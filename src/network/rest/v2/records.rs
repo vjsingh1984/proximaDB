@@ -80,35 +80,45 @@ fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::S
 }
 
 /// Convert SqlValue back to JSON for responses
-fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
+fn sql_value_to_json(
+    value: &crate::proto::proximadb_v1::SqlValue,
+) -> Result<serde_json::Value, ApiError> {
     use crate::proto::proximadb_v1::sql_value::Value;
 
-    match value.value.as_ref() {
+    Ok(match value.value.as_ref() {
         Some(Value::NullValue(_)) => serde_json::Value::Null,
         Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(Value::Int64Value(i)) => serde_json::Value::Number((*i).into()),
         Some(Value::NumberValue(f)) => serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .ok_or_else(|| {
+                ApiError::Internal(format!(
+                    "Failed to convert f64 to serde_json::Number: {}",
+                    f
+                ))
+            })?,
         Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
         Some(Value::BytesValue(b)) => serde_json::Value::Array(
             b.iter()
                 .map(|x| serde_json::Value::Number((*x as u64).into()))
                 .collect(),
         ),
-        Some(Value::ArrayValue(arr)) => {
-            serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
-        }
+        Some(Value::ArrayValue(arr)) => serde_json::Value::Array(
+            arr.values
+                .iter()
+                .map(|v| sql_value_to_json(v))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
         Some(Value::ObjectValue(obj)) => {
             let map: serde_json::Map<String, serde_json::Value> = obj
                 .fields
                 .iter()
-                .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
-                .collect();
+                .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
+                .collect::<Result<_, ApiError>>()?;
             serde_json::Value::Object(map)
         }
         None => serde_json::Value::Null,
-    }
+    })
 }
 
 /// Convert a JSON value to a FilterClause value
@@ -470,7 +480,10 @@ pub async fn insert_records(
         ));
     }
 
-    let validate_schema = request.validate_schema.unwrap_or(true);
+    let validate_schema = request.validate_schema.unwrap_or_else(|| {
+        debug!("No schema validation preference provided, defaulting to true");
+        true
+    });
     debug!(
         "Schema validation: {}",
         if validate_schema {
@@ -496,10 +509,11 @@ pub async fn insert_records(
         }
 
         // Generate ID if not provided
-        let record_id = record
-            .id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let record_id = record.id.clone().unwrap_or_else(|| {
+            let new_id = uuid::Uuid::new_v4().to_string();
+            debug!("Generated new UUID for record: {}", new_id);
+            new_id
+        });
 
         // Convert typed_fields to metadata for backward compatibility with v1 storage
         let mut metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
@@ -789,7 +803,10 @@ pub async fn search_with_typed_filters(
         }
     }
 
-    let include_text = request.include_text.unwrap_or(false);
+    let include_text = request.include_text.unwrap_or_else(|| {
+        debug!("No include_text preference provided, defaulting to false");
+        false
+    });
     debug!(
         "Include TEXT fields: {}, filters: {:?}",
         include_text,
@@ -850,8 +867,11 @@ pub async fn search_with_typed_filters(
         Ok(resp) => {
             let latency_ms = start_time.elapsed().as_millis() as u64;
 
-            // resp.results is Option<SearchResult> - unwrap it
-            let search_result = resp.results.unwrap_or_default();
+            // resp.results is Option<SearchResult> - use default if None
+            let search_result = resp.results.unwrap_or_else(|| {
+                debug!("Search response contains no results, using default");
+                Default::default()
+            });
 
             // Convert results to TypedSearchResult format
             // search_result.results is Vec<SearchVectorRecord>
@@ -863,13 +883,16 @@ pub async fn search_with_typed_filters(
                     let typed_fields: HashMap<String, serde_json::Value> = r
                         .metadata
                         .iter()
-                        .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
-                        .collect();
+                        .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
+                        .collect::<Result<_, ApiError>>()?;
 
-                    TypedSearchResult {
+                    Ok(TypedSearchResult {
                         id: r.id.clone(),
                         score: r.score as f32,
-                        vector: if request.include_vector.unwrap_or(false) {
+                        vector: if request.include_vector.unwrap_or_else(|| {
+                            debug!("No include_vector preference provided, defaulting to false");
+                            false
+                        }) {
                             Some(r.vector.clone())
                         } else {
                             None
@@ -882,9 +905,9 @@ pub async fn search_with_typed_filters(
                             None
                         },
                         metadata: None, // Legacy metadata is converted to typed_fields
-                    }
+                    })
                 })
-                .collect();
+                .collect::<Result<_, ApiError>>()?;
 
             let total_matches = search_result.total_found as u64;
             let response = TypedSearchResponse {
@@ -984,8 +1007,14 @@ pub async fn get_record_v2(
         ));
     }
 
-    let include_vector = params.include_vector.unwrap_or(true);
-    let include_text = params.include_text.unwrap_or(false);
+    let include_vector = params.include_vector.unwrap_or_else(|| {
+        debug!("No include_vector preference provided, defaulting to true");
+        true
+    });
+    let include_text = params.include_text.unwrap_or_else(|| {
+        debug!("No include_text preference provided, defaulting to false");
+        false
+    });
 
     // Get vector via unified handlers
     match state
@@ -994,8 +1023,11 @@ pub async fn get_record_v2(
         .await
     {
         Ok(resp) => {
-            // resp.results is Option<SearchResult>, unwrap then access Vec<SearchVectorRecord>
-            let search_result = resp.results.unwrap_or_default();
+            // resp.results is Option<SearchResult>, use default if None
+            let search_result = resp.results.unwrap_or_else(|| {
+                debug!("Get vector response contains no results, using default");
+                Default::default()
+            });
             let result = search_result
                 .results
                 .first()
@@ -1005,8 +1037,8 @@ pub async fn get_record_v2(
             let typed_fields: HashMap<String, serde_json::Value> = result
                 .metadata
                 .iter()
-                .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
-                .collect();
+                .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
+                .collect::<Result<_, ApiError>>()?;
 
             let response = RecordV2Response {
                 id: result.id.clone(),
@@ -1067,11 +1099,12 @@ mod tests {
             "validate_schema": true
         }"#;
 
-        let request: InsertRecordsRequest = serde_json::from_str(json).unwrap();
+        let request: InsertRecordsRequest = serde_json::from_str(json)
+            .expect("Failed to deserialize InsertRecordsRequest from test JSON");
         assert_eq!(request.records.len(), 1);
         assert_eq!(request.records[0].id, Some("doc_1".to_string()));
         assert_eq!(request.records[0].vector.len(), 3);
-        assert!(request.validate_schema.unwrap());
+        assert_eq!(request.validate_schema, Some(true));
     }
 
     #[test]
@@ -1086,12 +1119,13 @@ mod tests {
             "include_text": true
         }"#;
 
-        let request: TypedSearchRequest = serde_json::from_str(json).unwrap();
+        let request: TypedSearchRequest = serde_json::from_str(json)
+            .expect("Failed to deserialize TypedSearchRequest from test JSON");
         assert_eq!(request.vector.len(), 3);
         assert_eq!(request.top_k, 10);
-        assert!(request.include_text.unwrap());
+        assert_eq!(request.include_text, Some(true));
 
-        let filters = request.filters.unwrap();
+        let filters = request.filters.as_ref().expect("filters should be Some");
         assert_eq!(filters.len(), 2);
         assert_eq!(filters[0].field, "category");
         assert_eq!(filters[0].op, "eq");
@@ -1106,7 +1140,8 @@ mod tests {
             "value_upper": 500
         }"#;
 
-        let filter: TypedFilter = serde_json::from_str(json).unwrap();
+        let filter: TypedFilter =
+            serde_json::from_str(json).expect("Failed to deserialize TypedFilter from test JSON");
         assert_eq!(filter.op, "between");
         assert!(filter.value_upper.is_some());
     }
@@ -1122,7 +1157,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].field, "status");
         assert_eq!(clauses[0].op, ComparisonOp::Eq as i32);
@@ -1159,7 +1195,8 @@ mod tests {
             },
         ];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 4);
         assert_eq!(clauses[0].op, ComparisonOp::Gt as i32);
         assert_eq!(clauses[1].op, ComparisonOp::Gte as i32);
@@ -1178,7 +1215,8 @@ mod tests {
             value_upper: Some(serde_json::json!(500)),
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         // between is converted to two clauses: gte and lte
         assert_eq!(clauses.len(), 2);
         assert_eq!(clauses[0].field, "price");
@@ -1211,7 +1249,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::Contains as i32);
     }
@@ -1227,7 +1266,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::Contains as i32);
         // Verify the value is prefixed with ^
@@ -1249,7 +1289,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::Contains as i32);
         // Verify the value is suffixed with $
@@ -1271,7 +1312,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::In as i32);
         // Verify the value is a JSON array string
@@ -1297,7 +1339,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::In as i32);
         if let Some(Value::StringValue(s)) = &clauses[0].value {
@@ -1333,7 +1376,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::Ne as i32);
     }
@@ -1363,7 +1407,8 @@ mod tests {
             },
         ];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 3);
         assert_eq!(clauses[0].op, ComparisonOp::Eq as i32);
         assert_eq!(clauses[1].op, ComparisonOp::Lt as i32);

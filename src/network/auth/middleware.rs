@@ -915,14 +915,14 @@ mod tests {
         let coordinator = Arc::new(
             SecurityCoordinator::from_config(build_security_config_with_api_key())
                 .await
-                .unwrap(),
+                .expect("Failed to create SecurityCoordinator from config"),
         );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .header("Authorization", "Api-Key test-key")
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route(
@@ -942,10 +942,15 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("Failed to read response body");
         assert_eq!(&body[..], b"ok");
     }
 
@@ -954,13 +959,13 @@ mod tests {
         let coordinator = Arc::new(
             SecurityCoordinator::from_config(build_security_config_with_api_key())
                 .await
-                .unwrap(),
+                .expect("Failed to create SecurityCoordinator from config"),
         );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route("/api/v1/search", get(|| async { "ok" }))
@@ -969,10 +974,15 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("Failed to read response body");
         assert!(String::from_utf8_lossy(&body).contains("Authorization header is required"));
     }
 
@@ -990,14 +1000,18 @@ mod tests {
             audience: cfg.authentication.jwt.audience.clone(),
             algorithm: JwtAlgorithm::HS256,
         })
-        .unwrap();
+        .expect("Failed to create JWT service");
 
         let token_pair = jwt_service
             .generate_token_pair("jwt-user", None, vec!["reader".to_string()])
             .await
-            .unwrap();
+            .expect("Failed to generate JWT token pair");
 
-        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(cfg)
+                .await
+                .expect("Failed to create SecurityCoordinator from config"),
+        );
 
         let request = Request::builder()
             .uri("/api/v1/search")
@@ -1006,7 +1020,7 @@ mod tests {
                 format!("Bearer {}", token_pair.access_token),
             )
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route(
@@ -1022,22 +1036,31 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("Failed to read response body");
         assert!(String::from_utf8_lossy(&body).contains("jwt-user"));
     }
 
     #[tokio::test]
     async fn auth_middleware_unified_rejects_invalid_jwt() {
         let cfg = build_security_config_with_jwt();
-        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(cfg)
+                .await
+                .expect("Failed to create SecurityCoordinator from config"),
+        );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .header("Authorization", "Bearer invalid-token")
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route("/api/v1/search", get(|| async { "ok" }))
@@ -1046,7 +1069,10 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -1074,15 +1100,19 @@ mod tests {
             &claims,
             &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
         )
-        .unwrap();
+        .expect("Failed to encode expired JWT token");
 
-        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(cfg)
+                .await
+                .expect("Failed to create SecurityCoordinator from config"),
+        );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .header("Authorization", format!("Bearer {}", expired_token))
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route("/api/v1/search", get(|| async { "ok" }))
@@ -1091,7 +1121,10 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -1109,20 +1142,24 @@ mod tests {
             audience: cfg.authentication.jwt.audience.clone(),
             algorithm: JwtAlgorithm::HS256,
         })
-        .unwrap();
+        .expect("Failed to create JWT service with wrong issuer");
         let bad_token = bad_jwt_service
             .generate_token_pair("jwt-user", None, vec!["reader".to_string()])
             .await
-            .unwrap()
+            .expect("Failed to generate JWT token with wrong issuer")
             .access_token;
 
-        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(cfg)
+                .await
+                .expect("Failed to create SecurityCoordinator from config"),
+        );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .header("Authorization", format!("Bearer {}", bad_token))
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route("/api/v1/search", get(|| async { "ok" }))
@@ -1131,7 +1168,10 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -297,13 +297,19 @@ impl KafkaSink {
 
     /// Check if connected
     pub fn is_connected(&self) -> bool {
-        *self.connected.lock().unwrap()
+        *self
+            .connected
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Connect to Kafka (simulated)
     pub async fn connect(&self) -> SinkResult<()> {
         // In production, would create rdkafka producer here
-        *self.connected.lock().unwrap() = true;
+        *self
+            .connected
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
         Ok(())
     }
 
@@ -313,7 +319,10 @@ impl KafkaSink {
         let _ = (topic, key, payload);
 
         // Update stats
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.record_send(payload.len() as u64, 1.0);
 
         Ok(())
@@ -328,7 +337,10 @@ impl KafkaSink {
         let _ = messages;
 
         // Update stats
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.record_batch(count, total_bytes, 5.0);
 
         Ok(())
@@ -366,7 +378,10 @@ impl CdcSink for KafkaSink {
     async fn flush(&self) -> SinkResult<()> {
         // Flush buffer
         let events = {
-            let mut buffer = self.buffer.lock().unwrap();
+            let mut buffer = self
+                .buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             std::mem::take(&mut *buffer)
         };
 
@@ -379,12 +394,18 @@ impl CdcSink for KafkaSink {
 
     async fn close(&self) -> SinkResult<()> {
         self.flush().await?;
-        *self.connected.lock().unwrap() = false;
+        *self
+            .connected
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
         Ok(())
     }
 
     fn stats(&self) -> SinkStats {
-        self.stats.lock().unwrap().clone()
+        self.stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 

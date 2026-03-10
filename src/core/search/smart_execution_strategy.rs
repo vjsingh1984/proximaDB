@@ -353,8 +353,8 @@ impl SmartExecutionStrategy {
             last_compaction: Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                    .map(|duration| duration.as_secs())
+                    .unwrap_or(0),
             ),
         };
 

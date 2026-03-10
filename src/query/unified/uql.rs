@@ -547,8 +547,12 @@ impl UQLParser {
                 }
                 let num_str: String = chars[start..i].iter().collect();
                 if num_str.contains('.') {
+                    // TD-007: unwrap_or with safe default - fallback to 0.0 for malformed number tokens
+                    // In production, valid number strings are guaranteed by the lexer pattern
                     tokens.push(Token::NumberLit(num_str.parse().unwrap_or(0.0)));
                 } else {
+                    // TD-007: unwrap_or with safe default - fallback to 0 for malformed integer tokens
+                    // In production, valid number strings are guaranteed by the lexer pattern
                     tokens.push(Token::IntegerLit(num_str.parse().unwrap_or(0)));
                 }
                 continue;
@@ -629,6 +633,8 @@ impl UQLParser {
     }
 
     fn current(&self) -> Token {
+        // TD-007: unwrap_or with safe default - Token::Eof is correct fallback for parser position
+        // When pos exceeds tokens length, we're at end of input, so Eof is the correct token
         self.tokens.get(self.pos).cloned().unwrap_or(Token::Eof)
     }
 
@@ -1471,6 +1477,7 @@ impl UQLParser {
         }
 
         // Set fusion strategy
+        // TD-007: unwrap_or with safe default - Intersection is sensible default for multi-model queries
         query.fusion_strategy = select.fusion.unwrap_or(FusionStrategy::Intersection);
 
         // Set limit
@@ -1632,146 +1639,145 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tokenize_simple_select() {
+    fn test_tokenize_simple_select() -> Result<()> {
         let parser = UQLParser::new();
-        let tokens = parser.tokenize("SELECT * FROM vectors.products").unwrap();
+        let tokens = parser.tokenize("SELECT * FROM vectors.products")?;
 
         assert!(matches!(tokens[0], Token::Select));
         assert!(matches!(tokens[1], Token::Star));
         assert!(matches!(tokens[2], Token::From));
         assert!(matches!(tokens[3], Token::Vector));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_simple_select() {
+    fn test_parse_simple_select() -> Result<()> {
         let mut parser = UQLParser::new();
-        let result = parser
-            .parse("SELECT * FROM vectors.products LIMIT 10")
-            .unwrap();
+        let result = parser.parse("SELECT * FROM vectors.products LIMIT 10")?;
 
         if let UQLStatement::Select(select) = result {
             assert_eq!(select.columns, vec!["*"]);
             assert_eq!(select.from.collection, "products");
             assert_eq!(select.limit, Some(10));
         } else {
-            panic!("Expected SELECT statement");
+            return Err(anyhow!("Expected SELECT statement"));
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_where_clause() {
+    fn test_parse_where_clause() -> Result<()> {
         let mut parser = UQLParser::new();
-        let result = parser
-            .parse("SELECT * FROM docs.products WHERE $.category = 'electronics'")
-            .unwrap();
+        let result =
+            parser.parse("SELECT * FROM docs.products WHERE $.category = 'electronics'")?;
 
         if let UQLStatement::Select(select) = result {
             assert!(select.where_clause.is_some());
         } else {
-            panic!("Expected SELECT statement");
+            return Err(anyhow!("Expected SELECT statement"));
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_vector_similar() {
+    fn test_parse_vector_similar() -> Result<()> {
         let mut parser = UQLParser::new();
         let result = parser
-            .parse("SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8)")
-            .unwrap();
+            .parse("SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8)")?;
 
         if let UQLStatement::Select(select) = result {
-            let wc = select.where_clause.unwrap();
+            let wc = select
+                .where_clause
+                .ok_or_else(|| anyhow!("Expected where clause"))?;
             assert!(!wc.conditions.is_empty());
             if let Condition::VectorSimilar { threshold, .. } = &wc.conditions[0] {
                 assert_eq!(*threshold, 0.8);
             }
         } else {
-            panic!("Expected SELECT statement");
+            return Err(anyhow!("Expected SELECT statement"));
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_join() {
+    fn test_parse_join() -> Result<()> {
         let mut parser = UQLParser::new();
-        let result = parser
-            .parse(
-                "SELECT v.*, d.title FROM vectors.items v \
+        let result = parser.parse(
+            "SELECT v.*, d.title FROM vectors.items v \
              JOIN documents.metadata d ON v.id = d.item_id",
-            )
-            .unwrap();
+        )?;
 
         if let UQLStatement::Select(select) = result {
             assert_eq!(select.joins.len(), 1);
             assert_eq!(select.joins[0].source.collection, "metadata");
         } else {
-            panic!("Expected SELECT statement");
+            return Err(anyhow!("Expected SELECT statement"));
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_fusion() {
+    fn test_parse_fusion() -> Result<()> {
         let mut parser = UQLParser::new();
-        let result = parser
-            .parse("SELECT * FROM vectors.products FUSION RRF(60)")
-            .unwrap();
+        let result = parser.parse("SELECT * FROM vectors.products FUSION RRF(60)")?;
 
         if let UQLStatement::Select(select) = result {
             if let Some(FusionStrategy::ReciprocalRankFusion { k }) = select.fusion {
                 assert_eq!(k, 60);
             } else {
-                panic!("Expected RRF fusion");
+                return Err(anyhow!("Expected RRF fusion"));
             }
         } else {
-            panic!("Expected SELECT statement");
+            return Err(anyhow!("Expected SELECT statement"));
         }
+        Ok(())
     }
 
     #[test]
-    fn test_parse_explain() {
+    fn test_parse_explain() -> Result<()> {
         let mut parser = UQLParser::new();
-        let result = parser
-            .parse("EXPLAIN SELECT * FROM vectors.products")
-            .unwrap();
+        let result = parser.parse("EXPLAIN SELECT * FROM vectors.products")?;
 
         assert!(matches!(result, UQLStatement::Explain(_)));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_order_by() {
+    fn test_parse_order_by() -> Result<()> {
         let mut parser = UQLParser::new();
-        let result = parser
-            .parse("SELECT * FROM vectors.products ORDER BY score DESC, name ASC")
-            .unwrap();
+        let result =
+            parser.parse("SELECT * FROM vectors.products ORDER BY score DESC, name ASC")?;
 
         if let UQLStatement::Select(select) = result {
-            let order = select.order_by.unwrap();
+            let order = select
+                .order_by
+                .ok_or_else(|| anyhow!("Expected order_by clause"))?;
             assert_eq!(order.columns.len(), 2);
             assert_eq!(order.columns[0].1, SortOrder::Desc);
             assert_eq!(order.columns[1].1, SortOrder::Asc);
         } else {
-            panic!("Expected SELECT statement");
+            return Err(anyhow!("Expected SELECT statement"));
         }
+        Ok(())
     }
 
     #[test]
-    fn test_convert_to_multi_model_query() {
+    fn test_convert_to_multi_model_query() -> Result<()> {
         let mut parser = UQLParser::new();
-        let query = parser
-            .parse_to_multi_model_query(
-                "SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8) LIMIT 10",
-            )
-            .unwrap();
+        let query = parser.parse_to_multi_model_query(
+            "SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8) LIMIT 10",
+        )?;
 
         assert_eq!(query.components.len(), 1);
         assert_eq!(query.limit, Some(10));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_complex_query() {
+    fn test_parse_complex_query() -> Result<()> {
         let mut parser = UQLParser::new();
-        let result = parser
-            .parse(
-                "SELECT v.id, v.score, d.title \
+        let result = parser.parse(
+            "SELECT v.id, v.score, d.title \
              FROM vectors.embeddings v \
              JOIN documents.metadata d ON v.id = d.embedding_id \
              WHERE VECTOR_SIMILAR(v.embedding, ?, 0.7) \
@@ -1779,8 +1785,7 @@ mod tests {
              ORDER BY v.score DESC \
              LIMIT 50 \
              FUSION INTERSECTION",
-            )
-            .unwrap();
+        )?;
 
         if let UQLStatement::Select(select) = result {
             assert_eq!(select.joins.len(), 1);
@@ -1788,7 +1793,8 @@ mod tests {
             assert_eq!(select.limit, Some(50));
             assert!(matches!(select.fusion, Some(FusionStrategy::Intersection)));
         } else {
-            panic!("Expected SELECT statement");
+            return Err(anyhow!("Expected SELECT statement"));
         }
+        Ok(())
     }
 }

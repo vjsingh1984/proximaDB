@@ -196,7 +196,16 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "HighCPU".to_string(),
+                metric_name: "cpu_usage".to_string(),
+                condition: RuleCondition::Above(threshold),
+                duration_ns: 0,
+                severity: AlertSeverity::High,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!("CPU usage is {{value}}% (threshold: {})", threshold),
+            })
     }
 
     /// Low memory rule
@@ -211,7 +220,19 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "LowMemory".to_string(),
+                metric_name: "memory_available_bytes".to_string(),
+                condition: RuleCondition::Below(threshold),
+                duration_ns: 0,
+                severity: AlertSeverity::Critical,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!(
+                    "Available memory is {{value}} bytes (threshold: {})",
+                    threshold
+                ),
+            })
     }
 
     /// High error rate rule
@@ -226,7 +247,16 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "HighErrorRate".to_string(),
+                metric_name: "error_rate".to_string(),
+                condition: RuleCondition::Above(threshold),
+                duration_ns: 0,
+                severity: AlertSeverity::High,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!("Error rate is {{value}}% (threshold: {})", threshold),
+            })
     }
 
     /// High latency rule
@@ -241,7 +271,19 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "HighLatency".to_string(),
+                metric_name: "request_latency_ms".to_string(),
+                condition: RuleCondition::Above(threshold_ms),
+                duration_ns: 0,
+                severity: AlertSeverity::Medium,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!(
+                    "Request latency is {{value}}ms (threshold: {}ms)",
+                    threshold_ms
+                ),
+            })
     }
 
     /// Disk usage rule
@@ -256,7 +298,16 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "HighDiskUsage".to_string(),
+                metric_name: "disk_usage_percent".to_string(),
+                condition: RuleCondition::Above(threshold),
+                duration_ns: 0,
+                severity: AlertSeverity::Medium,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!("Disk usage is {{value}}% (threshold: {})", threshold),
+            })
     }
 }
 

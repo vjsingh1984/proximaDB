@@ -119,7 +119,9 @@ impl Default for UnifiedColumnarConfig {
             enable_column_statistics: true,
             enable_page_index: true,
             enable_column_index: true,
-            parquet_compression: Compression::ZSTD(ZstdLevel::try_new(3).unwrap()),
+            parquet_compression: Compression::ZSTD(
+                ZstdLevel::try_new(3).unwrap_or_else(|_| ZstdLevel::default()),
+            ),
             enable_dictionary: true,
             enable_delta_encoding: true,
             enable_byte_stream_split: true,
@@ -410,7 +412,10 @@ impl UnifiedColumnarReader {
     ) -> Result<Arc<parquet::file::metadata::ParquetMetaData>> {
         // Check cache first
         {
-            let cache = self.parquet_metadata_cache.read().unwrap();
+            let cache = self
+                .parquet_metadata_cache
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(metadata) = cache.get(file_path) {
                 return Ok(Arc::clone(metadata));
             }
@@ -423,7 +428,10 @@ impl UnifiedColumnarReader {
         let metadata = Arc::new(metadata);
 
         {
-            let mut cache = self.parquet_metadata_cache.write().unwrap();
+            let mut cache = self
+                .parquet_metadata_cache
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             cache.insert(file_path.to_string(), Arc::clone(&metadata));
         }
 

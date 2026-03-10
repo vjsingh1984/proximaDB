@@ -1289,8 +1289,8 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
-        // Note: /api/v1/hybrid/search registered via nested router below (~line 1434)
-        // The /index endpoint uses AppState so it stays here
+        // Hybrid search production endpoints (AppState-backed)
+        .route("/api/v1/hybrid/search", post(hybrid_search))
         .route("/api/v1/hybrid/index", post(hybrid_index))
         // With metadata endpoints
         .route(
@@ -1431,15 +1431,15 @@ pub fn create_router(state: AppState) -> axum::Router {
         );
     }
 
-    // Hybrid Search API endpoints
+    // Experimental hybrid API (mock-backed) stays separate from production path
     let hybrid_router = {
         use crate::network::rest::v1::hybrid::{self, HybridSearchApiState};
 
         let hybrid_state = HybridSearchApiState::new();
         hybrid::create_router().with_state(hybrid_state)
     };
-    router = router.nest("/api/v1/hybrid", hybrid_router);
-    info!("✅ Hybrid Search API endpoints enabled at /api/v1/hybrid");
+    router = router.nest("/api/v1/experimental/hybrid", hybrid_router);
+    info!("✅ Experimental Hybrid API endpoints enabled at /api/v1/experimental/hybrid");
 
     // Convert to Router<()> by providing state
     let router = router.with_state(state);
@@ -1487,6 +1487,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     info!("   DELETE /api/v1/collections/:id (delete_collection)");
     info!("   POST   /api/v1/hybrid/search (hybrid_search)");
     info!("   POST   /api/v1/hybrid/index (hybrid_index)");
+    info!("   POST   /api/v1/experimental/hybrid/search (mock hybrid API)");
 
     router
 }
@@ -1530,6 +1531,56 @@ pub async fn readiness_check(
 mod tests {
     use super::*;
     use crate::network::rest::proto_json::ProtoApiResponse;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::sync::RwLock;
+    use tempfile::TempDir;
+    use tower::ServiceExt;
+
+    fn file_url(path: &Path) -> String {
+        format!("file://{}", path.to_string_lossy())
+    }
+
+    async fn build_test_app_state() -> (AppState, TempDir) {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let storage_path = temp_dir.path().join("storage");
+        let metadata_path = temp_dir.path().join("metadata");
+        let data_dir = temp_dir.path().join("server_data");
+        std::fs::create_dir_all(&storage_path).expect("failed to create storage path");
+        std::fs::create_dir_all(&metadata_path).expect("failed to create metadata path");
+        std::fs::create_dir_all(&data_dir).expect("failed to create data dir");
+
+        let mut config = crate::core::config::Config::default();
+        config.server.data_dir = data_dir.clone();
+        config.storage.metadata_url = file_url(&metadata_path);
+        config.storage.storage_locations = vec![crate::core::config::StorageLocation {
+            url: file_url(&storage_path),
+            weight: 1,
+            tags: vec!["test".to_string()],
+        }];
+
+        let (shared_services, _) = crate::network::multi_server::SharedServices::new(
+            None,
+            &config.storage,
+            None,
+            Some(&config),
+        )
+        .await
+        .expect("failed to initialize shared services for test app state");
+
+        let state = AppState {
+            unified_handlers: shared_services.unified_handlers,
+            security_coordinator: None,
+            data_dir,
+            query_adapter: None,
+            fulltext_indexes: Some(Arc::new(RwLock::new(HashMap::new()))),
+        };
+        (state, temp_dir)
+    }
 
     #[test]
     fn test_error_conversion() {
@@ -1548,10 +1599,14 @@ mod tests {
             "top_k": 5,
             "vector_weight": 0.7
         });
-        let req: HybridSearchRequest = serde_json::from_value(json).unwrap();
+        let req: HybridSearchRequest =
+            serde_json::from_value(json).expect("failed to deserialize HybridSearchRequest");
         assert_eq!(req.collection, "test_col");
-        assert_eq!(req.vector.unwrap().len(), 3);
-        assert_eq!(req.text_query.unwrap(), "machine learning");
+        assert_eq!(req.vector.expect("vector should be present").len(), 3);
+        assert_eq!(
+            req.text_query.expect("text_query should be present"),
+            "machine learning"
+        );
         assert_eq!(req.top_k, 5);
         assert!((req.vector_weight - 0.7).abs() < 0.001);
         assert_eq!(req.rrf_k, 60); // default
@@ -1563,7 +1618,8 @@ mod tests {
             "collection": "test_col",
             "text_query": "hello"
         });
-        let req: HybridSearchRequest = serde_json::from_value(json).unwrap();
+        let req: HybridSearchRequest =
+            serde_json::from_value(json).expect("failed to deserialize HybridSearchRequest");
         assert_eq!(req.top_k, 10);
         assert!((req.vector_weight - 0.5).abs() < 0.001);
         assert_eq!(req.rrf_k, 60);
@@ -1579,7 +1635,8 @@ mod tests {
                 {"id": "doc2", "text": "jumps over the lazy dog"}
             ]
         });
-        let req: HybridIndexRequest = serde_json::from_value(json).unwrap();
+        let req: HybridIndexRequest =
+            serde_json::from_value(json).expect("failed to deserialize HybridIndexRequest");
         assert_eq!(req.collection, "test_col");
         assert_eq!(req.documents.len(), 2);
         assert_eq!(req.documents[0].id, "doc1");
@@ -1597,24 +1654,26 @@ mod tests {
 
         // Add an index
         {
-            let mut indexes = map.write().unwrap();
+            let mut indexes = map.write().expect("RwLock should not be poisoned");
             let mut index = FullTextIndex::new(TokenizerConfig::for_keyword_search());
             index
                 .add_document("doc1", "machine learning neural networks")
-                .unwrap();
+                .expect("failed to add document to index");
             index
                 .add_document("doc2", "deep learning transformers")
-                .unwrap();
+                .expect("failed to add document to index");
             index
                 .add_document("doc3", "database systems query optimization")
-                .unwrap();
+                .expect("failed to add document to index");
             indexes.insert("test_col".to_string(), index);
         }
 
         // Search
         {
-            let indexes = map.read().unwrap();
-            let index = indexes.get("test_col").unwrap();
+            let indexes = map.read().expect("RwLock should not be poisoned");
+            let index = indexes
+                .get("test_col")
+                .expect("test_col index should exist");
             let results = index.search("learning", 10);
             assert_eq!(results.len(), 2);
             // doc1 and doc2 both contain "learning"
@@ -1653,11 +1712,13 @@ mod tests {
             mode: "hybrid".to_string(),
         };
 
-        let json = serde_json::to_string(&response).unwrap();
+        let json =
+            serde_json::to_string(&response).expect("failed to serialize HybridSearchResponse");
         assert!(json.contains("\"success\":true"));
         assert!(json.contains("\"mode\":\"hybrid\""));
         // doc2 should NOT have vector_score/vector_rank (skip_serializing_if = None)
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("failed to deserialize JSON value");
         let doc2 = &parsed["results"][1];
         assert!(doc2.get("vector_score").is_none());
         assert!(doc2.get("vector_rank").is_none());
@@ -1675,7 +1736,7 @@ mod tests {
         let result = parse_search_request(json);
         assert!(result.is_ok());
 
-        let request = result.unwrap();
+        let request = result.expect("parse_search_request should succeed for simple format");
         assert_eq!(request.collection_id, "test_collection");
         assert_eq!(request.queries.len(), 1);
         assert_eq!(request.queries[0].vector, vec![0.1, 0.2, 0.3, 0.4]);
@@ -1697,7 +1758,7 @@ mod tests {
         let result = parse_search_request(json);
         assert!(result.is_ok());
 
-        let request = result.unwrap();
+        let request = result.expect("parse_search_request should succeed for proto format");
         assert_eq!(request.collection_id, "proto_collection");
         assert_eq!(request.queries.len(), 2);
         assert_eq!(request.top_k, 15);
@@ -1719,7 +1780,7 @@ mod tests {
         let result = parse_search_request(json);
         assert!(result.is_ok());
 
-        let request = result.unwrap();
+        let request = result.expect("parse_search_request should succeed with filters");
         assert_eq!(request.queries[0].filters.len(), 2);
         assert!(request.queries[0].filters.contains_key("category"));
     }
@@ -1765,7 +1826,7 @@ mod tests {
 
         let result = parse_search_request(json);
         assert!(result.is_ok()); // parse succeeds but validation happens in handler
-        assert_eq!(result.unwrap().collection_id, "");
+        assert_eq!(result.expect("parse should succeed").collection_id, "");
     }
 
     // Test default values for optional fields
@@ -1779,7 +1840,7 @@ mod tests {
         let result = parse_search_request(json);
         assert!(result.is_ok());
 
-        let request = result.unwrap();
+        let request = result.expect("parse_search_request with defaults should succeed");
         assert_eq!(request.top_k, 10); // default top_k
         assert!(request.include_fields.is_none()); // optional field
         assert!(request.search_params.is_none()); // optional field
@@ -1795,8 +1856,9 @@ mod tests {
             "filters": {"status": "active"}
         });
 
-        let parsed = parse_search_request(original_json.clone()).unwrap();
-        let serialized = serde_json::to_value(&parsed).unwrap();
+        let parsed = parse_search_request(original_json.clone())
+            .expect("parse_search_request roundtrip should succeed");
+        let serialized = serde_json::to_value(&parsed).expect("serialization should succeed");
 
         assert_eq!(
             serialized["collection_id"].as_str(),
@@ -1819,5 +1881,143 @@ mod tests {
             assert!(!msg.is_empty());
             assert!(!msg.contains("ApiError(")); // Should be user-friendly
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_hybrid_search_canonical_production_route_returns_bad_request_not_not_found() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/hybrid/search")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"collection":"","text_query":"hybrid route test"}"#,
+            ))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling canonical hybrid route request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_vector_search_canonical_production_route_returns_bad_request_not_not_found() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/search")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"collection":"","vector":[0.1,0.2,0.3],"top_k":5}"#,
+            ))
+            .expect("failed to build request");
+        request
+            .extensions_mut()
+            .insert(crate::network::middleware::tenant::TenantContext::default_tenant());
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling canonical vector route request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_document_index_canonical_production_route_returns_bad_request_not_not_found() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/documents/collections/ws1_docs/indexes")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"path":"content","index_type":"fulltext","unique":false}"#,
+            ))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling canonical document route request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_graph_shortest_path_canonical_production_route_returns_unprocessable_entity_not_not_found()
+     {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/graph/graphs/ws1_graph/shortest_path")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{}"#))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling canonical graph route request");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_graph_legacy_nodes_endpoint_redirects_to_canonical_multi_graph_route() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/graph/nodes")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{}"#))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling legacy graph nodes route request");
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(location, Some("/api/v1/graph/graphs/default/nodes"));
+        let deprecation = response
+            .headers()
+            .get("deprecation")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(deprecation, Some("true"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_graph_legacy_edges_endpoint_redirects_to_canonical_multi_graph_route() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/graph/edges")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{}"#))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling legacy graph edges route request");
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(location, Some("/api/v1/graph/graphs/default/edges"));
+        let deprecation = response
+            .headers()
+            .get("deprecation")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(deprecation, Some("true"));
     }
 }

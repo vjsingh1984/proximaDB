@@ -414,6 +414,11 @@ impl IvfClusteringBuilder {
         vectors: &[Vec<f32>],
         dimension: usize,
     ) -> Vec<Vec<u32>> {
+        if vectors.is_empty() {
+            tracing::warn!("No vectors provided for rowgroup clustering");
+            return Vec::new();
+        }
+
         // Step 1: Calculate optimal row group size based on mathematical and practical constraints
         let n = vectors.len(); // Total number of vectors to cluster
         let d = dimension; // Vector dimension from collection configuration
@@ -495,10 +500,30 @@ impl IvfClusteringBuilder {
 
         // Step 3: Phase 1 - Initial clustering using AXIS k-means++ for optimal initialization
         // k-means++ ensures well-separated initial centroids, leading to better final clusters
-        let (centroids, cluster_assignments) = self
-            .axis_clustering
-            .cluster_vectors_simple(vectors, k, distance_metric, max_iterations)
-            .expect("AXIS clustering failed - check vector dimensionality and cluster count");
+        let (centroids, cluster_assignments) = match self.axis_clustering.cluster_vectors_simple(
+            vectors,
+            k,
+            distance_metric,
+            max_iterations,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "AXIS clustering failed; falling back to deterministic round-robin assignment"
+                );
+                let effective_k = k.max(1).min(vectors.len());
+                let fallback_centroids = vectors
+                    .iter()
+                    .take(effective_k)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let fallback_assignments = (0..vectors.len())
+                    .map(|idx| idx % effective_k)
+                    .collect::<Vec<_>>();
+                (fallback_centroids, fallback_assignments)
+            }
+        };
 
         tracing::info!(
             "✅ AXIS clustering complete: {} centroids generated, {} vector assignments made",
@@ -512,7 +537,29 @@ impl IvfClusteringBuilder {
         let centroid_distances = self
             .axis_clustering
             .calculate_centroid_distance_matrix(&centroids, distance_metric)
-            .expect("Centroid distance matrix calculation failed");
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    error = %error,
+                    "Centroid distance matrix failed; falling back to direct pairwise computation"
+                );
+                let k = centroids.len();
+                let mut fallback = vec![vec![0.0f32; k]; k];
+                for i in 0..k {
+                    for j in 0..k {
+                        if i != j {
+                            fallback[i][j] = self
+                                .distance_compute
+                                .calculate_distance(
+                                    &centroids[i],
+                                    &centroids[j],
+                                    &DistanceMetric::Euclidean,
+                                )
+                                .raw_value;
+                        }
+                    }
+                }
+                fallback
+            });
 
         tracing::info!(
             "✅ Centroid distance matrix built: {}×{} (enables O(1) inter-centroid lookups)",
@@ -550,7 +597,17 @@ impl IvfClusteringBuilder {
                 distance_metric,     // Consistent distance metric
                 &boosting_weights,   // 5-component weight configuration
             )
-            .expect("Component boosting assignment failed - check weight configuration");
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    error = %error,
+                    "Component boosting assignment failed; using raw clustering assignments"
+                );
+                cluster_assignments
+                    .iter()
+                    .copied()
+                    .map(|cluster_id| (cluster_id, 0.0f32))
+                    .collect()
+            });
 
         tracing::info!(
             "✅ Component boosting complete: {} vectors assigned with 5-component optimization",
@@ -727,12 +784,19 @@ impl IvfClusteringBuilder {
             .nodes
             .iter()
             .enumerate()
-            .map(|(node_idx, node)| {
-                // SAFETY: node.vector_id is guaranteed to be in id_to_node map because
-                // nodes are only created via add_node() which inserts into id_to_node.
-                let source_idx = *self.id_to_node.get(&node.vector_id).unwrap() as usize;
+            .filter_map(|(node_idx, node)| {
+                let source_idx = match self.id_to_node.get(&node.vector_id) {
+                    Some(index) => *index as usize,
+                    None => {
+                        tracing::warn!(
+                            vector_id = %node.vector_id,
+                            "Skipping node without id_to_node mapping during component boosting"
+                        );
+                        return None;
+                    }
+                };
                 let source_cluster = Self::find_cluster_for_node_static(source_idx, clusters);
-                (node_idx, source_idx, source_cluster)
+                Some((node_idx, source_idx, source_cluster))
             })
             .collect();
 
@@ -1020,7 +1084,18 @@ impl IvfClusteringBuilder {
             let std_dev = variance.sqrt();
 
             // Calculate 95th percentile (radius)
-            distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            distances.sort_by(|a, b| {
+                a.partial_cmp(b).unwrap_or_else(|| {
+                    // Handle NaN values by treating them as less than any number
+                    if a.is_nan() && b.is_nan() {
+                        std::cmp::Ordering::Equal
+                    } else if a.is_nan() {
+                        std::cmp::Ordering::Less
+                    } else {
+                        std::cmp::Ordering::Greater
+                    }
+                })
+            });
             let percentile_95 = distances[(distances.len() as f32 * 0.95) as usize];
 
             centroid.mean_distance = mean;
@@ -2685,8 +2760,12 @@ impl RaptorWriter {
             // Serialize SourceContent proto to bytes
             use prost::Message;
             let mut buf = Vec::new();
-            source.encode(&mut buf).unwrap();
-            buf
+            if let Err(e) = source.encode(&mut buf) {
+                tracing::warn!("Source content encoding failed: {}, using empty bytes", e);
+                Vec::new()
+            } else {
+                buf
+            }
         });
 
         // Create compact row with all VectorRecord fields
@@ -2744,7 +2823,7 @@ impl RaptorWriter {
         self.ivf_builder.id_to_node.insert(id.clone(), node_id);
 
         // Update column projections for filtering
-        self.update_column_projections(vector, location);
+        self.update_column_projections(vector, location)?;
 
         // Add to current page
         if self.current_row_page.is_none() {
@@ -2760,9 +2839,10 @@ impl RaptorWriter {
             });
         }
 
+        // SAFETY: current_row_page is guaranteed to be Some after the initialization above.
         self.current_row_page
             .as_mut()
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("Current row page not initialized"))?
             .rows
             .push(compact_row);
         self.file_metadata.total_rows += 1;
@@ -3119,7 +3199,10 @@ impl RaptorWriter {
         // Write indices
         for value_opt in values {
             if let Some(value) = value_opt {
-                let idx = dictionary.iter().position(|v| v == value).unwrap() as u16;
+                let idx =
+                    dictionary.iter().position(|v| v == value).ok_or_else(|| {
+                        anyhow::anyhow!("Value {:?} not found in dictionary", value)
+                    })? as u16;
                 encoded.extend(&idx.to_le_bytes());
             } else {
                 encoded.extend(&0xFFFF_u16.to_le_bytes()); // Null marker
@@ -3351,7 +3434,9 @@ impl RaptorWriter {
                 // Write indices
                 for value_opt in &values {
                     if let Some(value) = value_opt {
-                        let idx = value_dict.iter().position(|v| v == value).unwrap() as u16;
+                        let idx = value_dict.iter().position(|v| v == value).ok_or_else(|| {
+                            anyhow::anyhow!("Value {:?} not found in dictionary", value)
+                        })? as u16;
                         encoded.extend(&idx.to_le_bytes());
                     } else {
                         encoded.extend(&0xFFFF_u16.to_le_bytes()); // Null marker
@@ -3795,7 +3880,18 @@ impl RaptorWriter {
         }
 
         // Sort by distance for nearest/farthest extraction
-        inter_centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        inter_centroid_distances.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1).unwrap_or_else(|| {
+                // Handle NaN values by treating them as less than any number
+                if a.1.is_nan() && b.1.is_nan() {
+                    std::cmp::Ordering::Equal
+                } else if a.1.is_nan() {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                }
+            })
+        });
 
         // Extract top 5 nearest centroids (Component 4)
         let nearest_centroid_ids: Vec<u16> = inter_centroid_distances
@@ -4165,12 +4261,17 @@ impl RaptorWriter {
             if let Some(stats) = centroid_stats {
                 rg.centroid_stats = Some(stats);
 
+                // SAFETY: centroid_stats is guaranteed to be Some after the assignment above
+                let stats_ref = rg
+                    .centroid_stats
+                    .as_ref()
+                    .expect("centroid_stats just set above");
                 tracing::debug!(
                     "RowGroup {} centroid stats: cluster={}, mean_dist={:.3}, radius={:.3}",
                     rg.id,
                     dominant_cluster,
-                    rg.centroid_stats.as_ref().unwrap().mean_distance,
-                    rg.centroid_stats.as_ref().unwrap().radius
+                    stats_ref.mean_distance,
+                    stats_ref.radius
                 );
             }
 
@@ -4582,20 +4683,23 @@ impl RaptorWriter {
     }
 
     /// Update column projections for filtering
-    fn update_column_projections(&mut self, vector: &VectorRecord, _location: RowLocation) {
+    fn update_column_projections(&mut self, vector: &VectorRecord, _location: RowLocation) -> Result<()> {
         // Extract metadata columns for projection
         if !vector.metadata.is_empty() {
             for (key, value) in &vector.metadata {
+                let serialized = bincode::serialize(&value)
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize metadata key '{}': {}", key, e))?;
                 self.column_projections
                     .metadata_columns
                     .entry(key.clone())
                     .or_default()
-                    .push(bincode::serialize(&value).expect("Failed to serialize metadata value"));
+                    .push(serialized);
             }
         }
 
         // Update filter bitmaps (example: filtering by specific metadata values)
         // This would be customized based on actual filtering needs
+        Ok(())
     }
 
     /// Write column projections to disk
@@ -4909,7 +5013,18 @@ impl RaptorWriter {
                     .collect();
 
                 // Sort by distance and take top M edges
-                distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                distances.sort_by(|a, b| {
+                    a.1.partial_cmp(&b.1).unwrap_or_else(|| {
+                        // Handle NaN values by treating them as less than any number
+                        if a.1.is_nan() && b.1.is_nan() {
+                            std::cmp::Ordering::Equal
+                        } else if a.1.is_nan() {
+                            std::cmp::Ordering::Less
+                        } else {
+                            std::cmp::Ordering::Greater
+                        }
+                    })
+                });
                 distances.truncate(edges_per_node);
 
                 // Create edge structures

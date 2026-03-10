@@ -15,7 +15,7 @@
 //! ```rust,ignore
 //! use proximadb::utils::glob::{GlobPattern, GlobMatcher};
 //!
-//! let pattern = GlobPattern::new("*.parquet").unwrap();
+//! let pattern = GlobPattern::new("*.parquet")?;
 //! let matcher = GlobMatcher::new(&pattern);
 //!
 //! assert!(matcher.is_match("data.parquet"));
@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_literal_matching() {
-        let pattern = GlobPattern::new("hello").unwrap();
+        let pattern = GlobPattern::new("hello").expect("Test pattern 'hello' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("hello"));
@@ -476,7 +476,8 @@ mod tests {
 
     #[test]
     fn test_case_insensitive_matching() {
-        let pattern = GlobPattern::new_with_options("Hello", false).unwrap();
+        let pattern = GlobPattern::new_with_options("Hello", false)
+            .expect("Test pattern 'Hello' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("hello"));
@@ -486,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_wildcard_matching() {
-        let pattern = GlobPattern::new("*.txt").unwrap();
+        let pattern = GlobPattern::new("*.txt").expect("Test pattern '*.txt' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("file.txt"));
@@ -497,7 +498,8 @@ mod tests {
 
     #[test]
     fn test_question_mark_matching() {
-        let pattern = GlobPattern::new("test?.txt").unwrap();
+        let pattern =
+            GlobPattern::new("test?.txt").expect("Test pattern 'test?.txt' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("test1.txt"));
@@ -508,7 +510,8 @@ mod tests {
 
     #[test]
     fn test_character_class_matching() {
-        let pattern = GlobPattern::new("test[123].txt").unwrap();
+        let pattern = GlobPattern::new("test[123].txt")
+            .expect("Test pattern 'test[123].txt' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("test1.txt"));
@@ -520,7 +523,8 @@ mod tests {
 
     #[test]
     fn test_character_range_matching() {
-        let pattern = GlobPattern::new("file[a-z].txt").unwrap();
+        let pattern = GlobPattern::new("file[a-z].txt")
+            .expect("Test pattern 'file[a-z].txt' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("filea.txt"));
@@ -531,7 +535,8 @@ mod tests {
 
     #[test]
     fn test_negated_character_class() {
-        let pattern = GlobPattern::new("file[^0-9].txt").unwrap();
+        let pattern = GlobPattern::new("file[^0-9].txt")
+            .expect("Test pattern 'file[^0-9].txt' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("filea.txt"));
@@ -542,7 +547,8 @@ mod tests {
 
     #[test]
     fn test_alternatives_matching() {
-        let pattern = GlobPattern::new("file.{txt,doc,pdf}").unwrap();
+        let pattern = GlobPattern::new("file.{txt,doc,pdf}")
+            .expect("Test pattern 'file.{txt,doc,pdf}' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("file.txt"));
@@ -553,7 +559,8 @@ mod tests {
 
     #[test]
     fn test_complex_pattern() {
-        let pattern = GlobPattern::new("data_[0-9][0-9]_*.{parquet,orc}").unwrap();
+        let pattern = GlobPattern::new("data_[0-9][0-9]_*.{parquet,orc}")
+            .expect("Test pattern 'data_[0-9][0-9]_*.{parquet,orc}' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("data_01_vectors.parquet"));
@@ -566,7 +573,8 @@ mod tests {
     fn test_path_matching() {
         use std::path::PathBuf;
 
-        let pattern = GlobPattern::new("*.parquet").unwrap();
+        let pattern =
+            GlobPattern::new("*.parquet").expect("Test pattern '*.parquet' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         let path = PathBuf::from("vectors.parquet");
@@ -594,14 +602,23 @@ mod tests {
 
     #[test]
     fn test_convenience_function() {
-        assert!(glob_match("*.rs", "main.rs").unwrap());
-        assert!(!glob_match("*.rs", "main.py").unwrap());
-        assert!(glob_match("test?.txt", "test1.txt").unwrap());
+        assert!(
+            glob_match("*.rs", "main.rs")
+                .expect("Pattern '*.rs' and text 'main.rs' should match successfully")
+        );
+        assert!(
+            !glob_match("*.rs", "main.py")
+                .expect("Pattern '*.rs' and text 'main.py' should match successfully (negative)")
+        );
+        assert!(
+            glob_match("test?.txt", "test1.txt")
+                .expect("Pattern 'test?.txt' and text 'test1.txt' should match successfully")
+        );
     }
 
     #[test]
     fn test_empty_patterns() {
-        let pattern = GlobPattern::new("").unwrap();
+        let pattern = GlobPattern::new("").expect("Test pattern '' (empty) should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match(""));
@@ -610,7 +627,8 @@ mod tests {
 
     #[test]
     fn test_multiple_stars() {
-        let pattern = GlobPattern::new("**/*.txt").unwrap();
+        let pattern =
+            GlobPattern::new("**/*.txt").expect("Test pattern '**/*.txt' should be valid");
         let matcher = GlobMatcher::new(&pattern);
 
         assert!(matcher.is_match("file.txt"));

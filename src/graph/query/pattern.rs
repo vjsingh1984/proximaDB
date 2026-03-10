@@ -636,8 +636,13 @@ impl PatternMatcher {
 
         match (a, b) {
             (Value::Number(n1), Value::Number(n2)) => {
+                // unwrap_or(0.0) is safe here: JSON numbers are always valid f64 values in practice.
+                // as_f64() only returns None for numbers beyond f64 range, which is extremely rare.
+                // Defaulting to 0.0 provides a stable comparison value for edge cases.
                 let f1 = n1.as_f64().unwrap_or(0.0);
                 let f2 = n2.as_f64().unwrap_or(0.0);
+                // unwrap_or(Equal) handles NaN comparison: NaN != NaN, so partial_cmp returns None.
+                // Using Equal as default provides deterministic sorting for NaN values.
                 Ok(f1.partial_cmp(&f2).unwrap_or(std::cmp::Ordering::Equal) as i32)
             }
             (Value::String(s1), Value::String(s2)) => Ok(s1.cmp(s2) as i32),
@@ -661,6 +666,9 @@ impl PatternMatcher {
                 serde_json::Value::Number(serde_json::Number::from(*i))
             }
             Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
+                // unwrap_or is safe here: serde_json::Number::from_f64 returns None for
+                // NaN and Infinity values, which are not valid JSON numbers.
+                // Defaulting to 0 provides a valid JSON representation for these edge cases.
                 serde_json::Value::Number(
                     serde_json::Number::from_f64(*d).unwrap_or(serde_json::Number::from(0)),
                 )
@@ -767,6 +775,8 @@ impl PatternMatcher {
         mut results: Vec<MatchResult>,
     ) -> QueryResult<Vec<MatchResult>> {
         // Sort by score (descending) for now
+        // unwrap_or(Equal) is safe: partial_cmp on f64 returns None only for NaN values.
+        // Using Equal as default provides deterministic sorting behavior for NaN scores.
         results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -1015,11 +1025,11 @@ impl PatternCompiler {
     }
 }
 
-impl Default for PatternMatcher {
-    fn default() -> Self {
-        Self::new().unwrap()
-    }
-}
+// NOTE: Default implementation removed because PatternMatcher::new() is fallible.
+// PatternMatcher requires regex compilation in PatternCompiler which can fail.
+// Types with fallible initialization should not implement Default to avoid
+// runtime panics during default construction.
+// Use PatternMatcher::new() explicitly to handle initialization errors.
 
 #[cfg(test)]
 mod tests {

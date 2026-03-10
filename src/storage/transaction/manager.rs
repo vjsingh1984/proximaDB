@@ -464,13 +464,12 @@ impl MultiModelTransactionManager {
 
     /// Prepare phase of 2PC
     async fn prepare_phase(&self, tx_id: &TransactionId) -> Result<bool> {
-        let participants = {
-            self.participants
-                .read()
-                .get(tx_id)
-                .cloned()
-                .unwrap_or_default()
-        };
+        let participants = self
+            .participants
+            .read()
+            .get(tx_id)
+            .cloned()
+            .unwrap_or_default();
 
         if participants.is_empty() {
             // No participants, nothing to prepare
@@ -514,13 +513,12 @@ impl MultiModelTransactionManager {
 
     /// Commit phase of 2PC
     async fn commit_phase(&self, tx_id: &TransactionId) -> Result<()> {
-        let participants = {
-            self.participants
-                .read()
-                .get(tx_id)
-                .cloned()
-                .unwrap_or_default()
-        };
+        let participants = self
+            .participants
+            .read()
+            .get(tx_id)
+            .cloned()
+            .unwrap_or_default();
 
         for (store_id, _participant) in &participants {
             self.commit_participant(tx_id, store_id).await?;
@@ -578,13 +576,12 @@ impl MultiModelTransactionManager {
 
     /// Rollback all participants
     async fn rollback_all_participants(&self, tx_id: &TransactionId) -> Result<()> {
-        let participants = {
-            self.participants
-                .read()
-                .get(tx_id)
-                .cloned()
-                .unwrap_or_default()
-        };
+        let participants = self
+            .participants
+            .read()
+            .get(tx_id)
+            .cloned()
+            .unwrap_or_default();
 
         for (store_id, _participant) in &participants {
             self.rollback_participant(tx_id, store_id).await?;
@@ -679,9 +676,16 @@ impl MultiModelTransactionManager {
             (TransactionState::Aborted, 0)
         };
 
+        // Participant votes: None = not voted, Some(true) = yes, Some(false) = no
+        // Default to false (no/aborted) if vote not recorded
         let participant_results: HashMap<String, bool> = participants
             .iter()
-            .map(|(k, v)| (k.clone(), v.vote.unwrap_or(false)))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.vote.unwrap_or(false), // Default to false if no vote recorded
+                )
+            })
             .collect();
 
         TransactionResult {

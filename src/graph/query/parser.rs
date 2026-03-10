@@ -1140,7 +1140,7 @@ mod tests {
     fn test_parse_simple_match_return() {
         let parser = QueryParser::new();
         let query = "MATCH (n:Person) RETURN n";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser.parse(query).expect("Failed to parse query");
 
         assert_eq!(compiled.nodes.len(), 1);
         assert_eq!(compiled.nodes[0].variable, "n");
@@ -1156,7 +1156,9 @@ mod tests {
     fn test_parse_match_with_properties() {
         let parser = QueryParser::new();
         let query = "MATCH (p:Person {name: \"Alice\", age: 30, active: true}) RETURN p";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with properties");
 
         assert_eq!(compiled.nodes.len(), 1);
         let node_pattern = &compiled.nodes[0];
@@ -1181,7 +1183,9 @@ mod tests {
     fn test_parse_multiple_nodes() {
         let parser = QueryParser::new();
         let query = "MATCH (a:Person), (b:Company) RETURN a, b";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with multiple nodes");
 
         assert_eq!(compiled.nodes.len(), 2);
         assert_eq!(compiled.nodes[0].variable, "a");
@@ -1198,7 +1202,9 @@ mod tests {
     fn test_parse_no_label_node() {
         let parser = QueryParser::new();
         let query = "MATCH (n) RETURN n";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with no label");
 
         assert_eq!(compiled.nodes.len(), 1);
         assert_eq!(compiled.nodes[0].variable, "n");
@@ -1217,7 +1223,9 @@ mod tests {
     fn test_parse_edge_pattern() {
         let parser = QueryParser::new();
         let query = "MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a, r, b";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with edge pattern");
 
         // Should have 2 nodes (a and b)
         assert_eq!(compiled.nodes.len(), 2);
@@ -1240,7 +1248,9 @@ mod tests {
     fn test_parse_where_clause() {
         let parser = QueryParser::new();
         let query = "MATCH (p:Person) WHERE p.age > 25 RETURN p";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with WHERE clause");
 
         assert_eq!(compiled.nodes.len(), 1);
         assert_eq!(compiled.where_clauses.len(), 1);
@@ -1271,7 +1281,9 @@ mod tests {
     fn test_parse_where_and_condition() {
         let parser = QueryParser::new();
         let query = "MATCH (p:Person) WHERE p.age > 25 AND p.name = \"Alice\" RETURN p";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with AND condition");
 
         assert_eq!(compiled.where_clauses.len(), 1);
 
@@ -1307,7 +1319,9 @@ mod tests {
     fn test_parse_aggregation_count() {
         let parser = QueryParser::new();
         let query = "MATCH (n:Person) RETURN COUNT(*)";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with COUNT aggregation");
 
         assert_eq!(compiled.return_spec.projections.len(), 1);
         match &compiled.return_spec.projections[0] {
@@ -1320,7 +1334,9 @@ mod tests {
     fn test_parse_aggregation_sum() {
         let parser = QueryParser::new();
         let query = "MATCH (p:Person) RETURN SUM(p.salary)";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with SUM aggregation");
 
         assert_eq!(compiled.return_spec.projections.len(), 1);
         match &compiled.return_spec.projections[0] {
@@ -1336,7 +1352,9 @@ mod tests {
     fn test_parse_property_projection() {
         let parser = QueryParser::new();
         let query = "MATCH (p:Person) RETURN p.name, p.age";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with property projection");
 
         assert_eq!(compiled.return_spec.projections.len(), 2);
 
@@ -1361,7 +1379,9 @@ mod tests {
     fn test_parse_property_projection_with_alias() {
         let parser = QueryParser::new();
         let query = "MATCH (p:Person) RETURN p.name AS person_name";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with property projection alias");
 
         assert_eq!(compiled.return_spec.variables.len(), 1);
         assert_eq!(compiled.return_spec.variables[0], "person_name");
@@ -1379,7 +1399,9 @@ mod tests {
     fn test_parse_return_with_limit() {
         let parser = QueryParser::new();
         let query = "MATCH (n:Person) RETURN n LIMIT 10";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with LIMIT");
 
         assert_eq!(compiled.return_spec.limit, Some(10));
     }
@@ -1388,7 +1410,9 @@ mod tests {
     fn test_parse_return_with_skip_and_limit() {
         let parser = QueryParser::new();
         let query = "MATCH (n:Person) RETURN n SKIP 5 LIMIT 10";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with SKIP and LIMIT");
 
         assert_eq!(compiled.return_spec.skip, Some(5));
         assert_eq!(compiled.return_spec.limit, Some(10));
@@ -1398,7 +1422,9 @@ mod tests {
     fn test_parse_return_with_order_by() {
         let parser = QueryParser::new();
         let query = "MATCH (p:Person) RETURN p ORDER BY p ASC";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with ORDER BY");
 
         assert_eq!(compiled.return_spec.order_by.len(), 1);
         assert_eq!(compiled.return_spec.order_by[0].0, "p");
@@ -1409,7 +1435,9 @@ mod tests {
     fn test_parse_return_distinct() {
         let parser = QueryParser::new();
         let query = "MATCH (n:Person) RETURN DISTINCT n";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser
+            .parse(query)
+            .expect("Failed to parse query with DISTINCT");
 
         assert!(compiled.return_spec.distinct);
     }
@@ -1418,7 +1446,7 @@ mod tests {
     fn test_parse_complex_query() {
         let parser = QueryParser::new();
         let query = "MATCH (a:Person)-[r:KNOWS]->(b:Person) WHERE a.age > 25 AND b.age < 40 RETURN a.name, b.name, r ORDER BY a ASC LIMIT 20";
-        let compiled = parser.parse(query).unwrap();
+        let compiled = parser.parse(query).expect("Failed to parse complex query");
 
         // Verify nodes and edges
         assert_eq!(compiled.nodes.len(), 2);
@@ -1440,7 +1468,7 @@ mod tests {
         let input = "CREATE (n:Person {name: \"Alice\", age: 30})";
         let result = parse_create_clause(input);
         assert!(result.is_ok());
-        let (remaining, clause) = result.unwrap();
+        let (remaining, clause) = result.expect("Failed to parse CREATE node clause");
         assert!(remaining.trim().is_empty());
         assert_eq!(clause.nodes.len(), 1);
         assert_eq!(clause.nodes[0].variable, Some("n".to_string()));
@@ -1457,7 +1485,7 @@ mod tests {
         let input = "CREATE (n:Employee)";
         let result = parse_create_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse CREATE node without properties");
         assert_eq!(clause.nodes.len(), 1);
         assert_eq!(clause.nodes[0].labels, vec!["Employee"]);
         assert!(clause.nodes[0].properties.is_empty());
@@ -1468,7 +1496,7 @@ mod tests {
         let input = "CREATE (a:Person)-[r:KNOWS {since: 2020}]->(b:Person)";
         let result = parse_create_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse CREATE relationship clause");
         // Should have 2 nodes and 1 edge
         assert_eq!(clause.nodes.len(), 2);
         assert_eq!(clause.edges.len(), 1);
@@ -1482,7 +1510,7 @@ mod tests {
         let input = "DELETE n";
         let result = parse_delete_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse DELETE clause");
         assert_eq!(clause.variables, vec!["n"]);
         assert!(!clause.detach);
     }
@@ -1492,7 +1520,7 @@ mod tests {
         let input = "DETACH DELETE n, m";
         let result = parse_delete_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse DETACH DELETE clause");
         assert_eq!(clause.variables, vec!["n", "m"]);
         assert!(clause.detach);
     }
@@ -1502,7 +1530,7 @@ mod tests {
         let input = "SET n.name = \"Bob\"";
         let result = parse_set_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse SET property clause");
         assert_eq!(clause.items.len(), 1);
         match &clause.items[0] {
             SetItem::Property {
@@ -1523,7 +1551,7 @@ mod tests {
         let input = "SET n.name = \"Bob\", n.age = 25";
         let result = parse_set_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse SET multiple properties clause");
         assert_eq!(clause.items.len(), 2);
     }
 
@@ -1532,7 +1560,7 @@ mod tests {
         let input = "SET n:Manager";
         let result = parse_set_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse SET add label clause");
         assert_eq!(clause.items.len(), 1);
         match &clause.items[0] {
             SetItem::AddLabel { variable, label } => {
@@ -1548,7 +1576,7 @@ mod tests {
         let input = "REMOVE n.tempProperty";
         let result = parse_remove_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse REMOVE property clause");
         assert_eq!(clause.items.len(), 1);
         match &clause.items[0] {
             RemoveItem::Property { variable, property } => {
@@ -1564,7 +1592,7 @@ mod tests {
         let input = "REMOVE n:Temporary";
         let result = parse_remove_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse REMOVE label clause");
         assert_eq!(clause.items.len(), 1);
         match &clause.items[0] {
             RemoveItem::Label { variable, label } => {
@@ -1580,7 +1608,7 @@ mod tests {
         let input = "MERGE (n:Person {name: \"Alice\"})";
         let result = parse_merge_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse MERGE clause");
         assert_eq!(clause.pattern.nodes.len(), 1);
         assert!(clause.on_create.is_none());
         assert!(clause.on_match.is_none());
@@ -1591,7 +1619,7 @@ mod tests {
         let input = "OPTIONAL MATCH (n:Person)-[r:KNOWS]->(m)";
         let result = parse_optional_match_clause(input);
         assert!(result.is_ok());
-        let (_, (nodes, edges)) = result.unwrap();
+        let (_, (nodes, edges)) = result.expect("Failed to parse OPTIONAL MATCH clause");
         assert_eq!(nodes.len(), 2);
         assert_eq!(edges.len(), 1);
         assert!(nodes[0].optional);
@@ -1603,7 +1631,7 @@ mod tests {
         let input = "WITH n, COUNT(*) AS cnt";
         let result = parse_with_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse WITH clause");
         assert_eq!(clause.projections.len(), 2);
         assert_eq!(clause.projections[0].0, "n");
         assert_eq!(clause.projections[1].0, "cnt");
@@ -1614,7 +1642,7 @@ mod tests {
         let input = "WITH DISTINCT n.name AS name";
         let result = parse_with_clause(input);
         assert!(result.is_ok());
-        let (_, clause) = result.unwrap();
+        let (_, clause) = result.expect("Failed to parse WITH DISTINCT clause");
         assert!(clause.distinct);
     }
 
@@ -1623,7 +1651,7 @@ mod tests {
         let input = "CREATE (n:Person {name: \"Alice\"}) RETURN n";
         let result = parse_cypher_query(input);
         assert!(result.is_ok());
-        let (_, query) = result.unwrap();
+        let (_, query) = result.expect("Failed to parse Cypher CREATE query");
         assert!(query.reading_clauses.is_empty());
         assert_eq!(query.updating_clauses.len(), 1);
         assert!(query.return_spec.is_some());
@@ -1634,7 +1662,7 @@ mod tests {
         let input = "MATCH (n:Person {name: \"Alice\"}) SET n.age = 31 RETURN n";
         let result = parse_cypher_query(input);
         assert!(result.is_ok());
-        let (_, query) = result.unwrap();
+        let (_, query) = result.expect("Failed to parse Cypher MATCH SET query");
         assert_eq!(query.reading_clauses.len(), 1);
         assert_eq!(query.updating_clauses.len(), 1);
         assert!(query.return_spec.is_some());
@@ -1646,7 +1674,7 @@ mod tests {
         let input = "MATCH (n:Person) WHERE n.age > 100 DELETE n";
         let result = parse_cypher_query(input);
         assert!(result.is_ok());
-        let (_, query) = result.unwrap();
+        let (_, query) = result.expect("Failed to parse Cypher MATCH DELETE query");
         assert_eq!(query.reading_clauses.len(), 1);
         assert!(query.has_delete());
         assert!(!query.is_read_only());
@@ -1657,7 +1685,7 @@ mod tests {
         let input = "MATCH (n:Person) RETURN n";
         let result = parse_cypher_query(input);
         assert!(result.is_ok());
-        let (_, query) = result.unwrap();
+        let (_, query) = result.expect("Failed to parse Cypher read-only query");
         assert!(query.is_read_only());
         assert!(query.has_match());
         assert!(!query.has_create());
@@ -1668,7 +1696,7 @@ mod tests {
         let input = "{name: \"Bob\", age: 25, active: true}";
         let result = parse_property_value_map(input);
         assert!(result.is_ok());
-        let (_, props) = result.unwrap();
+        let (_, props) = result.expect("Failed to parse property value map");
         assert_eq!(props.len(), 3);
         assert_eq!(
             props.get("name"),

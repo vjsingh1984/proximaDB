@@ -233,7 +233,9 @@ impl ObservabilityQueryEngine {
 
         // If text query and fulltext enabled, try Tantivy first
         if use_fulltext && params.query.is_some() {
-            let query = params.query.as_ref().unwrap();
+            let Some(query) = params.query.as_ref() else {
+                return self.query_logs(namespace, params).await;
+            };
 
             // Check if we have indexed documents
             let index = self.get_or_create_log_index(namespace).await?;

@@ -67,10 +67,15 @@
 //! - **Durability**: WAL-based crash recovery
 
 pub mod coordinator;
+pub mod participants;
 pub mod two_phase_commit;
 pub mod wal_coordinator;
 
 pub use coordinator::{CrossModelTransactionCoordinator, TransactionConfig, TransactionStats};
+pub use participants::{
+    DocumentEngineParticipant, GraphEngineParticipant, TimeSeriesEngineParticipant,
+    TransactionBuffer, VectorEngineParticipant,
+};
 pub use two_phase_commit::{
     TransactionId, TransactionParticipant, TransactionState, TwoPhaseCommit, Vote,
 };

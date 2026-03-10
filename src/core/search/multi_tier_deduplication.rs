@@ -445,7 +445,11 @@ impl MultiTierDeduplicator {
         }
 
         // Sort by similarity (descending - higher similarity is better)
-        final_results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap());
+        final_results.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Limit to k results
         final_results.truncate(k);

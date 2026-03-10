@@ -247,6 +247,8 @@ impl SemanticBFSTraversal {
         }
 
         // Sort results by combined score (descending)
+        // Note: unwrap_or is safe here - partial_cmp returns None only for NaN values,
+        // which we treat as equal to maintain sort stability
         results.sort_by(|a, b| {
             b.combined_score
                 .partial_cmp(&a.combined_score)
@@ -413,7 +415,7 @@ mod tests {
         let node = create_test_node("node_1", embedding.clone());
         GraphEngine::insert_node(engine.as_ref(), node)
             .await
-            .unwrap();
+            .expect("Failed to insert test node");
 
         let semantic_bfs = SemanticBFSTraversal::new(
             engine.clone(),
@@ -428,7 +430,9 @@ mod tests {
             max_depth: 3,
         };
 
-        let result = semantic_bfs.execute(input).unwrap();
+        let result = semantic_bfs
+            .execute(input)
+            .expect("Failed to execute semantic BFS traversal");
 
         // Should find the start node with perfect similarity
         assert_eq!(result.matches_found, 1);
@@ -460,7 +464,7 @@ mod tests {
         let node1 = create_test_node("node_1", embed1);
         GraphEngine::insert_node(engine.as_ref(), node1)
             .await
-            .unwrap();
+            .expect("Failed to insert node_1");
 
         // Node 2: Orthogonal to query (second half of dimensions)
         let mut embed2 = vec![0.0; 128];
@@ -470,7 +474,7 @@ mod tests {
         let node2 = create_test_node("node_2", embed2);
         GraphEngine::insert_node(engine.as_ref(), node2)
             .await
-            .unwrap();
+            .expect("Failed to insert node_2");
 
         // Node 3: Opposite direction (negative first half)
         let mut embed3 = vec![0.0; 128];
@@ -480,17 +484,17 @@ mod tests {
         let node3 = create_test_node("node_3", embed3);
         GraphEngine::insert_node(engine.as_ref(), node3)
             .await
-            .unwrap();
+            .expect("Failed to insert node_3");
 
         // Create edges
         let edge1 = create_test_edge("node_1", "node_2");
         let edge2 = create_test_edge("node_2", "node_3");
         GraphEngine::insert_edge(engine.as_ref(), edge1)
             .await
-            .unwrap();
+            .expect("Failed to insert edge node_1->node_2");
         GraphEngine::insert_edge(engine.as_ref(), edge2)
             .await
-            .unwrap();
+            .expect("Failed to insert edge node_2->node_3");
 
         let semantic_bfs = SemanticBFSTraversal::new(
             engine.clone(),
@@ -505,7 +509,9 @@ mod tests {
             max_depth: 3,
         };
 
-        let result = semantic_bfs.execute(input).unwrap();
+        let result = semantic_bfs
+            .execute(input)
+            .expect("Failed to execute semantic BFS traversal");
 
         // Should visit all 3 nodes but only find 1 match (node_1 with similarity 1.0)
         // node_2 has similarity 0.0 (orthogonal), node_3 has similarity 0.0 (opposite)
@@ -525,7 +531,7 @@ mod tests {
             let node = create_test_node(&format!("node_{}", i), embedding.clone());
             GraphEngine::insert_node(engine.as_ref(), node)
                 .await
-                .unwrap();
+                .expect("Failed to insert test node");
         }
 
         // Create edges: 1->2->3->4->5
@@ -533,7 +539,7 @@ mod tests {
             let edge = create_test_edge(&format!("node_{}", i), &format!("node_{}", i + 1));
             GraphEngine::insert_edge(engine.as_ref(), edge)
                 .await
-                .unwrap();
+                .expect("Failed to insert test edge");
         }
 
         let semantic_bfs = SemanticBFSTraversal::new(
@@ -549,7 +555,9 @@ mod tests {
             max_depth: 2, // Should only reach nodes 1, 2, 3
         };
 
-        let result = semantic_bfs.execute(input).unwrap();
+        let result = semantic_bfs
+            .execute(input)
+            .expect("Failed to execute semantic BFS traversal");
 
         // Should visit only nodes within depth 2
         assert_eq!(result.nodes_visited, 3); // nodes 1, 2, 3
@@ -572,27 +580,27 @@ mod tests {
         let node1 = create_test_node("node_1", vec![1.0; 128]);
         GraphEngine::insert_node(engine.as_ref(), node1)
             .await
-            .unwrap();
+            .expect("Failed to insert node_1");
 
         // Node 2 at depth 1: good match (similarity ~0.95)
         let node2 = create_test_node("node_2", vec![0.95; 128]);
         GraphEngine::insert_node(engine.as_ref(), node2)
             .await
-            .unwrap();
+            .expect("Failed to insert node_2");
 
         // Node 3 at depth 2: moderate match (similarity ~0.7)
         let node3 = create_test_node("node_3", vec![0.7; 128]);
         GraphEngine::insert_node(engine.as_ref(), node3)
             .await
-            .unwrap();
+            .expect("Failed to insert node_3");
 
         // Create edges
         GraphEngine::insert_edge(engine.as_ref(), create_test_edge("node_1", "node_2"))
             .await
-            .unwrap();
+            .expect("Failed to insert edge node_1->node_2");
         GraphEngine::insert_edge(engine.as_ref(), create_test_edge("node_2", "node_3"))
             .await
-            .unwrap();
+            .expect("Failed to insert edge node_2->node_3");
 
         let semantic_bfs = SemanticBFSTraversal::new(
             engine.clone(),
@@ -607,7 +615,9 @@ mod tests {
             max_depth: 3,
         };
 
-        let result = semantic_bfs.execute(input).unwrap();
+        let result = semantic_bfs
+            .execute(input)
+            .expect("Failed to execute semantic BFS traversal");
 
         assert_eq!(result.matches_found, 3);
 
@@ -673,27 +683,27 @@ mod tests {
 
         GraphEngine::insert_node(engine.as_ref(), node1)
             .await
-            .unwrap();
+            .expect("Failed to insert node_1");
         GraphEngine::insert_node(engine.as_ref(), node2)
             .await
-            .unwrap();
+            .expect("Failed to insert node_2");
         GraphEngine::insert_node(engine.as_ref(), node3)
             .await
-            .unwrap();
+            .expect("Failed to insert node_3");
         GraphEngine::insert_node(engine.as_ref(), node4)
             .await
-            .unwrap();
+            .expect("Failed to insert node_4");
 
         // Create a star topology: node_1 connects to all others
         GraphEngine::insert_edge(engine.as_ref(), create_test_edge("node_1", "node_2"))
             .await
-            .unwrap();
+            .expect("Failed to insert edge node_1->node_2");
         GraphEngine::insert_edge(engine.as_ref(), create_test_edge("node_1", "node_3"))
             .await
-            .unwrap();
+            .expect("Failed to insert edge node_1->node_3");
         GraphEngine::insert_edge(engine.as_ref(), create_test_edge("node_1", "node_4"))
             .await
-            .unwrap();
+            .expect("Failed to insert edge node_1->node_4");
 
         let semantic_bfs = SemanticBFSTraversal::new(
             engine.clone(),
@@ -708,7 +718,9 @@ mod tests {
             max_depth: 2,
         };
 
-        let result = semantic_bfs.execute(input).unwrap();
+        let result = semantic_bfs
+            .execute(input)
+            .expect("Failed to execute semantic BFS traversal");
 
         // Should visit all 4 nodes but only match high similarity ones
         assert_eq!(result.nodes_visited, 4);

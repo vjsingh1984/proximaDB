@@ -261,7 +261,10 @@ impl LeafNode {
         let mid = max_keys / 2;
         let new_entries = self.entries.split_off(mid);
 
-        let split_key = new_entries.first().unwrap().0.clone();
+        let split_key = new_entries
+            .first()
+            .map(|(key, _)| key.clone())
+            .unwrap_or_default();
 
         let new_node = LeafNode {
             entries: new_entries,
@@ -554,12 +557,20 @@ impl BPlusTree {
             return old_value;
         }
 
-        let root_ref = self.root.as_ref().unwrap().clone();
+        let root_ref = match self.root.as_ref() {
+            Some(root) => root.clone(),
+            None => return None,
+        };
         if let Some((old_value, split_result)) = self.insert_recursive(&root_ref, key, value) {
             // Handle root split
             if let Some((split_key, new_node)) = split_result {
                 let mut new_root = InternalNode::new();
-                new_root.children.push(self.root.take().unwrap());
+                if let Some(old_root) = self.root.take() {
+                    new_root.children.push(old_root);
+                } else {
+                    self.root = Some(NodeRef::new_internal(new_root));
+                    return old_value;
+                }
                 new_root.keys.push(split_key);
                 new_root.children.push(new_node);
 

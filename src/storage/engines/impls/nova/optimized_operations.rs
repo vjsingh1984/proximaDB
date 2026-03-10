@@ -272,7 +272,7 @@ impl OptimizedNovaOperations {
         }
 
         // Sort and take top-k
-        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         all_results.truncate(top_k);
         Ok(all_results)
     }

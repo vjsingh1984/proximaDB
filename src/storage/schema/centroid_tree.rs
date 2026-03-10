@@ -533,15 +533,26 @@ impl CentroidTree {
         let scale = if range > 0.0 { range / 254.0 } else { 1.0 };
         let offset = min;
 
-        let quantized: Vec<i8> = v
-            .iter()
+        let quantized = Self::quantize_vector_with_params(v, scale, offset);
+
+        (quantized, scale, offset)
+    }
+
+    /// Quantize using explicit scale and offset parameters.
+    ///
+    /// This keeps query and centroid vectors in the same quantization space so
+    /// distance comparisons remain meaningful.
+    fn quantize_vector_with_params(v: &[f32], scale: f32, offset: f32) -> Vec<i8> {
+        if v.is_empty() {
+            return Vec::new();
+        }
+
+        v.iter()
             .map(|&x| {
                 let normalized = (x - offset) / scale;
                 (normalized.clamp(0.0, 254.0) as i8).saturating_sub(127)
             })
-            .collect();
-
-        (quantized, scale, offset)
+            .collect()
     }
 
     /// Quantized recursive pruning.
@@ -554,8 +565,8 @@ impl CentroidTree {
         max_distance: f32,
         matching: &mut Vec<usize>,
     ) {
-        // Quantize node centroid
-        let (node_quantized, _, _) = Self::quantize_vector(&node.centroid);
+        // Quantize node centroid using the same query scale/offset.
+        let node_quantized = Self::quantize_vector_with_params(&node.centroid, scale, offset);
 
         // Compute quantized L2 distance
         let dist_quantized = Self::l2_distance_quantized(query_quantized, &node_quantized);
@@ -756,7 +767,8 @@ mod tests {
     #[test]
     fn test_centroid_tree_construction() {
         let centroids = create_test_centroids();
-        let tree = CentroidTree::build(&centroids, 8).unwrap();
+        let tree = CentroidTree::build(&centroids, 8)
+            .expect("CentroidTree::build should succeed with valid centroids");
 
         assert_eq!(tree.dimension(), 3);
         assert_eq!(tree.num_rowgroups(), 8);
@@ -764,7 +776,8 @@ mod tests {
 
     #[test]
     fn test_centroid_tree_empty() {
-        let tree = CentroidTree::build(&[], 8).unwrap();
+        let tree = CentroidTree::build(&[], 8)
+            .expect("CentroidTree::build should succeed with empty centroids");
         assert_eq!(tree.dimension(), 0);
         assert_eq!(tree.num_rowgroups(), 0);
     }
@@ -772,7 +785,8 @@ mod tests {
     #[test]
     fn test_centroid_tree_single() {
         let centroids = vec![vec![1.0, 2.0, 3.0]];
-        let tree = CentroidTree::build(&centroids, 8).unwrap();
+        let tree = CentroidTree::build(&centroids, 8)
+            .expect("CentroidTree::build should succeed with single centroid");
 
         assert_eq!(tree.dimension(), 3);
         assert_eq!(tree.num_rowgroups(), 1);
@@ -785,7 +799,8 @@ mod tests {
     #[test]
     fn test_centroid_tree_pruning() {
         let centroids = create_test_centroids();
-        let tree = CentroidTree::build(&centroids, 8).unwrap();
+        let tree = CentroidTree::build(&centroids, 8)
+            .expect("CentroidTree::build should succeed with valid centroids");
 
         // Query near origin - should only match rowgroups 0-3
         let query_near_origin = vec![0.5, 0.5, 0.5];
@@ -805,7 +820,8 @@ mod tests {
     #[test]
     fn test_centroid_tree_prune_all() {
         let centroids = create_test_centroids();
-        let tree = CentroidTree::build(&centroids, 8).unwrap();
+        let tree = CentroidTree::build(&centroids, 8)
+            .expect("CentroidTree::build should succeed with valid centroids");
 
         // Query very far from all centroids
         let query_very_far = vec![1000.0, 1000.0, 1000.0];
@@ -818,7 +834,8 @@ mod tests {
     #[test]
     fn test_centroid_tree_include_all() {
         let centroids = create_test_centroids();
-        let tree = CentroidTree::build(&centroids, 8).unwrap();
+        let tree = CentroidTree::build(&centroids, 8)
+            .expect("CentroidTree::build should succeed with valid centroids");
 
         // Query with very large distance threshold
         let query = vec![5.0, 5.0, 5.0];
@@ -837,7 +854,8 @@ mod tests {
             use_quantized: true,
             quantization_bits: 8,
         };
-        let tree = CentroidTree::build_with_config(&centroids, config).unwrap();
+        let tree = CentroidTree::build_with_config(&centroids, config)
+            .expect("CentroidTree::build_with_config should succeed with valid config");
 
         let query = vec![0.5, 0.5, 0.5];
 
@@ -869,7 +887,8 @@ mod tests {
     #[test]
     fn test_dimension_mismatch() {
         let centroids = create_test_centroids();
-        let tree = CentroidTree::build(&centroids, 8).unwrap();
+        let tree = CentroidTree::build(&centroids, 8)
+            .expect("CentroidTree::build should succeed with valid centroids");
 
         // Query with wrong dimension
         let wrong_dim_query = vec![1.0, 2.0]; // 2D instead of 3D
@@ -882,10 +901,14 @@ mod tests {
     #[test]
     fn test_serialization_roundtrip() {
         let centroids = create_test_centroids();
-        let tree = CentroidTree::build(&centroids, 8).unwrap();
+        let tree = CentroidTree::build(&centroids, 8)
+            .expect("CentroidTree::build should succeed with valid centroids");
 
-        let bytes = tree.serialize().unwrap();
-        let restored = CentroidTree::deserialize(&bytes).unwrap();
+        let bytes = tree
+            .serialize()
+            .expect("CentroidTree::serialize should succeed");
+        let restored = CentroidTree::deserialize(&bytes)
+            .expect("CentroidTree::deserialize should succeed with valid bytes");
 
         assert_eq!(restored.dimension(), tree.dimension());
         assert_eq!(restored.num_rowgroups(), tree.num_rowgroups());
@@ -904,7 +927,8 @@ mod tests {
     #[test]
     fn test_vector_pruner_trait() {
         let centroids = create_test_centroids();
-        let tree = CentroidTree::build(&centroids, 8).unwrap();
+        let tree = CentroidTree::build(&centroids, 8)
+            .expect("CentroidTree::build should succeed with valid centroids");
 
         // Use as trait object
         let pruner: &dyn VectorPruner = &tree;

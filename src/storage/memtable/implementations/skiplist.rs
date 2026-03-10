@@ -280,17 +280,23 @@ mod tests {
         assert!(memtable.insert(2u64, "value2".to_string()).await.is_ok());
 
         assert_eq!(
-            memtable.get(&1u64).await.unwrap(),
+            memtable.get(&1u64).await.expect("failed to get key 1"),
             Some("value1".to_string())
         );
         assert_eq!(
-            memtable.get(&2u64).await.unwrap(),
+            memtable.get(&2u64).await.expect("failed to get key 2"),
             Some("value2".to_string())
         );
-        assert_eq!(memtable.get(&3u64).await.unwrap(), None);
+        assert_eq!(
+            memtable.get(&3u64).await.expect("failed to get key 3"),
+            None
+        );
 
         // Test range scan
-        let results = memtable.range_scan(1u64, Some(10)).await.unwrap();
+        let results = memtable
+            .range_scan(1u64, Some(10))
+            .await
+            .expect("failed to perform range scan");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0], (1u64, "value1".to_string()));
         assert_eq!(results[1], (2u64, "value2".to_string()));
@@ -312,7 +318,10 @@ mod tests {
                 for j in 0..100 {
                     let key = i * 100 + j;
                     let value = format!("value_{}", key);
-                    memtable_clone.insert(key as u64, value).await.unwrap();
+                    memtable_clone
+                        .insert(key as u64, value)
+                        .await
+                        .expect("failed to insert key in concurrent writer");
                 }
             });
             handles.push(handle);
@@ -320,7 +329,7 @@ mod tests {
 
         // Wait for all writers to complete
         for handle in handles {
-            handle.await.unwrap();
+            handle.await.expect("failed to join concurrent writer task");
         }
 
         // Verify all entries were written
@@ -335,7 +344,7 @@ mod tests {
                 let results = memtable_clone
                     .range_scan(start_key as u64, Some(100))
                     .await
-                    .unwrap();
+                    .expect("failed to perform range scan in concurrent test");
                 assert_eq!(results.len(), 100);
             });
             read_handles.push(handle);
@@ -343,7 +352,7 @@ mod tests {
 
         // Wait for all readers to complete
         for handle in read_handles {
-            handle.await.unwrap();
+            handle.await.expect("failed to join concurrent reader task");
         }
     }
 
@@ -356,12 +365,15 @@ mod tests {
             memtable
                 .insert(i as u64, format!("value{}", i))
                 .await
-                .unwrap();
+                .expect("failed to insert test data");
         }
 
         // Test batch get
         let keys = vec![1u64, 3u64, 5u64, 7u64, 9u64];
-        let batch_results = memtable.get_batch(&keys).await.unwrap();
+        let batch_results = memtable
+            .get_batch(&keys)
+            .await
+            .expect("failed to get batch results");
         assert_eq!(batch_results.len(), 5);
         assert_eq!(batch_results[0].1, Some("value1".to_string()));
         assert_eq!(batch_results[2].1, Some("value5".to_string()));
@@ -370,7 +382,7 @@ mod tests {
         let range_results = memtable
             .concurrent_range_scan(3u64, Some(7u64), None)
             .await
-            .unwrap();
+            .expect("failed to perform concurrent range scan");
         assert_eq!(range_results.len(), 5); // 3, 4, 5, 6, 7
 
         // Test count range

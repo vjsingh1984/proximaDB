@@ -1220,16 +1220,18 @@ impl ViperEngine {
                                     if let Some(struct_array) =
                                         kv_pairs.as_any().downcast_ref::<StructArray>()
                                     {
-                                        let key_array = struct_array
-                                            .column(0)
-                                            .as_any()
-                                            .downcast_ref::<StringArray>()
-                                            .unwrap();
-                                        let value_array = struct_array
-                                            .column(1)
-                                            .as_any()
-                                            .downcast_ref::<StringArray>()
-                                            .unwrap();
+                                        let (Some(key_array), Some(value_array)) = (
+                                            struct_array
+                                                .column(0)
+                                                .as_any()
+                                                .downcast_ref::<StringArray>(),
+                                            struct_array
+                                                .column(1)
+                                                .as_any()
+                                                .downcast_ref::<StringArray>(),
+                                        ) else {
+                                            continue;
+                                        };
 
                                         for kv_idx in 0..struct_array.len() {
                                             if !struct_array.is_null(kv_idx) {
@@ -1813,39 +1815,51 @@ impl ViperEngine {
 // Close the impl ViperEngine block
 impl Default for ViperEngine {
     fn default() -> Self {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async {
-                let filesystem_factory = Arc::new(
-                    FilesystemFactory::create(
-                        crate::storage::persistence::filesystem::FilesystemConfig::default(),
-                    )
-                    .await
-                    .unwrap(),
-                );
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(err) => panic!("Failed to create Tokio runtime for ViperEngine::default: {err}"),
+        };
 
-                // Create VIPER metadata serializer
-                let metadata_serializer = Arc::new(
-                    super::unified_metadata_serializer::ViperMetadataSerializer::new()
-                );
+        let engine_result = runtime.block_on(async {
+            let filesystem_factory_result = FilesystemFactory::create(
+                crate::storage::persistence::filesystem::FilesystemConfig::default(),
+            )
+            .await;
+            let filesystem_factory = Arc::new(match filesystem_factory_result {
+                Ok(factory) => factory,
+                Err(err) => {
+                    panic!("Failed to create filesystem factory for ViperEngine::default: {err}")
+                }
+            });
 
-                // Get base filesystem
-                let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+            // Create VIPER metadata serializer
+            let metadata_serializer =
+                Arc::new(super::unified_metadata_serializer::ViperMetadataSerializer::new());
 
-                // Create UnifiedCachingFilesystem
-                let unified_fs = Arc::new(
-                    crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
-                        base_fs,
-                        "default".to_string(),
-                        "viper".to_string(),
-                        metadata_serializer,
-                    )
-                );
+            // Get base filesystem
+            let base_fs = match filesystem_factory.get_filesystem("file://") {
+                Ok(fs) => fs,
+                Err(err) => panic!("Failed to get base filesystem for ViperEngine::default: {err}"),
+            };
 
-                Self::from_unified_filesystem(crate::core::config::ViperConfig::default(), unified_fs)
-                    .await
-            })
-            .unwrap()
+            // Create UnifiedCachingFilesystem
+            let unified_fs = Arc::new(
+                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+                    base_fs,
+                    "default".to_string(),
+                    "viper".to_string(),
+                    metadata_serializer,
+                )
+            );
+
+            Self::from_unified_filesystem(crate::core::config::ViperConfig::default(), unified_fs)
+                .await
+        });
+
+        match engine_result {
+            Ok(engine) => engine,
+            Err(err) => panic!("Failed to build ViperEngine::default: {err}"),
+        }
     }
 }
 

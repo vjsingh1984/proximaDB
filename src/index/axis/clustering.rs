@@ -373,7 +373,8 @@ impl AxisClusteringEngine {
             .collect();
 
         // Sort by distance and take top-k
-        cluster_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        cluster_distances
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         cluster_distances.truncate(k);
 
         Ok(cluster_distances)

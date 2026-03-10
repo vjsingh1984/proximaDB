@@ -287,6 +287,7 @@ docs/log/
 *.json
 !package.json
 !config.json
+!docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
 !clients/**/package.json
 !clients/**/tsconfig.json
 !clients/**/tsconfig.*.json

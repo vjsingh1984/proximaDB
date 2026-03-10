@@ -36,6 +36,17 @@ pub struct RestHandler {
     config: Option<Arc<RestHandlerConfig>>,
 }
 
+fn response_builder_fallback(error: hyper::http::Error) -> Response<Body> {
+    warn!(?error, "response builder failure");
+    let mut response = Response::new(Body::from(r#"{"error":"Internal server error"}"#));
+    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    response.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
 impl RestHandler {
     /// Create a new REST handler without configuration (placeholder mode)
     pub fn new() -> Self {
@@ -73,7 +84,7 @@ impl RestHandler {
             .status(StatusCode::OK)
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
-            .expect("response builder should not fail")
+            .unwrap_or_else(response_builder_fallback)
     }
 
     /// Handle metrics request (Prometheus format) - async version
@@ -119,13 +130,13 @@ impl RestHandler {
                 .status(StatusCode::OK)
                 .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
                 .body(Body::from(prometheus_text))
-                .expect("response builder should not fail")
+                .unwrap_or_else(response_builder_fallback)
         } else {
             Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "text/plain")
                 .body(Body::from("# No metrics collector configured\n"))
-                .expect("response builder should not fail")
+                .unwrap_or_else(response_builder_fallback)
         }
     }
 
@@ -138,7 +149,7 @@ impl RestHandler {
                     .status(StatusCode::OK)
                     .header("content-type", "application/json")
                     .body(Body::from(json))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
                 Err(e) => Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
@@ -146,7 +157,7 @@ impl RestHandler {
                         r#"{{"error":"Failed to serialize metrics: {}"}}"#,
                         e
                     )))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
             }
         } else {
             Response::builder()
@@ -155,7 +166,7 @@ impl RestHandler {
                 .body(Body::from(
                     r#"{"message":"No metrics collector configured"}"#,
                 ))
-                .expect("response builder should not fail")
+                .unwrap_or_else(response_builder_fallback)
         }
     }
 
@@ -166,7 +177,7 @@ impl RestHandler {
             .status(StatusCode::OK)
             .header("content-type", "text/html; charset=utf-8")
             .body(Body::from(html))
-            .expect("response builder should not fail")
+            .unwrap_or_else(response_builder_fallback)
     }
 
     // === API Endpoint Handlers ===
@@ -181,7 +192,7 @@ impl RestHandler {
                         .status(StatusCode::OK)
                         .header("content-type", "application/json")
                         .body(Body::from(json))
-                        .expect("response builder should not fail"),
+                        .unwrap_or_else(response_builder_fallback),
                     Err(e) => Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .header("content-type", "application/json")
@@ -189,7 +200,7 @@ impl RestHandler {
                             r#"{{"error":"Serialization error: {}"}}"#,
                             e
                         )))
-                        .expect("response builder should not fail"),
+                        .unwrap_or_else(response_builder_fallback),
                 }
             }
             Err(e) => {
@@ -198,7 +209,7 @@ impl RestHandler {
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
                     .body(Body::from(response.to_string()))
-                    .expect("response builder should not fail")
+                    .unwrap_or_else(response_builder_fallback)
             }
         }
     }
@@ -213,7 +224,7 @@ impl RestHandler {
                     .status(StatusCode::BAD_REQUEST)
                     .header("content-type", "application/json")
                     .body(Body::from(format!(r#"{{"error":"Invalid JSON: {}"}}"#, e)))
-                    .expect("response builder should not fail");
+                    .unwrap_or_else(response_builder_fallback);
             }
         };
 
@@ -273,7 +284,7 @@ impl RestHandler {
                 .body(Body::from(
                     r#"{"error":"Missing required fields: name, dimension"}"#,
                 ))
-                .expect("response builder should not fail");
+                .unwrap_or_else(response_builder_fallback);
         }
 
         // Create collection via collection service
@@ -319,7 +330,7 @@ impl RestHandler {
                     .status(StatusCode::CREATED)
                     .header("content-type", "application/json")
                     .body(Body::from(json))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
                 Err(e) => Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
@@ -327,7 +338,7 @@ impl RestHandler {
                         r#"{{"error":"Serialization error: {}"}}"#,
                         e
                     )))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
             },
             Err(e) => {
                 let response = serde_json::json!({ "error": e.to_string() });
@@ -335,7 +346,7 @@ impl RestHandler {
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
                     .body(Body::from(response.to_string()))
-                    .expect("response builder should not fail")
+                    .unwrap_or_else(response_builder_fallback)
             }
         }
     }
@@ -351,7 +362,7 @@ impl RestHandler {
                     .status(StatusCode::OK)
                     .header("content-type", "application/json")
                     .body(Body::from(json))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
                 Err(e) => Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
@@ -359,7 +370,7 @@ impl RestHandler {
                         r#"{{"error":"Serialization error: {}"}}"#,
                         e
                     )))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
             },
             Ok(None) => Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -368,12 +379,12 @@ impl RestHandler {
                     r#"{{"error":"Collection '{}' not found"}}"#,
                     collection_id
                 )))
-                .expect("response builder should not fail"),
+                .unwrap_or_else(response_builder_fallback),
             Err(e) => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("content-type", "application/json")
                 .body(Body::from(format!(r#"{{"error":"{}"}}"#, e)))
-                .expect("response builder should not fail"),
+                .unwrap_or_else(response_builder_fallback),
         }
     }
 
@@ -404,7 +415,7 @@ impl RestHandler {
                     .status(StatusCode::OK)
                     .header("content-type", "application/json")
                     .body(Body::from(json))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
                 Err(e) => Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
@@ -412,13 +423,13 @@ impl RestHandler {
                         r#"{{"error":"Serialization error: {}"}}"#,
                         e
                     )))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
             },
             Err(e) => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("content-type", "application/json")
                 .body(Body::from(format!(r#"{{"error":"{}"}}"#, e)))
-                .expect("response builder should not fail"),
+                .unwrap_or_else(response_builder_fallback),
         }
     }
 
@@ -436,7 +447,7 @@ impl RestHandler {
                     .status(StatusCode::BAD_REQUEST)
                     .header("content-type", "application/json")
                     .body(Body::from(format!(r#"{{"error":"Invalid JSON: {}"}}"#, e)))
-                    .expect("response builder should not fail");
+                    .unwrap_or_else(response_builder_fallback);
             }
         };
 
@@ -450,7 +461,7 @@ impl RestHandler {
                     .body(Body::from(
                         r#"{"error":"Missing 'vectors' array in request body"}"#,
                     ))
-                    .expect("response builder should not fail");
+                    .unwrap_or_else(response_builder_fallback);
             }
         };
 
@@ -476,7 +487,7 @@ impl RestHandler {
                             r#"{{"error":"Vector at index {} missing 'vector' field"}}"#,
                             i
                         )))
-                        .expect("response builder should not fail");
+                        .unwrap_or_else(response_builder_fallback);
                 }
             };
 
@@ -528,7 +539,7 @@ impl RestHandler {
                     .status(StatusCode::OK)
                     .header("content-type", "application/json")
                     .body(Body::from(json))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
                 Err(e) => Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
@@ -536,13 +547,13 @@ impl RestHandler {
                         r#"{{"error":"Serialization error: {}"}}"#,
                         e
                     )))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
             },
             Err(e) => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("content-type", "application/json")
                 .body(Body::from(format!(r#"{{"error":"{}"}}"#, e)))
-                .expect("response builder should not fail"),
+                .unwrap_or_else(response_builder_fallback),
         }
     }
 
@@ -560,7 +571,7 @@ impl RestHandler {
                     .status(StatusCode::BAD_REQUEST)
                     .header("content-type", "application/json")
                     .body(Body::from(format!(r#"{{"error":"Invalid JSON: {}"}}"#, e)))
-                    .expect("response builder should not fail");
+                    .unwrap_or_else(response_builder_fallback);
             }
         };
 
@@ -577,7 +588,7 @@ impl RestHandler {
                     .body(Body::from(
                         r#"{"error":"Missing 'vector' field in request"}"#,
                     ))
-                    .expect("response builder should not fail");
+                    .unwrap_or_else(response_builder_fallback);
             }
         };
 
@@ -608,7 +619,7 @@ impl RestHandler {
                     .status(StatusCode::OK)
                     .header("content-type", "application/json")
                     .body(Body::from(json))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
                 Err(e) => Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
@@ -616,13 +627,13 @@ impl RestHandler {
                         r#"{{"error":"Serialization error: {}"}}"#,
                         e
                     )))
-                    .expect("response builder should not fail"),
+                    .unwrap_or_else(response_builder_fallback),
             },
             Err(e) => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("content-type", "application/json")
                 .body(Body::from(format!(r#"{{"error":"{}"}}"#, e)))
-                .expect("response builder should not fail"),
+                .unwrap_or_else(response_builder_fallback),
         }
     }
 
@@ -638,7 +649,7 @@ impl RestHandler {
             .status(StatusCode::NOT_FOUND)
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
-            .expect("response builder should not fail")
+            .unwrap_or_else(response_builder_fallback)
     }
 }
 
@@ -692,7 +703,7 @@ impl ProtocolHandler for RestHandler {
                     .body(Body::from(
                         r#"{"error":"REST handler not configured for unified port mode"}"#,
                     ))
-                    .expect("response builder should not fail");
+                    .unwrap_or_else(response_builder_fallback);
             }
 
             // Create a temporary handler for routing
@@ -721,7 +732,7 @@ impl ProtocolHandler for RestHandler {
                             .status(StatusCode::OK)
                             .header("content-type", "application/json")
                             .body(Body::from(r#"{}"#))
-                            .expect("response builder should not fail");
+                            .unwrap_or_else(response_builder_fallback);
                     }
                 }
                 "/metrics/health" => {
@@ -745,7 +756,7 @@ impl ProtocolHandler for RestHandler {
                             r#"{{"error":"Failed to read body: {}"}}"#,
                             e
                         )))
-                        .expect("response builder should not fail");
+                        .unwrap_or_else(response_builder_fallback);
                 }
             };
 
@@ -762,7 +773,7 @@ impl ProtocolHandler for RestHandler {
                         .body(Body::from(
                             r#"{"error":"REST handler not properly configured"}"#,
                         ))
-                        .expect("response builder should not fail");
+                        .unwrap_or_else(response_builder_fallback);
                 }
             };
 

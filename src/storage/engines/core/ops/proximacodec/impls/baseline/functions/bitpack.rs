@@ -548,8 +548,9 @@ mod tests {
         let values = vec![1.0f32, 2.0, 3.0, 4.0, 5.0];
         let bits = 32; // Full precision
 
-        let encoded = encode_f32(&values, bits).unwrap();
-        let decoded = decode_f32(&encoded, bits, values.len()).unwrap();
+        let encoded = encode_f32(&values, bits).expect("Failed to encode f32 values");
+        let decoded =
+            decode_f32(&encoded, bits, values.len()).expect("Failed to decode f32 values");
 
         assert_eq!(values, decoded);
     }
@@ -559,8 +560,9 @@ mod tests {
         let values = vec![10i64, 20, 30, 40, 50];
         let bits = 16; // 16 bits per value
 
-        let encoded = encode_i64(&values, bits).unwrap();
-        let decoded = decode_i64(&encoded, bits, values.len()).unwrap();
+        let encoded = encode_i64(&values, bits).expect("Failed to encode i64 values");
+        let decoded =
+            decode_i64(&encoded, bits, values.len()).expect("Failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -570,8 +572,9 @@ mod tests {
         let values = vec![100i32, 200, 300, 400, 500];
         let bits = 16; // 16 bits per value
 
-        let encoded = encode_i32(&values, bits).unwrap();
-        let decoded = decode_i32(&encoded, bits, values.len()).unwrap();
+        let encoded = encode_i32(&values, bits).expect("Failed to encode i32 values");
+        let decoded =
+            decode_i32(&encoded, bits, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
     }
@@ -582,8 +585,10 @@ mod tests {
         let values = vec![1i32, 5, 10, 15, 3];
         let bits = 4;
 
-        let encoded = encode_i32(&values, bits).unwrap();
-        let decoded = decode_i32(&encoded, bits, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values, bits).expect("Failed to encode i32 values with small bit width");
+        let decoded = decode_i32(&encoded, bits, values.len())
+            .expect("Failed to decode i32 values with small bit width");
 
         assert_eq!(values, decoded);
 
@@ -603,10 +608,10 @@ mod tests {
         let values: Vec<i64> = vec![];
         let bits = 16;
 
-        let encoded = encode_i64(&values, bits).unwrap();
+        let encoded = encode_i64(&values, bits).expect("Failed to encode empty i64 values");
         assert!(encoded.is_empty());
 
-        let decoded = decode_i64(&encoded, bits, 0).unwrap();
+        let decoded = decode_i64(&encoded, bits, 0).expect("Failed to decode empty i64 values");
         assert!(decoded.is_empty());
     }
 
@@ -616,8 +621,10 @@ mod tests {
         let values = vec![0i32, 1, 0, 1, 1, 0];
         let bits = 1;
 
-        let encoded = encode_i32(&values, bits).unwrap();
-        let decoded = decode_i32(&encoded, bits, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values, bits).expect("Failed to encode i32 values with single bit");
+        let decoded = decode_i32(&encoded, bits, values.len())
+            .expect("Failed to decode i32 values with single bit");
 
         assert_eq!(values, decoded);
 

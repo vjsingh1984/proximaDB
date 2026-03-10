@@ -391,7 +391,7 @@ impl CollectionStateManager {
             })
             .collect();
 
-        collections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        collections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         collections
     }
 

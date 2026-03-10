@@ -46,7 +46,7 @@ use std::sync::Arc;
 /// use proximadb::graph::engines::orion::algorithms::traits::GraphAlgorithm;
 ///
 /// let floyd = FloydWarshallAPSP::new(engine);
-/// let distances = floyd.execute(()).unwrap();
+/// let distances = floyd.execute(())?;
 /// ```
 pub struct FloydWarshallAPSP {
     engine: Arc<OrionGraphEngine>,
@@ -461,7 +461,9 @@ mod tests {
         let engine = Arc::new(OrionGraphEngine::new());
         let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
 
-        let result = floyd.execute(NoInput).unwrap();
+        let result = floyd
+            .execute(NoInput)
+            .expect("Floyd-Warshall on empty graph should succeed");
         assert_eq!(result.len(), 0);
     }
 
@@ -478,14 +480,22 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        engine.as_ref().insert_node(node).await.unwrap();
+        engine
+            .as_ref()
+            .insert_node(node)
+            .await
+            .expect("Node insertion should succeed");
 
         let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
-        let result = floyd.execute(NoInput).unwrap();
+        let result = floyd
+            .execute(NoInput)
+            .expect("Floyd-Warshall on single node should succeed");
 
         assert_eq!(result.len(), 1);
         assert_eq!(
-            result.get(&("n1".to_string(), "n1".to_string())).unwrap(),
+            result
+                .get(&("n1".to_string(), "n1".to_string()))
+                .expect("Distance from n1 to n1 should exist"),
             &0.0
         );
     }
@@ -504,7 +514,11 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.as_ref().insert_node(node).await.unwrap();
+            engine
+                .as_ref()
+                .insert_node(node)
+                .await
+                .expect("Node insertion should succeed");
         }
 
         // Add edges
@@ -542,11 +556,17 @@ mod tests {
         ];
 
         for edge in edges {
-            engine.as_ref().insert_edge(edge).await.unwrap();
+            engine
+                .as_ref()
+                .insert_edge(edge)
+                .await
+                .expect("Edge insertion should succeed");
         }
 
         let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
-        let result = floyd.execute(NoInput).unwrap();
+        let result = floyd
+            .execute(NoInput)
+            .expect("Floyd-Warshall on triangle graph should succeed");
 
         // Result should have 9 entries (3x3 matrix)
         assert_eq!(result.len(), 9);
@@ -556,7 +576,9 @@ mod tests {
             for j in 1..=3 {
                 let from = format!("n{}", i);
                 let to = format!("n{}", j);
-                let dist = result.get(&(from.clone(), to.clone())).unwrap();
+                let dist = result
+                    .get(&(from.clone(), to.clone()))
+                    .expect("Distance should exist in result");
 
                 if i == j {
                     assert_eq!(*dist, 0.0);
@@ -582,7 +604,11 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.as_ref().insert_node(node).await.unwrap();
+            engine
+                .as_ref()
+                .insert_node(node)
+                .await
+                .expect("Node insertion should succeed");
         }
 
         // Add edges only within components
@@ -610,21 +636,31 @@ mod tests {
         ];
 
         for edge in edges {
-            engine.as_ref().insert_edge(edge).await.unwrap();
+            engine
+                .as_ref()
+                .insert_edge(edge)
+                .await
+                .expect("Edge insertion should succeed");
         }
 
         let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
-        let result = floyd.execute(NoInput).unwrap();
+        let result = floyd
+            .execute(NoInput)
+            .expect("Floyd-Warshall on disconnected graph should succeed");
 
         assert_eq!(result.len(), 16); // 4x4 matrix
 
         // Verify distances within components are finite
         assert_eq!(
-            *result.get(&("n1".to_string(), "n2".to_string())).unwrap(),
+            *result
+                .get(&("n1".to_string(), "n2".to_string()))
+                .expect("Distance n1->n2 should exist"),
             1.0
         ); // n1 -> n2
         assert_eq!(
-            *result.get(&("n3".to_string(), "n4".to_string())).unwrap(),
+            *result
+                .get(&("n3".to_string(), "n4".to_string()))
+                .expect("Distance n3->n4 should exist"),
             1.0
         ); // n3 -> n4
 
@@ -632,13 +668,13 @@ mod tests {
         assert!(
             result
                 .get(&("n1".to_string(), "n3".to_string()))
-                .unwrap()
+                .expect("Distance n1->n3 should exist")
                 .is_infinite()
         ); // n1 -> n3 (disconnected)
         assert!(
             result
                 .get(&("n2".to_string(), "n4".to_string()))
-                .unwrap()
+                .expect("Distance n2->n4 should exist")
                 .is_infinite()
         ); // n2 -> n4 (disconnected)
     }

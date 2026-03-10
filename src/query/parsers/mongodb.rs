@@ -1492,7 +1492,9 @@ mod tests {
     #[test]
     fn test_parse_simple_equality() {
         let parser = MongoDBParser::new();
-        let result = parser.parse_query(r#"{"name": "John"}"#).unwrap();
+        let result = parser
+            .parse_query(r#"{"name": "John"}"#)
+            .expect("Failed to parse query");
 
         match result {
             MongoDBExpression::FieldEquals { field, value } => {
@@ -1508,7 +1510,9 @@ mod tests {
         let parser = MongoDBParser::new();
 
         // $gte operator
-        let result = parser.parse_query(r#"{"age": {"$gte": 18}}"#).unwrap();
+        let result = parser
+            .parse_query(r#"{"age": {"$gte": 18}}"#)
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1525,7 +1529,7 @@ mod tests {
         // $in operator
         let result = parser
             .parse_query(r#"{"status": {"$in": ["active", "pending"]}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1552,7 +1556,7 @@ mod tests {
         // $and operator
         let result = parser
             .parse_query(r#"{"$and": [{"age": {"$gte": 18}}, {"active": true}]}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::And(exprs) => {
                 assert_eq!(exprs.len(), 2);
@@ -1563,7 +1567,7 @@ mod tests {
         // $or operator
         let result = parser
             .parse_query(r#"{"$or": [{"age": {"$lt": 18}}, {"premium": true}]}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::Or(exprs) => {
                 assert_eq!(exprs.len(), 2);
@@ -1579,7 +1583,7 @@ mod tests {
         // $exists operator
         let result = parser
             .parse_query(r#"{"email": {"$exists": true}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1596,7 +1600,7 @@ mod tests {
         // $type operator
         let result = parser
             .parse_query(r#"{"age": {"$type": "number"}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1617,7 +1621,7 @@ mod tests {
 
         let result = parser
             .parse_query(r#"{"name": {"$regex": "^John", "$options": "i"}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1644,7 +1648,7 @@ mod tests {
 
         let result = parser
             .parse_query(r#"{"$text": {"$search": "hello world"}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::TextSearch { search, .. } => {
                 assert_eq!(search, "hello world");
@@ -1659,7 +1663,7 @@ mod tests {
 
         let result = parser
             .parse_projection(r#"{"name": 1, "age": 1, "password": 0}"#)
-            .unwrap();
+            .expect("Failed to parse projection");
 
         assert!(result.include.contains(&"name".to_string()));
         assert!(result.include.contains(&"age".to_string()));
@@ -1677,7 +1681,9 @@ mod tests {
             {"$limit": 10}
         ]"#;
 
-        let result = parser.parse_pipeline(pipeline).unwrap();
+        let result = parser
+            .parse_pipeline(pipeline)
+            .expect("Failed to parse pipeline");
         assert_eq!(result.len(), 4);
 
         // Check $match stage
@@ -1723,23 +1729,33 @@ mod tests {
         let parser = MongoDBParser::new();
 
         // Simple equality
-        let expr = parser.parse_query(r#"{"name": "John"}"#).unwrap();
-        let filter = expr.to_document_filter().unwrap();
+        let expr = parser
+            .parse_query(r#"{"name": "John"}"#)
+            .expect("Failed to parse query");
+        let filter = expr
+            .to_document_filter()
+            .expect("Failed to convert to document filter");
         assert_eq!(filter.conditions.len(), 1);
         assert_eq!(filter.conditions[0].path, "name");
         assert_eq!(filter.conditions[0].operator, DocFilterOperator::Eq as i32);
 
         // Comparison operator
-        let expr = parser.parse_query(r#"{"age": {"$gte": 18}}"#).unwrap();
-        let filter = expr.to_document_filter().unwrap();
+        let expr = parser
+            .parse_query(r#"{"age": {"$gte": 18}}"#)
+            .expect("Failed to parse query");
+        let filter = expr
+            .to_document_filter()
+            .expect("Failed to convert to document filter");
         assert_eq!(filter.conditions.len(), 1);
         assert_eq!(filter.conditions[0].operator, DocFilterOperator::Gte as i32);
 
         // $or operator
         let expr = parser
             .parse_query(r#"{"$or": [{"status": "active"}, {"premium": true}]}"#)
-            .unwrap();
-        let filter = expr.to_document_filter().unwrap();
+            .expect("Failed to parse query");
+        let filter = expr
+            .to_document_filter()
+            .expect("Failed to convert to document filter");
         assert_eq!(filter.or_filters.len(), 2);
     }
 
@@ -1753,7 +1769,7 @@ mod tests {
             "tags": {"$in": ["premium", "verified"]}
         }"#;
 
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
         match result {
             MongoDBExpression::Compound(exprs) => {
                 assert_eq!(exprs.len(), 3);
@@ -1773,7 +1789,7 @@ mod tests {
             ]
         }"#;
 
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
         match result {
             MongoDBExpression::And(exprs) => {
                 assert_eq!(exprs.len(), 2);
@@ -1790,7 +1806,8 @@ mod tests {
 
     #[test]
     fn test_lexer_tokenize() {
-        let tokens = MongoDBLexer::tokenize(r#"{"age": 25, "active": true}"#).unwrap();
+        let tokens =
+            MongoDBLexer::tokenize(r#"{"age": 25, "active": true}"#).expect("Failed to tokenize");
 
         assert!(matches!(tokens[0], Token::LeftBrace));
         assert!(matches!(tokens[1], Token::String(ref s) if s == "age"));
@@ -1808,7 +1825,7 @@ mod tests {
         let parser = MongoDBParser::new();
 
         let query = r#"{"items": {"$elemMatch": {"price": {"$gt": 100}}}}"#;
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
 
         match result {
             MongoDBExpression::ElemMatch { field, query } => {
@@ -1833,7 +1850,7 @@ mod tests {
 
         // $all operator
         let query = r#"{"tags": {"$all": ["a", "b", "c"]}}"#;
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
 
         match result {
             MongoDBExpression::FieldOperator {
@@ -1853,7 +1870,7 @@ mod tests {
 
         // $size operator
         let query = r#"{"items": {"$size": 5}}"#;
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
 
         match result {
             MongoDBExpression::FieldOperator {
@@ -1876,13 +1893,26 @@ mod tests {
         let query = r#"{"status": "active"}"#;
         let options = r#"{"projection": {"name": 1, "email": 1}, "sort": {"createdAt": -1}, "limit": 10, "skip": 5}"#;
 
-        let result = parser.parse_full_query(query, Some(options)).unwrap();
+        let result = parser
+            .parse_full_query(query, Some(options))
+            .expect("Failed to parse full query");
 
         assert!(result.filter.is_some());
         assert!(result.projection.is_some());
-        assert_eq!(result.projection.as_ref().unwrap().include.len(), 2);
+        assert_eq!(
+            result
+                .projection
+                .as_ref()
+                .expect("Projection should be Some")
+                .include
+                .len(),
+            2
+        );
         assert!(result.sort.is_some());
-        assert_eq!(result.sort.as_ref().unwrap()[0].1, SortOrder::Descending);
+        assert_eq!(
+            result.sort.as_ref().expect("Sort should be Some")[0].1,
+            SortOrder::Descending
+        );
         assert_eq!(result.limit, Some(10));
         assert_eq!(result.skip, Some(5));
     }

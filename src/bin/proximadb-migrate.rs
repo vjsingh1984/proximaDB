@@ -233,7 +233,10 @@ async fn run_migration(
     let collections = if all {
         discover_collections(config_path).await?
     } else {
-        vec![collection.unwrap()]
+        match collection {
+            Some(name) => vec![name],
+            None => Vec::new(),
+        }
     };
 
     info!("Found {} collections to process", collections.len());
@@ -275,7 +278,10 @@ async fn run_migration(
         let is_dry_run = dry_run;
 
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem
+                .acquire()
+                .await
+                .map_err(|e| anyhow::anyhow!("Semaphore acquire failed: {}", e))?;
             migrate_collection(&collection_name, is_dry_run, &config).await
         });
 
@@ -402,7 +408,10 @@ async fn run_validation(
     let collections = if all {
         discover_collections(config_path).await?
     } else {
-        vec![collection.unwrap()]
+        match collection {
+            Some(name) => vec![name],
+            None => Vec::new(),
+        }
     };
 
     let mut all_valid = true;

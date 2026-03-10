@@ -153,7 +153,7 @@ impl<'de> Deserialize<'de> for U512 {
         for (i, part) in parts.iter_mut().enumerate() {
             let start = i * 16;
             let end = start + 16;
-            *part = u128::from_le_bytes(bytes[start..end].try_into().unwrap());
+            *part = u128::from_le_bytes(bytes[start..end].try_into().unwrap_or([0; 16]));
         }
 
         Ok(Self::new(parts))
@@ -393,7 +393,7 @@ impl<'de> Deserialize<'de> for SpatialCode {
                     return Err(serde::de::Error::custom("Invalid 64-bit code length"));
                 }
                 Ok(Self::Code64(u64::from_le_bytes(
-                    bytes[1..9].try_into().unwrap(),
+                    bytes[1..9].try_into().unwrap_or([0; 8]),
                 )))
             }
             2 => {
@@ -401,7 +401,7 @@ impl<'de> Deserialize<'de> for SpatialCode {
                     return Err(serde::de::Error::custom("Invalid 128-bit code length"));
                 }
                 Ok(Self::Code128(u128::from_le_bytes(
-                    bytes[1..17].try_into().unwrap(),
+                    bytes[1..17].try_into().unwrap_or([0; 16]),
                 )))
             }
             3 => {
@@ -409,8 +409,8 @@ impl<'de> Deserialize<'de> for SpatialCode {
                     return Err(serde::de::Error::custom("Invalid 256-bit code length"));
                 }
                 Ok(Self::Code256 {
-                    low: u128::from_le_bytes(bytes[1..17].try_into().unwrap()),
-                    high: u128::from_le_bytes(bytes[17..33].try_into().unwrap()),
+                    low: u128::from_le_bytes(bytes[1..17].try_into().unwrap_or([0; 16])),
+                    high: u128::from_le_bytes(bytes[17..33].try_into().unwrap_or([0; 16])),
                 })
             }
             4 => {
@@ -421,7 +421,7 @@ impl<'de> Deserialize<'de> for SpatialCode {
                 for (i, part) in parts.iter_mut().enumerate() {
                     let start = 1 + i * 16;
                     let end = start + 16;
-                    *part = u128::from_le_bytes(bytes[start..end].try_into().unwrap());
+                    *part = u128::from_le_bytes(bytes[start..end].try_into().unwrap_or([0; 16]));
                 }
                 Ok(Self::Code512(U512::new(parts)))
             }

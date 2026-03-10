@@ -7,6 +7,8 @@
 [.lead]
 **Strategic roadmap aligned with the Vision document phases. This is the authoritative source for feature status and prioritization.**
 
+Execution tracking across sessions: link:./BEST_IN_CLASS_EXECUTION_TRACKER.adoc[Best-in-Class Foundation Execution Tracker]
+
 == Vision Alignment
 
 This roadmap implements the three-phase approach from link:../../concepts/vision.adoc[Vision Document]:

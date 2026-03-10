@@ -65,6 +65,8 @@ impl V2ApiTestHarness {
     async fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let http_client = HttpClient::builder()
             .timeout(Duration::from_secs(30))
+            // Avoid platform system proxy discovery in test environments.
+            .no_proxy()
             .build()?;
 
         // Generate unique test name to avoid conflicts

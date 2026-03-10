@@ -161,7 +161,7 @@ impl Default for PostgresConfig {
             bind_address: "127.0.0.1:5432".parse().unwrap_or_else(|_| {
                 "127.0.0.1:5433"
                     .parse()
-                    .expect("Failed to parse default address")
+                    .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 5433)))
             }),
             max_connections: 100,
             idle_timeout_secs: 3600,

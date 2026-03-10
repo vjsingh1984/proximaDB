@@ -1205,9 +1205,10 @@ impl ProximaDataBlock {
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
         } else {
+            // Safe: we checked timestamps.is_empty() above
             (
-                *timestamps.iter().min().unwrap(),
-                *timestamps.iter().max().unwrap(),
+                timestamps.iter().min().copied().unwrap_or(0),
+                timestamps.iter().max().copied().unwrap_or(0),
             )
         };
 
@@ -1375,9 +1376,10 @@ impl ProximaDataBlock {
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
         } else {
+            // Safe: we checked timestamps.is_empty() above
             (
-                *timestamps.iter().min().unwrap(),
-                *timestamps.iter().max().unwrap(),
+                timestamps.iter().min().copied().unwrap_or(0),
+                timestamps.iter().max().copied().unwrap_or(0),
             )
         };
 
@@ -2010,7 +2012,10 @@ impl ProximaDataBlock {
                 );
                 result
             }
-            VectorEncodingLayout::Auto => unreachable!("Auto should be resolved above"),
+            // unreachable! is acceptable here: Auto variant is resolved to FullVector at lines 1929-1946
+            // before this match statement. This arm should never be reached; it exists only for
+            // exhaustiveness checking. If reached, it indicates a serious code logic error.
+            VectorEncodingLayout::Auto => unreachable!("Auto should be resolved to FullVector at lines 1929-1946"),
         };
 
         // Write encoded vectors
@@ -2063,8 +2068,14 @@ impl ProximaDataBlock {
         // Create ID indices in record order
         let id_indices: Vec<i64> = ordered_ids
             .iter()
-            .map(|id| *id_lookup.get(id).unwrap() as i64)
-            .collect();
+            .map(|id| {
+                id_lookup
+                    .get(id)
+                    .copied()
+                    .map(|v| v as i64)
+                    .ok_or_else(|| anyhow::anyhow!("ID '{:?}' not found in lookup table", id))
+            })
+            .collect::<Result<Vec<i64>, _>>()?;
 
         trace!("ID indices to encode: {} values", id_indices.len());
         debug!(
@@ -2248,8 +2259,16 @@ impl ProximaDataBlock {
         // Create source indices in record order
         let source_indices: Vec<i64> = ordered_sources
             .iter()
-            .map(|source| *source_lookup.get(source).unwrap() as i64)
-            .collect();
+            .map(|source| {
+                source_lookup
+                    .get(source)
+                    .copied()
+                    .map(|v| v as i64)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Source '{:?}' not found in lookup table", source)
+                    })
+            })
+            .collect::<Result<Vec<i64>, _>>()?;
 
         debug!(
             "[ENCODE] Source indices (first 5): {:?}",
@@ -5676,8 +5695,11 @@ mod tests {
         let block_auto = ProximaDataBlock::new(records.clone(), compression_config_auto);
 
         // Serialize and deserialize
-        let serialized = block_auto.serialize().unwrap();
-        let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+        let serialized = block_auto
+            .serialize()
+            .expect("Auto strategy block should serialize");
+        let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+            .expect("Auto strategy block should deserialize");
 
         // Verify records match
         assert_eq!(deserialized.records.len(), vector_count);
@@ -5696,9 +5718,11 @@ mod tests {
         };
         let block_grouped = ProximaDataBlock::new(records, compression_config_grouped);
 
-        let serialized_grouped = block_grouped.serialize().unwrap();
-        let deserialized_grouped =
-            ProximaDataBlock::deserialize(&serialized_grouped, None).unwrap();
+        let serialized_grouped = block_grouped
+            .serialize()
+            .expect("Grouped block should serialize");
+        let deserialized_grouped = ProximaDataBlock::deserialize(&serialized_grouped, None)
+            .expect("Grouped block should deserialize");
 
         assert_eq!(deserialized_grouped.records.len(), vector_count);
         // Verify all dimensions are preserved
@@ -5753,7 +5777,9 @@ mod tests {
         };
 
         let block = ProximaDataBlock::new(records.clone(), config.clone());
-        let serialized = block.serialize_with_config(&config).unwrap();
+        let serialized = block
+            .serialize_with_config(&config)
+            .expect("Constant pattern block should serialize with config");
 
         // Verify compression is effective (should be much smaller than raw)
         let raw_size = count * dimension * 4; // 4 bytes per f32
@@ -5765,7 +5791,8 @@ mod tests {
         );
 
         // Verify round-trip
-        let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+        let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+            .expect("Constant pattern block should deserialize");
         assert_eq!(deserialized.records.len(), count);
 
         // Verify data integrity
@@ -5815,7 +5842,9 @@ mod tests {
         };
 
         let block = ProximaDataBlock::new(records.clone(), config.clone());
-        let serialized = block.serialize_with_config(&config).unwrap();
+        let serialized = block
+            .serialize_with_config(&config)
+            .expect("Random pattern block should serialize with config");
 
         // Verify compression is less effective (random data doesn't compress well)
         let raw_size = count * dimension * 4; // 4 bytes per f32
@@ -5923,7 +5952,9 @@ mod tests {
         };
 
         let block = ProximaDataBlock::new(records.clone(), config.clone());
-        let serialized = block.serialize_with_config(&config).unwrap();
+        let serialized = block
+            .serialize_with_config(&config)
+            .expect("Mixed pattern block should serialize with config");
 
         // Verify moderate compression (between constant and random)
         let raw_size = count * dimension * 4; // 4 bytes per f32
@@ -6007,10 +6038,10 @@ mod tests {
         let bloom_result = block.generate_bloom();
         assert!(bloom_result.is_ok());
 
-        let bloom_data = bloom_result.unwrap();
+        let bloom_data = bloom_result.expect("Bloom filter generation should succeed");
         assert!(bloom_data.is_some());
 
-        let bloom_bytes = bloom_data.unwrap();
+        let bloom_bytes = bloom_data.expect("Bloom filter data should be present");
         assert!(!bloom_bytes.is_empty());
 
         // Verify bloom filter can be deserialized
@@ -6044,14 +6075,19 @@ mod tests {
         let result = block.serialize_with_bloom_sync();
         assert!(result.is_ok());
 
-        let (serialized_block, bloom_data) = result.unwrap();
+        let (serialized_block, bloom_data) =
+            result.expect("Serialize with bloom sync should succeed");
 
         // Verify block was serialized
         assert!(!serialized_block.is_empty());
 
         // Verify bloom filter was generated
         assert!(bloom_data.is_some());
-        assert!(!bloom_data.unwrap().is_empty());
+        assert!(
+            !bloom_data
+                .expect("Bloom filter data should be present")
+                .is_empty()
+        );
 
         // Verify block can be deserialized
         let deserialized_block = ProximaDataBlock::deserialize(&serialized_block, None);
@@ -6059,7 +6095,13 @@ mod tests {
             panic!("Deserialization failed: {}", e);
         }
         assert!(deserialized_block.is_ok());
-        assert_eq!(deserialized_block.unwrap().records.len(), 2);
+        assert_eq!(
+            deserialized_block
+                .expect("Deserialized block should be present")
+                .records
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -6079,7 +6121,8 @@ mod tests {
         let result = block.serialize_with_bloom().await;
         assert!(result.is_ok());
 
-        let (serialized_block, bloom_data) = result.unwrap();
+        let (serialized_block, bloom_data) =
+            result.expect("Serialize with bloom async should succeed");
 
         // Verify both were generated
         assert!(!serialized_block.is_empty());
@@ -6094,12 +6137,17 @@ mod tests {
         // Empty block should return None for bloom
         let bloom_result = block.generate_bloom();
         assert!(bloom_result.is_ok());
-        assert!(bloom_result.unwrap().is_none());
+        assert!(
+            bloom_result
+                .expect("Bloom generation for empty block should succeed")
+                .is_none()
+        );
 
         // Sync serialization with empty block
         let result = block.serialize_with_bloom_sync();
         assert!(result.is_ok());
-        let (_, bloom_data) = result.unwrap();
+        let (_, bloom_data) =
+            result.expect("Serialize with bloom sync for empty block should succeed");
         assert!(bloom_data.is_none());
     }
 
@@ -6200,8 +6248,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Transpose field encoded block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Transpose field encoded block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6217,8 +6268,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Transpose field encoded normalized block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Transpose field encoded normalized block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6236,8 +6290,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Transpose field encoded sparse block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Transpose field encoded sparse block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0);
         }
@@ -6255,8 +6312,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Transpose field block compressed block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Transpose field block compressed block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6272,8 +6332,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Transpose field block compressed high dim block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Transpose field block compressed high dim block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6289,8 +6352,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Transpose field constant values block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Transpose field constant values block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0);
         }
@@ -6312,8 +6378,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Grouped field encoded compressed block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Grouped field encoded compressed block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6329,8 +6398,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Grouped field encoded 256d block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Grouped field encoded 256d block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6346,8 +6418,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Grouped field encoded non-aligned block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Grouped field encoded non-aligned block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6365,8 +6440,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Grouped field block compressed block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Grouped field block compressed block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6382,8 +6460,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Grouped field block compressed 1536d block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Grouped field block compressed 1536d block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6399,8 +6480,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Grouped field single group block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Grouped field single group block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6422,8 +6506,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Full vector block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Full vector block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6442,18 +6529,22 @@ mod tests {
                 ..Default::default()
             };
             let transpose_block = ProximaDataBlock::new(vectors.clone(), transpose_config);
-            let transpose_serialized = transpose_block.serialize().unwrap();
-            let transpose_deserialized =
-                ProximaDataBlock::deserialize(&transpose_serialized, None).unwrap();
+            let transpose_serialized = transpose_block
+                .serialize()
+                .expect("Transpose block should serialize for comparison");
+            let transpose_deserialized = ProximaDataBlock::deserialize(&transpose_serialized, None)
+                .expect("Transpose block should deserialize for comparison");
 
             let grouped_config = BlockCompressionConfig {
                 vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
                 ..Default::default()
             };
             let grouped_block = ProximaDataBlock::new(vectors.clone(), grouped_config);
-            let grouped_serialized = grouped_block.serialize().unwrap();
-            let grouped_deserialized =
-                ProximaDataBlock::deserialize(&grouped_serialized, None).unwrap();
+            let grouped_serialized = grouped_block
+                .serialize()
+                .expect("Grouped block should serialize for comparison");
+            let grouped_deserialized = ProximaDataBlock::deserialize(&grouped_serialized, None)
+                .expect("Grouped block should deserialize for comparison");
 
             // Both should decode to identical results
             verify_roundtrip(&vectors, &transpose_deserialized.records, 0.0001);
@@ -6488,7 +6579,9 @@ mod tests {
                 ..Default::default()
             };
             let grouped_block = ProximaDataBlock::new(vectors.clone(), grouped_config);
-            let grouped_serialized = grouped_block.serialize().unwrap();
+            let grouped_serialized = grouped_block
+                .serialize()
+                .expect("Grouped block should serialize for compression efficiency test");
 
             // Test TransposeField compression
             let transpose_config = BlockCompressionConfig {
@@ -6496,7 +6589,9 @@ mod tests {
                 ..Default::default()
             };
             let transpose_block = ProximaDataBlock::new(vectors.clone(), transpose_config);
-            let transpose_serialized = transpose_block.serialize().unwrap();
+            let transpose_serialized = transpose_block
+                .serialize()
+                .expect("Transpose block should serialize for compression efficiency test");
 
             println!("Raw size: {} bytes", raw_size);
             println!(
@@ -6538,8 +6633,11 @@ mod tests {
                 };
 
                 let block = ProximaDataBlock::new(vectors.clone(), config);
-                let serialized = block.serialize().unwrap();
-                let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+                let serialized = block
+                    .serialize()
+                    .expect("Single vector block should serialize");
+                let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                    .expect("Single vector block should deserialize");
 
                 verify_roundtrip(&vectors, &deserialized.records, 0.0001);
             }
@@ -6560,8 +6658,11 @@ mod tests {
                 };
 
                 let block = ProximaDataBlock::new(vectors.clone(), config);
-                let serialized = block.serialize().unwrap();
-                let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+                let serialized = block
+                    .serialize()
+                    .expect("Small dimension block should serialize");
+                let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                    .expect("Small dimension block should deserialize");
 
                 verify_roundtrip(&vectors, &deserialized.records, 0.0001);
             }
@@ -6578,8 +6679,11 @@ mod tests {
             };
 
             let block = ProximaDataBlock::new(vectors.clone(), config);
-            let serialized = block.serialize().unwrap();
-            let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+            let serialized = block
+                .serialize()
+                .expect("Large batch block should serialize");
+            let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                .expect("Large batch block should deserialize");
 
             verify_roundtrip(&vectors, &deserialized.records, 0.0001);
         }
@@ -6601,8 +6705,11 @@ mod tests {
                 };
 
                 let block = ProximaDataBlock::new(vectors.clone(), config);
-                let serialized = block.serialize().unwrap();
-                let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
+                let serialized = block
+                    .serialize()
+                    .expect("Lossless encoding block should serialize");
+                let deserialized = ProximaDataBlock::deserialize(&serialized, None)
+                    .expect("Lossless encoding block should deserialize");
 
                 // Use very tight tolerance to verify lossless encoding
                 verify_roundtrip(&vectors, &deserialized.records, 1e-6);

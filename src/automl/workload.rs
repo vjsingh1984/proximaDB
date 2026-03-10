@@ -481,49 +481,59 @@ mod tests {
 
     #[tokio::test]
     async fn test_workload_pattern_detection() {
-        let analyzer = WorkloadAnalyzer::new().await.unwrap();
+        let analyzer = WorkloadAnalyzer::new()
+            .await
+            .expect("Failed to create workload analyzer");
 
         // Simulate read-heavy workload
         for i in 0..20 {
             analyzer
                 .record_metric("test_collection", "reads_per_sec", 1000.0 + i as f64)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
             analyzer
                 .record_metric("test_collection", "writes_per_sec", 10.0)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
             analyzer
                 .record_metric("test_collection", "query_latency_ms", 5.0)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
         }
 
-        let pattern = analyzer.analyze_workload("test_collection").await.unwrap();
+        let pattern = analyzer
+            .analyze_workload("test_collection")
+            .await
+            .expect("Failed to analyze workload");
         assert_eq!(pattern, WorkloadPattern::ReadHeavy);
     }
 
     #[tokio::test]
     async fn test_workload_statistics() {
-        let analyzer = WorkloadAnalyzer::new().await.unwrap();
+        let analyzer = WorkloadAnalyzer::new()
+            .await
+            .expect("Failed to create workload analyzer");
 
         // Record metrics
         for i in 0..10 {
             analyzer
                 .record_metric("test_collection", "reads_per_sec", 100.0 * (i + 1) as f64)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
             analyzer
                 .record_metric("test_collection", "writes_per_sec", 50.0)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
             analyzer
                 .record_metric("test_collection", "query_latency_ms", 10.0 + i as f64)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
         }
 
-        let stats = analyzer.get_statistics("test_collection").await.unwrap();
+        let stats = analyzer
+            .get_statistics("test_collection")
+            .await
+            .expect("Failed to get statistics");
         assert!(stats.avg_reads_per_sec > 0.0);
         assert!(stats.read_write_ratio > 1.0);
         assert!(stats.query_latency_p50 > 0.0);

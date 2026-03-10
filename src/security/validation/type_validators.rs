@@ -578,24 +578,26 @@ impl TypedValueValidator {
 pub struct UuidValidator;
 
 /// Compiled UUID regex pattern
-static UUID_REGEX: Lazy<Regex> = Lazy::new(|| {
+static UUID_REGEX: Lazy<Option<Regex>> = Lazy::new(|| {
     Regex::new(
         r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
     )
-    .expect("Invalid UUID regex pattern")
+    .ok()
 });
 
 impl UuidValidator {
     /// Validate UUID string format (RFC 4122)
     pub fn validate(value: &str) -> ValidationResult {
-        if UUID_REGEX.is_match(value) {
-            Ok(())
-        } else {
-            Err(ValidationError::InvalidFormat {
-                type_name: "UUID".to_string(),
-                value: value.to_string(),
-            })
+        if let Some(regex) = &*UUID_REGEX {
+            if regex.is_match(value) {
+                return Ok(());
+            }
         }
+
+        Err(ValidationError::InvalidFormat {
+            type_name: "UUID".to_string(),
+            value: value.to_string(),
+        })
     }
 
     /// Validate UUID bytes (must be exactly 16 bytes)
@@ -862,17 +864,17 @@ impl Default for TimestampValidator {
 
 /// SQL injection patterns for security checking
 static SQL_INJECTION_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
-    vec![
-        Regex::new(
-            r"(?i)(\b(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|ALTER)\b.*\b(FROM|INTO|SET|TABLE)\b)",
-        )
-        .expect("Invalid regex"),
-        Regex::new(r"(?i)(\b(OR|AND)\s+['\x220-9]+=\s*['\x220-9]+)").expect("Invalid regex"),
-        Regex::new(r"(?i)(--\s*$|/\*.*\*/)").expect("Invalid regex"),
-        Regex::new(r"(?i)(\bEXEC\s*\(|\bEXECUTE\s*\()").expect("Invalid regex"),
-        Regex::new(r"(?i)(;\s*(DROP|DELETE|UPDATE|INSERT))").expect("Invalid regex"),
-        Regex::new(r"['\x22]\s*;\s*--").expect("Invalid regex"),
+    [
+        r"(?i)(\b(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|ALTER)\b.*\b(FROM|INTO|SET|TABLE)\b)",
+        r"(?i)(\b(OR|AND)\s+['\x220-9]+=\s*['\x220-9]+)",
+        r"(?i)(--\s*$|/\*.*\*/)",
+        r"(?i)(\bEXEC\s*\(|\bEXECUTE\s*\()",
+        r"(?i)(;\s*(DROP|DELETE|UPDATE|INSERT))",
+        r"['\x22]\s*;\s*--",
     ]
+    .into_iter()
+    .filter_map(|pattern| Regex::new(pattern).ok())
+    .collect()
 });
 
 /// Check if text contains SQL injection patterns

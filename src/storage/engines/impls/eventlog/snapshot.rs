@@ -83,8 +83,9 @@ impl SnapshotManager {
         debug!("Creating snapshot manager at {:?}", base_dir);
 
         // Create snapshot directory
-        std::fs::create_dir_all(&base_dir)
-            .map_err(|e| ProximaDBError::Internal(format!("Failed to create snapshot dir: {}", e)))?;
+        std::fs::create_dir_all(&base_dir).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to create snapshot dir: {}", e))
+        })?;
 
         Ok(Self {
             base_dir,
@@ -108,7 +109,10 @@ impl SnapshotManager {
         entity_id: &EntityId,
         sequence: EventSequence,
     ) -> Result<SnapshotMetadata> {
-        info!("Creating snapshot for {} at sequence {}", entity_id, sequence);
+        info!(
+            "Creating snapshot for {} at sequence {}",
+            entity_id, sequence
+        );
 
         // In production, we'd:
         // 1. Load all events for the entity
@@ -127,8 +131,18 @@ impl SnapshotManager {
             "created_at": Utc::now().to_rfc3339(),
         });
 
-        let serialized = serde_json::to_vec(&snapshot_data)
-            .map_err(|e| ProximaDBError::Internal(format!("Snapshot serialization failed: {}", e)))?;
+        let serialized = serde_json::to_vec(&snapshot_data).map_err(|e| {
+            ProximaDBError::Internal(format!("Snapshot serialization failed: {}", e))
+        })?;
+
+        let size_bytes = serialized.len();
+
+        // Create entity directory if it doesn't exist
+        if let Some(entity_dir) = snapshot_path.parent() {
+            tokio::fs::create_dir_all(entity_dir).await.map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to create entity dir: {}", e))
+            })?;
+        }
 
         // Write snapshot file
         tokio::fs::write(&snapshot_path, serialized)
@@ -140,13 +154,14 @@ impl SnapshotManager {
             sequence,
             created_at: Utc::now(),
             file_path: snapshot_path.clone(),
-            size_bytes: serialized.len(),
+            size_bytes,
         };
 
         // Update index
         {
             let mut snapshots = self.snapshots.write().await;
-            snapshots.entry(entity_id.clone())
+            snapshots
+                .entry(entity_id.clone())
                 .or_insert_with(Vec::new)
                 .push(metadata.clone());
         }
@@ -155,11 +170,13 @@ impl SnapshotManager {
         {
             let mut stats = self.stats.write().await;
             stats.total_snapshots += 1;
-            stats.total_size_bytes += serialized.len() as u64;
+            stats.total_size_bytes += size_bytes as u64;
         }
 
-        debug!("Created snapshot for {} at sequence {} ({} bytes)",
-            entity_id, sequence, serialized.len());
+        debug!(
+            "Created snapshot for {} at sequence {} ({} bytes)",
+            entity_id, sequence, size_bytes
+        );
 
         Ok(metadata)
     }
@@ -179,18 +196,24 @@ impl SnapshotManager {
         entity_id: &EntityId,
         sequence: EventSequence,
     ) -> Result<serde_json::Value> {
-        debug!("Loading snapshot for {} at sequence {}", entity_id, sequence);
+        debug!(
+            "Loading snapshot for {} at sequence {}",
+            entity_id, sequence
+        );
 
         // Find snapshot metadata
         let snapshot_path = {
             let snapshots = self.snapshots.read().await;
-            snapshots.get(entity_id)
+            snapshots
+                .get(entity_id)
                 .and_then(|snapshots| snapshots.iter().find(|s| s.sequence == sequence))
                 .map(|s| s.file_path.clone())
-                .ok_or_else(|| ProximaDBError::Internal(format!(
-                    "Snapshot not found for {} at sequence {}",
-                    entity_id, sequence
-                )))?
+                .ok_or_else(|| {
+                    ProximaDBError::Internal(format!(
+                        "Snapshot not found for {} at sequence {}",
+                        entity_id, sequence
+                    ))
+                })?
         };
 
         // Read snapshot file
@@ -199,8 +222,9 @@ impl SnapshotManager {
             .map_err(|e| ProximaDBError::Internal(format!("Failed to read snapshot: {}", e)))?;
 
         // Deserialize
-        let snapshot: serde_json::Value = serde_json::from_slice(&data)
-            .map_err(|e| ProximaDBError::Internal(format!("Snapshot deserialization failed: {}", e)))?;
+        let snapshot: serde_json::Value = serde_json::from_slice(&data).map_err(|e| {
+            ProximaDBError::Internal(format!("Snapshot deserialization failed: {}", e))
+        })?;
 
         // Update stats
         {
@@ -249,9 +273,11 @@ impl SnapshotManager {
     ) -> Result<Vec<SnapshotMetadata>> {
         let snapshots = self.snapshots.read().await;
 
-        Ok(snapshots.get(entity_id)
-            .cloned()
-            .unwrap_or_default())
+        // Return empty Vec if no snapshots exist for this entity (valid state)
+        Ok(match snapshots.get(entity_id) {
+            Some(entity_snapshots) => entity_snapshots.clone(),
+            None => Vec::new(),
+        })
     }
 
     /// Delete old snapshots to save space
@@ -269,7 +295,10 @@ impl SnapshotManager {
         entity_id: &EntityId,
         keep_latest: usize,
     ) -> Result<usize> {
-        debug!("Cleaning up snapshots for {} (keeping latest {})", entity_id, keep_latest);
+        debug!(
+            "Cleaning up snapshots for {} (keeping latest {})",
+            entity_id, keep_latest
+        );
 
         let mut snapshots = self.snapshots.write().await;
 
@@ -318,16 +347,21 @@ mod tests {
     #[test]
     fn test_snapshot_manager_creation() {
         let base_dir = PathBuf::from("/tmp/test_snapshot_manager");
-        let manager = SnapshotManager::new(base_dir).unwrap();
+        let manager = SnapshotManager::new(base_dir.clone())
+            .expect("Failed to create snapshot manager for test");
         assert_eq!(manager.base_dir, base_dir);
     }
 
     #[tokio::test]
     async fn test_create_snapshot() {
         let base_dir = PathBuf::from("/tmp/test_create_snapshot");
-        let manager = SnapshotManager::new(base_dir.clone()).unwrap();
+        let manager = SnapshotManager::new(base_dir.clone())
+            .expect("Failed to create snapshot manager for test");
 
-        let metadata = manager.create_snapshot(&"entity:test".to_string(), 100).await.unwrap();
+        let metadata = manager
+            .create_snapshot(&"entity:test".to_string(), 100)
+            .await
+            .expect("Failed to create snapshot for test");
 
         assert_eq!(metadata.entity_id, "entity:test");
         assert_eq!(metadata.sequence, 100);
@@ -340,13 +374,20 @@ mod tests {
     #[tokio::test]
     async fn test_load_snapshot() {
         let base_dir = PathBuf::from("/tmp/test_load_snapshot");
-        let manager = SnapshotManager::new(base_dir.clone()).unwrap();
+        let manager = SnapshotManager::new(base_dir.clone())
+            .expect("Failed to create snapshot manager for test");
 
         // Create snapshot
-        manager.create_snapshot(&"entity:test".to_string(), 100).await.unwrap();
+        manager
+            .create_snapshot(&"entity:test".to_string(), 100)
+            .await
+            .expect("Failed to create snapshot for test");
 
         // Load snapshot
-        let state = manager.load_snapshot(&"entity:test".to_string(), 100).await.unwrap();
+        let state = manager
+            .load_snapshot(&"entity:test".to_string(), 100)
+            .await
+            .expect("Failed to load snapshot for test");
         assert_eq!(state["entity_id"], "entity:test");
         assert_eq!(state["sequence"], 100);
 
@@ -357,19 +398,29 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_old_snapshots() {
         let base_dir = PathBuf::from("/tmp/test_cleanup_snapshots");
-        let manager = SnapshotManager::new(base_dir.clone()).unwrap();
+        let manager = SnapshotManager::new(base_dir.clone())
+            .expect("Failed to create snapshot manager for test");
 
         // Create multiple snapshots
         for i in 1..=5 {
-            manager.create_snapshot(&"entity:test".to_string(), i * 100).await.unwrap();
+            manager
+                .create_snapshot(&"entity:test".to_string(), i * 100)
+                .await
+                .expect("Failed to create snapshot for test");
         }
 
         // Cleanup, keep only latest 2
-        let deleted = manager.cleanup_old_snapshots(&"entity:test".to_string(), 2).await.unwrap();
+        let deleted = manager
+            .cleanup_old_snapshots(&"entity:test".to_string(), 2)
+            .await
+            .expect("Failed to cleanup old snapshots for test");
         assert_eq!(deleted, 3);
 
         // Verify only 2 remain
-        let snapshots = manager.get_entity_snapshots(&"entity:test".to_string()).await.unwrap();
+        let snapshots = manager
+            .get_entity_snapshots(&"entity:test".to_string())
+            .await
+            .expect("Failed to get entity snapshots for test");
         assert_eq!(snapshots.len(), 2);
 
         // Cleanup

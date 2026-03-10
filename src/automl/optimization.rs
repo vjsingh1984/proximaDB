@@ -415,18 +415,26 @@ impl OptimizationPipeline {
 
         for _ in 0..budget {
             let config = Configuration {
-                index: config_space.index_configs.choose(&mut rng).unwrap().clone(),
+                index: config_space
+                    .index_configs
+                    .choose(&mut rng)
+                    .ok_or_else(|| anyhow::anyhow!("No index configurations available"))?
+                    .clone(),
                 quantization: config_space
                     .quantization_configs
                     .choose(&mut rng)
-                    .unwrap()
+                    .ok_or_else(|| anyhow::anyhow!("No quantization configurations available"))?
                     .clone(),
                 engine: config_space
                     .engine_configs
                     .choose(&mut rng)
-                    .unwrap()
+                    .ok_or_else(|| anyhow::anyhow!("No engine configurations available"))?
                     .clone(),
-                cache: config_space.cache_configs.choose(&mut rng).unwrap().clone(),
+                cache: config_space
+                    .cache_configs
+                    .choose(&mut rng)
+                    .ok_or_else(|| anyhow::anyhow!("No cache configurations available"))?
+                    .clone(),
             };
 
             let score = self
@@ -474,7 +482,7 @@ impl OptimizationPipeline {
         // Return best observed configuration
         observations
             .into_iter()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(config, _)| config)
             .ok_or_else(|| anyhow::anyhow!("No valid configuration found"))
     }
@@ -508,8 +516,12 @@ impl OptimizationPipeline {
 
             while new_population.len() < population_size {
                 // Tournament selection
-                let parent1 = population.choose(&mut rng).unwrap();
-                let parent2 = population.choose(&mut rng).unwrap();
+                let parent1 = population
+                    .choose(&mut rng)
+                    .ok_or_else(|| anyhow::anyhow!("Population is empty during selection"))?;
+                let parent2 = population
+                    .choose(&mut rng)
+                    .ok_or_else(|| anyhow::anyhow!("Population is empty during selection"))?;
 
                 // Crossover
                 let child = self.crossover(&parent1.0, &parent2.0, config_space)?;
@@ -531,7 +543,7 @@ impl OptimizationPipeline {
         // Return best individual
         population
             .into_iter()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(config, _)| config)
             .ok_or_else(|| anyhow::anyhow!("No valid configuration found"))
     }
@@ -542,18 +554,26 @@ impl OptimizationPipeline {
         let mut rng = rand::thread_rng();
 
         Ok(Configuration {
-            index: config_space.index_configs.choose(&mut rng).unwrap().clone(),
+            index: config_space
+                .index_configs
+                .choose(&mut rng)
+                .ok_or_else(|| anyhow::anyhow!("No index configurations available"))?
+                .clone(),
             quantization: config_space
                 .quantization_configs
                 .choose(&mut rng)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("No quantization configurations available"))?
                 .clone(),
             engine: config_space
                 .engine_configs
                 .choose(&mut rng)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("No engine configurations available"))?
                 .clone(),
-            cache: config_space.cache_configs.choose(&mut rng).unwrap().clone(),
+            cache: config_space
+                .cache_configs
+                .choose(&mut rng)
+                .ok_or_else(|| anyhow::anyhow!("No cache configurations available"))?
+                .clone(),
         })
     }
 
@@ -614,24 +634,32 @@ impl OptimizationPipeline {
         let mut mutated = config.clone();
 
         if rng.gen_bool(0.1) {
-            mutated.index = config_space.index_configs.choose(&mut rng).unwrap().clone();
+            mutated.index = config_space
+                .index_configs
+                .choose(&mut rng)
+                .ok_or_else(|| anyhow::anyhow!("No index configurations available"))?
+                .clone();
         }
         if rng.gen_bool(0.1) {
             mutated.quantization = config_space
                 .quantization_configs
                 .choose(&mut rng)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("No quantization configurations available"))?
                 .clone();
         }
         if rng.gen_bool(0.1) {
             mutated.engine = config_space
                 .engine_configs
                 .choose(&mut rng)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("No engine configurations available"))?
                 .clone();
         }
         if rng.gen_bool(0.1) {
-            mutated.cache = config_space.cache_configs.choose(&mut rng).unwrap().clone();
+            mutated.cache = config_space
+                .cache_configs
+                .choose(&mut rng)
+                .ok_or_else(|| anyhow::anyhow!("No cache configurations available"))?
+                .clone();
         }
 
         Ok(mutated)
@@ -741,8 +769,13 @@ mod tests {
     #[tokio::test]
     async fn test_grid_search() {
         let config = AutoMLConfig::default();
-        let pipeline = OptimizationPipeline::new(config).await.unwrap();
-        pipeline.start().await.unwrap();
+        let pipeline = OptimizationPipeline::new(config)
+            .await
+            .expect("Failed to create optimization pipeline");
+        pipeline
+            .start()
+            .await
+            .expect("Failed to start optimization pipeline");
 
         let config_space = ConfigurationSpace {
             index_configs: vec![IndexConfiguration {
@@ -773,7 +806,7 @@ mod tests {
                 &config_space,
             )
             .await
-            .unwrap();
+            .expect("Grid search failed");
 
         assert_eq!(best.index.algorithm, "HNSW");
     }

@@ -490,8 +490,8 @@ impl AuditLogger {
             result: AuditResult::Success,
             details: serde_json::to_value(&alert)?
                 .as_object()
-                .unwrap()
-                .clone()
+                .cloned()
+                .unwrap_or_default()
                 .into_iter()
                 .collect(),
             ip_address: alert.ip_address,

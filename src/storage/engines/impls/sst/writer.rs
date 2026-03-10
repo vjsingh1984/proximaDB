@@ -673,7 +673,7 @@ impl SstableWriter {
             index_offset: 0, // Will be set after bloom filter
             index_size: layout_index_entries
                 .iter()
-                .map(|e| 4 + e.serialize().unwrap().len()) // Include 4-byte length prefix!
+                .map(|e| 4 + e.serialize().unwrap_or_default().len()) // Include 4-byte length prefix!
                 .sum::<usize>() as u32,
             total_records: processed_count as u64,
             min_timestamp: 0,        // TODO: extract from data
@@ -1326,7 +1326,7 @@ impl SstableWriter {
         }
 
         // Write to file using filesystem
-        let write_path = self.path.to_str().unwrap();
+        let write_path = self.path.to_str().unwrap_or_default();
         debug!(
             "SST Writer: Writing {} bytes to path: {}",
             file_content.len(),

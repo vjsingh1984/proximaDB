@@ -162,9 +162,12 @@ impl HelixSIMDWriter {
         // Calculate spatial statistics for clustering
         let hilbert_range = if let Some(keys) = hilbert_keys {
             if !keys.is_empty() {
-                let min_key = *keys.iter().min().unwrap();
-                let max_key = *keys.iter().max().unwrap();
-                Some((min_key, max_key))
+                let min_key = keys.iter().copied().min();
+                let max_key = keys.iter().copied().max();
+                match (min_key, max_key) {
+                    (Some(min_key), Some(max_key)) => Some((min_key, max_key)),
+                    _ => None,
+                }
             } else {
                 None
             }
@@ -945,7 +948,7 @@ pub async fn search_helix_sstable(
     }
 
     // Sort by distance and return top-k
-    results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(k);
 
     Ok(results)

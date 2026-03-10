@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use crate::core::error::VectorDBError;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, trace};
@@ -373,6 +374,7 @@ struct DecisionStump {
 
 impl DecisionStump {
     fn predict(&self, features: &[f64]) -> f64 {
+        // TD-007: unwrap_or with safe default - missing features default to 0.0 for ML model inference
         if features.get(self.feature_index).copied().unwrap_or(0.0) <= self.threshold {
             self.left_value * self.weight
         } else {
@@ -418,8 +420,10 @@ impl GradientBoostingModel {
             // Get feature values and sort
             let mut values: Vec<(f64, f64)> = samples
                 .iter()
+                // TD-007: unwrap_or with safe default - missing features default to 0.0
                 .map(|(f, t)| (f.get(feature_idx).copied().unwrap_or(0.0), *t))
                 .collect();
+            // TD-007: unwrap_or with safe default - Equal for NaN comparisons in sorting
             values.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
             // Try different thresholds
@@ -450,6 +454,7 @@ impl GradientBoostingModel {
                 // Compute MSE loss
                 let mut loss = 0.0;
                 for (f, target) in samples {
+                    // TD-007: unwrap_or with safe default - missing features default to 0.0
                     let pred = if f.get(feature_idx).copied().unwrap_or(0.0) <= threshold {
                         left_value
                     } else {
@@ -677,7 +682,10 @@ impl LearnedFusion {
 
         // Single result - no fusion needed
         if sub_results.len() == 1 {
-            return Ok(self.convert_single_result(sub_results.into_iter().next().unwrap()));
+            let result = sub_results.into_iter().next().ok_or_else(|| {
+                VectorDBError::InvalidInput("Expected single result but found none".to_string())
+            })?;
+            return Ok(self.convert_single_result(result));
         }
 
         // Extract features
@@ -699,9 +707,15 @@ impl LearnedFusion {
         let record_ids: Vec<String> = all_records.keys().cloned().collect();
 
         // Get predictions from model
-        let is_trained = *self.is_trained.read().unwrap();
+        let is_trained = *self
+            .is_trained
+            .read()
+            .map_err(|e| VectorDBError::Internal(format!("Lock poisoning in is_trained: {}", e)))?;
         let scores = if is_trained {
-            let model = self.model.read().unwrap();
+            let model = self
+                .model
+                .read()
+                .map_err(|e| VectorDBError::Internal(format!("Lock poisoning in model: {}", e)))?;
             model.predict(&features, &record_ids)?
         } else {
             // Fallback to RRF-style fusion if model not trained
@@ -713,14 +727,17 @@ impl LearnedFusion {
             .into_iter()
             .zip(scores.into_iter())
             .map(|(id, score)| {
-                let mut record = all_records.remove(&id).unwrap();
+                let mut record = all_records.remove(&id).ok_or_else(|| {
+                    VectorDBError::Internal(format!("Record ID {} not found in all_records", id))
+                })?;
                 record.score = Some(score);
-                record
+                Ok(record)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         // Sort by score
         records.sort_by(|a, b| {
+            // TD-007: unwrap_or with safe defaults - missing scores default to 0.0, NaN comparisons to Equal
             b.score
                 .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
@@ -732,7 +749,9 @@ impl LearnedFusion {
 
         // Update query count and trigger online learning if needed
         if self.config.enable_online_learning {
-            let mut count = self.query_count.write().unwrap();
+            let mut count = self.query_count.write().map_err(|e| {
+                VectorDBError::Internal(format!("Lock poisoning in query_count: {}", e))
+            })?;
             *count += 1;
 
             if *count % self.config.online_update_frequency == 0 {
@@ -756,7 +775,9 @@ impl LearnedFusion {
             return Ok(());
         }
 
-        let mut buffer = self.training_buffer.write().unwrap();
+        let mut buffer = self.training_buffer.write().map_err(|e| {
+            VectorDBError::Internal(format!("Lock poisoning in training_buffer: {}", e))
+        })?;
 
         // Maintain max buffer size
         if buffer.len() >= self.config.max_training_samples {
@@ -810,7 +831,7 @@ impl LearnedFusion {
             feedback: Some(feedback),
             timestamp_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
+                .map_err(|e| VectorDBError::Internal(format!("SystemTime error: {}", e)))?
                 .as_millis() as u64,
         };
 
@@ -819,7 +840,9 @@ impl LearnedFusion {
 
     /// Train the model on accumulated samples
     pub fn train(&self) -> Result<TrainingMetrics> {
-        let buffer = self.training_buffer.read().unwrap();
+        let buffer = self.training_buffer.read().map_err(|e| {
+            VectorDBError::Internal(format!("Lock poisoning in training_buffer: {}", e))
+        })?;
 
         if buffer.len() < self.config.min_samples_for_training {
             return Err(anyhow!(
@@ -832,10 +855,15 @@ impl LearnedFusion {
         let samples: Vec<TrainingSample> = buffer.clone();
         drop(buffer);
 
-        let mut model = self.model.write().unwrap();
+        let mut model = self
+            .model
+            .write()
+            .map_err(|e| VectorDBError::Internal(format!("Lock poisoning in model: {}", e)))?;
         let metrics = model.train_batch(&samples)?;
 
-        *self.is_trained.write().unwrap() = true;
+        *self.is_trained.write().map_err(|e| {
+            VectorDBError::Internal(format!("Lock poisoning in is_trained: {}", e))
+        })? = true;
 
         info!(
             "Trained fusion model on {} samples, loss: {:.4}",
@@ -847,7 +875,9 @@ impl LearnedFusion {
 
     /// Maybe train if conditions are met
     fn maybe_train(&self) -> Result<()> {
-        let buffer = self.training_buffer.read().unwrap();
+        let buffer = self.training_buffer.read().map_err(|e| {
+            VectorDBError::Internal(format!("Lock poisoning in training_buffer: {}", e))
+        })?;
         if buffer.len() >= self.config.min_samples_for_training {
             drop(buffer);
             let _ = self.train(); // Ignore errors in background training
@@ -857,32 +887,49 @@ impl LearnedFusion {
 
     /// Get feature importance from model
     pub fn get_feature_importance(&self) -> Option<Vec<f64>> {
-        let model = self.model.read().unwrap();
+        let model = self.model.read().ok()?;
         model.get_weights()
     }
 
     /// Save model state
     pub fn save_model(&self) -> Result<Vec<u8>> {
-        let model = self.model.read().unwrap();
+        let model = self
+            .model
+            .read()
+            .map_err(|e| VectorDBError::Internal(format!("Lock poisoning in model: {}", e)))?;
         model.save()
     }
 
     /// Load model state
     pub fn load_model(&self, data: &[u8]) -> Result<()> {
-        let mut model = self.model.write().unwrap();
+        let mut model = self
+            .model
+            .write()
+            .map_err(|e| VectorDBError::Internal(format!("Lock poisoning in model: {}", e)))?;
         model.load(data)?;
-        *self.is_trained.write().unwrap() = true;
+        *self.is_trained.write().map_err(|e| {
+            VectorDBError::Internal(format!("Lock poisoning in is_trained: {}", e))
+        })? = true;
         Ok(())
     }
 
     /// Get training buffer size
     pub fn training_buffer_size(&self) -> usize {
-        self.training_buffer.read().unwrap().len()
+        self.training_buffer
+            .read()
+            .map_err(|e| {
+                VectorDBError::Internal(format!("Lock poisoning in training_buffer: {}", e))
+            })
+            .ok()
+            .map(|b| b.len())
+            // TD-007: unwrap_or with safe default - 0 if model not yet trained
+            .unwrap_or(0)
     }
 
     /// Check if model is trained
     pub fn is_trained(&self) -> bool {
-        *self.is_trained.read().unwrap()
+        // TD-007: unwrap_or with safe default - false if lock poisoned or not trained
+        self.is_trained.read().ok().map(|t| *t).unwrap_or(false)
     }
 
     /// Fallback RRF scoring when model not trained
@@ -987,11 +1034,13 @@ impl FeatureExtractor {
             features[4] = std_dev;
             features[5] = *all_scores
                 .iter()
-                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                // TD-007: unwrap_or with safe defaults - max with NaN handling, default 0.0 for empty
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or(&0.0);
             features[6] = *all_scores
                 .iter()
-                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                // TD-007: unwrap_or with safe defaults - min with NaN handling, default 0.0 for empty
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or(&0.0);
         }
 
@@ -1020,11 +1069,13 @@ impl FeatureExtractor {
             features[2] = variance.sqrt();
             features[3] = *scores
                 .iter()
-                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                // TD-007: unwrap_or with safe defaults - max with NaN handling, default 0.0 for empty
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or(&0.0);
             features[4] = *scores
                 .iter()
-                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                // TD-007: unwrap_or with safe defaults - min with NaN handling, default 0.0 for empty
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or(&0.0);
         }
 
@@ -1215,7 +1266,7 @@ mod tests {
         let features = FusionFeatures::new(32);
         let scores = model
             .predict(&features, &["a".to_string(), "b".to_string()])
-            .unwrap();
+            .expect("Failed to predict scores");
 
         assert_eq!(scores.len(), 2);
         // Scores should be in [0, 1] due to sigmoid
@@ -1281,14 +1332,24 @@ mod tests {
             ],
         );
 
-        let fused = fusion.fuse(vec![result1, result2]).unwrap();
+        let fused = fusion
+            .fuse(vec![result1, result2])
+            .expect("Failed to fuse results");
 
         // Should have 3 unique records
         assert_eq!(fused.records.len(), 3);
 
         // b appears in both, should have highest score
-        let b_record = fused.records.iter().find(|r| r.id == "b").unwrap();
-        let a_record = fused.records.iter().find(|r| r.id == "a").unwrap();
+        let b_record = fused
+            .records
+            .iter()
+            .find(|r| r.id == "b")
+            .expect("Record 'b' should be present in fused results");
+        let a_record = fused
+            .records
+            .iter()
+            .find(|r| r.id == "a")
+            .expect("Record 'a' should be present in fused results");
         assert!(b_record.score > a_record.score);
     }
 
@@ -1312,7 +1373,9 @@ mod tests {
             timestamp_ms: 0,
         };
 
-        fusion.add_training_sample(sample).unwrap();
+        fusion
+            .add_training_sample(sample)
+            .expect("Failed to add training sample");
 
         assert_eq!(fusion.training_buffer_size(), 1);
     }
@@ -1328,7 +1391,9 @@ mod tests {
             position: 0,
         };
 
-        fusion.record_feedback(features, feedback).unwrap();
+        fusion
+            .record_feedback(features, feedback)
+            .expect("Failed to record feedback");
 
         assert_eq!(fusion.training_buffer_size(), 1);
     }
@@ -1341,10 +1406,10 @@ mod tests {
         };
         let fusion = LearnedFusion::new(config.clone());
 
-        let data = fusion.save_model().unwrap();
+        let data = fusion.save_model().expect("Failed to save model");
 
         let fusion2 = LearnedFusion::new(config);
-        fusion2.load_model(&data).unwrap();
+        fusion2.load_model(&data).expect("Failed to load model");
 
         assert!(fusion2.is_trained());
     }
@@ -1369,7 +1434,7 @@ mod tests {
             });
         }
 
-        let metrics = model.train_batch(&samples).unwrap();
+        let metrics = model.train_batch(&samples).expect("Failed to train model");
 
         assert_eq!(metrics.num_samples, 50);
         assert!(metrics.loss < 1.0);
@@ -1395,7 +1460,9 @@ mod tests {
             });
         }
 
-        let metrics = model.train_batch(&samples).unwrap();
+        let metrics = model
+            .train_batch(&samples)
+            .expect("Failed to train gradient boosting model");
 
         assert_eq!(metrics.num_samples, 50);
         assert!(model.trees.len() > 0);

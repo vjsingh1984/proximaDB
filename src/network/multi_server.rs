@@ -220,7 +220,9 @@ impl Default for PostgresServerConfig {
     fn default() -> Self {
         Self {
             port: 5433, // Use 5433 to avoid conflict with real PostgreSQL
-            bind_address: "0.0.0.0:5433".parse().unwrap(),
+            bind_address: "0.0.0.0:5433"
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5433))),
             enable_postgres: true,
             max_connections: 100,
             idle_timeout_secs: 3600,
@@ -394,7 +396,9 @@ impl RestHttpServerConfig {
 
     /// Get active bind address
     pub fn active_bind_address(&self) -> SocketAddr {
-        format!("0.0.0.0:{}", self.port).parse().unwrap()
+        format!("0.0.0.0:{}", self.port)
+            .parse()
+            .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], self.port)))
     }
 }
 
@@ -564,7 +568,9 @@ impl Default for MultiServerConfig {
             },
             grpc_config: GrpcHttpServerConfig {
                 port: 5679,
-                bind_address: "0.0.0.0:5679".parse().unwrap(),
+                bind_address: "0.0.0.0:5679"
+                    .parse()
+                    .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5679))),
                 tls_bind_address: None,
                 enable_grpc: true,
                 max_message_size: 64 * 1024 * 1024, // 64MB for bulk vector inserts with Avro
@@ -575,7 +581,9 @@ impl Default for MultiServerConfig {
             },
             arrow_ipc_config: ArrowIpcServerConfig {
                 port: 5680,
-                bind_address: "0.0.0.0:5680".parse().unwrap(),
+                bind_address: "0.0.0.0:5680"
+                    .parse()
+                    .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5680))),
                 enable_arrow_ipc: true,
                 max_message_size: 512 * 1024 * 1024, // 512MB for massive batch uploads
                 compression: false,                  // Arrow has built-in compression
@@ -653,7 +661,9 @@ impl TLSConfig {
 
     /// Get bind address for given port
     pub fn bind_address(&self, port: u16) -> SocketAddr {
-        format!("{}:{}", self.bind_interface, port).parse().unwrap()
+        format!("{}:{}", self.bind_interface, port)
+            .parse()
+            .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], port)))
     }
 }
 
@@ -675,7 +685,7 @@ impl MultiServerConfig {
             .unwrap_or_else(|_| {
                 format!("0.0.0.0:{}", self.unified_port)
                     .parse()
-                    .expect("valid default")
+                    .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], self.unified_port)))
             })
     }
 
@@ -912,22 +922,26 @@ impl SharedServices {
             // For now, the consumer will run until the process exits
             std::mem::forget(shutdown_tx); // Prevent sender from being dropped
 
-            let _consumer_handle =
-                crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
-                    crate::services::events::log::event_log_service()
-                        .expect("EventLog service just initialized")
-                        .inner(),
-                    axis_manager.clone(),
-                    filesystem_factory.clone(),
-                    collection_cache.clone(),
-                    orchestrator.clone(),
-                    shutdown_rx,
-                )
-                .await;
+            if let Some(event_log_service) = crate::services::events::log::event_log_service() {
+                let _consumer_handle =
+                    crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
+                        event_log_service.inner(),
+                        axis_manager.clone(),
+                        filesystem_factory.clone(),
+                        collection_cache.clone(),
+                        orchestrator.clone(),
+                        shutdown_rx,
+                    )
+                    .await;
 
-            info!(
-                "✅ SharedServices: AXIS EventLog consumer started - automatic index building enabled"
-            );
+                info!(
+                    "✅ SharedServices: AXIS EventLog consumer started - automatic index building enabled"
+                );
+            } else {
+                warn!(
+                    "⚠️ SharedServices: EventLog service unavailable after initialization; AXIS consumer not started."
+                );
+            }
         }
 
         let vector_operations_service = Arc::new(
@@ -1715,25 +1729,30 @@ impl MultiServer {
                     ))
                 }
             };
-            let obs_service =
-                match crate::observability::ObservabilityService::new(obs_storage).await {
-                    Ok(svc) => Arc::new(svc),
-                    Err(e) => {
-                        warn!(
-                            "Failed to create ObservabilityService: {}. Creating minimal instance.",
-                            e
-                        );
-                        // Create a minimal instance with WAL if possible
-                        let fallback_storage = Arc::new(
-                            crate::observability::ObservabilityStorage::new(&obs_path_str),
-                        );
-                        Arc::new(
-                            crate::observability::ObservabilityService::new(fallback_storage)
-                                .await
-                                .expect("Failed to create fallback observability service"),
-                        )
+            let obs_service = match crate::observability::ObservabilityService::new(obs_storage)
+                .await
+            {
+                Ok(svc) => Arc::new(svc),
+                Err(e) => {
+                    warn!(
+                        "Failed to create ObservabilityService: {}. Creating minimal instance.",
+                        e
+                    );
+                    // Create a minimal instance with WAL if possible
+                    let fallback_storage = Arc::new(
+                        crate::observability::ObservabilityStorage::new(&obs_path_str),
+                    );
+                    match crate::observability::ObservabilityService::new(fallback_storage).await {
+                        Ok(svc) => Arc::new(svc),
+                        Err(fallback_err) => {
+                            return Err(anyhow::anyhow!(
+                                "Failed to create fallback observability service: {}",
+                                fallback_err
+                            ));
+                        }
                     }
-                };
+                }
+            };
             let observability_service_impl =
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service);
             let observability_service =
@@ -1944,10 +1963,12 @@ impl MultiServer {
 
         // Internal addresses for REST and gRPC servers
         // These are only accessible via the TCP multiplexer
-        let internal_rest_addr: std::net::SocketAddr =
-            "127.0.0.1:15678".parse().expect("valid address");
-        let internal_grpc_addr: std::net::SocketAddr =
-            "127.0.0.1:15679".parse().expect("valid address");
+        let internal_rest_addr: std::net::SocketAddr = "127.0.0.1:15678"
+            .parse()
+            .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 15678)));
+        let internal_grpc_addr: std::net::SocketAddr = "127.0.0.1:15679"
+            .parse()
+            .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 15679)));
 
         let mut handles = Vec::new();
 

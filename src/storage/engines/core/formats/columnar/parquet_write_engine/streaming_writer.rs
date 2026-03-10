@@ -303,7 +303,7 @@ impl StreamingParquetWriter {
             Arc::new(values_array),
             None,
         )
-        .expect("Failed to create fixed-size list array");
+        .map_err(|e| anyhow::anyhow!("Failed to create fixed-size list array: {}", e))?;
 
         arrays.push(Arc::new(fixed_list_array));
 
@@ -569,7 +569,7 @@ impl StreamingParquetWriter {
             vec![Arc::new(keys_array), Arc::new(values_array)],
             None,
         )
-        .expect("Failed to create struct array");
+        .map_err(|e| anyhow::anyhow!("Failed to create struct array: {}", e))?;
 
         // Create offsets buffer from the offsets vector
         let offsets =

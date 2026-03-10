@@ -817,7 +817,10 @@ impl IcebergFormat {
 
         Ok(Snapshot {
             version: iceberg_snap.snapshot_id,
-            timestamp: Utc.timestamp_millis_opt(iceberg_snap.timestamp_ms).unwrap(),
+            timestamp: Utc
+                .timestamp_millis_opt(iceberg_snap.timestamp_ms)
+                .single()
+                .unwrap_or_else(Utc::now),
             files,
             schema_string: serde_json::to_string(schema)?,
             properties: iceberg_snap.summary.properties.clone(),
@@ -1192,7 +1195,9 @@ impl OpenTableFormat for IcebergFormat {
         // For now, write as JSON for testing
         let manifest_data = serde_json::to_string_pretty(&data_files)?;
         let manifest_path = Path::new(&location).join(&manifest_list_path);
-        fs::create_dir_all(manifest_path.parent().unwrap()).await?;
+        if let Some(parent) = manifest_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
         fs::write(&manifest_path, &manifest_data).await?;
 
         // Write new metadata version

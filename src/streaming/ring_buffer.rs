@@ -105,7 +105,7 @@ impl From<BackpressureLevel> for i32 {
 /// let buffer: RingBuffer<u64> = RingBuffer::new(1024);
 ///
 /// // Push elements
-/// buffer.try_push(42).expect("buffer should have space");
+/// let _ = buffer.try_push(42);
 ///
 /// // Check backpressure
 /// let level = buffer.backpressure_level();
@@ -436,9 +436,9 @@ mod tests {
         assert_eq!(buffer.len(), 0);
 
         // Push some elements
-        buffer.try_push(1).unwrap();
-        buffer.try_push(2).unwrap();
-        buffer.try_push(3).unwrap();
+        buffer.try_push(1).expect("push should succeed in test");
+        buffer.try_push(2).expect("push should succeed in test");
+        buffer.try_push(3).expect("push should succeed in test");
 
         assert_eq!(buffer.len(), 3);
         assert!(!buffer.is_empty());
@@ -457,10 +457,18 @@ mod tests {
         let buffer: RingBuffer<u64> = RingBuffer::new(4);
 
         // Fill the buffer
-        buffer.try_push(1).unwrap();
-        buffer.try_push(2).unwrap();
-        buffer.try_push(3).unwrap();
-        buffer.try_push(4).unwrap();
+        buffer
+            .try_push(1)
+            .expect("push should succeed when buffer not full");
+        buffer
+            .try_push(2)
+            .expect("push should succeed when buffer not full");
+        buffer
+            .try_push(3)
+            .expect("push should succeed when buffer not full");
+        buffer
+            .try_push(4)
+            .expect("push should succeed when buffer not full");
 
         // Should fail now
         assert!(buffer.try_push(5).is_err());
@@ -468,7 +476,7 @@ mod tests {
 
         // Pop one and push should work
         buffer.try_pop();
-        buffer.try_push(5).unwrap();
+        buffer.try_push(5).expect("push should succeed after pop");
     }
 
     #[test]
@@ -476,7 +484,9 @@ mod tests {
         let buffer: RingBuffer<u64> = RingBuffer::new(16);
 
         for i in 0..10 {
-            buffer.try_push(i).unwrap();
+            buffer
+                .try_push(i)
+                .expect("push should succeed when buffer not full");
         }
 
         // Drain first 5
@@ -498,25 +508,33 @@ mod tests {
 
         // Fill to low watermark (25%)
         for i in 0..256 {
-            buffer.try_push(i).unwrap();
+            buffer
+                .try_push(i)
+                .expect("push should succeed when buffer not full");
         }
         assert_eq!(buffer.backpressure_level(), BackpressureLevel::Low);
 
         // Fill to medium (50%)
         for i in 256..512 {
-            buffer.try_push(i).unwrap();
+            buffer
+                .try_push(i)
+                .expect("push should succeed when buffer not full");
         }
         assert_eq!(buffer.backpressure_level(), BackpressureLevel::Medium);
 
         // Fill to high (75%)
         for i in 512..768 {
-            buffer.try_push(i).unwrap();
+            buffer
+                .try_push(i)
+                .expect("push should succeed when buffer not full");
         }
         assert_eq!(buffer.backpressure_level(), BackpressureLevel::High);
 
         // Fill to critical (90%)
         for i in 768..922 {
-            buffer.try_push(i).unwrap();
+            buffer
+                .try_push(i)
+                .expect("push should succeed when buffer not full");
         }
         assert_eq!(buffer.backpressure_level(), BackpressureLevel::Critical);
     }
@@ -527,12 +545,14 @@ mod tests {
         let num_producers = 4;
         let num_consumers = 2;
         let items_per_producer = 1000;
+        let producers_done = Arc::new(AtomicUsize::new(0));
 
         let mut handles = vec![];
 
         // Spawn producers
         for p in 0..num_producers {
             let buffer = Arc::clone(&buffer);
+            let producers_done = Arc::clone(&producers_done);
             handles.push(thread::spawn(move || {
                 let mut pushed = 0;
                 for i in 0..items_per_producer {
@@ -550,6 +570,7 @@ mod tests {
                         }
                     }
                 }
+                producers_done.fetch_add(1, Ordering::Release);
                 pushed
             }));
         }
@@ -557,17 +578,21 @@ mod tests {
         // Spawn consumers
         for _ in 0..num_consumers {
             let buffer = Arc::clone(&buffer);
+            let producers_done = Arc::clone(&producers_done);
             handles.push(thread::spawn(move || {
                 let mut popped = 0;
-                let mut empty_count = 0;
-                while empty_count < 1000 {
+                loop {
                     match buffer.try_pop() {
                         Some(_) => {
                             popped += 1;
-                            empty_count = 0;
                         }
                         None => {
-                            empty_count += 1;
+                            // Exit only after all producers finished and buffer is drained.
+                            if producers_done.load(Ordering::Acquire) == num_producers
+                                && buffer.is_empty()
+                            {
+                                break;
+                            }
                             thread::yield_now();
                         }
                     }
@@ -580,7 +605,7 @@ mod tests {
         let mut total_popped = 0;
 
         for (i, handle) in handles.into_iter().enumerate() {
-            let count = handle.join().unwrap();
+            let count = handle.join().expect("thread should not panic");
             if i < num_producers {
                 total_pushed += count;
             } else {
@@ -599,8 +624,8 @@ mod tests {
     fn test_stats() {
         let buffer: RingBuffer<u64> = RingBuffer::new(16);
 
-        buffer.try_push(1).unwrap();
-        buffer.try_push(2).unwrap();
+        buffer.try_push(1).expect("push should succeed in test");
+        buffer.try_push(2).expect("push should succeed in test");
         buffer.try_pop();
 
         let stats = buffer.stats();

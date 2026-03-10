@@ -341,7 +341,10 @@ impl SearchParams {
             .collect();
 
         let filter_expr = if conditions.len() == 1 {
-            conditions.into_iter().next().unwrap()
+            conditions
+                .into_iter()
+                .next()
+                .unwrap_or(FilterExpression::And(Vec::new()))
         } else {
             FilterExpression::And(conditions)
         };
@@ -812,7 +815,9 @@ pub mod protocol_conversions {
         match conditions {
             Ok(conds) => {
                 if conds.len() == 1 {
-                    Ok(conds.into_iter().next().unwrap())
+                    conds.into_iter().next().ok_or_else(|| {
+                        "Internal error: expected one converted filter condition".to_string()
+                    })
                 } else {
                     // Use AND logic by default for multiple conditions
                     Ok(FilterExpression::And(conds))
@@ -923,7 +928,10 @@ pub mod protocol_conversions {
             .collect();
 
         if conditions.len() == 1 {
-            conditions.into_iter().next().unwrap()
+            conditions
+                .into_iter()
+                .next()
+                .unwrap_or(FilterExpression::And(Vec::new()))
         } else {
             FilterExpression::And(conditions)
         }
@@ -978,7 +986,9 @@ pub mod protocol_conversions {
 
         let conditions = conditions?;
         if conditions.len() == 1 {
-            Ok(conditions.into_iter().next().unwrap())
+            conditions.into_iter().next().ok_or_else(|| {
+                "Internal error: expected one v1 simple filter condition".to_string()
+            })
         } else {
             Ok(FilterExpression::And(conditions))
         }
@@ -1051,14 +1061,18 @@ pub mod protocol_conversions {
         match crate::proto::proximadb_v1::LogicalOp::try_from(metadata_filter.op) {
             Ok(crate::proto::proximadb_v1::LogicalOp::And) => {
                 if conditions.len() == 1 {
-                    Ok(conditions.into_iter().next().unwrap())
+                    conditions.into_iter().next().ok_or_else(|| {
+                        "Internal error: expected one metadata filter condition".to_string()
+                    })
                 } else {
                     Ok(FilterExpression::And(conditions))
                 }
             }
             Ok(crate::proto::proximadb_v1::LogicalOp::Or) => {
                 if conditions.len() == 1 {
-                    Ok(conditions.into_iter().next().unwrap())
+                    conditions.into_iter().next().ok_or_else(|| {
+                        "Internal error: expected one metadata filter condition".to_string()
+                    })
                 } else {
                     Ok(FilterExpression::Or(conditions))
                 }
@@ -1066,7 +1080,9 @@ pub mod protocol_conversions {
             _ => {
                 // Default to AND for unspecified
                 if conditions.len() == 1 {
-                    Ok(conditions.into_iter().next().unwrap())
+                    conditions.into_iter().next().ok_or_else(|| {
+                        "Internal error: expected one metadata filter condition".to_string()
+                    })
                 } else {
                     Ok(FilterExpression::And(conditions))
                 }

@@ -472,7 +472,7 @@ impl RestoreManager {
     /// Find the most recent backup that can be used for point-in-time recovery
     pub async fn find_backup_for_pitr(
         &self,
-        target_timestamp: u64,
+        _target_timestamp: u64,
     ) -> Result<Option<BackupManifest>> {
         // TODO: Implement by listing backups and finding one before target time
         // For now, return None

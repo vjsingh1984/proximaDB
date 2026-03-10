@@ -30,6 +30,7 @@
 //! ```
 
 use anyhow::{Result, anyhow};
+use std::cmp::Ordering;
 use std::f32;
 
 /// ## Vector Normalization
@@ -279,7 +280,7 @@ pub fn quantile(vector: &[f32], quantile: f32) -> Result<f32> {
     }
 
     let mut sorted = vector.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
 
     let index = (quantile * (sorted.len() - 1) as f32) as usize;
     Ok(sorted[index])

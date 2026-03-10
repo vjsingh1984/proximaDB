@@ -33,9 +33,20 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     // Test parameters
-    let num_vectors = 1000;
+    let run_full_matrix = std::env::var("PROXIMADB_QUANT_STATS_FULL_MATRIX")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let default_vectors = if run_full_matrix { 1000 } else { 100 };
+    let num_vectors = std::env::var("PROXIMADB_QUANT_STATS_NUM_VECTORS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default_vectors);
     let dimension = 768; // BERT-like dimensions
-    let sparsity_levels = vec![0, 30, 50, 70, 90];
+    let sparsity_levels = if run_full_matrix {
+        vec![0, 30, 50, 70, 90]
+    } else {
+        vec![0, 90]
+    };
 
     // Generate test vectors with different sparsity levels
     let mut all_test_data = Vec::new();
@@ -45,54 +56,76 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
     }
 
     // Run tests for different quantization configurations
-    let quantization_configs = vec![
-        ("No Quantization", None, None),
-        (
-            "Binary Quantization",
-            Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
-                    threshold: None,
-                    sign_based: false,
-                })),
-            }),
-            None,
-        ),
-        (
-            "INT8 Quantization",
-            None,
-            Some(UnifiedQuantizationLevel::int8()),
-        ),
-        (
-            "PQ8 Quantization",
-            Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevel::Pq(PqConfig {
-                    num_subvectors: 8,
-                    bits_per_code: 8,
-                    codebook_id: None,
-                    adaptive_subvectors: false,
-                })),
-            }),
-            None,
-        ),
-        (
-            "PQ4 Quantization",
-            Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevel::Pq(PqConfig {
-                    num_subvectors: 16,
-                    bits_per_code: 4,
-                    codebook_id: None,
-                    adaptive_subvectors: false,
-                })),
-            }),
-            None,
-        ),
-    ];
+    let quantization_configs = if run_full_matrix {
+        vec![
+            ("No Quantization", None, None),
+            (
+                "Binary Quantization",
+                Some(UnifiedQuantizationLevel {
+                    level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
+                        threshold: None,
+                        sign_based: false,
+                    })),
+                }),
+                None,
+            ),
+            (
+                "INT8 Quantization",
+                None,
+                Some(UnifiedQuantizationLevel::int8()),
+            ),
+            (
+                "PQ8 Quantization",
+                Some(UnifiedQuantizationLevel {
+                    level_type: Some(QuantizationLevel::Pq(PqConfig {
+                        num_subvectors: 8,
+                        bits_per_code: 8,
+                        codebook_id: None,
+                        adaptive_subvectors: false,
+                    })),
+                }),
+                None,
+            ),
+            (
+                "PQ4 Quantization",
+                Some(UnifiedQuantizationLevel {
+                    level_type: Some(QuantizationLevel::Pq(PqConfig {
+                        num_subvectors: 16,
+                        bits_per_code: 4,
+                        codebook_id: None,
+                        adaptive_subvectors: false,
+                    })),
+                }),
+                None,
+            ),
+        ]
+    } else {
+        vec![
+            ("No Quantization", None, None),
+            (
+                "PQ8 Quantization",
+                Some(UnifiedQuantizationLevel {
+                    level_type: Some(QuantizationLevel::Pq(PqConfig {
+                        num_subvectors: 8,
+                        bits_per_code: 8,
+                        codebook_id: None,
+                        adaptive_subvectors: false,
+                    })),
+                }),
+                None,
+            ),
+        ]
+    };
 
     println!("\n📊 TEST CONFIGURATION:");
     println!("  • Vectors: {}", num_vectors);
     println!("  • Dimension: {}", dimension);
     println!("  • Sparsity levels: {:?}%", sparsity_levels);
     println!("  • Quantization types: {}", quantization_configs.len());
+    println!(
+        "  • Matrix mode: {}",
+        if run_full_matrix { "full" } else { "quick" }
+    );
 
     // Store results for summary
     let mut all_results = Vec::new();

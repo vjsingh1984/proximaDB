@@ -554,7 +554,8 @@ impl QueryCoordinator {
 
                         // Get nodes from shard (would use NodeScanOperator in full impl)
                         // For now, simplified implementation
-                        let nodes = if let Some(label) = labels.as_ref().and_then(|l| l.first()) {
+                        let label_opt = labels.as_ref().and_then(|l| l.first());
+                        let nodes = if let Some(label) = label_opt {
                             shard.get_nodes_by_label(label)?
                         } else {
                             shard.get_all_nodes()?

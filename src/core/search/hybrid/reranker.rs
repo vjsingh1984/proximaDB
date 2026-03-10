@@ -74,7 +74,10 @@ impl Reranker {
 
 impl Default for Reranker {
     fn default() -> Self {
-        Self::new().unwrap()
+        match Self::new() {
+            Ok(reranker) => reranker,
+            Err(_) => Self { _private: () },
+        }
     }
 }
 

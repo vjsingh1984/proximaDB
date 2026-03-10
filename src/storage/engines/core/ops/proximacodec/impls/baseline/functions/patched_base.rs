@@ -341,8 +341,8 @@ mod tests {
         values.extend(vec![101.0; 10]);
         values.extend(vec![10000.0; 5]); // Outliers
 
-        let encoded = encode_f32(&values, 0, 8).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, 0, 8).expect("Failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode f32 values");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -357,8 +357,8 @@ mod tests {
         values.extend(vec![1001; 5]);
         values.extend(vec![999999; 5]); // Outliers
 
-        let encoded = encode_i64(&values, 1000, 10).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, 1000, 10).expect("Failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("Failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -370,8 +370,8 @@ mod tests {
         values.extend(vec![501, 502, 503, 504, 505]);
         values.extend(vec![50000; 15]); // Outliers
 
-        let encoded = encode_i32(&values, 500, 8).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 500, 8).expect("Failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
     }
@@ -381,8 +381,8 @@ mod tests {
         // All values within threshold - should have 0 patches
         let values: Vec<i32> = (0..100).collect();
 
-        let encoded = encode_i32(&values, 0, 10).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 0, 10).expect("Failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
 
@@ -396,8 +396,8 @@ mod tests {
         // All values exceed threshold
         let values = vec![10000i32; 32];
 
-        let encoded = encode_i32(&values, 0, 4).unwrap(); // threshold = 16, all exceed
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 0, 4).expect("Failed to encode i32 values"); // threshold = 16, all exceed
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
 
@@ -411,8 +411,8 @@ mod tests {
         // Test with i32 extremes - would overflow with i32 deltas
         let values = vec![i32::MIN, i32::MAX, i32::MIN, i32::MAX];
 
-        let encoded = encode_i32(&values, 0, 32).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 0, 32).expect("Failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded, "Failed to roundtrip i32 extremes");
     }
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn test_patched_base_empty() {
         let values: Vec<f32> = vec![];
-        let encoded = encode_f32(&values, 0, 8).unwrap();
+        let encoded = encode_f32(&values, 0, 8).expect("Failed to encode f32 values");
         assert!(encoded.is_empty());
     }
 
@@ -431,8 +431,8 @@ mod tests {
         values[100] = 999999; // Single outlier
         values[500] = 888888; // Another outlier
 
-        let encoded = encode_i32(&values, 42, 8).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 42, 8).expect("Failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
 

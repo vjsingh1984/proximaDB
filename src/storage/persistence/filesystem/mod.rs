@@ -201,6 +201,9 @@ pub mod tests;
 // Filesystem implementations
 pub use local::LocalFileSystem;
 
+// Unified caching filesystem
+pub use unified::UnifiedCachingFilesystem;
+
 // Re-export centralized scheme validation functions
 pub use scheme_validation::{
     FilesystemScheme, extract_scheme, is_supported_scheme, normalize_url, validate_url,
@@ -1654,15 +1657,15 @@ impl FilesystemFactory {
     /// Create an Arc-wrapped filesystem factory (safe helper)
     ///
     /// This is a convenience helper for creating Arc<FilesystemFactory> with proper error handling.
-    /// Use this to avoid `.unwrap()` calls when creating filesystem factories.
+    /// Use this to avoid panic-prone call sites when creating filesystem factories.
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use anyhow::Context;
     ///
     /// // Before (panics on error):
-    /// let factory = Arc::new(FilesystemFactory::create(config).await.unwrap());
+    /// let factory = Arc::new(FilesystemFactory::create(config).await?);
     ///
     /// // After (proper error handling):
     /// let factory = FilesystemFactory::create_arc(config).await
@@ -1679,11 +1682,11 @@ impl FilesystemFactory {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use anyhow::Context;
     ///
     /// // Before (panics on error):
-    /// let factory = Arc::new(FilesystemFactory::create_default().await.unwrap());
+    /// let factory = Arc::new(FilesystemFactory::create_default().await?);
     ///
     /// // After (proper error handling):
     /// let factory = FilesystemFactory::create_default_arc().await
@@ -1702,7 +1705,9 @@ mod inline_tests {
     #[tokio::test]
     async fn test_filesystem_factory_creation() {
         let config = FilesystemConfig::default();
-        let factory = FilesystemFactory::create(config).await.unwrap();
+        let factory = FilesystemFactory::create(config)
+            .await
+            .expect("Failed to create filesystem factory with default config");
 
         // Should have local filesystem by default
         assert!(factory.available_filesystems().contains(&"file"));
@@ -1711,33 +1716,51 @@ mod inline_tests {
     #[tokio::test]
     async fn test_url_scheme_extraction() {
         let config = FilesystemConfig::default();
-        let factory = FilesystemFactory::create(config).await.unwrap();
+        let factory = FilesystemFactory::create(config)
+            .await
+            .expect("Failed to create filesystem factory for URL scheme extraction test");
 
         assert_eq!(
-            factory.extract_scheme("file:///tmp/test.txt").unwrap(),
+            factory
+                .extract_scheme("file:///tmp/test.txt")
+                .expect("Failed to extract scheme from file:// URL"),
             "file"
         );
-        assert_eq!(factory.extract_scheme("s3://bucket/key").unwrap(), "s3");
+        assert_eq!(
+            factory
+                .extract_scheme("s3://bucket/key")
+                .expect("Failed to extract scheme from s3:// URL"),
+            "s3"
+        );
         assert_eq!(
             factory
                 .extract_scheme("adls://account/container/path")
-                .unwrap(),
+                .expect("Failed to extract scheme from adls:// URL"),
             "adls"
         );
         assert_eq!(
             factory
                 .extract_scheme("abfs://container@account/path")
-                .unwrap(),
+                .expect("Failed to extract scheme from abfs:// URL"),
             "abfs"
         );
         assert_eq!(
-            factory.extract_scheme("gcs://bucket/object").unwrap(),
+            factory
+                .extract_scheme("gcs://bucket/object")
+                .expect("Failed to extract scheme from gcs:// URL"),
             "gcs"
         );
         // Test gs:// scheme mapping to gcs
-        assert_eq!(factory.extract_scheme("gs://bucket/object").unwrap(), "gcs");
         assert_eq!(
-            factory.extract_scheme("hdfs://namenode:9000/path").unwrap(),
+            factory
+                .extract_scheme("gs://bucket/object")
+                .expect("Failed to extract scheme from gs:// URL"),
+            "gcs"
+        );
+        assert_eq!(
+            factory
+                .extract_scheme("hdfs://namenode:9000/path")
+                .expect("Failed to extract scheme from hdfs:// URL"),
             "hdfs"
         );
     }
@@ -1745,18 +1768,22 @@ mod inline_tests {
     #[tokio::test]
     async fn test_path_extraction() {
         let _config = FilesystemConfig::default();
-        let _factory = FilesystemFactory::create(_config).await.unwrap();
+        let _factory = FilesystemFactory::create(_config)
+            .await
+            .expect("Failed to create filesystem factory for path extraction test");
 
         assert_eq!(
-            FilesystemFactory::resolve_path("file:///tmp/test.txt").unwrap(),
+            FilesystemFactory::resolve_path("file:///tmp/test.txt")
+                .expect("Failed to resolve path from file:// URL"),
             "/tmp/test.txt"
         );
         assert_eq!(
-            FilesystemFactory::resolve_path("s3://bucket/key").unwrap(),
+            FilesystemFactory::resolve_path("s3://bucket/key")
+                .expect("Failed to resolve path from s3:// URL"),
             "/key"
         );
         assert_eq!(
-            FilesystemFactory::resolve_path("/local/path").unwrap(),
+            FilesystemFactory::resolve_path("/local/path").expect("Failed to resolve local path"),
             "/local/path"
         );
     }

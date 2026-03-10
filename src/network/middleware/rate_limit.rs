@@ -332,7 +332,9 @@ fn get_client_ip<B>(request: &Request<B>) -> IpAddr {
 
     // Fall back to connection remote address
     // Note: This would need to be set by the server, for now use localhost
-    "127.0.0.1".parse().unwrap()
+    "127.0.0.1"
+        .parse()
+        .unwrap_or_else(|_| std::net::IpAddr::from([127, 0, 0, 1]))
 }
 
 /// Check if the path is a health endpoint

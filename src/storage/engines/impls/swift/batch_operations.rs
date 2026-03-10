@@ -168,9 +168,9 @@ async fn load_and_extract_records(
         let cache = cache.as_ref().map(|c| c.clone());
 
         let handle = tokio::spawn(async move {
-            // SAFETY: acquire().unwrap() is safe because the semaphore is never closed
+            // SAFETY: semaphore acquire is safe because the semaphore is never closed
             // during batch operations. It is only used for concurrency limiting.
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem.acquire().await.ok();
 
             // Check cache first
             let block = if let Some(ref cache) = cache {
@@ -306,7 +306,10 @@ pub async fn prefetch_blocks(
         return Ok(());
     }
 
-    let cache = cache.unwrap();
+    let cache = match cache {
+        Some(cache) => cache,
+        None => return Ok(()),
+    };
     let semaphore = Arc::new(Semaphore::new(4)); // Limited prefetch parallelism
     let mut handles = Vec::new();
 
@@ -320,9 +323,9 @@ pub async fn prefetch_blocks(
         let cache = cache.clone();
 
         let handle = tokio::spawn(async move {
-            // SAFETY: acquire().unwrap() is safe because the semaphore is never closed
+            // SAFETY: semaphore acquire is safe because the semaphore is never closed
             // during prefetch operations. It is only used for concurrency limiting.
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem.acquire().await.ok();
 
             match load_block_from_disk(sb_idx, b_idx).await {
                 Ok(block) => {

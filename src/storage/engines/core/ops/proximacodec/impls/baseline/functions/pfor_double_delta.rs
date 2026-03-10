@@ -457,8 +457,8 @@ mod tests {
         // Perfect case: linear sequence (constant second deltas)
         let values = vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 
-        let encoded = encode_f32(&values, 0).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, 0).expect("Failed to encode linear sequence");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode linear sequence");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -485,8 +485,9 @@ mod tests {
         // Normalized embedding-like values (smooth)
         let values: Vec<f32> = (0..100).map(|i| (i as f32) * 0.01).collect();
 
-        let encoded = encode_f32(&values, 0).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, 0).expect("Failed to encode smooth embeddings");
+        let decoded =
+            decode_f32(&encoded, values.len()).expect("Failed to decode smooth embeddings");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -509,8 +510,9 @@ mod tests {
         values[50] = 5.0; // Outlier
         values[75] = -2.0; // Outlier
 
-        let encoded = encode_f32(&values, 0).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, 0).expect("Failed to encode values with outliers");
+        let decoded =
+            decode_f32(&encoded, values.len()).expect("Failed to decode values with outliers");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -530,8 +532,8 @@ mod tests {
     fn test_pfor_double_delta_i64() {
         let values: Vec<i64> = (0..100).collect();
 
-        let encoded = encode_i64(&values, 0).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, 0).expect("Failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("Failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -540,8 +542,8 @@ mod tests {
     fn test_pfor_double_delta_single_value() {
         let values = vec![42.0f32];
 
-        let encoded = encode_f32(&values, 0).unwrap();
-        let decoded = decode_f32(&encoded, 1).unwrap();
+        let encoded = encode_f32(&values, 0).expect("Failed to encode single value");
+        let decoded = decode_f32(&encoded, 1).expect("Failed to decode single value");
 
         assert_eq!(values, decoded);
     }
@@ -550,10 +552,10 @@ mod tests {
     fn test_pfor_double_delta_empty() {
         let values: Vec<f32> = vec![];
 
-        let encoded = encode_f32(&values, 0).unwrap();
+        let encoded = encode_f32(&values, 0).expect("Failed to encode empty values");
         assert!(encoded.is_empty());
 
-        let decoded = decode_f32(&encoded, 0).unwrap();
+        let decoded = decode_f32(&encoded, 0).expect("Failed to decode empty values");
         assert!(decoded.is_empty());
     }
 
@@ -562,8 +564,8 @@ mod tests {
         // All same value → all deltas = 0 → all double deltas = 0
         let values = vec![0.5f32; 100];
 
-        let encoded = encode_f32(&values, 0).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, 0).expect("Failed to encode constant values");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode constant values");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {

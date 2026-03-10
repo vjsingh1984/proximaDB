@@ -173,14 +173,21 @@ impl LouvainCommunityDetection {
 
             // Visit nodes in random order (for now, sequential)
             for node_idx in 0..node_count {
-                let current_community = communities[&node_idx];
+                let current_community = *communities.get(&node_idx).ok_or_else(|| {
+                    ProximaDBError::Internal(format!("Node {} not found in communities", node_idx))
+                })?;
 
                 // Find best neighboring community
                 let neighbors = self.csr.get_neighbors(node_idx).unwrap_or(&[]);
                 let mut neighbor_communities: HashMap<usize, f64> = HashMap::new();
 
                 for &neighbor_idx in neighbors {
-                    let neighbor_community = communities[&neighbor_idx];
+                    let neighbor_community = *communities.get(&neighbor_idx).ok_or_else(|| {
+                        ProximaDBError::Internal(format!(
+                            "Neighbor node {} not found in communities",
+                            neighbor_idx
+                        ))
+                    })?;
                     *neighbor_communities
                         .entry(neighbor_community)
                         .or_insert(0.0) += 1.0;
@@ -493,14 +500,19 @@ mod tests {
         // 3 - 4 - 5    (community 2)
         // 1 - 3 (weak link between communities)
 
-        csr.add_edge(0, 1, "e0".to_string()).unwrap();
-        csr.add_edge(1, 2, "e1".to_string()).unwrap();
-        csr.add_edge(3, 4, "e2".to_string()).unwrap();
-        csr.add_edge(4, 5, "e3".to_string()).unwrap();
-        csr.add_edge(1, 3, "e4".to_string()).unwrap(); // Weak inter-community link
+        csr.add_edge(0, 1, "e0".to_string())
+            .expect("Failed to add edge e0");
+        csr.add_edge(1, 2, "e1".to_string())
+            .expect("Failed to add edge e1");
+        csr.add_edge(3, 4, "e2".to_string())
+            .expect("Failed to add edge e2");
+        csr.add_edge(4, 5, "e3".to_string())
+            .expect("Failed to add edge e3");
+        csr.add_edge(1, 3, "e4".to_string())
+            .expect("Failed to add edge e4"); // Weak inter-community link
 
         // Rebuild CSR to apply temp edges
-        csr.rebuild().unwrap();
+        csr.rebuild().expect("Failed to rebuild CSR");
 
         csr
     }
@@ -510,7 +522,9 @@ mod tests {
         let csr = Arc::new(create_test_csr());
         let louvain = LouvainCommunityDetection::new(csr.clone(), 1.0, 10);
 
-        let communities = louvain.execute(NoInput).unwrap();
+        let communities = louvain
+            .execute(NoInput)
+            .expect("Failed to execute Louvain algorithm");
 
         // Verify we have community assignments for all nodes
         assert_eq!(communities.len(), 6);
@@ -530,12 +544,14 @@ mod tests {
         let csr = Arc::new(create_test_csr());
         let louvain = LouvainCommunityDetection::new(csr.clone(), 1.0, 10);
 
-        let communities = louvain.execute(NoInput).unwrap();
+        let communities = louvain
+            .execute(NoInput)
+            .expect("Failed to execute Louvain algorithm");
 
         // Convert back to usize for modularity calculation
         let communities_usize: HashMap<usize, usize> = communities
             .into_iter()
-            .map(|(k, v)| (k.parse().unwrap(), v))
+            .map(|(k, v)| (k.parse().expect("Failed to parse node ID as usize"), v))
             .collect();
 
         let modularity = louvain.compute_modularity(&communities_usize);
@@ -557,9 +573,11 @@ mod tests {
         let thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(4)
             .build()
-            .unwrap();
+            .expect("Failed to build Rayon thread pool");
 
-        let communities = louvain.execute_parallel(NoInput, &thread_pool).unwrap();
+        let communities = louvain
+            .execute_parallel(NoInput, &thread_pool)
+            .expect("Failed to execute parallel Louvain algorithm");
 
         // Verify we have community assignments for all nodes
         assert_eq!(communities.len(), 6);
@@ -571,7 +589,9 @@ mod tests {
         let mut louvain = LouvainCommunityDetection::new(csr.clone(), 1.0, 10);
 
         // Initial community detection
-        let _initial_communities = louvain.execute(NoInput).unwrap();
+        let _initial_communities = louvain
+            .execute(NoInput)
+            .expect("Failed to execute initial Louvain algorithm");
 
         // Add a new edge
         let change = GraphChange::EdgeAdded {

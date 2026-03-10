@@ -345,10 +345,9 @@ impl TransactionCoordinator {
         };
 
         // Create metadata-optimized write strategy
-        let fs = filesystem.get_filesystem("file://").unwrap_or_else(|_| {
-            // Fallback to any available filesystem
-            panic!("No filesystem available")
-        });
+        let fs = filesystem
+            .get_filesystem("file://")
+            .map_err(|_| anyhow::anyhow!("No filesystem available for transaction coordinator"))?;
         let write_strategy =
             WriteStrategyFactory::create_metadata_strategy(fs.as_ref(), temp_directory.as_deref())?;
 
@@ -1247,10 +1246,16 @@ impl<'a> TransactionHandle<'a> {
 /// Generate unique transaction ID
 pub fn generate_transaction_id(prefix: &str) -> String {
     let counter = TRANSACTION_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
+    let timestamp = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis(),
+        Err(error) => {
+            warn!(
+                error = %error,
+                "System clock is before Unix epoch while generating transaction ID; using timestamp 0"
+            );
+            0
+        }
+    };
     format!("{}_{}_{}", prefix, timestamp, counter)
 }
 

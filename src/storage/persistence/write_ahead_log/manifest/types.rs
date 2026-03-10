@@ -498,8 +498,8 @@ impl GlobalManifest {
             checkpoint_lsn,
             timestamp_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or(0),
             collections: collection_map.into_values().collect(),
             safe_to_delete_before_lsn: checkpoint_lsn,
         };

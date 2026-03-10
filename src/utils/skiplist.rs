@@ -48,37 +48,55 @@ where
     /// Insert a key-value pair, returning the old value if the key existed
     /// Guaranteed to succeed (never returns due to contention)
     pub fn insert(&self, key: K, value: V) -> Option<V> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.insert(key, value)
     }
 
     /// Get the value associated with a key
     pub fn get(&self, key: &K) -> Option<V> {
-        let data = self.data.lock().unwrap();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.get(key).cloned()
     }
 
     /// Remove a key-value pair, returning the value if it existed
     pub fn remove(&self, key: &K) -> Option<V> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.remove(key)
     }
 
     /// Get the number of elements in the skip list
     pub fn len(&self) -> usize {
-        let data = self.data.lock().unwrap();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.len()
     }
 
     /// Check if the skip list is empty
     pub fn is_empty(&self) -> bool {
-        let data = self.data.lock().unwrap();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.is_empty()
     }
 
     /// Clear all elements from the skip list
     pub fn clear(&self) {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.clear();
     }
 
@@ -87,7 +105,10 @@ where
     where
         R: RangeBounds<K>,
     {
-        let data = self.data.lock().unwrap();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.range(range)
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect::<Vec<_>>()
@@ -96,7 +117,10 @@ where
 
     /// Iterate over all key-value pairs
     pub fn iter(&self) -> impl Iterator<Item = (K, V)> {
-        let data = self.data.lock().unwrap();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect::<Vec<_>>()
@@ -130,7 +154,10 @@ impl<K, V> Iterator for SkipListIterator<K, V> {
 impl<K: Ord + Clone, V: Clone> SkipList<K, V> {
     /// Create an iterator (for backwards compatibility)
     pub fn skip_list_iter(&self) -> SkipListIterator<K, V> {
-        let data = self.data.lock().unwrap();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let items = data
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))

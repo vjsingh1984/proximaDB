@@ -1312,7 +1312,7 @@ impl SwiftFile {
             let mut columnar_stats = Vec::new();
             for dim in 0..dimension {
                 let mut values: Vec<f32> = all_vectors.iter().map(|v| v[dim]).collect();
-                values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
                 let min_val = values[0];
                 let max_val = values[values.len() - 1];

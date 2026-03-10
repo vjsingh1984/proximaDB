@@ -196,7 +196,9 @@ impl RaptorCompactor {
         for (rg_idx, cluster_id) in sorted_cluster_ids.iter().enumerate() {
             // SAFETY: cluster_id is obtained from vectors_by_cluster.keys(), so it must
             // exist. We iterate in sorted order and remove() each key exactly once.
-            let vectors = vectors_by_cluster.remove(cluster_id).unwrap();
+            let Some(vectors) = vectors_by_cluster.remove(cluster_id) else {
+                continue;
+            };
 
             // Create rowgroup - rowgroup_id matches position in sorted order
             let mut row_group = RowGroup::with_capacity(rg_idx as u16, p);

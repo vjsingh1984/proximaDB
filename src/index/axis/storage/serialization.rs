@@ -29,6 +29,20 @@ use tracing::{debug, error, info, warn};
 const AXIS_MAGIC: &[u8; 4] = b"AXIS";
 const VERSION: u16 = 1;
 
+fn unix_now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+fn unix_now_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
+}
+
 /// Serialization error types
 #[derive(Debug, thiserror::Error)]
 pub enum SerializationError {
@@ -173,10 +187,7 @@ impl IndexSerializer {
             collection_id: collection_id.to_string(),
             num_vectors: index.len(),
             dimension: index.dimension(),
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: unix_now_secs(),
             checksum: 0, // Will be calculated after serialization
             is_delta: false,
             base_checkpoint_id: None,
@@ -273,10 +284,7 @@ impl IndexSerializer {
             collection_id: collection_id.to_string(),
             num_vectors: index.len(),
             dimension: index.dimension(),
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: unix_now_secs(),
             checksum: 0,
             is_delta: false,
             base_checkpoint_id: None,
@@ -370,19 +378,9 @@ impl IndexSerializer {
         index_data: Vec<u8>,
         collection_id: &str,
     ) -> Result<IndexCheckpoint> {
-        let checkpoint_id = format!(
-            "chk_{}_{}",
-            collection_id,
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        );
+        let checkpoint_id = format!("chk_{}_{}", collection_id, unix_now_millis());
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = unix_now_secs();
 
         let metadata = IndexMetadata {
             index_type,
@@ -733,17 +731,8 @@ impl DeltaManager {
         if let Some(ref checkpoint) = self.base_checkpoint {
             let delta = IndexDelta {
                 base_checkpoint_id: checkpoint.checkpoint_id.clone(),
-                delta_id: format!(
-                    "delta_{}",
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()
-                ),
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                delta_id: format!("delta_{}", unix_now_millis()),
+                timestamp: unix_now_secs(),
                 operations: vec![operation],
             };
 

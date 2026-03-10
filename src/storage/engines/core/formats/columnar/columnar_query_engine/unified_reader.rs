@@ -1814,7 +1814,10 @@ impl UnifiedParquetReader {
 
         // Combine with AND logic (MetadataFilter default)
         if expressions.len() == 1 {
-            expressions.into_iter().next().unwrap()
+            expressions
+                .into_iter()
+                .next()
+                .unwrap_or(FilterExpression::And(Vec::new()))
         } else {
             FilterExpression::And(expressions)
         }

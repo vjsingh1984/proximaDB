@@ -1,9 +1,13 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust benchmark release install help
+.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline
 
 # Default target
 all: build test
+
+PANIC_POLICY_BASELINE ?= docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
+PANIC_POLICY_ARTIFACT ?= artifacts/panic_policy/latest_metrics.json
+PANIC_POLICY_CRITICAL_MODULES ?= network_rest,api_handlers,graph,query
 
 # Build targets
 build:
@@ -62,6 +66,30 @@ clippy:
 
 check: fmt clippy test
 	@echo "✅ Code quality checks passed"
+
+capability-matrix-check:
+	@echo "🧭 Validating capability matrix..."
+	python3 scripts/validate_capability_matrix.py
+
+panic-policy-report:
+	@echo "🧯 WS-2 panic policy report (non-blocking)..."
+	@mkdir -p artifacts/panic_policy
+	bash scripts/count_panic_patterns.sh --mode report --baseline $(PANIC_POLICY_BASELINE) --format text --write $(PANIC_POLICY_ARTIFACT)
+
+panic-policy-no-regression:
+	@echo "🧯 WS-2 panic policy no-regression check..."
+	@mkdir -p artifacts/panic_policy
+	bash scripts/count_panic_patterns.sh --mode no-regression --baseline $(PANIC_POLICY_BASELINE) --format text --write $(PANIC_POLICY_ARTIFACT)
+
+panic-policy-module-guard:
+	@echo "🧯 WS-2 panic policy critical-module guard..."
+	@mkdir -p artifacts/panic_policy
+	bash scripts/count_panic_patterns.sh --mode module-guard --baseline $(PANIC_POLICY_BASELINE) --critical-modules $(PANIC_POLICY_CRITICAL_MODULES) --format text --write $(PANIC_POLICY_ARTIFACT)
+
+panic-policy-baseline:
+	@echo "🧯 Refreshing WS-2 panic policy baseline..."
+	bash scripts/count_panic_patterns.sh --mode report --format json --write $(PANIC_POLICY_BASELINE)
+	@echo "Updated baseline: $(PANIC_POLICY_BASELINE)"
 
 # Release targets
 release: clean build-server test benchmark
@@ -158,6 +186,11 @@ help:
 	@echo "  fmt                - Format code"
 	@echo "  clippy             - Run linter"
 	@echo "  check              - Format + lint + test"
+	@echo "  capability-matrix-check - Validate docs/_internal/roadmap/CAPABILITY_MATRIX.toml"
+	@echo "  panic-policy-report - WS-2 panic metrics report (non-blocking)"
+	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"
+	@echo "  panic-policy-module-guard - Fail on critical module panic regression"
+	@echo "  panic-policy-baseline - Refresh panic-policy baseline artifact"
 	@echo ""
 	@echo "Release:"
 	@echo "  release            - Full release build with tests"

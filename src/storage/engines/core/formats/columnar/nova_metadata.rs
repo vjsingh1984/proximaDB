@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 // Bytemuck imports removed - using manual serialization for flexibility
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::core::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::traits::{
@@ -994,10 +994,10 @@ impl MetadataSerializer for NovaMetadataSerializer {
     }
 
     fn can_skip_file(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> bool {
-        let nova_metadata = metadata
-            .as_any()
-            .downcast_ref::<NovaMetadata>()
-            .expect("Invalid metadata type for NOVA serializer");
+        let Some(nova_metadata) = metadata.as_any().downcast_ref::<NovaMetadata>() else {
+            warn!("Invalid metadata type for NOVA serializer in can_skip_file; cannot skip");
+            return false;
+        };
 
         match &query_context.query_type {
             QueryType::IdLookup => {
@@ -1042,10 +1042,12 @@ impl MetadataSerializer for NovaMetadataSerializer {
         metadata: &dyn EngineMetadata,
         query_context: &QueryContext,
     ) -> Option<Vec<DataRange>> {
-        let nova_metadata = metadata
-            .as_any()
-            .downcast_ref::<NovaMetadata>()
-            .expect("Invalid metadata type for NOVA serializer");
+        let Some(nova_metadata) = metadata.as_any().downcast_ref::<NovaMetadata>() else {
+            warn!(
+                "Invalid metadata type for NOVA serializer in get_required_ranges; falling back to full read"
+            );
+            return None;
+        };
 
         let required_groups = nova_metadata.get_required_column_groups(query_context);
         let column_requirements = nova_metadata.get_required_columns(query_context);
@@ -1079,33 +1081,39 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_nova_metadata_serialization() {
-        let _temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
+    async fn test_nova_metadata_serialization() -> Result<(), ProximaDBError> {
+        let _temp_dir = TempDir::new().map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to create temporary directory: {}", e))
+        })?;
+        let filesystem = Arc::new(FilesystemFactory::create_default().await.map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to create filesystem: {}", e))
+        })?);
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         // Test serialization
-        let serialized = serializer
-            .serialize_metadata("/test/file.nova", "test_collection")
-            .unwrap();
+        let serialized = serializer.serialize_metadata("/test/file.nova", "test_collection")?;
         assert!(!serialized.is_empty());
 
         // Test deserialization
-        let metadata = serializer.deserialize_metadata(&serialized).unwrap();
+        let metadata = serializer.deserialize_metadata(&serialized)?;
         assert_eq!(metadata.file_size(), 2 * 1024 * 1024);
         assert!(metadata.memory_footprint() > 0);
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_nova_columnar_optimization() {
-        let _temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
+    async fn test_nova_columnar_optimization() -> Result<(), ProximaDBError> {
+        let _temp_dir = TempDir::new().map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to create temporary directory: {}", e))
+        })?;
+        let filesystem = Arc::new(FilesystemFactory::create_default().await.map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to create filesystem: {}", e))
+        })?);
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
-        let serialized = serializer
-            .serialize_metadata("/test/file.nova", "test_collection")
-            .unwrap();
-        let metadata = serializer.deserialize_metadata(&serialized).unwrap();
+        let serialized = serializer.serialize_metadata("/test/file.nova", "test_collection")?;
+        let metadata = serializer.deserialize_metadata(&serialized)?;
 
         // Test metadata filtering - should be very selective
         let mut query_context = QueryContext::default();
@@ -1124,18 +1132,22 @@ mod tests {
             assert!(!ranges.is_empty());
             // Should be more selective than full file
         }
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_nova_similarity_search_optimization() {
-        let _temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
+    async fn test_nova_similarity_search_optimization() -> Result<(), ProximaDBError> {
+        let _temp_dir = TempDir::new().map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to create temporary directory: {}", e))
+        })?;
+        let filesystem = Arc::new(FilesystemFactory::create_default().await.map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to create filesystem: {}", e))
+        })?);
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
-        let serialized = serializer
-            .serialize_metadata("/test/file.nova", "test_collection")
-            .unwrap();
-        let metadata = serializer.deserialize_metadata(&serialized).unwrap();
+        let serialized = serializer.serialize_metadata("/test/file.nova", "test_collection")?;
+        let metadata = serializer.deserialize_metadata(&serialized)?;
 
         // Test similarity search with vector
         let mut query_context = QueryContext::default();
@@ -1149,5 +1161,7 @@ mod tests {
         // With 8 column groups, selectivity should be around 0.92
         // But the calculation is (1.0 - (8/100).min(0.8)).max(0.1) = 0.92
         assert!(selectivity <= 1.0); // Valid selectivity range
+
+        Ok(())
     }
 }

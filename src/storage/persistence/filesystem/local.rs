@@ -126,7 +126,10 @@ impl LocalFileSystem {
                     while remaining.starts_with("../") {
                         if let Some(parent) = current.parent() {
                             current = parent.to_path_buf();
-                            remaining = remaining.strip_prefix("../").unwrap_or(remaining);
+                            remaining = match remaining.strip_prefix("../") {
+                                Some(s) => s,
+                                None => remaining,
+                            };
                         } else {
                             // Can't go up further, just use what we have
                             break;
@@ -143,7 +146,10 @@ impl LocalFileSystem {
                     }
                 } else if path_str.starts_with("./") {
                     // Replace ./ with the base directory
-                    let clean_path = path_str.strip_prefix("./").unwrap_or(path_str);
+                    let clean_path = match path_str.strip_prefix("./") {
+                        Some(p) => p,
+                        None => path_str,
+                    };
                     resolved_path = PathBuf::from(fallback_base).join(clean_path);
                 } else if path_str == "." {
                     // Just current directory
@@ -591,7 +597,10 @@ impl FileSystem for LocalFileSystem {
             }
             Err(e) => {
                 // Get current position for debugging
-                let current_pos = file.stream_position().await.unwrap_or(0);
+                let current_pos = file
+                    .stream_position()
+                    .await
+                    .map_err(|e| FilesystemError::Io(e))?;
                 tracing::error!(
                     "LocalFS read_exact failed: path={}, offset={}, bytes_to_read={}, current_pos={}, file_size={}, error={:?}",
                     path,
@@ -645,7 +654,12 @@ impl FileSystem for LocalFileSystem {
             let name = entry_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
+                .ok_or_else(|| {
+                    FilesystemError::InvalidPath(format!(
+                        "Invalid filename encoding for path: {}",
+                        entry_path.display()
+                    ))
+                })?
                 .to_string();
 
             let metadata = entry.metadata().await.map_err(FilesystemError::Io)?;

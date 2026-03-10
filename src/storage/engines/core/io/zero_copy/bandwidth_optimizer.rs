@@ -63,9 +63,13 @@ impl OptimizedRange {
             panic!("Cannot create merged range from empty ranges");
         }
 
-        let start = ranges.iter().map(|r| r.offset).min().unwrap();
-        let end = ranges.iter().map(|r| r.offset + r.length).max().unwrap();
-        let priority = ranges.iter().map(|r| r.priority).max().unwrap();
+        let start = ranges.iter().map(|r| r.offset).min().unwrap_or(0);
+        let end = ranges
+            .iter()
+            .map(|r| r.offset + r.length)
+            .max()
+            .unwrap_or(0);
+        let priority = ranges.iter().map(|r| r.priority).max().unwrap_or(0);
 
         Self {
             range: DataRange::new(start, end - start, priority),
@@ -835,7 +839,10 @@ impl RangeOptimizer {
         let mut current_ranges = vec![ranges[0]];
 
         for range in ranges.into_iter().skip(1) {
-            let last_range = current_ranges.last().unwrap();
+            let Some(last_range) = current_ranges.last() else {
+                current_ranges.push(range);
+                continue;
+            };
 
             // Check if ranges should be merged
             let gap = range

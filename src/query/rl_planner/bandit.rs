@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use rand::distributions::{Distribution, Uniform};
 use rand_distr::Beta;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use super::action::{ActionId, ActionSpace, ExecutionAction};
 use super::state::PlannerState;
@@ -29,10 +30,24 @@ impl BetaDistribution {
 
     /// Sample from the posterior distribution
     pub fn sample(&self) -> f64 {
-        let beta =
-            Beta::new(self.alpha, self.beta).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
         let mut rng = rand::thread_rng();
-        beta.sample(&mut rng)
+        match Beta::new(self.alpha, self.beta).or_else(|_| Beta::new(1.0, 1.0)) {
+            Ok(beta) => beta.sample(&mut rng),
+            Err(error) => {
+                // TD-007: Safe fallback to neutral reward (0.5) when Beta distribution
+                // construction fails. This is acceptable because:
+                // 1. Beta::new only fails with invalid parameters (alpha <= 0, beta <= 0)
+                // 2. We try a fallback uniform prior (1.0, 1.0) first
+                // 3. Returning 0.5 (neutral reward) is better than panicking the sampler
+                warn!(
+                    error = %error,
+                    alpha = self.alpha,
+                    beta = self.beta,
+                    "Failed to construct Beta distribution; using neutral reward sample"
+                );
+                0.5
+            }
+        }
     }
 
     /// Get expected value (mean)
@@ -154,6 +169,7 @@ impl ContextualBanditPlanner {
     pub fn select_action(&self, state: &PlannerState) -> ExecutionAction {
         // Get action space for this engine
         let engine_name = state.storage_engine.to_string();
+        // TD-007: unwrap_or with safe default - fallback to default action space
         let action_space = self
             .engine_action_spaces
             .get(&engine_name)
@@ -184,13 +200,15 @@ impl ContextualBanditPlanner {
                 .action_stats
                 .get(&action_id)
                 .map(|beta| beta.sample())
-                .unwrap_or(0.5); // Optimistic prior
+                // TD-007: unwrap_or with safe default - optimistic prior (0.5) for new actions
+                .unwrap_or(0.5);
 
             // Add context bonus
             let context_bonus = self
                 .context_weights
                 .get(&action_id)
                 .map(|w| w.compute_bonus(&features))
+                // TD-007: unwrap_or with safe default - no bonus (0.0) for actions without context
                 .unwrap_or(0.0);
 
             let total_sample = posterior_sample + context_bonus;
@@ -236,6 +254,7 @@ impl ContextualBanditPlanner {
                 .action_stats
                 .get(&action_id)
                 .map(|beta| beta.mean())
+                // TD-007: unwrap_or with safe default - optimistic prior (0.5) for new actions
                 .unwrap_or(0.5);
 
             // Context bonus
@@ -243,6 +262,7 @@ impl ContextualBanditPlanner {
                 .context_weights
                 .get(&action_id)
                 .map(|w| w.compute_bonus(&features))
+                // TD-007: unwrap_or with safe default - no bonus (0.0) for actions without context
                 .unwrap_or(0.0);
 
             let total_value = expected + context_bonus;
@@ -272,6 +292,7 @@ impl ContextualBanditPlanner {
             .action_stats
             .get(&action_id)
             .map(|b| b.mean() as f32)
+            // TD-007: unwrap_or with safe default - optimistic prior (0.5) for new actions
             .unwrap_or(0.5);
         let error = (reward - expected) as f64;
 
@@ -339,6 +360,7 @@ impl ContextualBanditPlanner {
     /// Get top-k best actions for a given state
     pub fn get_top_actions(&self, state: &PlannerState, k: usize) -> Vec<(ExecutionAction, f64)> {
         let engine_name = state.storage_engine.to_string();
+        // TD-007: unwrap_or with safe default - fallback to default action space
         let action_space = self
             .engine_action_spaces
             .get(&engine_name)
@@ -354,17 +376,22 @@ impl ContextualBanditPlanner {
                     .action_stats
                     .get(&action_id)
                     .map(|b| b.mean())
+                    // TD-007: unwrap_or with safe default - optimistic prior (0.5) for new actions
                     .unwrap_or(0.5);
                 let context_bonus = self
                     .context_weights
                     .get(&action_id)
                     .map(|w| w.compute_bonus(&features))
+                    // TD-007: unwrap_or with safe default - no bonus (0.0) for actions without context
                     .unwrap_or(0.0);
                 (action.clone(), expected + context_bonus)
             })
             .collect();
 
-        scored_actions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_actions.sort_by(|a, b| {
+            // TD-007: unwrap_or with safe default - Equal for NaN comparisons
+            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored_actions.truncate(k);
         scored_actions
     }

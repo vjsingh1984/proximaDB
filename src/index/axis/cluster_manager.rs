@@ -141,7 +141,7 @@ impl ClusterManager {
                     .centroids
                     .iter()
                     .map(|c| Self::euclidean_distance(vector, c))
-                    .min_by(|a, b| a.partial_cmp(b).unwrap());
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 if let Some(dist) = min_dist {
                     distances.push(dist * dist);
                 } else {
@@ -199,7 +199,8 @@ impl ClusterManager {
             cluster_distances.push((i as u32, distance));
         }
 
-        cluster_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        cluster_distances
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(cluster_distances
             .into_iter()

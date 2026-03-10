@@ -253,7 +253,11 @@ impl CentroidStore {
         let mut centroids = Vec::with_capacity(n_clusters);
 
         // Choose first centroid randomly
-        centroids.push(training_vectors.choose(&mut rng).unwrap().clone());
+        let first_centroid = training_vectors
+            .choose(&mut rng)
+            .ok_or_else(|| anyhow!("Cannot select initial centroid from empty training set"))?
+            .clone();
+        centroids.push(first_centroid);
 
         // Choose remaining centroids with K-means++ probability
         for _ in 1..n_clusters {
@@ -263,8 +267,8 @@ impl CentroidStore {
                 let min_dist = centroids
                     .iter()
                     .map(|c| euclidean_distance(vector, c))
-                    .min_by(|a, b| a.partial_cmp(b).unwrap())
-                    .unwrap();
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .unwrap_or(f32::MAX);
                 distances.push(min_dist * min_dist); // Square for probability
             }
 
@@ -392,7 +396,7 @@ impl CentroidStore {
             })
             .collect();
 
-        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         distances.truncate(n);
         distances
     }
@@ -698,7 +702,8 @@ impl UnifiedIvfIndex {
                 let (c_idx, dist) = self.find_nearest_centroid_with_distance(vector, &centroids);
                 vector_distances.push((v_idx, c_idx, dist));
             }
-            vector_distances.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
+            vector_distances
+                .sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
 
             // Assign vectors respecting balance
             for (v_idx, c_idx, _) in vector_distances {
@@ -780,7 +785,11 @@ impl UnifiedIvfIndex {
         let mut centroids = Vec::with_capacity(k);
 
         // Choose first centroid randomly
-        centroids.push(vectors.choose(&mut rng).unwrap().clone());
+        let first_centroid = vectors
+            .choose(&mut rng)
+            .ok_or_else(|| anyhow!("Cannot select initial centroid from empty vector set"))?
+            .clone();
+        centroids.push(first_centroid);
 
         // Choose remaining centroids
         for _ in 1..k {
@@ -790,8 +799,8 @@ impl UnifiedIvfIndex {
                 let min_dist = centroids
                     .iter()
                     .map(|c| euclidean_distance(vector, c))
-                    .min_by(|a, b| a.partial_cmp(b).unwrap())
-                    .unwrap();
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .unwrap_or(f32::MAX);
                 distances.push(min_dist * min_dist);
             }
 
@@ -860,7 +869,7 @@ impl UnifiedIvfIndex {
             .map(|(idx, c)| (idx, euclidean_distance(vector, c)))
             .collect();
 
-        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         candidates.first().map(|c| c.0).unwrap_or(0)
     }
 
@@ -1225,7 +1234,9 @@ impl UnifiedIvfIndex {
 
         // Add vector to zero-overhead collection
         {
-            let mut coll = collection.write().unwrap();
+            let mut coll = collection
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             coll.add_fp32(id, &vector)?;
         }
 
@@ -1275,7 +1286,9 @@ impl UnifiedIvfIndex {
                 for vector_id in &posting_list.vector_ids {
                     // Get vector from zero-overhead collection
                     if let Some(collection_entry) = self.vectors.get(&self.collection_id) {
-                        let collection = collection_entry.read().unwrap();
+                        let collection = collection_entry
+                            .read()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
                         if let Some(view) = collection.get(vector_id) {
                             if let Some(vector_data) = view.as_f32() {
                                 let distance = self
@@ -1295,7 +1308,7 @@ impl UnifiedIvfIndex {
         }
 
         // Step 5: Sort and return top-k
-        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         candidates.truncate(k);
 
         Ok(candidates)

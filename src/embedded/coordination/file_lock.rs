@@ -378,13 +378,13 @@ mod tests {
 
     #[test]
     fn test_exclusive_lock_basic() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
         let path = temp_dir.path();
 
         let lock = FileLockManager::new(path, AccessMode::Exclusive);
         assert!(lock.is_ok());
 
-        let lock = lock.unwrap();
+        let lock = lock.expect("Failed to acquire exclusive lock for test");
         assert!(lock.is_locked());
         assert!(lock.can_write());
         assert_eq!(lock.mode(), AccessMode::Exclusive);
@@ -392,13 +392,13 @@ mod tests {
 
     #[test]
     fn test_shared_lock_basic() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
         let path = temp_dir.path();
 
         let lock = FileLockManager::new(path, AccessMode::SharedRead);
         assert!(lock.is_ok());
 
-        let lock = lock.unwrap();
+        let lock = lock.expect("Failed to acquire shared lock for test");
         assert!(lock.is_locked());
         assert!(!lock.can_write());
         assert_eq!(lock.mode(), AccessMode::SharedRead);
@@ -406,10 +406,11 @@ mod tests {
 
     #[test]
     fn test_exclusive_blocks_exclusive() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
         let path = temp_dir.path().to_path_buf();
 
-        let _lock1 = FileLockManager::new(&path, AccessMode::Exclusive).unwrap();
+        let _lock1 = FileLockManager::new(&path, AccessMode::Exclusive)
+            .expect("Failed to acquire first exclusive lock for test");
 
         // Non-blocking attempt should fail
         let lock2_result = FileLockManager::try_new(&path, AccessMode::Exclusive);
@@ -418,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_shared_allows_multiple() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
         let path = temp_dir.path().to_path_buf();
 
         let lock1 = FileLockManager::new(&path, AccessMode::SharedRead);
@@ -428,26 +429,42 @@ mod tests {
         assert!(lock2.is_ok());
 
         // Both locks should be held
-        assert!(lock1.unwrap().is_locked());
-        assert!(lock2.unwrap().is_locked());
+        assert!(
+            lock1
+                .expect("Failed to acquire first shared lock for test")
+                .is_locked()
+        );
+        assert!(
+            lock2
+                .expect("Failed to acquire second shared lock for test")
+                .is_locked()
+        );
     }
 
     #[test]
     fn test_access_mode_from_str() {
         assert_eq!(
-            "exclusive".parse::<AccessMode>().unwrap(),
+            "exclusive"
+                .parse::<AccessMode>()
+                .expect("Failed to parse 'exclusive' access mode"),
             AccessMode::Exclusive
         );
         assert_eq!(
-            "shared_read".parse::<AccessMode>().unwrap(),
+            "shared_read"
+                .parse::<AccessMode>()
+                .expect("Failed to parse 'shared_read' access mode"),
             AccessMode::SharedRead
         );
         assert_eq!(
-            "leader".parse::<AccessMode>().unwrap(),
+            "leader"
+                .parse::<AccessMode>()
+                .expect("Failed to parse 'leader' access mode"),
             AccessMode::LeaderFollower
         );
         assert_eq!(
-            "follower".parse::<AccessMode>().unwrap(),
+            "follower"
+                .parse::<AccessMode>()
+                .expect("Failed to parse 'follower' access mode"),
             AccessMode::SharedRead
         );
         assert!("invalid".parse::<AccessMode>().is_err());
@@ -455,25 +472,28 @@ mod tests {
 
     #[test]
     fn test_lock_file_path() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
         let path = temp_dir.path();
 
-        let lock = FileLockManager::new(path, AccessMode::Exclusive).unwrap();
+        let lock = FileLockManager::new(path, AccessMode::Exclusive)
+            .expect("Failed to acquire exclusive lock for test");
         assert!(lock.lock_file_path().ends_with("exclusive.lock"));
 
         drop(lock);
 
-        let lock = FileLockManager::new(path, AccessMode::SharedRead).unwrap();
+        let lock = FileLockManager::new(path, AccessMode::SharedRead)
+            .expect("Failed to acquire shared lock for test");
         assert!(lock.lock_file_path().ends_with("shared.lock"));
     }
 
     #[test]
     fn test_lock_release_on_drop() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for test");
         let path = temp_dir.path().to_path_buf();
 
         {
-            let lock = FileLockManager::new(&path, AccessMode::Exclusive).unwrap();
+            let lock = FileLockManager::new(&path, AccessMode::Exclusive)
+                .expect("Failed to acquire exclusive lock for test");
             assert!(lock.is_locked());
         }
         // Lock should be released after drop

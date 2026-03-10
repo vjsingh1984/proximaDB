@@ -836,12 +836,15 @@ mod tests {
         registry
             .create_vector_collection("embeddings", 768, "cosine")
             .await
-            .unwrap();
-        registry.create_graph("social", true).await.unwrap();
+            .expect("failed to create vector collection");
+        registry
+            .create_graph("social", true)
+            .await
+            .expect("failed to create graph");
         registry
             .create_document_collection("products", None)
             .await
-            .unwrap();
+            .expect("failed to create document collection");
 
         let info_schema = InformationSchema::new(registry);
         let tables = info_schema.tables().await;
@@ -851,11 +854,14 @@ mod tests {
         let vec_table = tables
             .iter()
             .find(|t| t.table_name == "embeddings")
-            .unwrap();
+            .expect("embeddings table should exist");
         assert_eq!(vec_table.table_type, "VECTOR COLLECTION");
         assert_eq!(vec_table.model_type, Some("VECTOR COLLECTION".to_string()));
 
-        let graph_table = tables.iter().find(|t| t.table_name == "social").unwrap();
+        let graph_table = tables
+            .iter()
+            .find(|t| t.table_name == "social")
+            .expect("social table should exist");
         assert_eq!(graph_table.table_type, "GRAPH");
     }
 
@@ -866,7 +872,7 @@ mod tests {
         registry
             .create_vector_collection("embeddings", 768, "cosine")
             .await
-            .unwrap();
+            .expect("failed to create vector collection");
 
         let info_schema = InformationSchema::new(registry);
         let columns = info_schema.columns().await;
@@ -889,11 +895,11 @@ mod tests {
         registry
             .create_vector_collection("embeddings", 768, "cosine")
             .await
-            .unwrap();
+            .expect("failed to create vector collection");
         registry
             .create_vector_collection("images", 512, "l2")
             .await
-            .unwrap();
+            .expect("failed to create vector collection");
 
         let info_schema = InformationSchema::new(registry);
         let vec_collections = info_schema.vector_collections().await;
@@ -903,14 +909,14 @@ mod tests {
         let embeddings = vec_collections
             .iter()
             .find(|v| v.collection_name == "embeddings")
-            .unwrap();
+            .expect("embeddings collection should exist");
         assert_eq!(embeddings.dimension, 768);
         assert_eq!(embeddings.distance_metric, "cosine");
 
         let images = vec_collections
             .iter()
             .find(|v| v.collection_name == "images")
-            .unwrap();
+            .expect("images collection should exist");
         assert_eq!(images.dimension, 512);
         assert_eq!(images.distance_metric, "l2");
     }
@@ -919,18 +925,30 @@ mod tests {
     async fn test_information_schema_graphs() {
         let registry = Arc::new(InternalSchemaRegistry::new());
 
-        registry.create_graph("social", true).await.unwrap();
-        registry.create_graph("knowledge", false).await.unwrap();
+        registry
+            .create_graph("social", true)
+            .await
+            .expect("failed to create graph");
+        registry
+            .create_graph("knowledge", false)
+            .await
+            .expect("failed to create graph");
 
         let info_schema = InformationSchema::new(registry);
         let graphs = info_schema.graphs().await;
 
         assert_eq!(graphs.len(), 2);
 
-        let social = graphs.iter().find(|g| g.graph_name == "social").unwrap();
+        let social = graphs
+            .iter()
+            .find(|g| g.graph_name == "social")
+            .expect("social graph should exist");
         assert_eq!(social.graph_type, "directed");
 
-        let knowledge = graphs.iter().find(|g| g.graph_name == "knowledge").unwrap();
+        let knowledge = graphs
+            .iter()
+            .find(|g| g.graph_name == "knowledge")
+            .expect("knowledge graph should exist");
         assert_eq!(knowledge.graph_type, "undirected");
     }
 
@@ -941,7 +959,7 @@ mod tests {
         registry
             .create_vector_collection("embeddings", 768, "cosine")
             .await
-            .unwrap();
+            .expect("failed to create vector collection");
 
         let info_schema = InformationSchema::new(registry);
 

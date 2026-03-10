@@ -44,7 +44,7 @@
 //! 4. **Collection-Aware Policies**: Per-collection constraints from base_location
 //! 5. **Unified Metrics**: Comprehensive observability across all backends
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use moka::future::Cache as MokaCache;
@@ -1451,10 +1451,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_index_backend_crud_operations() {
+    async fn test_index_backend_crud_operations() -> Result<()> {
         // Create IndexBackend with current API
         let global_tier = Arc::new(GlobalTier::new());
-        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
+        let tier_manager = Arc::new(
+            UniversalTier::new(global_tier)
+                .await
+                .context("Failed to create UniversalTier")?,
+        );
         let backend = IndexBackend::<String, String>::new_dashmap(
             "test_crud".to_string(),
             100,
@@ -1464,21 +1468,21 @@ mod tests {
             tier_manager,
         )
         .await
-        .unwrap();
+        .context("Failed to create IndexBackend")?;
 
         // CREATE: Insert new key-value pairs
         assert_eq!(
             backend
                 .insert("key1".to_string(), "value1".to_string())
                 .await
-                .unwrap(),
+                .context("Failed to insert key1")?,
             None
         );
         assert_eq!(
             backend
                 .insert("key2".to_string(), "value2".to_string())
                 .await
-                .unwrap(),
+                .context("Failed to insert key2")?,
             None
         );
 
@@ -1498,7 +1502,7 @@ mod tests {
             backend
                 .insert("key1".to_string(), "updated".to_string())
                 .await
-                .unwrap(),
+                .context("Failed to update key1")?,
             Some("value1".to_string())
         );
         assert_eq!(
@@ -1521,12 +1525,18 @@ mod tests {
 
         backend.clear().await;
         assert!(backend.is_empty().await);
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_index_backend_write_buffering() {
+    async fn test_index_backend_write_buffering() -> Result<()> {
         let global_tier = Arc::new(GlobalTier::new());
-        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
+        let tier_manager = Arc::new(
+            UniversalTier::new(global_tier)
+                .await
+                .context("Failed to create UniversalTier")?,
+        );
         let backend = IndexBackend::<String, i32>::new_dashmap(
             "test_buffer".to_string(),
             100,
@@ -1536,11 +1546,14 @@ mod tests {
             tier_manager,
         )
         .await
-        .unwrap();
+        .context("Failed to create IndexBackend")?;
 
         // Buffer writes without immediate insertion
         for i in 0..500 {
-            let flushed = backend.buffer_write(format!("key{}", i), i).await.unwrap();
+            let flushed = backend
+                .buffer_write(format!("key{}", i), i)
+                .await
+                .context(format!("Failed to buffer write for key{}", i))?;
             assert!(!flushed, "Should buffer, not flush at {}", i);
         }
 
@@ -1552,7 +1565,10 @@ mod tests {
         );
 
         // Manually flush buffer
-        let flushed_count = backend.flush_write_buffer().await.unwrap();
+        let flushed_count = backend
+            .flush_write_buffer()
+            .await
+            .context("Failed to flush write buffer")?;
         assert_eq!(flushed_count, 500);
         assert_eq!(backend.len().await, 500);
 
@@ -1563,19 +1579,28 @@ mod tests {
 
         // Test auto-flush at buffer size limit (1000)
         for i in 500..1500 {
-            let flushed = backend.buffer_write(format!("key{}", i), i).await.unwrap();
+            let flushed = backend
+                .buffer_write(format!("key{}", i), i)
+                .await
+                .context(format!("Failed to buffer write for key{}", i))?;
             if i == 1499 {
                 assert!(flushed, "Should auto-flush at buffer limit");
             }
         }
 
         assert_eq!(backend.len().await, 1500);
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_cache_backend_operations() {
+    async fn test_cache_backend_operations() -> Result<()> {
         let global_tier = Arc::new(GlobalTier::new());
-        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
+        let tier_manager = Arc::new(
+            UniversalTier::new(global_tier)
+                .await
+                .context("Failed to create UniversalTier")?,
+        );
         let backend = CacheBackend::<String, String>::new_moka(
             "test_cache".to_string(),
             100,  // max_capacity
@@ -1586,13 +1611,13 @@ mod tests {
             tier_manager,
         )
         .await
-        .unwrap();
+        .context("Failed to create CacheBackend")?;
 
         // Test basic operations
         backend
             .insert("key1".to_string(), "value1".to_string())
             .await
-            .unwrap();
+            .context("Failed to insert key1")?;
         assert_eq!(
             backend.get(&"key1".to_string()).await,
             Some("value1".to_string())
@@ -1602,7 +1627,7 @@ mod tests {
         backend
             .insert("key1".to_string(), "updated".to_string())
             .await
-            .unwrap();
+            .context("Failed to update key1")?;
         assert_eq!(
             backend.get(&"key1".to_string()).await,
             Some("updated".to_string())
@@ -1618,7 +1643,7 @@ mod tests {
             backend
                 .insert(format!("key{}", i), format!("value{}", i))
                 .await
-                .unwrap();
+                .context(format!("Failed to insert key{}", i))?;
         }
 
         // Moka cache entry_count() may have async lag, so verify by checking if we can get values
@@ -1630,12 +1655,18 @@ mod tests {
         // After clear, should not be able to get values
         let after_clear = backend.get(&"key0".to_string()).await;
         assert_eq!(after_clear, None, "Should not find values after clear");
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_metrics_and_workload_tracking() {
+    async fn test_metrics_and_workload_tracking() -> Result<()> {
         let global_tier = Arc::new(GlobalTier::new());
-        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
+        let tier_manager = Arc::new(
+            UniversalTier::new(global_tier)
+                .await
+                .context("Failed to create UniversalTier")?,
+        );
         let backend = IndexBackend::<String, String>::new_dashmap(
             "test_metrics".to_string(),
             100,
@@ -1645,17 +1676,17 @@ mod tests {
             tier_manager,
         )
         .await
-        .unwrap();
+        .context("Failed to create IndexBackend")?;
 
         // Perform mixed operations
         backend
             .insert("key1".to_string(), "value1".to_string())
             .await
-            .unwrap();
+            .context("Failed to insert key1")?;
         backend
             .insert("key2".to_string(), "value2".to_string())
             .await
-            .unwrap();
+            .context("Failed to insert key2")?;
         backend.get(&"key1".to_string()).await; // Hit
         backend.get(&"nonexistent".to_string()).await; // Miss
         backend.remove(&"key2".to_string()).await;
@@ -1677,12 +1708,18 @@ mod tests {
         assert!(workload.writes_per_second > 0.0); // Should have recorded write operations
         assert!(workload.reads_per_second > 0.0); // Should have recorded read operations
         assert!(workload.cache_hit_rate > 0.0); // Should have some hit rate
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_concurrent_index_backend_access() {
+    async fn test_concurrent_index_backend_access() -> Result<()> {
         let global_tier = Arc::new(GlobalTier::new());
-        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
+        let tier_manager = Arc::new(
+            UniversalTier::new(global_tier)
+                .await
+                .context("Failed to create UniversalTier")?,
+        );
         let backend = Arc::new(
             IndexBackend::<i32, i32>::new_dashmap(
                 "test_concurrent".to_string(),
@@ -1693,7 +1730,7 @@ mod tests {
                 tier_manager,
             )
             .await
-            .unwrap(),
+            .context("Failed to create IndexBackend")?,
         );
 
         // Spawn multiple concurrent tasks
@@ -1705,8 +1742,12 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 for i in 0..100 {
                     let key = thread_id * 100 + i;
-                    backend_clone.insert(key, key * 2).await.unwrap();
+                    backend_clone
+                        .insert(key, key * 2)
+                        .await
+                        .context("Failed to insert in concurrent task")?;
                 }
+                Ok::<(), anyhow::Error>(())
             }));
         }
 
@@ -1719,12 +1760,13 @@ mod tests {
                     // May or may not find the key depending on timing
                     let _ = backend_clone.get(&key).await;
                 }
+                Ok::<(), anyhow::Error>(())
             }));
         }
 
         // Wait for all tasks
         for handle in handles {
-            handle.await.unwrap();
+            handle.await.context("Failed to join concurrent task")??;
         }
 
         // Verify all writes succeeded
@@ -1734,10 +1776,12 @@ mod tests {
         for i in 0..500 {
             assert_eq!(backend.get(&i).await, Some(i * 2));
         }
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_adaptive_store_factory_creation() {
+    async fn test_adaptive_store_factory_creation() -> Result<()> {
         // Test configuration serialization/deserialization
 
         let config = AdaptiveStoreConfig {
@@ -1783,8 +1827,12 @@ mod tests {
         };
 
         // Ensure configuration can be serialized/deserialized
-        let serialized = serde_json::to_string(&config).unwrap();
-        let deserialized: AdaptiveStoreConfig = serde_json::from_str(&serialized).unwrap();
+        let serialized =
+            serde_json::to_string(&config).context("Failed to serialize AdaptiveStoreConfig")?;
+        let deserialized: AdaptiveStoreConfig = serde_json::from_str(&serialized)
+            .context("Failed to deserialize AdaptiveStoreConfig")?;
         assert_eq!(config.collection_id, deserialized.collection_id);
+
+        Ok(())
     }
 }

@@ -13,6 +13,7 @@ use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
 use super::parser::{FederatedQuery, QueryType, SqlExtension, TargetModelType};
+use crate::core::error::VectorDBError;
 use crate::storage::multimodel::ModelType;
 
 /// Physical plan node types
@@ -1022,7 +1023,7 @@ impl JoinOrderOptimizer {
                     (i, join_cost)
                 })
                 .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .unwrap();
+                .ok_or_else(|| VectorDBError::Internal("No viable join order found".to_string()))?;
 
             let next = remaining.remove(best_idx);
             let join_cardinality = self.cardinality_estimator.estimate_join_cardinality(
@@ -2213,8 +2214,10 @@ impl CrossModelOptimizer {
                     new_predicates.push(predicate);
 
                     // Estimate reduced row count based on predicate selectivity
-                    let selectivity =
-                        self.estimate_predicate_selectivity(&new_predicates.last().unwrap());
+                    let last_predicate = new_predicates.last().ok_or_else(|| {
+                        VectorDBError::Internal("No predicates found after push".to_string())
+                    })?;
+                    let selectivity = self.estimate_predicate_selectivity(last_predicate);
                     let new_rows = ((node.estimated_rows as f64) * selectivity) as u64;
 
                     Ok(PredicatePushResult {
@@ -3347,7 +3350,9 @@ mod tests {
             is_cross_model_join: false,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimize should succeed for valid query");
         assert!(plan.total_cost > 0.0);
         assert!(!plan.metadata.is_cross_model);
     }
@@ -3367,7 +3372,9 @@ mod tests {
             is_cross_model_join: false,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimize should succeed for vector search query");
         assert!(plan.metadata.involved_models.contains(&ModelType::Vector));
     }
 
@@ -3449,7 +3456,9 @@ mod tests {
         let filter = make_filter(&optimizer, scan, "name", "Alice");
 
         // Apply predicate pushdown
-        let optimized = optimizer.push_predicates(filter).unwrap();
+        let optimized = optimizer
+            .push_predicates(filter)
+            .expect("push_predicates should succeed for filter node");
 
         // The filter should be pushed into the scan
         match &optimized.node_type {
@@ -3478,7 +3487,9 @@ mod tests {
         let filter = make_filter(&optimizer, join, "users.name", "Alice");
 
         // Apply predicate pushdown
-        let optimized = optimizer.push_predicates(filter).unwrap();
+        let optimized = optimizer
+            .push_predicates(filter)
+            .expect("push_predicates should succeed for filter with join");
 
         // The filter should be pushed through the join
         match &optimized.node_type {
@@ -3505,7 +3516,9 @@ mod tests {
         let join = make_hash_join(&optimizer, expensive, cheap);
 
         // Apply join reordering
-        let optimized = optimizer.reorder_joins(join).unwrap();
+        let optimized = optimizer
+            .reorder_joins(join)
+            .expect("reorder_joins should succeed for hash join");
 
         // For inner joins, cheaper table should be on the left
         match &optimized.node_type {
@@ -3539,7 +3552,9 @@ mod tests {
         };
 
         // Apply projection pushdown
-        let optimized = optimizer.push_projections(project).unwrap();
+        let optimized = optimizer
+            .push_projections(project)
+            .expect("push_projections should succeed for project node");
 
         // The projection should be pushed down and the scan should only read needed columns
         // Cost should be reduced
@@ -3556,7 +3571,9 @@ mod tests {
         let join = make_hash_join(&optimizer, scan_a, scan_b);
 
         // Apply parallel identification
-        let optimized = optimizer.identify_parallelism(join).unwrap();
+        let optimized = optimizer
+            .identify_parallelism(join)
+            .expect("identify_parallelism should succeed for hash join");
 
         // Cost should account for parallel execution (max of children, not sum)
         match &optimized.node_type {
@@ -3595,7 +3612,9 @@ mod tests {
         };
 
         // Apply parallel identification
-        let optimized = optimizer.identify_parallelism(union).unwrap();
+        let optimized = optimizer
+            .identify_parallelism(union)
+            .expect("identify_parallelism should succeed for union node");
 
         // All union inputs can run in parallel, cost should be max + overhead
         assert!(
@@ -3691,7 +3710,9 @@ mod tests {
         let original_cost = optimizer.calculate_total_cost(&filter);
 
         // Apply all optimizations
-        let optimized = optimizer.apply_optimizations(filter).unwrap();
+        let optimized = optimizer
+            .apply_optimizations(filter)
+            .expect("apply_optimizations should succeed for filter node");
         let optimized_cost = optimizer.calculate_total_cost(&optimized);
 
         // Optimized plan should have lower or equal cost
@@ -3749,7 +3770,7 @@ mod tests {
                 &[("id".to_string(), "id".to_string())],
                 &JoinType::Inner,
             )
-            .unwrap();
+            .expect("greedy_join_order should succeed for valid relations");
 
         // Result should be a nested join tree starting with smallest tables
         match &result.node_type {

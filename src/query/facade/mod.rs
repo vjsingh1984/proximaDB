@@ -410,7 +410,12 @@ impl UnifiedQueryFacade {
         // Sort by priority (highest first)
         candidates.sort_by(|a, b| b.priority().cmp(&a.priority()));
 
-        Ok(candidates[0])
+        Ok(candidates.first().ok_or_else(|| {
+            anyhow!(
+                "No candidates available for query type: {:?}",
+                request.query_type
+            )
+        })?)
     }
 
     /// Get list of registered strategy names
@@ -546,7 +551,10 @@ mod tests {
         let facade = create_test_facade();
         let query = QueryRequest::vector_search(vec![0.1; 128], 10).with_metrics();
 
-        let result = facade.execute(query).await.unwrap();
+        let result = facade
+            .execute(query)
+            .await
+            .expect("Vector search query should succeed");
 
         // Verify execution path is "unified"
         let metrics = result.metrics.expect("Metrics should be present");
@@ -565,7 +573,10 @@ mod tests {
         let facade = create_test_facade();
         let query = QueryRequest::sql("SELECT * FROM products").with_metrics();
 
-        let result = facade.execute(query).await.unwrap();
+        let result = facade
+            .execute(query)
+            .await
+            .expect("SQL query should succeed");
 
         let metrics = result.metrics.expect("Metrics should be present");
         assert_eq!(metrics.execution_path, "unified");
@@ -579,7 +590,10 @@ mod tests {
             QueryRequest::federated("SELECT * FROM VECTOR_SEARCH('products', '[0.1,0.2]', 10)")
                 .with_metrics();
 
-        let result = facade.execute(query).await.unwrap();
+        let result = facade
+            .execute(query)
+            .await
+            .expect("Federated query should succeed");
 
         let metrics = result.metrics.expect("Metrics should be present");
         assert_eq!(metrics.execution_path, "unified");
@@ -592,7 +606,10 @@ mod tests {
         let facade = create_test_facade();
         let query = QueryRequest::graph("MATCH (n) RETURN n").with_metrics();
 
-        let result = facade.execute(query).await.unwrap();
+        let result = facade
+            .execute(query)
+            .await
+            .expect("Graph query should succeed");
 
         let metrics = result.metrics.expect("Metrics should be present");
         assert_eq!(metrics.execution_path, "unified");
@@ -609,7 +626,7 @@ mod tests {
         let result = facade.execute(query).await;
 
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.expect_err("Should return error when no strategy available");
         assert!(err.to_string().contains("No strategy found"));
     }
 
@@ -668,9 +685,14 @@ mod tests {
         let facade = UnifiedQueryFacade::with_strategies(strategies);
 
         let query = QueryRequest::vector_search(vec![0.1], 10).with_metrics();
-        let result = facade.execute(query).await.unwrap();
+        let result = facade
+            .execute(query)
+            .await
+            .expect("Priority query should succeed");
 
-        let metrics = result.metrics.unwrap();
+        let metrics = result
+            .metrics
+            .expect("Metrics should be present when with_metrics() is called");
         assert_eq!(
             metrics.strategy_name, "high-priority",
             "Higher priority strategy should be selected"
@@ -687,9 +709,14 @@ mod tests {
         // Even though this is a vector search query, force it to use SQL strategy
         let query = QueryRequest::vector_search(vec![0.1], 10).with_params(params);
 
-        let result = facade.execute(query).await.unwrap();
+        let result = facade
+            .execute(query)
+            .await
+            .expect("Forced path query should succeed");
 
-        let metrics = result.metrics.unwrap();
+        let metrics = result
+            .metrics
+            .expect("Metrics should be present when include_metrics is true");
         assert_eq!(
             metrics.strategy_name, "sql",
             "Should use forced SQL strategy"
@@ -706,7 +733,7 @@ mod tests {
         let result = facade.execute(query).await;
 
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.expect_err("Should return error for invalid forced path");
         assert!(err.to_string().contains("not found"));
     }
 
@@ -747,9 +774,14 @@ mod tests {
         let facade = create_test_facade();
         let query = QueryRequest::vector_search(vec![0.1], 10).with_metrics();
 
-        let result = facade.execute(query).await.unwrap();
+        let result = facade
+            .execute(query)
+            .await
+            .expect("Execution time query should succeed");
 
-        let metrics = result.metrics.unwrap();
+        let metrics = result
+            .metrics
+            .expect("Metrics should be present when with_metrics() is called");
         // Execution time should be > 0 (even if very small)
         // Note: In fast systems this might be 0, but the field should exist
         assert!(metrics.execution_time_ms >= 0);

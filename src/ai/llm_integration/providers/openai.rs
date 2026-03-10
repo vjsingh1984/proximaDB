@@ -378,7 +378,10 @@ mod tests {
     #[test]
     fn test_openai_request_building() {
         let client = OpenAIClient {
-            client: Client::new(),
+            client: Client::builder()
+                .no_proxy()
+                .build()
+                .expect("Failed to build test HTTP client"),
             api_key: "test_key".to_string(),
             base_url: "https://api.openai.com/v1".to_string(),
             organization_id: None,

@@ -55,7 +55,7 @@
 //! - **Audit Trails**: Complete change history
 
 use crate::core::error::ProximaDBError;
-use crate::storage::persistence::filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::{FileSystem, UnifiedCachingFilesystem};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -188,8 +188,9 @@ impl EventLogEngine {
         info!("Creating event log engine at {:?}", config.base_dir);
 
         // Create base directory
-        std::fs::create_dir_all(&config.base_dir)
-            .map_err(|e| ProximaDBError::Internal(format!("Failed to create eventlog dir: {}", e)))?;
+        std::fs::create_dir_all(&config.base_dir).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to create eventlog dir: {}", e))
+        })?;
 
         // Initialize sequence counter
         let sequence_counter = Arc::new(RwLock::new(0));
@@ -241,21 +242,54 @@ impl EventLogEngine {
         // Validate event data
         self.validate_event(&event)?;
 
-        // Serialize event
-        let serialized = bincode::serialize(&event)
+        // Serialize event to JSON (better compatibility than bincode)
+        let serialized = serde_json::to_vec(&event)
             .map_err(|e| ProximaDBError::Internal(format!("Event serialization failed: {}", e)))?;
 
         // Persist to storage (append-only)
         let event_path = self.get_event_path(sequence);
-        self.filesystem.write(&event_path, serialized).await?;
+
+        // Create partition directory if it doesn't exist
+        if let Some(partition_dir) = event_path.parent() {
+            tokio::fs::create_dir_all(partition_dir)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Internal(format!("Failed to create partition dir: {}", e))
+                })?;
+        }
+
+        // Write with create_dirs option to ensure parent directories exist
+        let options = crate::storage::persistence::filesystem::FileOptions {
+            create_dirs: true,
+            overwrite: true,
+            ..Default::default()
+        };
+        FileSystem::write(
+            self.filesystem.as_ref(),
+            &event_path.to_string_lossy(),
+            &serialized,
+            Some(options),
+        )
+        .await?;
 
         // Update index
         self.event_index.index_event(&event).await?;
 
         // Check if snapshot is needed
         if sequence % self.config.snapshot_interval == 0 {
-            debug!("Triggering snapshot for entity {} at sequence {}", event.entity_id, sequence);
-            self.snapshot_manager.create_snapshot(&event.entity_id, sequence).await?;
+            debug!(
+                "Triggering snapshot for entity {} at sequence {}",
+                event.entity_id, sequence
+            );
+            self.snapshot_manager
+                .create_snapshot(&event.entity_id, sequence)
+                .await?;
+
+            // Update snapshot stats
+            {
+                let mut stats = self.stats.write().await;
+                stats.snapshots_created += 1;
+            }
         }
 
         // Update stats
@@ -264,8 +298,10 @@ impl EventLogEngine {
             stats.total_events += 1;
         }
 
-        debug!("Appended event {} for entity {} at sequence {}",
-            event.event_type, event.entity_id, event.sequence);
+        debug!(
+            "Appended event {} for entity {} at sequence {}",
+            event.event_type, event.entity_id, event.sequence
+        );
 
         Ok(event)
     }
@@ -287,11 +323,14 @@ impl EventLogEngine {
         from_sequence: EventSequence,
         limit: usize,
     ) -> Result<Vec<Event>> {
-        debug!("Reading events for {} from sequence {}, limit {}",
-            entity_id, from_sequence, limit);
+        debug!(
+            "Reading events for {} from sequence {}, limit {}",
+            entity_id, from_sequence, limit
+        );
 
         // Query index for event sequences
-        let sequences = self.event_index
+        let sequences = self
+            .event_index
             .get_entity_events(entity_id, from_sequence, limit)
             .await?;
 
@@ -299,10 +338,12 @@ impl EventLogEngine {
         let mut events = Vec::new();
         for sequence in sequences {
             let event_path = self.get_event_path(sequence);
-            let data = self.filesystem.read(&event_path).await?;
+            let data =
+                FileSystem::read(self.filesystem.as_ref(), &event_path.to_string_lossy()).await?;
 
-            let event: Event = bincode::deserialize(&data)
-                .map_err(|e| ProximaDBError::Internal(format!("Event deserialization failed: {}", e)))?;
+            let event: Event = serde_json::from_slice(&data).map_err(|e| {
+                ProximaDBError::Internal(format!("Event deserialization failed: {}", e))
+            })?;
 
             events.push(event);
         }
@@ -338,7 +379,9 @@ impl EventLogEngine {
         entity_id: &EntityId,
         as_of: DateTime<Utc>,
     ) -> Result<serde_json::Value> {
-        self.temporal_engine.get_state_as_of(entity_id, Some(as_of)).await
+        self.temporal_engine
+            .get_state_as_of(entity_id, Some(as_of))
+            .await
     }
 
     /// Replay events for an entity
@@ -358,11 +401,15 @@ impl EventLogEngine {
         from_sequence: EventSequence,
         to_sequence: Option<EventSequence>,
     ) -> Result<Vec<Event>> {
-        let limit = to_sequence.map(|s| (s - from_sequence + 1) as usize).unwrap_or(usize::MAX);
+        // Determine limit based on to_sequence
+        let limit = match to_sequence {
+            Some(to_seq) => (to_seq - from_sequence + 1) as usize,
+            None => usize::MAX, // No limit if to_sequence is None
+        };
 
         let mut events = self.read_events(entity_id, from_sequence, limit).await?;
 
-        // Filter by to_sequence if specified
+        // Filter by to_sequence if specified (double-check)
         if let Some(to_seq) = to_sequence {
             events.retain(|e| e.sequence <= to_seq);
         }
@@ -392,7 +439,7 @@ impl EventLogEngine {
         // Verify timestamp precision
         if event.timestamp.timestamp_subsec_nanos() == 0 {
             return Err(ProximaDBError::Internal(
-                "Regulatory compliance: timestamp must have sub-millisecond precision".to_string()
+                "Regulatory compliance: timestamp must have sub-millisecond precision".to_string(),
             ));
         }
 
@@ -403,19 +450,19 @@ impl EventLogEngine {
     fn validate_event(&self, event: &Event) -> Result<()> {
         if event.entity_id.is_empty() {
             return Err(ProximaDBError::InvalidInput(
-                "Entity ID cannot be empty".to_string()
+                "Entity ID cannot be empty".to_string(),
             ));
         }
 
         if event.event_type.is_empty() {
             return Err(ProximaDBError::InvalidInput(
-                "Event type cannot be empty".to_string()
+                "Event type cannot be empty".to_string(),
             ));
         }
 
         if !event.data.is_object() {
             return Err(ProximaDBError::InvalidInput(
-                "Event data must be a JSON object".to_string()
+                "Event data must be a JSON object".to_string(),
             ));
         }
 
@@ -426,7 +473,8 @@ impl EventLogEngine {
     fn get_event_path(&self, sequence: EventSequence) -> PathBuf {
         // Partition events by sequence (1000 events per partition)
         let partition = sequence / 1000;
-        self.config.base_dir
+        self.config
+            .base_dir
             .join(format!("partition_{:05}", partition))
             .join(format!("event_{:010}.bin", sequence))
     }
@@ -439,22 +487,59 @@ mod tests {
 
     #[tokio::test]
     async fn test_event_log_creation() {
-        let config = EventLogConfig::default();
-        let fs = Arc::new(UnifiedCachingFilesystem::new(config.base_dir.clone()).unwrap());
+        let base_dir = PathBuf::from("/tmp/test_eventlog_creation");
+        // Create base directory first
+        std::fs::create_dir_all(&base_dir).expect("Failed to create test eventlog directory");
 
-        let engine = EventLogEngine::new(config, fs).unwrap();
+        let config = EventLogConfig {
+            base_dir: base_dir.clone(),
+            ..Default::default()
+        };
+
+        // Create local filesystem
+        let local_config = crate::storage::persistence::filesystem::local::LocalConfig::default();
+        let local_fs =
+            crate::storage::persistence::filesystem::local::LocalFileSystem::new(local_config)
+                .await
+                .expect("Failed to create local filesystem");
+        let fs = Arc::new(UnifiedCachingFilesystem::new(
+            Arc::new(local_fs),
+            "eventlog_test".to_string(),
+            "eventlog".to_string(),
+        ));
+
+        let engine = EventLogEngine::new(config, fs).expect("Failed to create eventlog engine");
         assert_eq!(engine.config.snapshot_interval, 1000);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(base_dir);
     }
 
     #[tokio::test]
     async fn test_append_event() {
+        let base_dir = PathBuf::from("/tmp/test_eventlog_append");
+        // Create base directory first
+        std::fs::create_dir_all(&base_dir)
+            .expect("Failed to create test eventlog append directory");
+
         let config = EventLogConfig {
-            base_dir: PathBuf::from("/tmp/test_eventlog_append"),
+            base_dir: base_dir.clone(),
             ..Default::default()
         };
-        let fs = Arc::new(UnifiedCachingFilesystem::new(config.base_dir.clone()).unwrap());
 
-        let engine = EventLogEngine::new(config, fs).unwrap();
+        // Create local filesystem
+        let local_config = crate::storage::persistence::filesystem::local::LocalConfig::default();
+        let local_fs =
+            crate::storage::persistence::filesystem::local::LocalFileSystem::new(local_config)
+                .await
+                .expect("Failed to create local filesystem");
+        let fs = Arc::new(UnifiedCachingFilesystem::new(
+            Arc::new(local_fs),
+            "eventlog_append".to_string(),
+            "eventlog".to_string(),
+        ));
+
+        let engine = EventLogEngine::new(config, fs).expect("Failed to create eventlog engine");
 
         let event = Event {
             sequence: 0, // Will be assigned
@@ -466,7 +551,10 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let appended = engine.append_event(event).await.unwrap();
+        let appended = engine
+            .append_event(event)
+            .await
+            .expect("Failed to append event");
         assert_eq!(appended.sequence, 1);
         assert_eq!(appended.entity_id, "account:123");
 
@@ -476,14 +564,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_regulatory_compliance() {
+        let base_dir = PathBuf::from("/tmp/test_eventlog_reg");
+        // Create base directory first
+        std::fs::create_dir_all(&base_dir)
+            .expect("Failed to create test eventlog regulatory directory");
+
         let config = EventLogConfig {
-            base_dir: PathBuf::from("/tmp/test_eventlog_reg"),
+            base_dir: base_dir.clone(),
             regulatory_mode: true,
             ..Default::default()
         };
-        let fs = Arc::new(UnifiedCachingFilesystem::new(config.base_dir.clone()).unwrap());
 
-        let engine = EventLogEngine::new(config, fs).unwrap();
+        // Create local filesystem
+        let local_config = crate::storage::persistence::filesystem::local::LocalConfig::default();
+        let local_fs =
+            crate::storage::persistence::filesystem::local::LocalFileSystem::new(local_config)
+                .await
+                .expect("Failed to create local filesystem");
+        let fs = Arc::new(UnifiedCachingFilesystem::new(
+            Arc::new(local_fs),
+            "eventlog_reg".to_string(),
+            "eventlog".to_string(),
+        ));
+
+        let engine = EventLogEngine::new(config, fs).expect("Failed to create eventlog engine");
 
         // Missing required metadata
         let event = Event {
@@ -505,13 +609,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_immutable_audit_trail() {
+        let base_dir = PathBuf::from("/tmp/test_eventlog_immutable");
+        // Create base directory first
+        std::fs::create_dir_all(&base_dir)
+            .expect("Failed to create test eventlog immutable directory");
+
         let config = EventLogConfig {
-            base_dir: PathBuf::from("/tmp/test_eventlog_immutable"),
+            base_dir: base_dir.clone(),
             ..Default::default()
         };
-        let fs = Arc::new(UnifiedCachingFilesystem::new(config.base_dir.clone()).unwrap());
 
-        let engine = EventLogEngine::new(config, fs).unwrap();
+        // Create local filesystem
+        let local_config = crate::storage::persistence::filesystem::local::LocalConfig::default();
+        let local_fs =
+            crate::storage::persistence::filesystem::local::LocalFileSystem::new(local_config)
+                .await
+                .expect("Failed to create local filesystem");
+        let fs = Arc::new(UnifiedCachingFilesystem::new(
+            Arc::new(local_fs),
+            "eventlog_immutable".to_string(),
+            "eventlog".to_string(),
+        ));
+
+        let engine = EventLogEngine::new(config, fs).expect("Failed to create eventlog engine");
 
         // Append multiple events
         for i in 1..=3 {
@@ -525,7 +645,10 @@ mod tests {
                 metadata: HashMap::new(),
             };
 
-            let appended = engine.append_event(event).await.unwrap();
+            let appended = engine
+                .append_event(event)
+                .await
+                .expect("Failed to append event");
             assert_eq!(appended.sequence, i as u64);
         }
 

@@ -1830,8 +1830,8 @@ impl WriteAheadLogManager {
             timestamp: Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64,
+                    .map(|duration| duration.as_secs() as i64)
+                    .unwrap_or(0),
             ),
             updated_at: None,
             expires_at: Some(0), // Setting to 0 or past time marks for deletion

@@ -172,7 +172,7 @@ impl OptimizedSwiftOperations {
             a.record
                 .similarity
                 .partial_cmp(&b.record.similarity)
-                .unwrap()
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         candidates_buffer.truncate(n_candidates);
 

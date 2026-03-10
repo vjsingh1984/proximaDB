@@ -109,7 +109,9 @@ pub struct RestHttpServerBuilder {
 impl Default for RestHttpServerBuilder {
     fn default() -> Self {
         Self {
-            bind_address: "0.0.0.0:5678".parse().unwrap(),
+            bind_address: "0.0.0.0:5678"
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5678))),
             enable_rest: true,
             enable_dashboard: true,
             enable_metrics: true,
@@ -315,7 +317,9 @@ pub struct GrpcHttpServerBuilder {
 impl Default for GrpcHttpServerBuilder {
     fn default() -> Self {
         Self {
-            bind_address: "0.0.0.0:5679".parse().unwrap(), // Standard gRPC port
+            bind_address: "0.0.0.0:5679"
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5679))), // Standard gRPC port
             enable_grpc: true,
             grpc_compression: false, // Clear naming, default false
             tls_cert_file: None,
@@ -499,7 +503,9 @@ pub struct ArrowIpcServerBuilder {
 impl Default for ArrowIpcServerBuilder {
     fn default() -> Self {
         Self {
-            bind_address: "0.0.0.0:5680".parse().unwrap(), // Standard Arrow Flight port
+            bind_address: "0.0.0.0:5680"
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5680))), // Standard Arrow Flight port
             enable_arrow_ipc: true,
             compression: false, // Arrow has built-in compression
             tls_cert_file: None,
@@ -731,9 +737,27 @@ impl MultiServerBuilder {
     pub fn development() -> Result<MultiServerConfig> {
         info!("🛠️  Building development configuration (non-TLS)");
         Self::new()
-            .http(|h| h.bind_address("0.0.0.0:5678".parse::<SocketAddr>().unwrap()))
-            .grpc(|g| g.bind_address("0.0.0.0:5679".parse::<SocketAddr>().unwrap()))
-            .arrow_ipc(|a| a.bind_address("0.0.0.0:5680".parse::<SocketAddr>().unwrap()))
+            .http(|h| {
+                h.bind_address(
+                    "0.0.0.0:5678"
+                        .parse::<SocketAddr>()
+                        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5678))),
+                )
+            })
+            .grpc(|g| {
+                g.bind_address(
+                    "0.0.0.0:5679"
+                        .parse::<SocketAddr>()
+                        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5679))),
+                )
+            })
+            .arrow_ipc(|a| {
+                a.bind_address(
+                    "0.0.0.0:5680"
+                        .parse::<SocketAddr>()
+                        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5680))),
+                )
+            })
             .build()
     }
 
@@ -742,9 +766,27 @@ impl MultiServerBuilder {
         info!("🔒 Building production configuration (TLS enabled)");
         Self::new()
             .with_default_tls()
-            .http(|h| h.bind_address("0.0.0.0:5678".parse::<SocketAddr>().unwrap()))
-            .grpc(|g| g.bind_address("0.0.0.0:5679".parse::<SocketAddr>().unwrap()))
-            .arrow_ipc(|a| a.bind_address("0.0.0.0:5680".parse::<SocketAddr>().unwrap()))
+            .http(|h| {
+                h.bind_address(
+                    "0.0.0.0:5678"
+                        .parse::<SocketAddr>()
+                        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5678))),
+                )
+            })
+            .grpc(|g| {
+                g.bind_address(
+                    "0.0.0.0:5679"
+                        .parse::<SocketAddr>()
+                        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5679))),
+                )
+            })
+            .arrow_ipc(|a| {
+                a.bind_address(
+                    "0.0.0.0:5680"
+                        .parse::<SocketAddr>()
+                        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5680))),
+                )
+            })
             .build()
     }
 

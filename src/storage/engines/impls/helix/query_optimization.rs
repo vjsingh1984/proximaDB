@@ -117,7 +117,7 @@ impl PredictivePrefetcher {
             .filter(|(_, score)| *score >= self.confidence_threshold)
             .collect();
 
-        ranked_files.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        ranked_files.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Return top files to prefetch
         ranked_files

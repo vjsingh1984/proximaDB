@@ -323,7 +323,9 @@ impl PCAModelManager {
         if active_model.is_none() {
             return Ok(false);
         }
-        let model = active_model.as_ref().unwrap();
+        let Some(model) = active_model.as_ref() else {
+            return Ok(false);
+        };
 
         // Calculate reconstruction errors
         let mut errors = Vec::new();

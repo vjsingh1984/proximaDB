@@ -84,9 +84,15 @@ pub struct TcpMultiplexConfig {
 impl Default for TcpMultiplexConfig {
     fn default() -> Self {
         Self {
-            bind_address: "0.0.0.0:5678".parse().expect("valid address"),
-            rest_address: "127.0.0.1:15678".parse().expect("valid address"), // Internal REST port
-            grpc_address: "127.0.0.1:15679".parse().expect("valid address"), // Internal gRPC port
+            bind_address: "0.0.0.0:5678"
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5678))),
+            rest_address: "127.0.0.1:15678"
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 15678))), // Internal REST port
+            grpc_address: "127.0.0.1:15679"
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 15679))), // Internal gRPC port
             max_connections: 10000,
             fallback_protocol: TcpProtocol::Http1,
             proxy_buffer_size: 64 * 1024, // 64KB

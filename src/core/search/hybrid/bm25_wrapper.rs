@@ -82,7 +82,10 @@ impl BM25Wrapper {
 
 impl Default for BM25Wrapper {
     fn default() -> Self {
-        Self::new().unwrap()
+        match Self::new() {
+            Ok(wrapper) => wrapper,
+            Err(_) => Self { _private: () },
+        }
     }
 }
 

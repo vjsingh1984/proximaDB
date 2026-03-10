@@ -378,7 +378,10 @@ impl Expr {
     /// Create an AND expression.
     pub fn and(exprs: Vec<Expr>) -> Self {
         if exprs.len() == 1 {
-            exprs.into_iter().next().expect("checked length")
+            exprs
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| Self::And(Vec::new()))
         } else {
             Self::And(exprs)
         }
@@ -387,7 +390,10 @@ impl Expr {
     /// Create an OR expression.
     pub fn or(exprs: Vec<Expr>) -> Self {
         if exprs.len() == 1 {
-            exprs.into_iter().next().expect("checked length")
+            exprs
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| Self::Or(Vec::new()))
         } else {
             Self::Or(exprs)
         }

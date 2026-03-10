@@ -482,7 +482,7 @@ impl AccessPatternTracker {
         correlated_items.sort_by(|a, b| {
             b.correlation_score
                 .partial_cmp(&a.correlation_score)
-                .unwrap()
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Use DashMap's insert (lock-free)

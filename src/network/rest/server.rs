@@ -492,10 +492,14 @@ impl RestServer {
 
         // Build TLS config if specified
         let tls_config = security_config.tls.as_ref().map(|tls| {
-            NetworkTlsConfig::new(true)
+            let mut config = NetworkTlsConfig::new(true)
                 .with_cert_file(tls.cert_file.clone())
-                .with_key_file(tls.key_file.clone())
-                .with_ca_file(tls.ca_file.clone().unwrap_or_default())
+                .with_key_file(tls.key_file.clone());
+            // Only add CA file if mTLS is enabled and CA file is provided
+            if let Some(ca_file) = &tls.ca_file {
+                config = config.with_ca_file(ca_file.clone());
+            }
+            config
         });
 
         if tls_config.is_some() {
@@ -611,9 +615,14 @@ impl RestServer {
         Self::log_endpoints(&self.bind_addr, true);
 
         // Build rustls config - either mTLS or standard TLS
-        if require_client_certs && ca_path.is_some() {
-            self.start_with_mtls(cert_path, key_path, ca_path.unwrap())
-                .await
+        if require_client_certs {
+            if let Some(ca) = ca_path {
+                self.start_with_mtls(cert_path, key_path, ca).await
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Client certificates required but CA path not provided"
+                ));
+            }
         } else {
             // Standard TLS (no client certificates)
             let rustls_config =

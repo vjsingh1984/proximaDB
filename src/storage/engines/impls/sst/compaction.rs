@@ -1022,7 +1022,10 @@ impl Compaction {
             // Write SSTable directly to staging path
             // Strip file:// prefix if present for local filesystem operations
             let staging_path = if atomic_op.staging_url.starts_with("file://") {
-                atomic_op.staging_url.strip_prefix("file://").unwrap()
+                atomic_op
+                    .staging_url
+                    .strip_prefix("file://")
+                    .unwrap_or(&atomic_op.staging_url)
             } else {
                 &atomic_op.staging_url
             };

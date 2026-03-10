@@ -160,7 +160,7 @@ async fn load_and_extract_records(
         let projection = projection.clone();
         let schema = nova_file.schema.clone();
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem.acquire().await.ok();
 
             // Check cache or load row group
             let batch = if let Some(ref cache) = cache {
@@ -353,7 +353,10 @@ pub async fn prefetch_row_groups(
     if cache.is_none() {
         return Ok(());
     }
-    let cache = cache.unwrap();
+    let cache = match cache {
+        Some(cache) => cache,
+        None => return Ok(()),
+    };
     let semaphore = Arc::new(Semaphore::new(2)); // Limited prefetch parallelism
     let mut handles = Vec::new();
 
@@ -368,7 +371,7 @@ pub async fn prefetch_row_groups(
         let schema = nova_file.schema.clone();
 
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem.acquire().await.ok();
             match load_row_group(rg_id, &[], &schema).await {
                 Ok(batch) => {
                     cache.put(rg_id, Arc::new(batch)).await;

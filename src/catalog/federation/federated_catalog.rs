@@ -378,7 +378,10 @@ impl FederatedCatalog {
     async fn resolve_fully_qualified(&self, parts: &[&str]) -> Result<FederatedTableInfo> {
         let catalog = parts[0];
         let namespace: Vec<&str> = parts[1..parts.len() - 1].to_vec();
-        let table = parts.last().unwrap();
+        let table = parts
+            .last()
+            .copied()
+            .ok_or_else(|| anyhow!("Invalid fully-qualified table reference"))?;
 
         self.resolve_in_catalog(catalog, &namespace, table).await
     }

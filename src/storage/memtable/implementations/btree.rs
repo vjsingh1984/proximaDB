@@ -112,7 +112,10 @@ where
         );
 
         let old_size = if key_exists {
-            let old_entry_size = Self::estimate_entry_size(&key, data.get(&key).unwrap());
+            let old_entry_size = data
+                .get(&key)
+                .map(|existing| Self::estimate_entry_size(&key, existing))
+                .unwrap_or(0);
             tracing::info!(
                 "🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: Replacing existing entry (old size: {} bytes)",
                 old_entry_size

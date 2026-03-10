@@ -161,12 +161,8 @@ impl MetadataQueryEngine {
             ComparisonOperator::NotIn => {
                 self.array_operation(field_value, &field_query.value, false)
             }
-            ComparisonOperator::Exists => {
-                Ok(field_value.is_some() && !field_value.unwrap().is_null())
-            }
-            ComparisonOperator::NotExists => {
-                Ok(field_value.is_none() || field_value.unwrap().is_null())
-            }
+            ComparisonOperator::Exists => Ok(field_value.map_or(false, |v| !v.is_null())),
+            ComparisonOperator::NotExists => Ok(field_value.map_or(true, |v| v.is_null())),
             ComparisonOperator::Regex => {
                 self.regex_operation(&field_query.field, field_value, &field_query.value)
             }
@@ -343,7 +339,7 @@ impl MetadataQueryBuilder {
     pub fn and(queries: Vec<MetadataQuery>) -> MetadataQuery {
         match queries.len() {
             0 => MetadataQuery::All,
-            1 => queries.into_iter().next().unwrap(),
+            1 => queries.into_iter().next().unwrap_or(MetadataQuery::All),
             _ => MetadataQuery::And(queries),
         }
     }
@@ -352,7 +348,7 @@ impl MetadataQueryBuilder {
     pub fn or(queries: Vec<MetadataQuery>) -> MetadataQuery {
         match queries.len() {
             0 => MetadataQuery::None,
-            1 => queries.into_iter().next().unwrap(),
+            1 => queries.into_iter().next().unwrap_or(MetadataQuery::None),
             _ => MetadataQuery::Or(queries),
         }
     }
@@ -465,10 +461,18 @@ mod tests {
         let metadata = create_test_metadata();
 
         let query = MetadataQuery::field_eq("category", json!("electronics"));
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
 
         let query = MetadataQuery::field_eq("category", json!("books"));
-        assert!(!engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            !engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
     }
 
     #[test]
@@ -482,7 +486,11 @@ mod tests {
             operator: ComparisonOperator::GreaterThan,
             value: json!(50.0),
         });
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
 
         // Less than
         let query = MetadataQuery::Field(FieldQuery {
@@ -490,7 +498,11 @@ mod tests {
             operator: ComparisonOperator::LessThan,
             value: json!(2025),
         });
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
     }
 
     #[test]
@@ -500,11 +512,19 @@ mod tests {
 
         // Contains - fix case sensitivity issue
         let query = MetadataQuery::field_contains("description", "Gaming");
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
 
         // Also test with "electronics" which definitely exists
         let query = MetadataQuery::field_contains("description", "electronics");
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
 
         // Starts with
         let query = MetadataQuery::Field(FieldQuery {
@@ -512,7 +532,11 @@ mod tests {
             operator: ComparisonOperator::StartsWith,
             value: json!("Tech"),
         });
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
 
         // Ends with
         let query = MetadataQuery::Field(FieldQuery {
@@ -520,7 +544,11 @@ mod tests {
             operator: ComparisonOperator::EndsWith,
             value: json!("Corp"),
         });
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
     }
 
     #[test]
@@ -537,21 +565,33 @@ mod tests {
                 value: json!(150.0),
             }),
         ]);
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
 
         // OR operation
         let query = MetadataQuery::Or(vec![
             MetadataQuery::field_eq("category", json!("books")),
             MetadataQuery::field_eq("category", json!("electronics")),
         ]);
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
 
         // NOT operation
         let query = MetadataQuery::Not(Box::new(MetadataQuery::field_eq(
             "category",
             json!("books"),
         )));
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
     }
 
     #[test]
@@ -561,7 +601,11 @@ mod tests {
 
         // IN operation
         let query = MetadataQuery::field_in("category", vec![json!("electronics"), json!("books")]);
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
 
         // Array contains value
         let _query = MetadataQuery::Field(FieldQuery {
@@ -577,7 +621,11 @@ mod tests {
         });
         // This needs special handling - let's test existence instead
         let exists_query = MetadataQuery::field_exists("tags");
-        assert!(engine.evaluate(&exists_query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&exists_query, &metadata)
+                .expect("query evaluation should succeed")
+        );
     }
 
     #[test]
@@ -602,7 +650,11 @@ mod tests {
             }),
         ]);
 
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
     }
 
     #[test]
@@ -612,11 +664,19 @@ mod tests {
 
         // Price range query: 50 <= price <= 200
         let query = MetadataQuery::field_range("price", 50.0, 200.0);
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
 
         // Out of range
         let query = MetadataQuery::field_range("price", 200.0, 300.0);
-        assert!(!engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            !engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
     }
 
     #[test]
@@ -628,6 +688,10 @@ mod tests {
             .field_equals("category", json!("electronics"))
             .build();
 
-        assert!(engine.evaluate(&query, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&query, &metadata)
+                .expect("query evaluation should succeed")
+        );
     }
 }

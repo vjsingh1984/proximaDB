@@ -407,12 +407,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_gorilla_identical_values() {
+    fn test_gorilla_identical_values() -> Result<()> {
         // All same value - best case for Gorilla
         let values = vec![42.0f32; 100];
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values)?;
+        let decoded = decode_f32(&encoded, values.len())?;
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -421,15 +421,16 @@ mod tests {
 
         // Should be very small: first value + 100 zero bits
         assert!(encoded.len() < 20);
+        Ok(())
     }
 
     #[test]
-    fn test_gorilla_similar_values() {
+    fn test_gorilla_similar_values() -> Result<()> {
         // Similar values (typical time-series, 32+ values)
         let values: Vec<f32> = (0..32).map(|i| 20.0 + (i as f32 * 0.1)).collect();
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values)?;
+        let decoded = decode_f32(&encoded, values.len())?;
 
         assert_eq!(values.len(), decoded.len());
         // Gorilla optimized for floats - should roundtrip exactly
@@ -437,51 +438,56 @@ mod tests {
             let diff = (orig - dec).abs();
             assert!(diff < 0.01, "Expected {}, got {}", orig, dec);
         }
+        Ok(())
     }
 
     #[test]
-    fn test_gorilla_i64_roundtrip() {
+    fn test_gorilla_i64_roundtrip() -> Result<()> {
         let values: Vec<i64> = (0..32).map(|i| 1000 + i).collect();
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values)?;
+        let decoded = decode_i64(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
+        Ok(())
     }
 
     #[test]
-    fn test_gorilla_i32_roundtrip() {
+    fn test_gorilla_i32_roundtrip() -> Result<()> {
         let values: Vec<i32> = (0..32).map(|i| 100 + i).collect();
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values)?;
+        let decoded = decode_i32(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
+        Ok(())
     }
 
     #[test]
-    fn test_gorilla_empty() {
+    fn test_gorilla_empty() -> Result<()> {
         let values: Vec<f32> = vec![];
-        let encoded = encode_f32(&values).unwrap();
+        let encoded = encode_f32(&values)?;
         assert!(encoded.is_empty());
 
-        let decoded = decode_f32(&encoded, 0).unwrap();
+        let decoded = decode_f32(&encoded, 0)?;
         assert!(decoded.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn test_gorilla_single_value() {
+    fn test_gorilla_single_value() -> Result<()> {
         let values = vec![42.0f32];
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values)?;
+        let decoded = decode_f32(&encoded, values.len())?;
 
         assert_eq!(values.len(), decoded.len());
         assert_eq!(values[0].to_bits(), decoded[0].to_bits());
+        Ok(())
     }
 
     #[test]
-    fn test_gorilla_temperature_sensor() {
+    fn test_gorilla_temperature_sensor() -> Result<()> {
         // Simulated temperature sensor data
         let mut values = Vec::new();
         let mut temp = 20.0f32;
@@ -490,8 +496,8 @@ mod tests {
             temp += 0.1; // Gradual increase
         }
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values)?;
+        let decoded = decode_f32(&encoded, values.len())?;
 
         assert_eq!(values.len(), decoded.len());
 
@@ -500,10 +506,11 @@ mod tests {
             let diff = (orig - dec).abs();
             assert!(diff < 0.01, "Expected {}, got {}", orig, dec);
         }
+        Ok(())
     }
 
     #[test]
-    fn test_gorilla_timestamps() {
+    fn test_gorilla_timestamps() -> Result<()> {
         // Simulated timestamps with small increments
         let mut values = Vec::new();
         let mut ts = 1000000i64;
@@ -512,9 +519,10 @@ mod tests {
             ts += 1000; // +1 second
         }
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values)?;
+        let decoded = decode_i64(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
+        Ok(())
     }
 }

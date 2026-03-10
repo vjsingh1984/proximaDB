@@ -264,7 +264,7 @@ impl OpenTelemetryManager {
         // Calculate span duration
         let duration = span
             .end_time
-            .unwrap()
+            .unwrap_or(span.start_time)
             .duration_since(span.start_time)
             .unwrap_or_default();
 

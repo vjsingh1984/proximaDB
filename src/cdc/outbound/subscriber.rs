@@ -227,7 +227,10 @@ impl WalSubscriber {
 
     /// Get statistics
     pub fn stats(&self) -> SubscriberStats {
-        self.stats.read().unwrap().clone()
+        self.stats
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Initialize the subscriber
@@ -318,7 +321,11 @@ impl WalSubscriber {
                     }
                     Err(e) => {
                         tracing::error!("Error polling events: {}", e);
-                        subscriber.stats.write().unwrap().errors += 1;
+                        subscriber
+                            .stats
+                            .write()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .errors += 1;
                         tokio::time::sleep(Duration::from_millis(1000)).await;
                     }
                 }
@@ -349,10 +356,16 @@ impl WalSubscriber {
     pub async fn poll_events(&self) -> CdcResult<Vec<ChangeEvent>> {
         // In a real implementation, this would read from the WAL
         // For now, return buffered events or simulate
-        let mut buffer = self.event_buffer.write().unwrap();
+        let mut buffer = self
+            .event_buffer
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let events: Vec<ChangeEvent> = buffer.drain(..).collect();
 
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self
+            .stats
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.events_read += events.len() as u64;
 
         // Filter and deduplicate
@@ -388,13 +401,21 @@ impl WalSubscriber {
     pub async fn acknowledge(&self, lsn: u64) -> CdcResult<()> {
         self.position_tracker
             .acknowledge(&self.subscription_id, lsn)?;
-        self.stats.write().unwrap().events_acknowledged += 1;
+        self.stats
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .events_acknowledged += 1;
 
         // Commit exactly-once transaction if enabled
         if let Some(ref eo) = self.exactly_once {
             let key = IdempotencyKey::new("wal", lsn, &self.subscription_id);
             // Create and commit a transaction for this ack
-            let txn_id = eo.begin_transaction(key).unwrap_or_default();
+            let txn_id = eo.begin_transaction(key).map_err(|e| {
+                CdcError::Other(format!(
+                    "Failed to begin exactly-once transaction for LSN {}: {}",
+                    lsn, e
+                ))
+            })?;
             if !txn_id.is_empty() {
                 eo.commit(&txn_id)?;
             }
@@ -406,7 +427,10 @@ impl WalSubscriber {
     /// Maybe checkpoint (based on interval)
     async fn maybe_checkpoint(&self) {
         let should_checkpoint = {
-            let last = self.last_checkpoint.read().unwrap();
+            let last = self
+                .last_checkpoint
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             last.elapsed() >= Duration::from_millis(self.config.checkpoint_interval_ms)
         };
 
@@ -422,14 +446,23 @@ impl WalSubscriber {
         self.position_tracker
             .checkpoint(&self.subscription_id)
             .await?;
-        self.stats.write().unwrap().checkpoints += 1;
-        *self.last_checkpoint.write().unwrap() = Instant::now();
+        self.stats
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .checkpoints += 1;
+        *self
+            .last_checkpoint
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Instant::now();
         Ok(())
     }
 
     /// Push events into the subscriber (for testing or injection)
     pub fn push_events(&self, events: Vec<ChangeEvent>) {
-        let mut buffer = self.event_buffer.write().unwrap();
+        let mut buffer = self
+            .event_buffer
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         buffer.extend(events);
     }
 
@@ -581,7 +614,10 @@ mod tests {
 
         subscriber.push_events(events);
 
-        let buffer = subscriber.event_buffer.read().unwrap();
+        let buffer = subscriber
+            .event_buffer
+            .read()
+            .expect("event_buffer lock should not be poisoned");
         assert_eq!(buffer.len(), 5);
     }
 
@@ -671,10 +707,12 @@ mod tests {
     #[test]
     fn test_subscription_status_serialization() {
         let status = SubscriptionStatus::Active;
-        let json = serde_json::to_string(&status).unwrap();
+        let json =
+            serde_json::to_string(&status).expect("should serialize SubscriptionStatus to JSON");
         assert_eq!(json, "\"active\"");
 
-        let parsed: SubscriptionStatus = serde_json::from_str("\"paused\"").unwrap();
+        let parsed: SubscriptionStatus = serde_json::from_str("\"paused\"")
+            .expect("should deserialize SubscriptionStatus from JSON");
         assert_eq!(parsed, SubscriptionStatus::Paused);
     }
 }

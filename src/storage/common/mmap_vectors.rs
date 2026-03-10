@@ -181,7 +181,8 @@ impl MmapVectorStorage {
             let vector: Vec<f32> = vector_bytes
                 .chunks_exact(4)
                 .map(|chunk| {
-                    let bytes: [u8; 4] = chunk.try_into().expect("Chunk size mismatch");
+                    let mut bytes = [0u8; 4];
+                    bytes.copy_from_slice(chunk);
                     f32::from_le_bytes(bytes)
                 })
                 .collect();

@@ -375,10 +375,11 @@ mod tests {
 
     #[test]
     fn test_leader_election_first_becomes_leader() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let path = temp_dir.path();
 
-        let election = LeaderElection::new(path, "node1").unwrap();
+        let election =
+            LeaderElection::new(path, "node1").expect("Failed to create leader election");
         assert!(election.is_leader());
         assert_eq!(election.leader_id(), Some("node1".to_string()));
         assert_eq!(election.status(), LeaderStatus::Leader);
@@ -387,13 +388,15 @@ mod tests {
 
     #[test]
     fn test_leader_election_second_becomes_follower() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let path = temp_dir.path().to_path_buf();
 
-        let election1 = LeaderElection::new(&path, "node1").unwrap();
+        let election1 = LeaderElection::new(&path, "node1")
+            .expect("Failed to create leader election for node1");
         assert!(election1.is_leader());
 
-        let election2 = LeaderElection::new(&path, "node2").unwrap();
+        let election2 = LeaderElection::new(&path, "node2")
+            .expect("Failed to create leader election for node2");
         assert!(!election2.is_leader());
         assert_eq!(election2.status(), LeaderStatus::Follower);
         assert!(!election2.can_write());
@@ -404,39 +407,46 @@ mod tests {
 
     #[test]
     fn test_leader_step_down() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let path = temp_dir.path().to_path_buf();
 
-        let mut election1 = LeaderElection::new(&path, "node1").unwrap();
+        let mut election1 = LeaderElection::new(&path, "node1")
+            .expect("Failed to create leader election for node1");
         assert!(election1.is_leader());
 
-        election1.step_down().unwrap();
+        election1
+            .step_down()
+            .expect("Failed to step down from leadership");
         assert!(!election1.is_leader());
 
         // Now another node can become leader
-        let election2 = LeaderElection::new(&path, "node2").unwrap();
+        let election2 = LeaderElection::new(&path, "node2")
+            .expect("Failed to create leader election for node2");
         assert!(election2.is_leader());
     }
 
     #[test]
     fn test_leader_info_file_created() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let path = temp_dir.path();
 
-        let _election = LeaderElection::new(path, "test_node").unwrap();
+        let _election =
+            LeaderElection::new(path, "test_node").expect("Failed to create leader election");
 
         let info_path = path.join(LeaderElection::LEADER_INFO_FILE);
         assert!(info_path.exists());
 
-        let contents = std::fs::read_to_string(&info_path).unwrap();
-        let info: LeaderInfo = serde_json::from_str(&contents).unwrap();
+        let contents =
+            std::fs::read_to_string(&info_path).expect("Failed to read leader info file");
+        let info: LeaderInfo =
+            serde_json::from_str(&contents).expect("Failed to parse leader info JSON");
         assert_eq!(info.node_id, "test_node");
         assert_eq!(info.pid, std::process::id());
     }
 
     #[test]
     fn test_invalid_node_id() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let path = temp_dir.path();
 
         let result = LeaderElection::new(path, "");
@@ -445,40 +455,52 @@ mod tests {
 
     #[test]
     fn test_refresh_leader_info() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let path = temp_dir.path().to_path_buf();
 
-        let election1 = LeaderElection::new(&path, "node1").unwrap();
-        let election2 = LeaderElection::new(&path, "node2").unwrap();
+        let election1 = LeaderElection::new(&path, "node1")
+            .expect("Failed to create leader election for node1");
+        let election2 = LeaderElection::new(&path, "node2")
+            .expect("Failed to create leader election for node2");
 
         assert!(election1.is_leader());
         assert!(!election2.is_leader());
 
         // Refresh should work without error
-        election2.refresh_leader_info().unwrap();
+        election2
+            .refresh_leader_info()
+            .expect("Failed to refresh leader info");
         assert_eq!(election2.leader_id(), Some("node1".to_string()));
     }
 
     #[test]
     fn test_try_become_leader() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let path = temp_dir.path().to_path_buf();
 
-        let mut election1 = LeaderElection::new(&path, "node1").unwrap();
-        let mut election2 = LeaderElection::new(&path, "node2").unwrap();
+        let mut election1 = LeaderElection::new(&path, "node1")
+            .expect("Failed to create leader election for node1");
+        let mut election2 = LeaderElection::new(&path, "node2")
+            .expect("Failed to create leader election for node2");
 
         assert!(election1.is_leader());
         assert!(!election2.is_leader());
 
         // Node2 tries to become leader while node1 is still leader
-        let became_leader = election2.try_become_leader(&path).unwrap();
+        let became_leader = election2
+            .try_become_leader(&path)
+            .expect("Failed to try becoming leader");
         assert!(!became_leader);
 
         // Node1 steps down
-        election1.step_down().unwrap();
+        election1
+            .step_down()
+            .expect("Failed to step down from leadership");
 
         // Now node2 can become leader
-        let became_leader = election2.try_become_leader(&path).unwrap();
+        let became_leader = election2
+            .try_become_leader(&path)
+            .expect("Failed to try becoming leader");
         assert!(became_leader);
         assert!(election2.is_leader());
     }

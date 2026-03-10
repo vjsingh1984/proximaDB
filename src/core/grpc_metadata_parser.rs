@@ -162,7 +162,8 @@ fn parse_json_field_query(
             if queries.is_empty() {
                 Ok(None)
             } else if queries.len() == 1 {
-                Ok(Some(queries.into_iter().next().unwrap()))
+                let only_query = queries.into_iter().next();
+                Ok(only_query.map(Some).unwrap_or(None))
             } else {
                 Ok(Some(MetadataQuery::And(queries)))
             }
@@ -262,7 +263,8 @@ fn construct_logical_query(
     if all_queries.is_empty() {
         Ok(None)
     } else if all_queries.len() == 1 {
-        Ok(Some(all_queries.into_iter().next().unwrap()))
+        let only_query = all_queries.into_iter().next();
+        Ok(only_query.map(Some).unwrap_or(None))
     } else {
         Ok(Some(MetadataQuery::And(all_queries)))
     }
@@ -287,7 +289,8 @@ fn parse_simple_filters(
     if queries.is_empty() {
         Ok(None)
     } else if queries.len() == 1 {
-        Ok(Some(queries.into_iter().next().unwrap()))
+        let only_query = queries.into_iter().next();
+        Ok(only_query.map(Some).unwrap_or(None))
     } else {
         Ok(Some(MetadataQuery::And(queries)))
     }
@@ -317,7 +320,8 @@ fn parse_simple_filters_excluding_operators(
     if queries.is_empty() {
         Ok(None)
     } else if queries.len() == 1 {
-        Ok(Some(queries.into_iter().next().unwrap()))
+        let only_query = queries.into_iter().next();
+        Ok(only_query.map(Some).unwrap_or(None))
     } else {
         Ok(Some(MetadataQuery::And(queries)))
     }

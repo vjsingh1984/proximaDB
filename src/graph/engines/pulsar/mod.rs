@@ -380,7 +380,11 @@ impl PulsarGraphEngine {
                         last_result = Some(result);
 
                         if successes >= required_success {
-                            return Ok(last_result.unwrap());
+                            return Ok(last_result.ok_or_else(|| {
+                                ProximaDBError::Internal(
+                                    "No result from quorum operation".to_string(),
+                                )
+                            })?);
                         }
                     }
                 }
@@ -437,7 +441,11 @@ impl PulsarGraphEngine {
                         last_result = Some(result);
 
                         if successes >= required_success {
-                            return Ok(last_result.unwrap());
+                            return Ok(last_result.ok_or_else(|| {
+                                ProximaDBError::Internal(
+                                    "No result from quorum operation".to_string(),
+                                )
+                            })?);
                         }
                     }
                 }
@@ -838,7 +846,9 @@ impl GraphEngine for PulsarGraphEngine {
         // Group nodes by their target shard
         let mut shard_batches: HashMap<u32, Vec<Node>> = HashMap::new();
         for node in nodes {
-            let shard_id = self.get_shard_for_node_sync(&node.id).unwrap_or(0);
+            let shard_id = self.get_shard_for_node_sync(&node.id).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to get shard for node {}: {}", node.id, e))
+            })?;
             shard_batches.entry(shard_id).or_default().push(node);
         }
 
@@ -869,7 +879,12 @@ impl GraphEngine for PulsarGraphEngine {
         for edge in edges {
             let shard_id = self
                 .get_shard_for_node_sync(&edge.from_node_id)
-                .unwrap_or(0);
+                .map_err(|e| {
+                    ProximaDBError::Internal(format!(
+                        "Failed to get shard for edge source {}: {}",
+                        edge.from_node_id, e
+                    ))
+                })?;
             shard_batches.entry(shard_id).or_default().push(edge);
         }
 
@@ -898,7 +913,9 @@ impl GraphEngine for PulsarGraphEngine {
         // Group node IDs by their shard
         let mut shard_batches: HashMap<u32, Vec<NodeId>> = HashMap::new();
         for node_id in node_ids {
-            let shard_id = self.get_shard_for_node_sync(&node_id).unwrap_or(0);
+            let shard_id = self.get_shard_for_node_sync(&node_id).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to get shard for node {}: {}", node_id, e))
+            })?;
             shard_batches.entry(shard_id).or_default().push(node_id);
         }
 
@@ -945,7 +962,58 @@ impl GraphEngine for PulsarGraphEngine {
 
 impl Default for PulsarGraphEngine {
     fn default() -> Self {
-        Self::new(PulsarConfig::default()).expect("Failed to create default PULSAR engine")
+        match Self::new(PulsarConfig::default()) {
+            Ok(engine) => engine,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Failed to build default PULSAR engine; creating degraded single-shard fallback"
+                );
+
+                let fallback_config = PulsarConfig {
+                    shard_count: 1,
+                    replication_factor: 1,
+                    consistency_level: ConsistencyLevel::Any,
+                    cross_shard_optimization: false,
+                    max_concurrent_queries: 1,
+                };
+
+                let memory_pool = Arc::new(GraphMemoryPool::new());
+                let shards = Arc::new(DashMap::new());
+                shards.insert(
+                    0,
+                    Arc::new(OrionGraphEngine::with_memory_pool(Arc::new(
+                        GraphMemoryPool::new(),
+                    ))),
+                );
+
+                let hash_ring = Arc::new(RwLock::new(sharding::ConsistentHashRing::new(1)));
+                let replication_manager = Arc::new(replication::ReplicationManager::new(
+                    fallback_config.replication_factor,
+                    &shards,
+                    Arc::clone(&hash_ring),
+                ));
+                let coordinator = Arc::new(coordinator::QueryCoordinator::new(
+                    Arc::clone(&shards),
+                    Arc::clone(&hash_ring),
+                    fallback_config.max_concurrent_queries,
+                ));
+                let stats = Arc::new(RwLock::new(PulsarStats {
+                    shards_active: 1,
+                    ..Default::default()
+                }));
+
+                Self {
+                    config: fallback_config,
+                    memory_pool,
+                    shards,
+                    hash_ring,
+                    replication_manager,
+                    coordinator,
+                    stats,
+                }
+            }
+        }
     }
 }
 
@@ -958,10 +1026,11 @@ mod tests {
     #[tokio::test]
     async fn test_pulsar_engine_creation() {
         let config = PulsarConfig::default();
-        let engine = PulsarGraphEngine::new(config).unwrap();
+        let engine = PulsarGraphEngine::new(config)
+            .expect("Failed to create PULSAR engine with default config");
 
-        assert_eq!(engine.node_count().unwrap(), 0);
-        assert_eq!(engine.edge_count().unwrap(), 0);
+        assert_eq!(engine.node_count().expect("Failed to get node count"), 0);
+        assert_eq!(engine.edge_count().expect("Failed to get edge count"), 0);
 
         let stats = engine.get_stats().await;
         assert_eq!(stats.shards_active, 16); // Default shard count
@@ -973,17 +1042,18 @@ mod tests {
             shard_count: 4,
             ..PulsarConfig::default()
         };
-        let engine = PulsarGraphEngine::new(config).unwrap();
+        let engine = PulsarGraphEngine::new(config)
+            .expect("Failed to create PULSAR engine for node distribution test");
 
         // Test nodes go to different shards
         let node1_shard = engine
             .get_shard_for_node(&"node1".to_string())
             .await
-            .unwrap();
+            .expect("Failed to get shard for node1");
         let node2_shard = engine
             .get_shard_for_node(&"node2".to_string())
             .await
-            .unwrap();
+            .expect("Failed to get shard for node2");
 
         // Shards should be within expected range
         assert!(node1_shard < 4);
@@ -992,7 +1062,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_operations() {
-        let engine = PulsarGraphEngine::new(PulsarConfig::default()).unwrap();
+        let engine = PulsarGraphEngine::new(PulsarConfig::default())
+            .expect("Failed to create PULSAR engine for basic operations test");
 
         // Create test node
         let node = Node {
@@ -1005,11 +1076,17 @@ mod tests {
         };
 
         // Insert node
-        let inserted = engine.insert_node(node).await.unwrap();
+        let inserted = engine
+            .insert_node(node)
+            .await
+            .expect("Failed to insert test node");
         assert_eq!(inserted.id, "test_node");
 
         // Get node
-        let retrieved = engine.get_node(&"test_node".to_string()).unwrap().unwrap();
+        let retrieved = engine
+            .get_node(&"test_node".to_string())
+            .expect("Failed to get test node")
+            .expect("Test node not found after insertion");
         assert_eq!(retrieved.id, "test_node");
 
         // Verify stats updated (stats now updated synchronously, no sleep needed)
@@ -1024,7 +1101,8 @@ mod tests {
             replication_factor: 1,
             ..PulsarConfig::default()
         };
-        let engine = PulsarGraphEngine::new(config).unwrap();
+        let engine = PulsarGraphEngine::new(config)
+            .expect("Failed to create PULSAR engine for hash ring routing test");
 
         let node_id = "route_me".to_string();
         let node = Node {
@@ -1037,15 +1115,24 @@ mod tests {
         };
 
         // Determine expected shard from hash ring
-        let expected_shard = engine.get_shard_for_node(&node_id).await.unwrap();
+        let expected_shard = engine
+            .get_shard_for_node(&node_id)
+            .await
+            .expect("Failed to get shard for node");
 
         // Insert and ensure it lands on the expected shard only (replication_factor=1)
-        engine.insert_node(node).await.unwrap();
+        engine
+            .insert_node(node)
+            .await
+            .expect("Failed to insert node for hash ring routing test");
 
         for shard_entry in engine.shards.iter() {
             let shard_id = *shard_entry.key();
             let shard = shard_entry.value();
-            let present = shard.get_node(&node_id).unwrap().is_some();
+            let present = shard
+                .get_node(&node_id)
+                .expect("Failed to check node presence in shard")
+                .is_some();
             assert_eq!(
                 present,
                 shard_id == expected_shard,

@@ -200,8 +200,8 @@ impl BitmapFilterCache {
                     filter_expr: component.expression.clone(),
                     cached_at: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
+                        .map(|duration| duration.as_secs())
+                        .unwrap_or(0),
                     dependencies: vec![],
                 };
 
@@ -223,8 +223,8 @@ impl BitmapFilterCache {
             filter_expr: filter.to_string(),
             cached_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0),
             dependencies,
         };
 
@@ -306,8 +306,8 @@ impl BitmapFilterCache {
                     filter_expr: format!("{:?}({:?})", op, filter_keys),
                     cached_at: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
+                        .map(|duration| duration.as_secs())
+                        .unwrap_or(0),
                     dependencies: filter_keys.iter().map(|s| s.to_string()).collect(),
                 });
             }
@@ -318,8 +318,8 @@ impl BitmapFilterCache {
             filter_expr: format!("{:?}({:?})", op, filter_keys),
             cached_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0),
             dependencies: filter_keys.iter().map(|s| s.to_string()).collect(),
         })
     }

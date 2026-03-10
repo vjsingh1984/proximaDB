@@ -82,7 +82,7 @@ impl GeoIndex {
             let mut entries = self
                 .entries
                 .write()
-                .expect("GeoIndex entries lock poisoned - unrecoverable state");
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             entries.insert(id.clone(), entry);
         }
 
@@ -93,7 +93,7 @@ impl GeoIndex {
             let mut hash_index = self
                 .hash_index
                 .write()
-                .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             hash_index.entry(geohash).or_default().push(id);
         }
     }
@@ -106,7 +106,7 @@ impl GeoIndex {
             let mut entries = self
                 .entries
                 .write()
-                .expect("GeoIndex entries lock poisoned - unrecoverable state");
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             entries.remove(id)
         };
 
@@ -116,7 +116,7 @@ impl GeoIndex {
             let mut hash_index = self
                 .hash_index
                 .write()
-                .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(ids) = hash_index.get_mut(&entry.geohash) {
                 ids.retain(|i| i != id);
                 if ids.is_empty() {
@@ -144,7 +144,7 @@ impl GeoIndex {
         let entries = self
             .entries
             .read()
-            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         entries.get(id).cloned()
     }
 
@@ -153,7 +153,7 @@ impl GeoIndex {
         let entries = self
             .entries
             .read()
-            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         entries.len()
     }
 
@@ -193,11 +193,11 @@ impl GeoIndex {
         let entries = self
             .entries
             .read()
-            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let hash_index = self
             .hash_index
             .read()
-            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let mut results: Vec<GeoQueryResult> = Vec::new();
 
@@ -242,11 +242,11 @@ impl GeoIndex {
         let entries = self
             .entries
             .read()
-            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let hash_index = self
             .hash_index
             .read()
-            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let mut results: Vec<GeoQueryResult> = Vec::new();
         let mut seen = HashSet::new();
@@ -346,11 +346,11 @@ impl GeoIndex {
         let entries = self
             .entries
             .read()
-            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let hash_index = self
             .hash_index
             .read()
-            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let total_entries = entries.len();
         let unique_hashes = hash_index.len();
@@ -377,11 +377,11 @@ impl GeoIndex {
         let mut entries = self
             .entries
             .write()
-            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut hash_index = self
             .hash_index
             .write()
-            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         entries.clear();
         hash_index.clear();
@@ -392,11 +392,11 @@ impl GeoIndex {
         let entries = self
             .entries
             .read()
-            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let hash_index = self
             .hash_index
             .read()
-            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let mut results = Vec::new();
 

@@ -117,6 +117,7 @@ impl QueryExecutor {
                     r.fields
                         .get("id")
                         .and_then(|v| v.as_str())
+                        // TD-007: unwrap_or with safe default - "unknown" for entities without ID field
                         .unwrap_or("unknown")
                         .to_string()
                 })
@@ -250,8 +251,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for JOIN"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for JOIN"))?;
                     let joined = self.join_rows(&left, &right, left_keys, right_keys, kind)?;
                     buffers.push(joined);
                 }
@@ -259,8 +264,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("UNION requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for UNION"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for UNION"))?;
                     let unioned = self.union_rows(&left, &right, *all)?;
                     buffers.push(unioned);
                 }
@@ -268,8 +277,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("SET UNION requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for SET UNION"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for SET UNION"))?;
                     let unioned = self.union_rows(&left, &right, !distinct)?;
                     buffers.push(unioned);
                 }
@@ -277,8 +290,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("SET INTERSECT requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for SET INTERSECT"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for SET INTERSECT"))?;
                     let intersected = self.intersect_rows(&left, &right, !distinct)?;
                     buffers.push(intersected);
                 }
@@ -286,8 +303,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("SET EXCEPT requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for SET EXCEPT"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for SET EXCEPT"))?;
                     let excepted = self.except_rows(&left, &right, !distinct)?;
                     buffers.push(excepted);
                 }
@@ -390,8 +411,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for JOIN"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for JOIN"))?;
                     let joined = self.join_rows(&left, &right, left_keys, right_keys, kind)?;
                     buffers.push(joined);
                 }
@@ -853,6 +878,7 @@ impl QueryExecutor {
                     // Add normalized similarity score as a field for display (0-1, higher = more similar)
                     // Use record.similarity which is set by UnifiedDistanceCompute.normalized_score
                     // All engines should populate this field consistently via .with_similarity()
+                    // TD-007: unwrap_or with safe default - 0.0 for records without similarity score
                     let display_score = record.similarity.unwrap_or(0.0) as f64;
                     fields.insert(
                         "_similarity_score".to_string(),
@@ -1117,6 +1143,7 @@ impl QueryExecutor {
         offset: Option<usize>,
         limit: Option<usize>,
     ) {
+        // TD-007: unwrap_or with safe default - offset of 0 if not specified
         let off = offset.unwrap_or(0);
         if off > 0 && off < rows.len() {
             rows.drain(0..off);
@@ -1241,6 +1268,9 @@ impl QueryExecutor {
                     | Op::GreaterThanOrEqual
                     | Op::LessThan
                     | Op::LessThanOrEqual => {
+                        // TD-007: unwrap_or with safe default - NaN propagates correctly in comparisons
+                        // Non-numeric values become NaN, which returns false for all comparison operators
+                        // This is the standard SQL-like behavior for filtering on non-numeric data
                         let ln = lv.as_f64().unwrap_or(f64::NAN);
                         let rn = value.as_f64().unwrap_or(f64::NAN);
                         match operator {
@@ -1375,6 +1405,7 @@ impl QueryExecutor {
 
             if let Some(existing) = fused_results.get_mut(&result_id) {
                 // Combine RRF scores
+                // TD-007: unwrap_or with safe default - 0.0 for records without similarity score
                 let combined_score = existing.similarity_score.unwrap_or(0.0) + rrf_score;
                 existing.similarity_score = Some(combined_score);
                 existing.graph_distance = result.graph_distance;
@@ -1388,6 +1419,7 @@ impl QueryExecutor {
         // Sort by combined RRF score
         let mut sorted_results: Vec<QueryRow> = fused_results.into_values().collect();
         sorted_results.sort_by(|a, b| {
+            // TD-007: unwrap_or with safe defaults - missing scores default to 0.0, NaN comparisons default to Equal
             b.similarity_score
                 .unwrap_or(0.0)
                 .partial_cmp(&a.similarity_score.unwrap_or(0.0))
@@ -1495,6 +1527,7 @@ impl QueryExecutor {
                 for field_name in metadata_fields {
                     if let Some(value) = row.fields.remove(&field_name) {
                         // Strip "metadata." prefix for nested object
+                        // TD-007: unwrap_or with safe default - keep original field name if prefix not found
                         let key = field_name.strip_prefix("metadata.").unwrap_or(&field_name);
                         metadata_obj.insert(key.to_string(), value);
                     }
@@ -1845,7 +1878,10 @@ mod executor_tests {
             offset: None,
         };
 
-        let result = executor.execute_vector_plan(plan).await.unwrap();
+        let result = executor
+            .execute_vector_plan(plan)
+            .await
+            .expect("Vector plan execution should succeed");
 
         // Verify execution completed successfully
         assert!(result.execution_time_ms > 0.0);
@@ -1912,7 +1948,10 @@ mod executor_tests {
             offset: None,
         };
 
-        let result = executor.execute_hybrid_plan(plan).await.unwrap();
+        let result = executor
+            .execute_hybrid_plan(plan)
+            .await
+            .expect("Hybrid plan execution should succeed");
 
         // Verify hybrid execution with fusion
         assert!(result.execution_time_ms > 0.0);
@@ -1979,7 +2018,10 @@ mod executor_tests {
         };
 
         let start = std::time::Instant::now();
-        let result = executor.execute_vector_plan(plan).await.unwrap();
+        let result = executor
+            .execute_vector_plan(plan)
+            .await
+            .expect("Vector plan execution should succeed");
         let execution_time = start.elapsed();
 
         // Performance validation: Should complete in sub-millisecond time
@@ -2077,7 +2119,7 @@ mod executor_tests {
         // embedding_dim won't be present - only the id field
         assert!(derived[0].fields.get("id").is_some());
         assert_eq!(
-            derived[0].fields.get("id").unwrap(),
+            derived[0].fields.get("id").expect("id field should exist"),
             &serde_json::Value::String("node1".to_string())
         );
     }
@@ -2189,7 +2231,10 @@ mod executor_tests {
 
         let executor = QueryExecutor::new_for_tests(graph_service);
 
-        let result = executor.execute_hybrid_plan(plan).await.unwrap();
+        let result = executor
+            .execute_hybrid_plan(plan)
+            .await
+            .expect("Hybrid plan execution should succeed");
         // Expect at least one graph-derived row (n2)
         let has_n2 = result
             .rows
@@ -2276,7 +2321,13 @@ mod executor_tests {
             snapshot_threshold: 1000,
             keep_snapshots: 3,
             backup_url: None,
-            temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            temp_dir: Some(
+                temp_dir
+                    .path()
+                    .to_str()
+                    .expect("temp_dir path should be valid UTF-8")
+                    .to_string(),
+            ),
         };
         let metadata_backend = Arc::new(
             UniversalMetadataBackend::new(metadata_config, filesystem2)
@@ -2376,7 +2427,13 @@ mod executor_tests {
             snapshot_threshold: 1000,
             keep_snapshots: 3,
             backup_url: None,
-            temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            temp_dir: Some(
+                temp_dir
+                    .path()
+                    .to_str()
+                    .expect("temp_dir path should be valid UTF-8")
+                    .to_string(),
+            ),
         };
         let metadata_backend = Arc::new(
             UniversalMetadataBackend::new(metadata_config, filesystem2)
@@ -2558,11 +2615,15 @@ mod executor_tests {
         ];
 
         // Test UNION ALL (should include duplicates)
-        let union_all_result = executor.union_rows(&left_rows, &right_rows, true).unwrap();
+        let union_all_result = executor
+            .union_rows(&left_rows, &right_rows, true)
+            .expect("UNION ALL operation should succeed");
         assert_eq!(union_all_result.len(), 4); // All rows included
 
         // Test UNION DISTINCT (should remove duplicates)
-        let union_distinct_result = executor.union_rows(&left_rows, &right_rows, false).unwrap();
+        let union_distinct_result = executor
+            .union_rows(&left_rows, &right_rows, false)
+            .expect("UNION DISTINCT operation should succeed");
         assert_eq!(union_distinct_result.len(), 3); // Duplicates removed
     }
 
@@ -2635,12 +2696,20 @@ mod executor_tests {
         // Test INTERSECT (should return only matching rows)
         let intersect_result = executor
             .intersect_rows(&left_rows, &right_rows, false)
-            .unwrap();
+            .expect("INTERSECT operation should succeed");
         assert_eq!(intersect_result.len(), 1); // Only one matching row
 
         // Verify the correct row is returned
         let result_row = &intersect_result[0];
-        assert_eq!(result_row.fields.get("id").unwrap().as_str().unwrap(), "2");
+        assert_eq!(
+            result_row
+                .fields
+                .get("id")
+                .expect("id field should exist")
+                .as_str()
+                .expect("id should be a string"),
+            "2"
+        );
     }
 
     #[tokio::test]
@@ -2684,11 +2753,19 @@ mod executor_tests {
         // Test EXCEPT (should return left rows not in right)
         let except_result = executor
             .except_rows(&left_rows, &right_rows, false)
-            .unwrap();
+            .expect("EXCEPT operation should succeed");
         assert_eq!(except_result.len(), 1); // Only non-matching row from left
 
         // Verify the correct row is returned
         let result_row = &except_result[0];
-        assert_eq!(result_row.fields.get("id").unwrap().as_str().unwrap(), "1");
+        assert_eq!(
+            result_row
+                .fields
+                .get("id")
+                .expect("id field should exist")
+                .as_str()
+                .expect("id should be a string"),
+            "1"
+        );
     }
 }

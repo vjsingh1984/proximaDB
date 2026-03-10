@@ -399,12 +399,15 @@ impl SchemaInferenceService {
             return (ColumnDataType::Text, 1.0); // All nulls, default to text
         }
 
-        let (dominant_type, count) = type_counts
+        let dominant = type_counts
             .iter()
             .filter(|(k, _)| **k != "null")
             .max_by_key(|(_, v)| *v)
-            .map(|(k, v)| (*k, *v))
-            .unwrap_or(("string", 0));
+            .map(|(k, v)| (*k, *v));
+        let (dominant_type, count) = match dominant {
+            Some(pair) => pair,
+            None => return (ColumnDataType::Text, 1.0),
+        };
 
         let confidence = count as f64 / non_null_count as f64;
 
@@ -989,16 +992,24 @@ mod tests {
 
         assert_eq!(schema.columns.len(), 4);
 
-        let name_col = schema.get_column("name").unwrap();
+        let name_col = schema
+            .get_column("name")
+            .expect("Expected 'name' column to exist in inferred schema");
         assert!(matches!(name_col.data_type, ColumnDataType::Text));
 
-        let age_col = schema.get_column("age").unwrap();
+        let age_col = schema
+            .get_column("age")
+            .expect("Expected 'age' column to exist in inferred schema");
         assert!(matches!(age_col.data_type, ColumnDataType::Integer));
 
-        let score_col = schema.get_column("score").unwrap();
+        let score_col = schema
+            .get_column("score")
+            .expect("Expected 'score' column to exist in inferred schema");
         assert!(matches!(score_col.data_type, ColumnDataType::Float));
 
-        let active_col = schema.get_column("active").unwrap();
+        let active_col = schema
+            .get_column("active")
+            .expect("Expected 'active' column to exist in inferred schema");
         assert!(matches!(active_col.data_type, ColumnDataType::Boolean));
     }
 
@@ -1062,7 +1073,9 @@ mod tests {
         ];
 
         let schema = service.infer_schema(&records);
-        let name_col = schema.get_column("name").unwrap();
+        let name_col = schema
+            .get_column("name")
+            .expect("Expected 'name' column to exist in inferred schema");
 
         assert!(name_col.nullable);
         assert_eq!(name_col.null_count, 1);
@@ -1105,7 +1118,9 @@ mod tests {
             .collect();
 
         let schema = service.infer_schema(&records);
-        let user_id_col = schema.get_column("user_id").unwrap();
+        let user_id_col = schema
+            .get_column("user_id")
+            .expect("Expected 'user_id' column to exist in inferred schema");
 
         assert!(matches!(user_id_col.data_type, ColumnDataType::Uuid));
         assert!(user_id_col.confidence >= 0.8);
@@ -1190,7 +1205,7 @@ mod tests {
         // ISO8601 with Z suffix
         let result = super::detect_timestamp("2024-01-15T10:30:00Z");
         assert!(result.is_some());
-        let (data_type, confidence) = result.unwrap();
+        let (data_type, confidence) = result.expect("Expected timestamp detection to succeed");
         assert!(matches!(data_type, ColumnDataType::Timestamp));
         assert!(confidence > 0.9);
 
@@ -1212,7 +1227,7 @@ mod tests {
         // Seconds (10 digits)
         let result = super::detect_timestamp("1704067200");
         assert!(result.is_some());
-        let (data_type, confidence) = result.unwrap();
+        let (data_type, confidence) = result.expect("Expected timestamp detection to succeed");
         assert!(matches!(data_type, ColumnDataType::Timestamp));
         assert!(confidence >= 0.7);
 
@@ -1242,7 +1257,7 @@ mod tests {
         // Valid UUID
         let result = super::detect_uuid("550e8400-e29b-41d4-a716-446655440000");
         assert!(result.is_some());
-        assert!(result.unwrap() > 0.9);
+        assert!(result.expect("Expected UUID detection to succeed") > 0.9);
 
         // Another valid UUID
         let result = super::detect_uuid("123e4567-e89b-12d3-a456-426614174000");
@@ -1274,25 +1289,25 @@ mod tests {
         // Positive integer
         let result = super::detect_numeric_type("42");
         assert!(result.is_some());
-        let (data_type, _) = result.unwrap();
+        let (data_type, _) = result.expect("Expected numeric type detection to succeed");
         assert!(matches!(data_type, ColumnDataType::Integer));
 
         // Negative integer
         let result = super::detect_numeric_type("-123");
         assert!(result.is_some());
-        let (data_type, _) = result.unwrap();
+        let (data_type, _) = result.expect("Expected numeric type detection to succeed");
         assert!(matches!(data_type, ColumnDataType::Integer));
 
         // Positive with plus sign
         let result = super::detect_numeric_type("+456");
         assert!(result.is_some());
-        let (data_type, _) = result.unwrap();
+        let (data_type, _) = result.expect("Expected numeric type detection to succeed");
         assert!(matches!(data_type, ColumnDataType::Integer));
 
         // Zero
         let result = super::detect_numeric_type("0");
         assert!(result.is_some());
-        let (data_type, _) = result.unwrap();
+        let (data_type, _) = result.expect("Expected numeric type detection to succeed");
         assert!(matches!(data_type, ColumnDataType::Integer));
     }
 
@@ -1301,7 +1316,7 @@ mod tests {
         // Financial decimal (2 places)
         let result = super::detect_numeric_type("99.99");
         assert!(result.is_some());
-        let (data_type, _) = result.unwrap();
+        let (data_type, _) = result.expect("Expected numeric type detection to succeed");
         assert!(matches!(
             data_type,
             ColumnDataType::Decimal {
@@ -1313,7 +1328,7 @@ mod tests {
         // More precision
         let result = super::detect_numeric_type("123.456");
         assert!(result.is_some());
-        let (data_type, _) = result.unwrap();
+        let (data_type, _) = result.expect("Expected numeric type detection to succeed");
         assert!(matches!(
             data_type,
             ColumnDataType::Decimal {
@@ -1325,13 +1340,13 @@ mod tests {
         // Negative decimal
         let result = super::detect_numeric_type("-50.00");
         assert!(result.is_some());
-        let (data_type, _) = result.unwrap();
+        let (data_type, _) = result.expect("Expected numeric type detection to succeed");
         assert!(matches!(data_type, ColumnDataType::Decimal { .. }));
 
         // Zero decimal
         let result = super::detect_numeric_type("0.00");
         assert!(result.is_some());
-        let (data_type, _) = result.unwrap();
+        let (data_type, _) = result.expect("Expected numeric type detection to succeed");
         assert!(matches!(data_type, ColumnDataType::Decimal { .. }));
     }
 
@@ -1340,7 +1355,7 @@ mod tests {
         // Single decimal place (detected as float, not decimal)
         let result = super::detect_numeric_type("3.1");
         assert!(result.is_some());
-        let (data_type, _) = result.unwrap();
+        let (data_type, _) = result.expect("Expected numeric type detection to succeed");
         assert!(matches!(data_type, ColumnDataType::Float));
 
         // Scientific notation not supported (returns None)
@@ -1401,15 +1416,15 @@ mod tests {
     #[test]
     fn test_detect_boolean_confidence_levels() {
         // Highest confidence for true/false
-        let conf = super::detect_boolean("true").unwrap();
+        let conf = super::detect_boolean("true").expect("Expected boolean detection to succeed");
         assert!(conf >= 0.95);
 
         // Medium confidence for yes/no
-        let conf = super::detect_boolean("yes").unwrap();
+        let conf = super::detect_boolean("yes").expect("Expected boolean detection to succeed");
         assert!(conf >= 0.85 && conf < 0.95);
 
         // Lower confidence for 0/1 (could be integer)
-        let conf = super::detect_boolean("1").unwrap();
+        let conf = super::detect_boolean("1").expect("Expected boolean detection to succeed");
         assert!(conf < 0.8);
     }
 
@@ -1428,7 +1443,9 @@ mod tests {
             .collect();
 
         let schema = service.infer_schema(&records);
-        let is_active_col = schema.get_column("is_active").unwrap();
+        let is_active_col = schema
+            .get_column("is_active")
+            .expect("Expected 'is_active' column to exist in inferred schema");
 
         assert!(matches!(is_active_col.data_type, ColumnDataType::Boolean));
         assert!(is_active_col.confidence >= 0.8);
@@ -1458,7 +1475,9 @@ mod tests {
             .collect();
 
         let schema = service.infer_schema(&records);
-        let created_at_col = schema.get_column("created_at").unwrap();
+        let created_at_col = schema
+            .get_column("created_at")
+            .expect("Expected 'created_at' column to exist in inferred schema");
 
         assert!(matches!(
             created_at_col.data_type,
@@ -1490,7 +1509,9 @@ mod tests {
             .collect();
 
         let schema = service.infer_schema(&records);
-        let event_time_col = schema.get_column("event_time").unwrap();
+        let event_time_col = schema
+            .get_column("event_time")
+            .expect("Expected 'event_time' column to exist in inferred schema");
 
         assert!(matches!(
             event_time_col.data_type,
@@ -1516,7 +1537,9 @@ mod tests {
             .collect();
 
         let schema = service.infer_schema(&records);
-        let price_col = schema.get_column("price").unwrap();
+        let price_col = schema
+            .get_column("price")
+            .expect("Expected 'price' column to exist in inferred schema");
 
         assert!(matches!(
             price_col.data_type,
@@ -1547,7 +1570,9 @@ mod tests {
         .collect();
 
         let schema = service.infer_schema(&records);
-        let mixed_col = schema.get_column("mixed_field").unwrap();
+        let mixed_col = schema
+            .get_column("mixed_field")
+            .expect("Expected 'mixed_field' column to exist in inferred schema");
 
         // Should fallback to Text since UUID ratio is below threshold
         assert!(matches!(mixed_col.data_type, ColumnDataType::Text));
@@ -1597,35 +1622,51 @@ mod tests {
         assert_eq!(schema.columns.len(), 8);
 
         // UUID column
-        let product_id = schema.get_column("product_id").unwrap();
+        let product_id = schema
+            .get_column("product_id")
+            .expect("Expected 'product_id' column to exist in inferred schema");
         assert!(matches!(product_id.data_type, ColumnDataType::Uuid));
 
         // Text column
-        let name = schema.get_column("name").unwrap();
+        let name = schema
+            .get_column("name")
+            .expect("Expected 'name' column to exist in inferred schema");
         assert!(matches!(name.data_type, ColumnDataType::Text));
 
         // Decimal column (price with 2 decimal places)
-        let price = schema.get_column("price").unwrap();
+        let price = schema
+            .get_column("price")
+            .expect("Expected 'price' column to exist in inferred schema");
         assert!(matches!(price.data_type, ColumnDataType::Decimal { .. }));
 
         // Integer column
-        let stock = schema.get_column("stock").unwrap();
+        let stock = schema
+            .get_column("stock")
+            .expect("Expected 'stock' column to exist in inferred schema");
         assert!(matches!(stock.data_type, ColumnDataType::Integer));
 
         // Float column
-        let rating = schema.get_column("rating").unwrap();
+        let rating = schema
+            .get_column("rating")
+            .expect("Expected 'rating' column to exist in inferred schema");
         assert!(matches!(rating.data_type, ColumnDataType::Float));
 
         // Boolean column
-        let in_stock = schema.get_column("in_stock").unwrap();
+        let in_stock = schema
+            .get_column("in_stock")
+            .expect("Expected 'in_stock' column to exist in inferred schema");
         assert!(matches!(in_stock.data_type, ColumnDataType::Boolean));
 
         // Timestamp column
-        let created_at = schema.get_column("created_at").unwrap();
+        let created_at = schema
+            .get_column("created_at")
+            .expect("Expected 'created_at' column to exist in inferred schema");
         assert!(matches!(created_at.data_type, ColumnDataType::Timestamp));
 
         // TEXT_LARGE column (long description)
-        let description = schema.get_column("description").unwrap();
+        let description = schema
+            .get_column("description")
+            .expect("Expected 'description' column to exist in inferred schema");
         assert!(matches!(description.data_type, ColumnDataType::TextLarge));
         assert!(schema.is_text_column("description"));
     }

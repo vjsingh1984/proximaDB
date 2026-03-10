@@ -179,9 +179,14 @@ impl RetryPolicy {
             }
         }
 
+        let final_error = match last_error {
+            Some(error) => error,
+            None => unreachable!("At least one attempt must have been made"),
+        };
+
         Err(RetryError::RetriesExhausted {
             attempts: total_attempts,
-            last_error: last_error.expect("At least one attempt must have been made"),
+            last_error: final_error,
         })
     }
 
@@ -236,9 +241,14 @@ impl RetryPolicy {
             }
         }
 
+        let final_error = match last_error {
+            Some(error) => error,
+            None => unreachable!("At least one attempt must have been made"),
+        };
+
         Err(RetryError::RetriesExhausted {
             attempts: total_attempts,
-            last_error: last_error.expect("At least one attempt must have been made"),
+            last_error: final_error,
         })
     }
 }

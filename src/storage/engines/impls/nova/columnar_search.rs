@@ -315,7 +315,7 @@ impl NovaColumnarSearch {
             let metric = distance_metric.clone();
 
             let handle = tokio::spawn(async move {
-                let _permit = sem.acquire().await.unwrap();
+                let _permit = sem.acquire().await.ok();
 
                 // Process row group with streaming
                 let candidates =
@@ -899,7 +899,7 @@ impl NovaColumnarSearch {
         }
 
         // Sort and take top-k
-        final_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        final_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         final_results.truncate(top_k);
 
         Ok(final_results)

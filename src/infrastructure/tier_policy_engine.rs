@@ -2141,7 +2141,7 @@ mod tests {
                     durability_preference: DurabilityPreference::High,
                 },
             )
-            .unwrap();
+            .expect("failed to register cloud_collection");
 
         // Collection 2: Local disk durability (/mnt/disk/collection2)
         // Can use acceleration up to memory + NVMe
@@ -2154,7 +2154,7 @@ mod tests {
                     durability_preference: DurabilityPreference::Standard,
                 },
             )
-            .unwrap();
+            .expect("failed to register disk_collection");
 
         // Collection 3: Memory-only (/tmp/cache_collection)
         // Cache workload - can evict
@@ -2167,7 +2167,7 @@ mod tests {
                     max_cost_per_gb_per_month: 50.0,
                 },
             )
-            .unwrap();
+            .expect("failed to register cache_collection");
 
         // Test placement decisions respect per-collection constraints
 
@@ -2180,13 +2180,13 @@ mod tests {
                 1,           // Recent
                 Some(8),     // High priority
             )
-            .unwrap();
+            .expect("failed to determine placement for cloud_collection");
         assert_eq!(tier, InfrastructureTier::Memory);
 
         // Disk collection: Similar data -> Memory (acceleration above disk baseline)
         let tier = global_manager
             .determine_placement("disk_collection", 1024 * 1024, 200.0, 1, Some(8))
-            .unwrap();
+            .expect("failed to determine placement for disk_collection");
         assert_eq!(tier, InfrastructureTier::Memory);
 
         // Cache collection: Can be more aggressive with memory
@@ -2199,7 +2199,7 @@ mod tests {
                 1,
                 Some(8),
             )
-            .unwrap();
+            .expect("failed to determine placement for cache_collection");
         assert_eq!(tier, InfrastructureTier::Memory);
     }
 
@@ -2212,7 +2212,7 @@ mod tests {
             "test_collection".to_string(),
             "s3://my-bucket/collections".to_string(),
         )
-        .unwrap();
+        .expect("failed to create config from S3 base location");
 
         assert!(matches!(
             config.durable_baseline,
@@ -2228,7 +2228,7 @@ mod tests {
             "disk_collection".to_string(),
             "/mnt/disk/data".to_string(),
         )
-        .unwrap();
+        .expect("failed to create config from local disk base location");
 
         assert!(matches!(
             config.durable_baseline,
@@ -2265,7 +2265,7 @@ mod tests {
                     durability_preference: DurabilityPreference::Maximum,
                 },
             )
-            .unwrap();
+            .expect("failed to register critical_index");
 
         global_manager
             .register_collection(
@@ -2276,10 +2276,12 @@ mod tests {
                     max_cost_per_gb_per_month: 25.0,
                 },
             )
-            .unwrap();
+            .expect("failed to register cache_workload");
 
         // Simulate global memory pressure
-        let response = global_manager.handle_global_memory_pressure().unwrap();
+        let response = global_manager
+            .handle_global_memory_pressure()
+            .expect("failed to handle global memory pressure");
 
         // Should free significant memory
         assert!(response.total_memory_freed > 0);

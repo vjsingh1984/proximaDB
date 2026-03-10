@@ -450,7 +450,7 @@ mod tests {
         let session_id = service
             .create_session("test_collection".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("failed to create test session");
 
         let records: Vec<VectorRecord> = (0..10)
             .map(|i| VectorRecord {
@@ -460,7 +460,10 @@ mod tests {
             })
             .collect();
 
-        let result = service.push_records(&session_id, records).await.unwrap();
+        let result = service
+            .push_records(&session_id, records)
+            .await
+            .expect("failed to push records");
         assert_eq!(result.pushed, 10);
 
         service.close_session(&session_id);
@@ -475,7 +478,7 @@ mod tests {
         let session_id = service
             .create_session("sub_test".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("failed to create subscription test session");
 
         // Create subscription
         let sub_config = SubscriptionConfig {
@@ -488,13 +491,13 @@ mod tests {
         let sub_handle = service
             .subscribe("sub_test".to_string(), vec![0.5; 64], sub_config, None)
             .await
-            .unwrap();
+            .expect("failed to create subscription");
 
         // Activate
         service
             .activate_subscription(&sub_handle.id, vec![])
             .await
-            .unwrap();
+            .expect("failed to activate subscription");
 
         // Push with notification
         let records: Vec<VectorRecord> = (0..5)
@@ -505,13 +508,18 @@ mod tests {
             })
             .collect();
 
-        let result = service.push_and_notify(&session_id, records).await.unwrap();
+        let result = service
+            .push_and_notify(&session_id, records)
+            .await
+            .expect("failed to push and notify");
         assert_eq!(result.push_result.pushed, 5);
         // Should have notified at least one subscription
         assert!(result.subscriptions_notified >= 0);
 
         // Cleanup
-        service.unsubscribe(&sub_handle.id).unwrap();
+        service
+            .unsubscribe(&sub_handle.id)
+            .expect("failed to unsubscribe");
         service.close_session(&session_id);
     }
 
@@ -525,7 +533,7 @@ mod tests {
         let session_id = service
             .create_session("no_notify".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("failed to create no_notify test session");
 
         let records = vec![VectorRecord {
             id: "vec_1".to_string(),
@@ -533,7 +541,10 @@ mod tests {
             ..Default::default()
         }];
 
-        let result = service.push_and_notify(&session_id, records).await.unwrap();
+        let result = service
+            .push_and_notify(&session_id, records)
+            .await
+            .expect("failed to push and notify");
         // With auto_notify disabled, no subscriptions should be notified
         assert_eq!(result.subscriptions_notified, 0);
     }
@@ -547,7 +558,7 @@ mod tests {
             let _ = service
                 .create_session(format!("collection_{}", i), SessionConfig::default())
                 .await
-                .unwrap();
+                .expect("failed to create session for stats test");
         }
 
         let stats = service.stats();
@@ -562,7 +573,7 @@ mod tests {
         let _ = service
             .create_session("shutdown_test".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("failed to create shutdown test session");
 
         // Shutdown without storage (no final flush)
         service.shutdown(None).await;

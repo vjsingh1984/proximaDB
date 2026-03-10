@@ -13,9 +13,10 @@
 // - OCSF event parsing
 // - Fluent adapter: FULLY IMPLEMENTED (MessagePack parsing complete)
 // - Full-text search with Tantivy (BM25 ranking)
+// - OTLP adapter: HTTP/JSON transport fully implemented with comprehensive tests
 //
 // ## Experimental Features (Use with Caution)
-// - OTLP adapter: Partial implementation, needs testing
+// - OTLP gRPC transport: Not implemented (use HTTP/JSON transport instead)
 // - High-throughput ingestion: Not benchmarked for >10K logs/sec
 // - Alerting engine: Framework only, no production-tested rules
 // - Storage partitioning: Basic implementation, needs validation

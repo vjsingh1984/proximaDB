@@ -766,7 +766,9 @@ impl BackupCoordinator {
                 break;
             }
 
-            let parent_id = current.parent_backup_id.as_ref().unwrap();
+            let Some(parent_id) = current.parent_backup_id.as_ref() else {
+                break;
+            };
             current = self.get_backup_metadata(parent_id).await?;
         }
 
@@ -824,7 +826,7 @@ impl BackupCoordinator {
                                     // Track as last backup of its type
                                     let existing = last_backup.get(&metadata.backup_type);
                                     if existing.is_none() || {
-                                        let existing_meta = backups.get(existing.unwrap());
+                                        let existing_meta = existing.and_then(|id| backups.get(id));
                                         existing_meta
                                             .map(|m| metadata.started_at > m.started_at)
                                             .unwrap_or(true)

@@ -270,10 +270,12 @@ mod tests {
         let mut builder = BloomFilterBuilder::new(config);
 
         // Add IDs to row group 0
-        builder.start_row_group(0).unwrap();
-        builder.add_id("id_1").unwrap();
-        builder.add_id("id_2").unwrap();
-        builder.add_id("id_3").unwrap();
+        builder
+            .start_row_group(0)
+            .expect("Failed to start row group");
+        builder.add_id("id_1").expect("Failed to add id_1");
+        builder.add_id("id_2").expect("Failed to add id_2");
+        builder.add_id("id_3").expect("Failed to add id_3");
 
         // Check membership
         assert!(builder.might_contain(0, "id_1"));
@@ -293,12 +295,16 @@ mod tests {
         let mut builder = BloomFilterBuilder::new(config);
 
         // Row group 0
-        builder.start_row_group(0).unwrap();
-        builder.add_id("rg0_id1").unwrap();
+        builder
+            .start_row_group(0)
+            .expect("Failed to start row group 0");
+        builder.add_id("rg0_id1").expect("Failed to add rg0_id1");
 
         // Row group 1
-        builder.start_row_group(1).unwrap();
-        builder.add_id("rg1_id1").unwrap();
+        builder
+            .start_row_group(1)
+            .expect("Failed to start row group 1");
+        builder.add_id("rg1_id1").expect("Failed to add rg1_id1");
 
         // Check isolation between row groups
         assert!(builder.might_contain(0, "rg0_id1"));
@@ -313,7 +319,9 @@ mod tests {
         let config = BloomFilterConfig::default();
         let mut builder = BloomFilterBuilder::new(config);
 
-        builder.start_row_group(0).unwrap();
+        builder
+            .start_row_group(0)
+            .expect("Failed to start row group");
 
         let records = vec![
             VectorRecord {
@@ -332,7 +340,7 @@ mod tests {
             },
         ];
 
-        builder.add_batch(&records).unwrap();
+        builder.add_batch(&records).expect("Failed to add batch");
 
         assert!(builder.might_contain(0, "batch_1"));
         assert!(builder.might_contain(0, "batch_2"));
@@ -343,8 +351,10 @@ mod tests {
         let config = BloomFilterConfig::default();
         let mut builder = BloomFilterBuilder::new(config);
 
-        builder.start_row_group(0).unwrap();
-        builder.add_id("test").unwrap();
+        builder
+            .start_row_group(0)
+            .expect("Failed to start row group");
+        builder.add_id("test").expect("Failed to add test ID");
 
         let stats = builder.get_stats();
         assert_eq!(stats.total_filters, 1);

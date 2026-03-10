@@ -101,6 +101,7 @@ impl Default for SAMLAttributeMappings {
 }
 
 /// Generic SAML 2.0 integration
+#[derive(Debug)]
 pub struct SAMLIntegration {
     config: SAMLConfig,
     // Note: In a real implementation, this would include:
@@ -225,37 +226,38 @@ impl SAMLIntegration {
                     "Required user ID attribute '{}' not found",
                     mappings.user_id_attribute
                 )
-            })?;
+            })?
+            .clone();
 
         // Extract email
         let email = attributes
             .get(&mappings.email_attribute)
             .and_then(|values| values.first())
-            .unwrap_or(user_id);
+            .cloned()
+            .unwrap_or_else(|| user_id.clone());
 
         // Extract display name
         let display_name = attributes
             .get(&mappings.display_name_attribute)
             .and_then(|values| values.first())
-            .unwrap_or(user_id);
+            .cloned()
+            .unwrap_or_else(|| user_id.clone());
 
         // Extract groups/roles
-        let groups = if let Some(groups_attr) = &mappings.groups_attribute {
-            attributes.get(groups_attr).cloned().unwrap_or_default()
-        } else {
-            vec![]
-        };
+        let groups = mappings
+            .groups_attribute
+            .as_ref()
+            .and_then(|groups_attr| attributes.get(groups_attr).cloned())
+            .unwrap_or_default();
 
         // Extract tenant/organization
-        let tenant_id = if let Some(tenant_attr) = &mappings.tenant_attribute {
-            attributes
-                .get(tenant_attr)
-                .and_then(|values| values.first())
-                .cloned()
-                .unwrap_or_else(|| self.config.default_tenant_id.clone())
-        } else {
-            self.config.default_tenant_id.clone()
-        };
+        let tenant_id = mappings
+            .tenant_attribute
+            .as_ref()
+            .and_then(|tenant_attr| attributes.get(tenant_attr))
+            .and_then(|values| values.first())
+            .cloned()
+            .unwrap_or_else(|| self.config.default_tenant_id.clone());
 
         // Map groups to roles
         let roles = self.map_groups_to_roles(&groups);
@@ -362,12 +364,12 @@ mod tests {
     #[tokio::test]
     async fn test_saml_auth_request_generation() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let auth_request = integration.generate_auth_request(Some("test-relay-state"));
         assert!(auth_request.is_ok());
 
-        let request = auth_request.unwrap();
+        let request = auth_request.expect("Failed to generate auth request");
         assert_eq!(request.sp_entity_id, "proximadb-test");
         assert_eq!(request.acs_url, "https://proximadb.test.com/auth/saml/acs");
         assert_eq!(request.relay_state, Some("test-relay-state".to_string()));
@@ -376,7 +378,7 @@ mod tests {
     #[tokio::test]
     async fn test_saml_assertion_validation() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         // Test with non-empty SAML response
         let result = integration
@@ -384,7 +386,7 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
-        let user_context = result.unwrap();
+        let user_context = result.expect("Failed to validate assertion");
         assert!(matches!(
             user_context.provider_context,
             ProviderUserContext::Generic { .. }
@@ -400,7 +402,7 @@ mod tests {
     #[test]
     fn test_group_role_mapping() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let admin_groups = vec!["admin_group".to_string()];
         let admin_roles = integration.map_groups_to_roles(&admin_groups);
@@ -425,7 +427,10 @@ mod tests {
         config.idp_metadata_url = String::new();
         let result = SAMLIntegration::new(config);
         assert!(result.is_err());
-        let err_msg = format!("{}", result.err().unwrap());
+        let err_msg = format!(
+            "{}",
+            result.expect_err("Expected error for missing IdP metadata URL")
+        );
         assert!(err_msg.contains("IdP metadata URL is required"));
     }
 
@@ -435,7 +440,10 @@ mod tests {
         config.sp_entity_id = String::new();
         let result = SAMLIntegration::new(config);
         assert!(result.is_err());
-        let err_msg = format!("{}", result.err().unwrap());
+        let err_msg = format!(
+            "{}",
+            result.expect_err("Expected error for missing SP entity ID")
+        );
         assert!(err_msg.contains("SP entity ID is required"));
     }
 
@@ -445,7 +453,10 @@ mod tests {
         config.idp_certificate = String::new();
         let result = SAMLIntegration::new(config);
         assert!(result.is_err());
-        let err_msg = format!("{}", result.err().unwrap());
+        let err_msg = format!(
+            "{}",
+            result.expect_err("Expected error for missing IdP certificate")
+        );
         assert!(err_msg.contains("IdP certificate is required"));
     }
 
@@ -483,12 +494,12 @@ mod tests {
     #[tokio::test]
     async fn test_saml_auth_request_without_relay_state() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let auth_request = integration.generate_auth_request(None);
         assert!(auth_request.is_ok());
 
-        let request = auth_request.unwrap();
+        let request = auth_request.expect("Failed to generate auth request");
         assert!(request.relay_state.is_none());
         assert!(!request.request_id.is_empty());
         assert!(request.request_id.starts_with("saml_req_"));
@@ -497,9 +508,11 @@ mod tests {
     #[tokio::test]
     async fn test_saml_auth_request_fields() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
-        let auth_request = integration.generate_auth_request(Some("relay123")).unwrap();
+        let auth_request = integration
+            .generate_auth_request(Some("relay123"))
+            .expect("Failed to generate auth request");
 
         assert_eq!(auth_request.destination, "https://idp.example.com/metadata");
         assert_eq!(
@@ -519,12 +532,12 @@ mod tests {
     #[tokio::test]
     async fn test_saml_assertion_validation_user_context_fields() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let result = integration
             .validate_assertion("<saml:Response>valid</saml:Response>")
             .await
-            .unwrap();
+            .expect("Failed to validate assertion");
 
         assert!(!result.user_id.is_empty());
         assert!(!result.email.is_empty());
@@ -539,12 +552,12 @@ mod tests {
     #[tokio::test]
     async fn test_saml_assertion_validation_provider_context() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let result = integration
             .validate_assertion("<saml:Response>test</saml:Response>")
             .await
-            .unwrap();
+            .expect("Failed to validate assertion");
 
         match &result.provider_context {
             ProviderUserContext::Generic {
@@ -567,7 +580,7 @@ mod tests {
     #[tokio::test]
     async fn test_saml_assertion_validation_whitespace_only() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         // Whitespace-only is not empty
         let result = integration.validate_assertion("   ").await;
@@ -577,7 +590,7 @@ mod tests {
     #[tokio::test]
     async fn test_saml_assertion_validation_long_response() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let long_response = format!("<saml:Response>{}</saml:Response>", "a".repeat(10000));
         let result = integration.validate_assertion(&long_response).await;
@@ -589,7 +602,7 @@ mod tests {
     #[test]
     fn test_group_role_mapping_multiple_groups() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let groups = vec!["admin_group".to_string(), "user_group".to_string()];
         let roles = integration.map_groups_to_roles(&groups);
@@ -602,7 +615,7 @@ mod tests {
     #[test]
     fn test_group_role_mapping_empty_groups() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let empty_groups: Vec<String> = vec![];
         let roles = integration.map_groups_to_roles(&empty_groups);
@@ -626,7 +639,7 @@ mod tests {
             ..create_test_saml_config()
         };
 
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let groups = vec![
             "admin_group".to_string(),
@@ -646,7 +659,7 @@ mod tests {
     #[test]
     fn test_map_attributes_to_user_context_complete() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let mut attributes = HashMap::new();
         attributes.insert("NameID".to_string(), vec!["user123".to_string()]);
@@ -658,7 +671,7 @@ mod tests {
         let result = integration.map_attributes_to_user_context(&attributes);
         assert!(result.is_ok());
 
-        let user_context = result.unwrap();
+        let user_context = result.expect("Failed to map attributes to user context");
         assert_eq!(user_context.user_id, "user123");
         assert_eq!(user_context.email, "user@example.com");
         assert_eq!(user_context.display_name, "John Doe");
@@ -669,7 +682,7 @@ mod tests {
     #[test]
     fn test_map_attributes_to_user_context_missing_user_id() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let attributes: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -677,7 +690,7 @@ mod tests {
         assert!(result.is_err());
         assert!(
             result
-                .unwrap_err()
+                .expect_err("Expected error for missing user ID")
                 .to_string()
                 .contains("user ID attribute")
         );
@@ -686,7 +699,7 @@ mod tests {
     #[test]
     fn test_map_attributes_to_user_context_minimal() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let mut attributes = HashMap::new();
         attributes.insert("NameID".to_string(), vec!["minimal_user".to_string()]);
@@ -694,7 +707,7 @@ mod tests {
         let result = integration.map_attributes_to_user_context(&attributes);
         assert!(result.is_ok());
 
-        let user_context = result.unwrap();
+        let user_context = result.expect("Failed to map attributes to user context");
         assert_eq!(user_context.user_id, "minimal_user");
         // Email defaults to user_id
         assert_eq!(user_context.email, "minimal_user");
@@ -716,14 +729,14 @@ mod tests {
             ..create_test_saml_config()
         };
 
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let mut attributes = HashMap::new();
         attributes.insert("NameID".to_string(), vec!["user1".to_string()]);
 
         let result = integration
             .map_attributes_to_user_context(&attributes)
-            .unwrap();
+            .expect("Failed to map attributes to user context");
         assert!(result.roles.contains(&"saml_user".to_string()));
     }
 
@@ -737,14 +750,14 @@ mod tests {
             ..create_test_saml_config()
         };
 
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let mut attributes = HashMap::new();
         attributes.insert("NameID".to_string(), vec!["user1".to_string()]);
 
         let result = integration
             .map_attributes_to_user_context(&attributes)
-            .unwrap();
+            .expect("Failed to map attributes to user context");
         // Should use default tenant
         assert_eq!(result.tenant_id, "saml_tenant");
     }
@@ -754,7 +767,7 @@ mod tests {
     #[test]
     fn test_extract_user_attributes_placeholder() {
         let config = create_test_saml_config();
-        let integration = SAMLIntegration::new(config).unwrap();
+        let integration = SAMLIntegration::new(config).expect("Failed to create SAML integration");
 
         let assertion = SAMLAssertion {
             assertion_id: "assertion_123".to_string(),
@@ -766,7 +779,9 @@ mod tests {
         };
 
         // Currently returns empty HashMap (placeholder)
-        let attributes = integration.extract_user_attributes(&assertion).unwrap();
+        let attributes = integration
+            .extract_user_attributes(&assertion)
+            .expect("Failed to extract user attributes");
         assert!(attributes.is_empty());
     }
 
@@ -822,14 +837,15 @@ mod tests {
     #[test]
     fn test_saml_config_serialization() {
         let config = create_test_saml_config();
-        let json = serde_json::to_string(&config).unwrap();
+        let json = serde_json::to_string(&config).expect("Failed to serialize config");
 
         assert!(json.contains("idp_metadata_url"));
         assert!(json.contains("sp_entity_id"));
         assert!(json.contains("idp_certificate"));
         assert!(json.contains("attribute_mappings"));
 
-        let deserialized: SAMLConfig = serde_json::from_str(&json).unwrap();
+        let deserialized: SAMLConfig =
+            serde_json::from_str(&json).expect("Failed to deserialize config");
         assert_eq!(deserialized.idp_metadata_url, config.idp_metadata_url);
         assert_eq!(deserialized.sp_entity_id, config.sp_entity_id);
         assert_eq!(
@@ -848,8 +864,9 @@ mod tests {
             ..SAMLAttributeMappings::default()
         };
 
-        let json = serde_json::to_string(&mappings).unwrap();
-        let deserialized: SAMLAttributeMappings = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&mappings).expect("Failed to serialize mappings");
+        let deserialized: SAMLAttributeMappings =
+            serde_json::from_str(&json).expect("Failed to deserialize mappings");
 
         assert_eq!(deserialized.user_id_attribute, mappings.user_id_attribute);
         assert_eq!(
@@ -879,7 +896,14 @@ mod tests {
         };
 
         assert_eq!(config.role_mapping.len(), 3);
-        assert_eq!(config.role_mapping.get("executives").unwrap().len(), 2);
+        assert_eq!(
+            config
+                .role_mapping
+                .get("executives")
+                .expect("Failed to get executives roles")
+                .len(),
+            2
+        );
     }
 
     // --- Allowed Audiences Tests ---

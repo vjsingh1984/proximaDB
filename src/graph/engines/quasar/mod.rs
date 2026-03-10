@@ -793,16 +793,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_quasar_engine_creation() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {}", e))
+            .expect("Failed to create temp directory for test");
         let config = QuasarConfig {
             cold_tier_path: temp_dir.path().to_path_buf(),
             ..QuasarConfig::default()
         };
 
-        let engine = QuasarGraphEngine::new(config).await.unwrap();
+        let engine = QuasarGraphEngine::new(config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create QUASAR engine: {}", e))
+            .expect("Failed to create QUASAR engine for test");
 
-        assert_eq!(engine.node_count().unwrap(), 0);
-        assert_eq!(engine.edge_count().unwrap(), 0);
+        assert_eq!(engine.node_count().expect("Failed to get node count"), 0);
+        assert_eq!(engine.edge_count().expect("Failed to get edge count"), 0);
 
         let stats = engine.get_stats().await;
         assert_eq!(stats.hot_tier_nodes, 0);
@@ -811,14 +816,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_node_operations() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {}", e))
+            .expect("Failed to create temp directory for test");
         let config = QuasarConfig {
             cold_tier_path: temp_dir.path().to_path_buf(),
             hot_tier_max_nodes: 5, // Small limit for testing
             ..QuasarConfig::default()
         };
 
-        let engine = QuasarGraphEngine::new(config).await.unwrap();
+        let engine = QuasarGraphEngine::new(config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create QUASAR engine: {}", e))
+            .expect("Failed to create QUASAR engine for test");
 
         // Create test node
         let node = Node {
@@ -831,14 +841,22 @@ mod tests {
         };
 
         // Insert node
-        let inserted = engine.insert_node(node).await.unwrap();
+        let inserted = engine
+            .insert_node(node)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to insert node: {}", e))
+            .expect("Failed to insert node for test");
         assert_eq!(inserted.id, "test_node");
 
         // Give some time for async operations
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Get node
-        let retrieved = engine.get_node(&"test_node".to_string()).unwrap().unwrap();
+        let retrieved = engine
+            .get_node(&"test_node".to_string())
+            .map_err(|e| anyhow::anyhow!("Failed to get node: {}", e))
+            .expect("Failed to get node for test")
+            .expect("Node should exist after insertion");
         assert_eq!(retrieved.id, "test_node");
 
         // Verify stats (temporarily disabled due to sync/async complexity)
@@ -849,7 +867,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_tiering_configuration() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {}", e))
+            .expect("Failed to create temp directory for test");
         let config = QuasarConfig {
             cold_tier_path: temp_dir.path().to_path_buf(),
             hot_tier_max_nodes: 100,
@@ -865,14 +885,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_cold_hit_promotes_to_hot() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {}", e))
+            .expect("Failed to create temp directory for test");
         let config = QuasarConfig {
             cold_tier_path: temp_dir.path().to_path_buf(),
             hot_tier_max_nodes: 1,
             ..QuasarConfig::default()
         };
 
-        let engine = QuasarGraphEngine::new(config).await.unwrap();
+        let engine = QuasarGraphEngine::new(config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create QUASAR engine: {}", e))
+            .expect("Failed to create QUASAR engine for test");
 
         // Insert a node directly into cold tier to simulate eviction
         let cold_node = Node {
@@ -887,7 +912,8 @@ mod tests {
             .cold_tier
             .store_node(cold_node.clone())
             .await
-            .unwrap();
+            .map_err(|e| anyhow::anyhow!("Failed to store node in cold tier: {}", e))
+            .expect("Failed to store node in cold tier for test");
         {
             let mut stats = engine.stats.write().await;
             stats.cold_tier_nodes += 1;
@@ -898,9 +924,13 @@ mod tests {
         let retrieved = engine
             .get_node_from_tiers(&"cold_node".to_string())
             .await
-            .unwrap();
+            .map_err(|e| anyhow::anyhow!("Failed to get node from tiers: {}", e))
+            .expect("Failed to get node from tiers for test");
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().id, "cold_node");
+        assert_eq!(
+            retrieved.expect("Node should exist in cold tier").id,
+            "cold_node"
+        );
 
         // Give promotion task a moment to complete
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -909,7 +939,8 @@ mod tests {
         let hot_has = engine
             .hot_tier
             .get_node(&"cold_node".to_string())
-            .unwrap()
+            .map_err(|e| anyhow::anyhow!("Failed to get node from hot tier: {}", e))
+            .expect("Failed to get node from hot tier for test")
             .is_some();
         assert!(hot_has, "Node should have been promoted to hot tier");
     }

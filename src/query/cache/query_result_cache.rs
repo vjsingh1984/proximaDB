@@ -619,7 +619,7 @@ mod tests {
                 Arc::new(StringArray::from(vec!["a", "b"])) as ArrayRef,
             ],
         )
-        .unwrap();
+        .expect("Failed to create test RecordBatch");
 
         ExecutionResult::from_batch(batch)
     }
@@ -652,14 +652,15 @@ mod tests {
 
         cache
             .insert(key.clone(), result, vec!["test".to_string()])
-            .unwrap();
+            .expect("Failed to insert test result into cache");
 
         assert!(cache.contains(&key));
         assert_eq!(cache.len(), 1);
 
         let cached = cache.get(&key);
         assert!(cached.is_some());
-        assert_eq!(cached.unwrap().result.row_count(), 2);
+        let cached_result = cached.expect("Cached result should exist");
+        assert_eq!(cached_result.result.row_count(), 2);
     }
 
     #[test]
@@ -689,21 +690,21 @@ mod tests {
                 create_test_result(),
                 vec!["test1".to_string()],
             )
-            .unwrap();
+            .expect("Failed to insert test1 result into cache");
         cache
             .insert(
                 key2.clone(),
                 create_test_result(),
                 vec!["test2".to_string()],
             )
-            .unwrap();
+            .expect("Failed to insert test2 result into cache");
         cache
             .insert(
                 key3.clone(),
                 create_test_result(),
                 vec!["test1".to_string(), "test2".to_string()],
             )
-            .unwrap();
+            .expect("Failed to insert test3 result into cache");
 
         assert_eq!(cache.len(), 3);
 
@@ -727,7 +728,7 @@ mod tests {
 
         cache
             .insert(key.clone(), create_test_result(), vec!["test".to_string()])
-            .unwrap();
+            .expect("Failed to insert test result into cache");
         assert!(cache.contains(&key));
 
         // Wait for expiration
@@ -747,7 +748,7 @@ mod tests {
 
         cache
             .insert(key.clone(), create_test_result(), vec!["test".to_string()])
-            .unwrap();
+            .expect("Failed to insert test result into cache");
         assert_eq!(cache.len(), 1);
 
         let removed = cache.remove(&key);
@@ -764,7 +765,7 @@ mod tests {
             let key = QueryKey::from_sql(&format!("SELECT * FROM test{}", i));
             cache
                 .insert(key, create_test_result(), vec![format!("test{}", i)])
-                .unwrap();
+                .expect("Failed to insert test result into cache");
         }
 
         assert_eq!(cache.len(), 5);
@@ -780,7 +781,7 @@ mod tests {
 
         cache
             .insert(key.clone(), create_test_result(), vec!["test".to_string()])
-            .unwrap();
+            .expect("Failed to insert test result into cache");
 
         // Hit
         let _ = cache.get(&key);
@@ -811,7 +812,7 @@ mod tests {
             let key = QueryKey::from_sql(&format!("SELECT * FROM test{}", i));
             cache
                 .insert(key, create_test_result(), vec![format!("test{}", i)])
-                .unwrap();
+                .expect("Failed to insert test result into cache");
         }
 
         assert_eq!(cache.len(), 3);
@@ -824,7 +825,7 @@ mod tests {
                 create_test_result(),
                 vec!["test4".to_string()],
             )
-            .unwrap();
+            .expect("Failed to insert test4 result into cache");
 
         assert_eq!(cache.len(), 3);
         assert!(cache.contains(&key4));
@@ -842,7 +843,7 @@ mod tests {
             let key = QueryKey::from_sql(&format!("SELECT * FROM test{}", i));
             cache
                 .insert(key, create_test_result(), vec![format!("test{}", i)])
-                .unwrap();
+                .expect("Failed to insert test result into cache");
         }
 
         assert_eq!(cache.len(), 5);
@@ -867,7 +868,7 @@ mod tests {
                 create_test_result(),
                 vec!["a".to_string(), "b".to_string(), "c".to_string()],
             )
-            .unwrap();
+            .expect("Failed to insert test result with multiple dependencies into cache");
 
         assert!(cache.contains(&key));
 

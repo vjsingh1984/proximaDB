@@ -10,6 +10,7 @@ use tracing::debug;
 
 use super::ast::DataModel;
 use super::{QueryMetrics, QueryResult, UnifiedRecord};
+use crate::core::error::VectorDBError;
 
 /// Strategy for fusing results from multiple query components
 #[derive(Debug, Clone)]
@@ -71,7 +72,10 @@ impl ResultFuser {
 
         // Single result - no fusion needed
         if sub_results.len() == 1 {
-            return Ok(self.convert_single_result(sub_results.into_iter().next().unwrap()));
+            let result = sub_results.into_iter().next().ok_or_else(|| {
+                VectorDBError::InvalidInput("Expected single result but found none".to_string())
+            })?;
+            return Ok(self.convert_single_result(result));
         }
 
         let fused_records = match strategy {
@@ -138,6 +142,9 @@ impl ResultFuser {
         // Sort by score if available
         let mut records: Vec<UnifiedRecord> = merged_records.into_values().collect();
         records.sort_by(|a, b| {
+            // TD-007: unwrap_or with safe defaults for sorting
+            // - Missing scores default to 0.0 (safe fallback for unranked records)
+            // - NaN comparisons default to Equal (safe fallback for floating-point)
             b.score
                 .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
@@ -174,6 +181,9 @@ impl ResultFuser {
 
         let mut records: Vec<UnifiedRecord> = all_records.into_values().collect();
         records.sort_by(|a, b| {
+            // TD-007: unwrap_or with safe defaults for sorting
+            // - Missing scores default to 0.0 (safe fallback for unranked records)
+            // - NaN comparisons default to Equal (safe fallback for floating-point)
             b.score
                 .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
@@ -225,6 +235,8 @@ impl ResultFuser {
         let mut score_map: HashMap<String, (UnifiedRecord, f64)> = HashMap::new();
 
         for result in sub_results {
+            // TD-007: unwrap_or with safe default - default weight of 1.0 if not specified
+            // This is safe as weights are optional parameters for fusion strategies
             let weight = weights.get(&result.source_model).copied().unwrap_or(1.0);
 
             // Normalize scores within this result if requested
@@ -246,6 +258,8 @@ impl ResultFuser {
             };
 
             for record in &result.records {
+                // TD-007: unwrap_or with safe default - unranked records default to score 0.0
+                // This is safe for normalization as unranked records get minimum score
                 let raw_score = record.score.unwrap_or(0.0);
                 let normalized_score = if normalize && (max_score - min_score).abs() > 1e-10 {
                     (raw_score - min_score) / (max_score - min_score)
@@ -293,6 +307,9 @@ impl ResultFuser {
             // Sort by score to get ranks
             let mut ranked: Vec<&UnifiedRecord> = result.records.iter().collect();
             ranked.sort_by(|a, b| {
+                // TD-007: unwrap_or with safe defaults for sorting
+                // - Missing scores default to 0.0 (safe fallback for unranked records)
+                // - NaN comparisons default to Equal (safe fallback for floating-point)
                 b.score
                     .unwrap_or(0.0)
                     .partial_cmp(&a.score.unwrap_or(0.0))
@@ -323,6 +340,9 @@ impl ResultFuser {
             .collect();
 
         records.sort_by(|a, b| {
+            // TD-007: unwrap_or with safe defaults for sorting
+            // - Missing scores default to 0.0 (safe fallback for unranked records)
+            // - NaN comparisons default to Equal (safe fallback for floating-point)
             b.score
                 .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
@@ -535,7 +555,7 @@ mod tests {
 
         let fused = fuser
             .fuse(vec![result1, result2], &FusionStrategy::Intersection)
-            .unwrap();
+            .expect("intersection fusion should succeed");
 
         assert_eq!(fused.records.len(), 2); // b and c
         assert!(fused.records.iter().any(|r| r.id == "b"));
@@ -566,12 +586,16 @@ mod tests {
 
         let fused = fuser
             .fuse(vec![result1, result2], &FusionStrategy::Union)
-            .unwrap();
+            .expect("union fusion should succeed");
 
         assert_eq!(fused.records.len(), 3); // a, b, c
 
         // b should have the higher score (0.95)
-        let b_record = fused.records.iter().find(|r| r.id == "b").unwrap();
+        let b_record = fused
+            .records
+            .iter()
+            .find(|r| r.id == "b")
+            .expect("record 'b' should exist in fusion results");
         assert!((b_record.score.unwrap() - 0.95).abs() < 0.01);
     }
 
@@ -600,14 +624,22 @@ mod tests {
                 vec![result1, result2],
                 &FusionStrategy::ReciprocalRankFusion { k: 60 },
             )
-            .unwrap();
+            .expect("rrf fusion should succeed");
 
         assert_eq!(fused.records.len(), 2);
 
         // Both a and b appear in both lists, so they should have similar RRF scores
         // but the exact ranking depends on positions
-        let a_record = fused.records.iter().find(|r| r.id == "a").unwrap();
-        let b_record = fused.records.iter().find(|r| r.id == "b").unwrap();
+        let a_record = fused
+            .records
+            .iter()
+            .find(|r| r.id == "a")
+            .expect("record 'a' should exist in fusion results");
+        let b_record = fused
+            .records
+            .iter()
+            .find(|r| r.id == "b")
+            .expect("record 'b' should exist in fusion results");
 
         // Both should have positive RRF scores
         assert!(a_record.score.unwrap() > 0.0);
@@ -617,7 +649,9 @@ mod tests {
     #[test]
     fn test_empty_results() {
         let fuser = ResultFuser::new(FusionStrategy::Intersection);
-        let fused = fuser.fuse(vec![], &FusionStrategy::Intersection).unwrap();
+        let fused = fuser
+            .fuse(vec![], &FusionStrategy::Intersection)
+            .expect("empty result fusion should succeed");
         assert!(fused.records.is_empty());
     }
 
@@ -632,7 +666,7 @@ mod tests {
 
         let fused = fuser
             .fuse(vec![result], &FusionStrategy::Intersection)
-            .unwrap();
+            .expect("single result fusion should succeed");
 
         assert_eq!(fused.records.len(), 1);
         assert_eq!(fused.records[0].id, "a");

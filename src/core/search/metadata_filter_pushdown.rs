@@ -431,14 +431,18 @@ impl MetadataFilterPushdown {
                     *value_histogram.entry(value.clone()).or_insert(0) += 1;
 
                     // Update min/max for comparable values
-                    if min_value.is_none()
-                        || self.compare_values(value, min_value.as_ref().unwrap()) < 0
-                    {
+                    let update_min = match min_value.as_ref() {
+                        Some(current_min) => self.compare_values(value, current_min) < 0,
+                        None => true,
+                    };
+                    if update_min {
                         min_value = Some(value.clone());
                     }
-                    if max_value.is_none()
-                        || self.compare_values(value, max_value.as_ref().unwrap()) > 0
-                    {
+                    let update_max = match max_value.as_ref() {
+                        Some(current_max) => self.compare_values(value, current_max) > 0,
+                        None => true,
+                    };
+                    if update_max {
                         max_value = Some(value.clone());
                     }
                 }

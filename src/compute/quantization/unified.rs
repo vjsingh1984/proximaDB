@@ -646,7 +646,11 @@ impl UnifiedQuantizationEngine {
         let mut centroids = Vec::with_capacity(k);
 
         // First centroid is chosen randomly
-        centroids.push(vectors.choose(&mut rng).unwrap().clone());
+        let first_centroid = vectors
+            .choose(&mut rng)
+            .ok_or_else(|| anyhow::anyhow!("k-means requires at least one vector"))?
+            .clone();
+        centroids.push(first_centroid);
 
         // Choose remaining centroids using k-means++ algorithm
         for _ in 1..k {
@@ -990,7 +994,10 @@ impl UnifiedQuantizationEngine {
 
             (scale, offset)
         } else {
-            (*scale.unwrap(), *offset.unwrap())
+            match (scale, offset) {
+                (Some(scale), Some(offset)) => (*scale, *offset),
+                _ => (1.0, 0.0),
+            }
         };
 
         let max_val = (1 << bits) - 1;

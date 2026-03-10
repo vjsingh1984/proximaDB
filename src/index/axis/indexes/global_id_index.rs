@@ -239,8 +239,13 @@ impl GlobalIdIndex {
 
     /// Get total vector count
     pub fn vector_count(&self) -> usize {
-        let map = self.id_map.read().unwrap();
-        map.len()
+        match self.id_map.read() {
+            Ok(map) => map.len(),
+            Err(e) => {
+                warn!("Lock error while reading vector_count: {}", e);
+                0
+            }
+        }
     }
 
     /// Check if vector ID exists
@@ -397,10 +402,16 @@ impl crate::index::axis::index_factory::AxisVectorIndex for GlobalIdIndex {
     }
 
     fn stats(&self) -> crate::index::axis::index_factory::IndexStats {
-        let map = self.id_map.read().unwrap();
+        let map_len = match self.id_map.read() {
+            Ok(map) => map.len(),
+            Err(e) => {
+                warn!("Lock error while reading stats: {}", e);
+                0
+            }
+        };
         crate::index::axis::index_factory::IndexStats {
-            vector_count: map.len(),
-            memory_usage_bytes: map.len() * 128, // Estimated bytes per entry
+            vector_count: map_len,
+            memory_usage_bytes: map_len * 128, // Estimated bytes per entry
             index_type: "GlobalId".to_string(),
         }
     }

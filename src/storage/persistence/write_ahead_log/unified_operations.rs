@@ -197,8 +197,8 @@ impl UnifiedWALEntry {
     pub fn new(sequence_number: u64, operation: UnifiedWALOperation) -> Self {
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
         let checksum = Self::calculate_checksum(&operation);
 
         Self {

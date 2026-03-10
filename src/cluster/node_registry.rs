@@ -340,7 +340,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_registration() {
-        let registry = NodeRegistry::new(NodeRegistryConfig::default()).unwrap();
+        let registry = NodeRegistry::new(NodeRegistryConfig::default())
+            .expect("NodeRegistry creation should not fail");
 
         let info = NodeInfo {
             node_id: "node-1".to_string(),
@@ -348,11 +349,15 @@ mod tests {
             ..Default::default()
         };
 
-        registry.register_node(info).await.unwrap();
+        registry
+            .register_node(info)
+            .await
+            .expect("Node registration should succeed");
 
         let node = registry.get_node("node-1").await;
         assert!(node.is_some());
-        assert_eq!(node.unwrap().address, "127.0.0.1:5679");
+        let node = node.expect("Node should exist after registration");
+        assert_eq!(node.address, "127.0.0.1:5679");
     }
 
     #[tokio::test]
@@ -362,47 +367,73 @@ mod tests {
             healthy_threshold: 2,
             ..Default::default()
         };
-        let registry = NodeRegistry::new(config).unwrap();
+        let registry = NodeRegistry::new(config).expect("NodeRegistry creation should not fail");
 
         let info = NodeInfo {
             node_id: "node-1".to_string(),
             ..Default::default()
         };
-        registry.register_node(info).await.unwrap();
+        registry
+            .register_node(info)
+            .await
+            .expect("Node registration should succeed");
 
         // Two successful checks should mark healthy
-        registry.update_health("node-1", true).await.unwrap();
-        registry.update_health("node-1", true).await.unwrap();
+        registry
+            .update_health("node-1", true)
+            .await
+            .expect("Health update should succeed");
+        registry
+            .update_health("node-1", true)
+            .await
+            .expect("Health update should succeed");
 
-        let node = registry.get_node("node-1").await.unwrap();
+        let node = registry
+            .get_node("node-1")
+            .await
+            .expect("Node should exist after registration");
         assert_eq!(node.health, NodeHealth::Healthy);
 
         // Two failed checks should mark unhealthy
-        registry.update_health("node-1", false).await.unwrap();
-        registry.update_health("node-1", false).await.unwrap();
+        registry
+            .update_health("node-1", false)
+            .await
+            .expect("Health update should succeed");
+        registry
+            .update_health("node-1", false)
+            .await
+            .expect("Health update should succeed");
 
-        let node = registry.get_node("node-1").await.unwrap();
+        let node = registry
+            .get_node("node-1")
+            .await
+            .expect("Node should still exist");
         assert_eq!(node.health, NodeHealth::Unhealthy);
     }
 
     #[tokio::test]
     async fn test_role_update() {
-        let registry = NodeRegistry::new(NodeRegistryConfig::default()).unwrap();
+        let registry = NodeRegistry::new(NodeRegistryConfig::default())
+            .expect("NodeRegistry creation should not fail");
 
         let info = NodeInfo {
             node_id: "node-1".to_string(),
             role: NodeRole::Follower,
             ..Default::default()
         };
-        registry.register_node(info).await.unwrap();
+        registry
+            .register_node(info)
+            .await
+            .expect("Node registration should succeed");
 
         registry
             .update_role("node-1", NodeRole::Leader)
             .await
-            .unwrap();
+            .expect("Role update should succeed");
 
         let leader = registry.get_leader().await;
         assert!(leader.is_some());
-        assert_eq!(leader.unwrap().node_id, "node-1");
+        let leader = leader.expect("Leader should exist after role update");
+        assert_eq!(leader.node_id, "node-1");
     }
 }

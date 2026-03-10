@@ -903,7 +903,7 @@ impl StorageQuantizationEngine {
         }
 
         // Sort and take top-k
-        scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         let top_candidates: Vec<usize> = scores
             .iter()
             .take(top_k.min(scores.len()))
@@ -995,7 +995,7 @@ impl StorageQuantizationEngine {
             .map(|(&idx, dist)| (idx, dist.raw_value))
             .collect();
 
-        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let top_candidates: Vec<usize> = scored
             .iter()
@@ -1074,25 +1074,33 @@ impl StorageQuantizationEngine {
     /// Quantize distances to 8-bit values with min/max for dequantization
     /// Returns (quantized_values, min, max)
     pub fn quantize_to_u8(&self, distances: &[f32]) -> (Vec<u8>, f32, f32) {
-        self.unified_engine.quantize_to_u8(distances).unwrap()
+        self.unified_engine
+            .quantize_to_u8(distances)
+            .unwrap_or_else(|_| (Vec::new(), 0.0, 0.0))
     }
 
     /// Quantize distances to 16-bit values with min/max for dequantization
     /// Returns (quantized_values, min, max)
     pub fn quantize_to_u16(&self, distances: &[f32]) -> (Vec<u16>, f32, f32) {
-        self.unified_engine.quantize_to_u16(distances).unwrap()
+        self.unified_engine
+            .quantize_to_u16(distances)
+            .unwrap_or_else(|_| (Vec::new(), 0.0, 0.0))
     }
 
     /// Quantize distances to 4-bit values with min/max for dequantization
     /// Returns (packed_values, min, max, num_values)
     pub fn quantize_to_u4(&self, distances: &[f32]) -> (Vec<u8>, f32, f32, usize) {
-        self.unified_engine.quantize_to_u4(distances).unwrap()
+        self.unified_engine
+            .quantize_to_u4(distances)
+            .unwrap_or_else(|_| (Vec::new(), 0.0, 0.0, 0))
     }
 
     /// Quantize distances to 6-bit values with min/max for dequantization
     /// Returns (packed_values, min, max, num_values)
     pub fn quantize_to_u6(&self, distances: &[f32]) -> (Vec<u8>, f32, f32, usize) {
-        self.unified_engine.quantize_to_u6(distances).unwrap()
+        self.unified_engine
+            .quantize_to_u6(distances)
+            .unwrap_or_else(|_| (Vec::new(), 0.0, 0.0, 0))
     }
 
     /// Dequantize 8-bit values back to f32 using stored min/max

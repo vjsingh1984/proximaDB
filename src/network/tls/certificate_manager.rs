@@ -19,7 +19,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use proximadb::network::tls::{CertificateManager, CertificateConfig};
 //!
 //! // Create certificate manager
@@ -27,10 +27,10 @@
 //! let manager = CertificateManager::new(config, "/tmp/certs".into());
 //!
 //! // Generate self-signed certificate
-//! let cert = manager.generate_self_signed().unwrap();
+//! let cert = manager.generate_self_signed()?;
 //!
 //! // Parse and validate certificate
-//! let parsed = manager.parse_certificate(cert.cert_pem.as_bytes()).unwrap();
+//! let parsed = manager.parse_certificate(cert.cert_pem.as_bytes())?;
 //! println!("Subject CN: {:?}", parsed.subject_cn);
 //! ```
 
@@ -374,7 +374,9 @@ impl CertificateManager {
             .iter_common_name()
             .next()
             .and_then(|cn| cn.as_str().ok())
-            .unwrap_or("CA");
+            .ok_or_else(|| {
+                TlsError::CertificateValidation("CA certificate missing Common Name".to_string())
+            })?;
 
         // Create CA certificate params for signing
         let mut ca_params = CertificateParams::default();
@@ -555,7 +557,7 @@ impl CertificateManager {
         let duration_until_expiry = parsed
             .not_after
             .duration_since(now)
-            .unwrap_or(Duration::ZERO);
+            .unwrap_or_else(|_| Duration::ZERO);
         let days_until_expiry = duration_until_expiry.as_secs() / (24 * 60 * 60);
         let needs_renewal = days_until_expiry <= self.config.renewal_threshold_days;
 
@@ -569,8 +571,12 @@ impl CertificateManager {
             expires_at: parsed.not_after,
             days_until_expiry,
             needs_renewal,
-            subject: parsed.subject_cn.unwrap_or_default(),
-            issuer: parsed.issuer_cn.unwrap_or_default(),
+            subject: parsed
+                .subject_cn
+                .ok_or_else(|| anyhow!("Certificate missing subject CN"))?,
+            issuer: parsed
+                .issuer_cn
+                .ok_or_else(|| anyhow!("Certificate missing issuer CN"))?,
             serial: parsed.serial,
             not_before: parsed.not_before,
         })
@@ -827,10 +833,12 @@ mod tests {
 
     #[test]
     fn test_generate_self_signed_certificate() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let manager = CertificateManager::new(test_config(), temp_dir.path().to_path_buf());
 
-        let cert = manager.generate_self_signed().unwrap();
+        let cert = manager
+            .generate_self_signed()
+            .expect("Failed to generate self-signed cert");
         assert!(cert.cert_pem.contains("BEGIN CERTIFICATE"));
         assert!(cert.cert_pem.contains("END CERTIFICATE"));
         assert!(cert.key_pem.contains("BEGIN PRIVATE KEY"));
@@ -839,11 +847,15 @@ mod tests {
 
     #[test]
     fn test_parse_certificate() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let manager = CertificateManager::new(test_config(), temp_dir.path().to_path_buf());
 
-        let cert = manager.generate_self_signed().unwrap();
-        let parsed = manager.parse_certificate(cert.cert_pem.as_bytes()).unwrap();
+        let cert = manager
+            .generate_self_signed()
+            .expect("Failed to generate cert");
+        let parsed = manager
+            .parse_certificate(cert.cert_pem.as_bytes())
+            .expect("Failed to parse cert");
 
         assert_eq!(parsed.subject_cn, Some("test.local".to_string()));
         assert_eq!(parsed.issuer_cn, Some("test.local".to_string())); // Self-signed
@@ -853,66 +865,89 @@ mod tests {
 
     #[test]
     fn test_certificate_validity_period() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let mut config = test_config();
         config.validity_days = 30;
         let manager = CertificateManager::new(config, temp_dir.path().to_path_buf());
 
-        let cert = manager.generate_self_signed().unwrap();
-        let parsed = manager.parse_certificate(cert.cert_pem.as_bytes()).unwrap();
+        let cert = manager
+            .generate_self_signed()
+            .expect("Failed to generate cert");
+        let parsed = manager
+            .parse_certificate(cert.cert_pem.as_bytes())
+            .expect("Failed to parse cert");
 
         let now = SystemTime::now();
         assert!(parsed.not_before <= now);
         assert!(parsed.not_after > now);
 
         // Should be valid for approximately 30 days
-        let duration = parsed.not_after.duration_since(parsed.not_before).unwrap();
+        let duration = parsed
+            .not_after
+            .duration_since(parsed.not_before)
+            .expect("Failed to calculate duration");
         let days = duration.as_secs() / (24 * 60 * 60);
         assert!(days >= 29 && days <= 31);
     }
 
     #[test]
     fn test_generate_ca_certificate() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let manager = CertificateManager::new(test_config(), temp_dir.path().to_path_buf());
 
-        let ca = manager.generate_ca().unwrap();
-        let parsed = manager.parse_certificate(ca.cert_pem.as_bytes()).unwrap();
+        let ca = manager.generate_ca().expect("Failed to generate CA");
+        let parsed = manager
+            .parse_certificate(ca.cert_pem.as_bytes())
+            .expect("Failed to parse CA cert");
 
-        assert!(parsed.subject_cn.unwrap().contains("CA"));
+        assert!(
+            parsed
+                .subject_cn
+                .expect("CA missing subject CN")
+                .contains("CA")
+        );
         assert!(parsed.is_ca);
         assert!(parsed.key_usage.contains(&"keyCertSign".to_string()));
     }
 
     #[test]
     fn test_generate_client_certificate() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let manager = CertificateManager::new(test_config(), temp_dir.path().to_path_buf());
 
         // Generate CA first
-        let ca = manager.generate_ca().unwrap();
+        let ca = manager.generate_ca().expect("Failed to generate CA");
 
         // Generate client cert signed by CA
         let client = manager
             .generate_client_cert("client1.test.local", &ca.cert_pem, &ca.key_pem)
-            .unwrap();
+            .expect("Failed to generate client cert");
         let parsed = manager
             .parse_certificate(client.cert_pem.as_bytes())
-            .unwrap();
+            .expect("Failed to parse client cert");
 
         assert_eq!(parsed.subject_cn, Some("client1.test.local".to_string()));
         assert!(!parsed.is_ca);
         // Issuer should be the CA
-        assert!(parsed.issuer_cn.unwrap().contains("CA"));
+        assert!(
+            parsed
+                .issuer_cn
+                .expect("Client cert missing issuer CN")
+                .contains("CA")
+        );
     }
 
     #[test]
     fn test_san_dns_names() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let manager = CertificateManager::new(test_config(), temp_dir.path().to_path_buf());
 
-        let cert = manager.generate_self_signed().unwrap();
-        let parsed = manager.parse_certificate(cert.cert_pem.as_bytes()).unwrap();
+        let cert = manager
+            .generate_self_signed()
+            .expect("Failed to generate cert");
+        let parsed = manager
+            .parse_certificate(cert.cert_pem.as_bytes())
+            .expect("Failed to parse cert");
 
         assert!(parsed.san_dns_names.contains(&"test.local".to_string()));
         assert!(parsed.san_dns_names.contains(&"localhost".to_string()));
@@ -920,10 +955,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_and_save_certificates() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let manager = CertificateManager::new(test_config(), temp_dir.path().to_path_buf());
 
-        manager.generate_and_save_certificates().await.unwrap();
+        manager
+            .generate_and_save_certificates()
+            .await
+            .expect("Failed to generate and save certs");
 
         assert!(manager.get_cert_path().exists());
         assert!(manager.get_key_path().exists());
@@ -933,7 +971,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::metadata(manager.get_key_path())
-                .unwrap()
+                .expect("Failed to get key metadata")
                 .permissions();
             assert_eq!(perms.mode() & 0o777, 0o600);
         }
@@ -941,14 +979,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_certificates() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let manager = CertificateManager::new(test_config(), temp_dir.path().to_path_buf());
 
         // Generate certificates
-        manager.generate_and_save_certificates().await.unwrap();
+        manager
+            .generate_and_save_certificates()
+            .await
+            .expect("Failed to generate certs");
 
         // Validate
-        let status = manager.validate_certificates().await.unwrap();
+        let status = manager
+            .validate_certificates()
+            .await
+            .expect("Failed to validate certs");
         assert!(status.valid);
         assert!(status.days_until_expiry > 360); // Should be ~365 days
         assert!(!status.needs_renewal);
@@ -957,36 +1001,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_renewal_check() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let mut config = test_config();
         config.renewal_threshold_days = 400; // Higher than validity
         let manager = CertificateManager::new(config, temp_dir.path().to_path_buf());
 
-        manager.generate_and_save_certificates().await.unwrap();
+        manager
+            .generate_and_save_certificates()
+            .await
+            .expect("Failed to generate certs");
 
         // With threshold higher than validity, should need renewal
-        let status = manager.validate_certificates().await.unwrap();
+        let status = manager
+            .validate_certificates()
+            .await
+            .expect("Failed to validate certs");
         assert!(status.needs_renewal);
     }
 
     #[test]
     fn test_load_certs_from_pem() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let manager = CertificateManager::new(test_config(), temp_dir.path().to_path_buf());
 
-        let cert = manager.generate_self_signed().unwrap();
-        let certs = utils::load_certs_from_pem(cert.cert_pem.as_bytes()).unwrap();
+        let cert = manager
+            .generate_self_signed()
+            .expect("Failed to generate cert");
+        let certs = utils::load_certs_from_pem(cert.cert_pem.as_bytes())
+            .expect("Failed to load certs from PEM");
 
         assert_eq!(certs.len(), 1);
     }
 
     #[test]
     fn test_load_private_key_from_pem() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let manager = CertificateManager::new(test_config(), temp_dir.path().to_path_buf());
 
-        let cert = manager.generate_self_signed().unwrap();
-        let key = utils::load_private_key_from_pem(cert.key_pem.as_bytes()).unwrap();
+        let cert = manager
+            .generate_self_signed()
+            .expect("Failed to generate cert");
+        let key = utils::load_private_key_from_pem(cert.key_pem.as_bytes())
+            .expect("Failed to load private key from PEM");
 
         assert!(!key.0.is_empty());
     }

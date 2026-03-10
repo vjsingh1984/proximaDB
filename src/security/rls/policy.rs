@@ -360,19 +360,31 @@ impl SecurityPredicateBuilder {
 
     /// Build as AND combination (all predicates must pass)
     pub fn build_and(self) -> SecurityPredicate {
-        if self.predicates.len() == 1 {
-            self.predicates.into_iter().next().unwrap()
-        } else {
-            SecurityPredicate::And(self.predicates.into_iter().map(Box::new).collect())
+        match self.predicates.len() {
+            0 => SecurityPredicate::AlwaysAllow,
+            1 => {
+                if let Some(predicate) = self.predicates.into_iter().next() {
+                    predicate
+                } else {
+                    SecurityPredicate::AlwaysAllow
+                }
+            }
+            _ => SecurityPredicate::And(self.predicates.into_iter().map(Box::new).collect()),
         }
     }
 
     /// Build as OR combination (any predicate must pass)
     pub fn build_or(self) -> SecurityPredicate {
-        if self.predicates.len() == 1 {
-            self.predicates.into_iter().next().unwrap()
-        } else {
-            SecurityPredicate::Or(self.predicates.into_iter().map(Box::new).collect())
+        match self.predicates.len() {
+            0 => SecurityPredicate::AlwaysDeny,
+            1 => {
+                if let Some(predicate) = self.predicates.into_iter().next() {
+                    predicate
+                } else {
+                    SecurityPredicate::AlwaysDeny
+                }
+            }
+            _ => SecurityPredicate::Or(self.predicates.into_iter().map(Box::new).collect()),
         }
     }
 }

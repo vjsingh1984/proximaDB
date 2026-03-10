@@ -184,11 +184,11 @@ mod tests {
         let request = make_request()
             .header("content-type", "application/json")
             .body(())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());
-        let result = result.unwrap();
+        let result = result.expect("Detection result should be Some");
         assert_eq!(result.protocol, DetectedProtocol::Rest);
         assert!(result.confidence >= 0.9);
     }
@@ -200,11 +200,14 @@ mod tests {
         let request = make_request()
             .header("content-type", "application/json; charset=utf-8")
             .body(())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().protocol, DetectedProtocol::Rest);
+        assert_eq!(
+            result.expect("Detection result should be Some").protocol,
+            DetectedProtocol::Rest
+        );
     }
 
     #[test]
@@ -214,22 +217,28 @@ mod tests {
         let request = make_request()
             .header("content-type", "application/x-www-form-urlencoded")
             .body(())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().protocol, DetectedProtocol::Rest);
+        assert_eq!(
+            result.expect("Detection result should be Some").protocol,
+            DetectedProtocol::Rest
+        );
     }
 
     #[test]
     fn test_rest_api_path() {
         let detector = RestDetector::new();
 
-        let request = make_request().uri("/api/v1/vectors").body(()).unwrap();
+        let request = make_request()
+            .uri("/api/v1/vectors")
+            .body(())
+            .expect("Failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());
-        let result = result.unwrap();
+        let result = result.expect("Detection result should be Some");
         assert_eq!(result.protocol, DetectedProtocol::Rest);
         assert!(result.confidence >= 0.8);
     }
@@ -239,7 +248,10 @@ mod tests {
         let detector = RestDetector::new();
 
         for path in &["/health", "/healthz", "/metrics", "/ready"] {
-            let request = make_request().uri(*path).body(()).unwrap();
+            let request = make_request()
+                .uri(*path)
+                .body(())
+                .expect("Failed to build test request");
             let result = detector.detect(&request);
             assert!(result.is_some(), "Should detect REST for path: {}", path);
         }
@@ -252,7 +264,7 @@ mod tests {
         let request = make_request()
             .header("content-type", "application/grpc")
             .body(())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_none());
@@ -267,11 +279,11 @@ mod tests {
             .uri("/unknown/path")
             .version(Version::HTTP_2)
             .body(())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());
-        let result = result.unwrap();
+        let result = result.expect("Detection result should be Some in fallback mode");
         assert_eq!(result.protocol, DetectedProtocol::Rest);
         assert!(result.confidence < 0.5); // Low confidence fallback
     }
@@ -285,7 +297,7 @@ mod tests {
             .uri("/unknown/path")
             .version(Version::HTTP_2)
             .body(())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_none());
@@ -298,11 +310,11 @@ mod tests {
         let request = make_request()
             .header("accept", "application/json")
             .body(())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());
-        assert!(result.unwrap().confidence >= 0.7);
+        assert!(result.expect("Detection result should be Some").confidence >= 0.7);
     }
 
     #[test]
@@ -320,7 +332,10 @@ mod tests {
         let detector = RestDetector::strict();
 
         // HTTP/1.1 should increase confidence
-        let request = make_request().version(Version::HTTP_11).body(()).unwrap();
+        let request = make_request()
+            .version(Version::HTTP_11)
+            .body(())
+            .expect("Failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());

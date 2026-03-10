@@ -242,6 +242,8 @@ impl ParityTestHarness {
     async fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let http_client = HttpClient::builder()
             .timeout(Duration::from_secs(30))
+            // Avoid macOS system proxy discovery in test sandboxes.
+            .no_proxy()
             .build()?;
 
         // Generate unique test names to avoid conflicts

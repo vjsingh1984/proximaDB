@@ -49,7 +49,9 @@ pub struct UnifiedServerConfig {
 impl Default for UnifiedServerConfig {
     fn default() -> Self {
         Self {
-            bind_address: "0.0.0.0:5678".parse().expect("valid default address"),
+            bind_address: "0.0.0.0:5678"
+                .parse()
+                .unwrap_or_else(|_| std::net::SocketAddr::from(([0, 0, 0, 0], 5678))),
             enable_http1: true,
             enable_http2: true,
             max_connections: 10000,

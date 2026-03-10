@@ -399,7 +399,11 @@ impl ProgressiveSearchExecutor {
         }
 
         // Sort by score (ascending for distance, descending for similarity)
-        candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        candidates.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Keep top candidates
         candidates.truncate(keep_count);
@@ -561,7 +565,11 @@ impl ProgressiveSearchExecutor {
             .await?;
 
         // Sort and truncate to top_k
-        candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        candidates.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(ctx.top_k());
 
         // Mark as full precision
@@ -666,7 +674,11 @@ impl ProgressiveSearchExecutor {
         }
 
         // Sort and truncate
-        results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        results.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(ctx.top_k());
 
         Ok(results)

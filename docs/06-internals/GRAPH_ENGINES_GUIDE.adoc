@@ -67,49 +67,35 @@ let engine = OrionGraphEngine::with_persistence_for_graph(
 [source,bash]
 ----
 # Create a graph collection with ORION (default)
-curl -X POST http://localhost:5678/api/v1/graph/collections \
+curl -X POST http://localhost:5678/api/v1/graph/graphs \
+  -H "Content-Type: application/json" \
+  -d '{"graph_id": "social_network"}'
+
+# Insert node
+curl -X POST http://localhost:5678/api/v1/graph/graphs/social_network/nodes \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "social_network",
-    "engine": "orion"
+    "node": {
+      "id": "user1",
+      "labels": ["User"],
+      "properties": {"name": "Alice"}
+    }
   }'
 
-# Insert nodes
-curl -X POST http://localhost:5678/api/v1/graph/nodes \
+# Insert edge
+curl -X POST http://localhost:5678/api/v1/graph/graphs/social_network/edges \
   -H "Content-Type: application/json" \
   -d '{
-    "collection": "social_network",
-    "nodes": [
-      {"id": "user1", "labels": ["User"], "properties": {"name": "Alice"}},
-      {"id": "user2", "labels": ["User"], "properties": {"name": "Bob"}}
-    ]
-  }'
-
-# Insert edges
-curl -X POST http://localhost:5678/api/v1/graph/edges \
-  -H "Content-Type: application/json" \
-  -d '{
-    "collection": "social_network",
-    "edges": [
-      {
-        "id": "edge1",
-        "from_node_id": "user1",
-        "to_node_id": "user2",
-        "edge_type": "FRIENDS_WITH"
-      }
-    ]
+    "edge": {
+      "id": "edge1",
+      "from_node_id": "user1",
+      "to_node_id": "user2",
+      "edge_type": "FRIENDS_WITH"
+    }
   }'
 
 # Query neighbors
-curl -X POST http://localhost:5678/api/v1/graph/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "collection": "social_network",
-    "query": {
-      "type": "neighbors",
-      "node_id": "user1"
-    }
-  }'
+curl http://localhost:5678/api/v1/graph/graphs/social_network/nodes/user1/neighbors
 ----
 
 == PULSAR: Distributed Graph Engine (Experimental)
@@ -211,27 +197,24 @@ max_concurrent_queries = 100
 [source,bash]
 ----
 # Create a graph collection with PULSAR
-curl -X POST http://localhost:5678/api/v1/graph/collections \
+curl -X POST http://localhost:5678/api/v1/graph/graphs/web_graph/engine \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "web_graph",
-    "engine": "pulsar",
-    "config": {
+    "graph_id": "web_graph",
+    "engine_type": "pulsar",
+    "pulsar_config": {
       "shard_count": 16,
       "replication_factor": 2
     }
   }'
 
 # PULSAR handles cross-shard queries automatically
-curl -X POST http://localhost:5678/api/v1/graph/query \
+curl -X POST http://localhost:5678/api/v1/graph/graphs/web_graph/pulsar/query \
   -H "Content-Type: application/json" \
   -d '{
-    "collection": "web_graph",
-    "query": {
-      "type": "traversal",
-      "start_node": "https://example.com",
-      "max_depth": 3
-    }
+    "graph_id": "web_graph",
+    "query": "MATCH (n)-[e]->(m) RETURN n,e,m LIMIT 100",
+    "shard_ids": []
   }'
 ----
 
@@ -317,7 +300,7 @@ let results = engine.cross_shard_traversal(&"node1".to_string(), 3).await?;
 [source,bash]
 ----
 # Get PULSAR engine statistics
-curl http://localhost:5678/api/v1/graph/stats?collection=web_graph
+curl http://localhost:5678/api/v1/graph/graphs/web_graph/pulsar/stats
 
 # Response includes:
 # {
@@ -434,32 +417,35 @@ cold_storage_backend = "sst"
 [source,bash]
 ----
 # Create a graph collection with QUASAR
-curl -X POST http://localhost:5678/api/v1/graph/collections \
+curl -X POST http://localhost:5678/api/v1/graph/graphs/historical_events/engine \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "historical_events",
-    "engine": "quasar",
-    "config": {
+    "graph_id": "historical_events",
+    "engine_type": "quasar",
+    "quasar_config": {
       "hot_tier_max_nodes": 100000,
       "cold_tier_path": "/data/quasar_cold"
     }
   }'
 
 # QUASAR automatically manages hot/cold tiers
-curl -X POST http://localhost:5678/api/v1/graph/nodes \
+curl -X POST http://localhost:5678/api/v1/graph/graphs/historical_events/nodes \
   -H "Content-Type: application/json" \
   -d '{
-    "collection": "historical_events",
-    "nodes": [
-      {"id": "event1", "labels": ["Event"], "properties": {"timestamp": "2024-01-01"}}
-    ]
+    "node": {
+      "id": "event1",
+      "labels": ["Event"],
+      "properties": {"timestamp": "2024-01-01"}
+    }
   }'
 
 # Force migration cycle (maintenance operation)
-curl -X POST http://localhost:5678/api/v1/graph/migrate \
+curl -X POST http://localhost:5678/api/v1/graph/graphs/historical_events/quasar/migrate \
   -H "Content-Type: application/json" \
   -d '{
-    "collection": "historical_events"
+    "graph_id": "historical_events",
+    "node_ids": ["event1"],
+    "target_tier": "cold"
   }'
 ----
 
@@ -543,7 +529,7 @@ println!("Cache hit ratio: {:.2}%",
 [source,bash]
 ----
 # Get QUASAR engine statistics
-curl http://localhost:5678/api/v1/graph/stats?collection=historical_events
+curl http://localhost:5678/api/v1/graph/graphs/historical_events/quasar/stats
 
 # Response includes:
 # {

@@ -352,8 +352,8 @@ impl RollupManager {
     pub async fn flush(&self) -> Result<usize> {
         let now_ns = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as i64;
+            .map(|duration| duration.as_nanos() as i64)
+            .unwrap_or(0);
 
         let mut total_flushed = 0;
 

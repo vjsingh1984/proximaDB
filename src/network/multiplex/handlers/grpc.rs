@@ -133,7 +133,7 @@ impl ProtocolHandler for GrpcHandler {
                     ),
                 )
                 .body(Body::empty())
-                .expect("response builder should not fail")
+                .unwrap_or_else(|_| Response::new(Body::empty()))
         })
     }
 

@@ -170,9 +170,11 @@ impl LiquidClusteringCoordinator {
     ) -> (Vec<VectorRecord>, Vec<HilbertKey>) {
         // Sort assignments by cluster and priority
         assignments.sort_by(|a, b| {
-            a.cluster_id
-                .cmp(&b.cluster_id)
-                .then(b.priority.partial_cmp(&a.priority).unwrap())
+            a.cluster_id.cmp(&b.cluster_id).then(
+                b.priority
+                    .partial_cmp(&a.priority)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
         });
 
         // Reorder records and keys based on assignments

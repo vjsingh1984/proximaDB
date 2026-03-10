@@ -120,7 +120,10 @@ impl<D: FixedDimension> FixedVector<D> {
 
 impl<D: FixedDimension> From<Vec<f32>> for FixedVector<D> {
     fn from(data: Vec<f32>) -> Self {
-        Self::new(data).expect("Vector dimension must match")
+        match Self::new(data) {
+            Ok(vector) => vector,
+            Err(err) => panic!("Vector dimension must match: {err}"),
+        }
     }
 }
 
@@ -556,7 +559,8 @@ mod tests {
     #[test]
     fn test_fixed_vector_creation() {
         let _data = [1.0, 2.0, 3.0, 4.0];
-        let vector = Vector64::new(vec![0.0; 64]).unwrap();
+        let vector = Vector64::new(vec![0.0; 64])
+            .expect("vector creation should succeed with correct dimension");
         assert_eq!(vector.dimension(), 64);
         assert_eq!(vector.data().len(), 64);
     }
@@ -577,9 +581,14 @@ mod tests {
             data[i] = i as f32 * 0.1;
         }
 
-        let vector = Vector128::new(data.clone()).unwrap();
-        let serialized = serializer.serialize(&vector).unwrap();
-        let deserialized = serializer.deserialize(&serialized).unwrap();
+        let vector = Vector128::new(data.clone())
+            .expect("vector creation should succeed with correct dimension");
+        let serialized = serializer
+            .serialize(&vector)
+            .expect("serialization should succeed");
+        let deserialized = serializer
+            .deserialize(&serialized)
+            .expect("deserialization should succeed for valid data");
 
         assert_eq!(vector.data(), deserialized.data());
     }
@@ -596,13 +605,16 @@ mod tests {
             data[i] = i as f32 * 0.001;
         }
 
-        let vector = Vector512::new(data).unwrap();
+        let vector =
+            Vector512::new(data).expect("vector creation should succeed with correct dimension");
         let analysis = serializer.analyze_vector(&vector);
         analysis.print_summary();
 
         assert!(analysis.sparsity > 0.8);
 
-        let ratio = serializer.compression_ratio(&vector).unwrap();
+        let ratio = serializer
+            .compression_ratio(&vector)
+            .expect("compression ratio calculation should succeed");
         assert!(ratio < 0.8, "Sparse vector should compress well");
     }
 
@@ -616,12 +628,16 @@ mod tests {
                 for j in 0..10 {
                     data[j] = (i * 10 + j) as f32 * 0.01;
                 }
-                Vector256::new(data).unwrap()
+                Vector256::new(data).expect("vector creation should succeed with correct dimension")
             })
             .collect::<Vec<_>>();
 
-        let serialized = serializer.serialize_batch(&vectors).unwrap();
-        let deserialized = serializer.deserialize_batch(&serialized).unwrap();
+        let serialized = serializer
+            .serialize_batch(&vectors)
+            .expect("batch serialization should succeed");
+        let deserialized = serializer
+            .deserialize_batch(&serialized)
+            .expect("batch deserialization should succeed for valid data");
 
         assert_eq!(vectors.len(), deserialized.len());
 
@@ -636,17 +652,23 @@ mod tests {
 
         // Dense vector
         let dense_data: Vec<f32> = (0..768).map(|i| i as f32 * 0.001).collect();
-        let dense_vector = Vector768::new(dense_data).unwrap();
+        let dense_vector = Vector768::new(dense_data)
+            .expect("vector creation should succeed with correct dimension");
 
         // Sparse vector
         let mut sparse_data = vec![0.0; 768];
         for i in (0..768).step_by(20) {
             sparse_data[i] = i as f32 * 0.001;
         }
-        let sparse_vector = Vector768::new(sparse_data).unwrap();
+        let sparse_vector = Vector768::new(sparse_data)
+            .expect("vector creation should succeed with correct dimension");
 
-        let dense_ratio = serializer.compression_ratio(&dense_vector).unwrap();
-        let sparse_ratio = serializer.compression_ratio(&sparse_vector).unwrap();
+        let dense_ratio = serializer
+            .compression_ratio(&dense_vector)
+            .expect("compression ratio calculation should succeed");
+        let sparse_ratio = serializer
+            .compression_ratio(&sparse_vector)
+            .expect("compression ratio calculation should succeed");
 
         debug!(
             "Dense ratio: {:.3}, Sparse ratio: {:.3}",
@@ -662,8 +684,11 @@ mod tests {
         config.enable_checksum = true;
         let serializer = Serializer128::new(config);
 
-        let vector = Vector128::new(vec![1.0; 128]).unwrap();
-        let mut serialized = serializer.serialize(&vector).unwrap();
+        let vector = Vector128::new(vec![1.0; 128])
+            .expect("vector creation should succeed with correct dimension");
+        let mut serialized = serializer
+            .serialize(&vector)
+            .expect("serialization should succeed");
 
         // Corrupt the data
         if serialized.len() > 20 {

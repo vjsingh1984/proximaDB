@@ -27,7 +27,7 @@
 
 use super::QueryResult;
 use super::ast::CompiledPattern;
-use crate::core::error::VectorDBError;
+use crate::core::error::{QueryError, VectorDBError};
 use crate::graph::GraphMemoryPool;
 use crate::utils::Uuid;
 use std::collections::HashMap;
@@ -1001,7 +1001,11 @@ impl QueryPlanner {
             .min_by(|(_, sel1), (_, sel2)| {
                 sel1.partial_cmp(sel2).unwrap_or(std::cmp::Ordering::Equal)
             })
-            .unwrap();
+            .ok_or_else(|| {
+                VectorDBError::Query(QueryError::InvalidQuery(
+                    "No viable starting node found in pattern".to_string(),
+                ))
+            })?;
 
         let starting_node = &pattern.nodes[start_idx];
         let start_cardinality = (stats.node_count as f64 * start_selectivity).max(1.0) as usize;
@@ -1420,7 +1424,9 @@ mod tests {
     #[test]
     fn test_query_planner_creation() {
         let planner = QueryPlanner::new();
-        let stats = planner.get_statistics().unwrap();
+        let stats = planner
+            .get_statistics()
+            .expect("Failed to get statistics in test");
         assert_eq!(stats.node_count, 0);
         assert_eq!(stats.edge_count, 0);
     }
@@ -1470,9 +1476,13 @@ mod tests {
         let memory_pool = Arc::new(GraphMemoryPool::new());
 
         // Update statistics with empty pool
-        planner.update_statistics(&memory_pool).unwrap();
+        planner
+            .update_statistics(&memory_pool)
+            .expect("Failed to update statistics in test");
 
-        let stats = planner.get_statistics().unwrap();
+        let stats = planner
+            .get_statistics()
+            .expect("Failed to get statistics in test");
         assert_eq!(stats.node_count, 0);
         assert_eq!(stats.edge_count, 0);
         assert_eq!(stats.avg_node_degree, 0.0);
@@ -1488,14 +1498,21 @@ mod tests {
             serde_json::Value::String("Person".to_string()),
         );
 
-        let plan = planner.plan_node_by_label_query(&params).unwrap();
+        let plan = planner
+            .plan_node_by_label_query(&params)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         assert_eq!(plan.steps.len(), 1);
 
         match &plan.steps[0].step_type {
             PlanStepType::NodeScan { labels, .. } => {
-                assert_eq!(labels.as_ref().unwrap()[0], "Person");
+                assert_eq!(
+                    labels
+                        .as_ref()
+                        .expect("Labels should be present in NodeScan")[0],
+                    "Person"
+                );
             }
             PlanStepType::IndexSeek { .. } => {
                 // Also valid if index is chosen
@@ -1851,7 +1868,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_single_node() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.label_selectivity.insert("Person".to_string(), 300);
         drop(stats);
@@ -1877,7 +1897,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         assert!(!plan.steps.is_empty());
@@ -1888,7 +1910,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_with_edge() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.edge_count = 5000;
         stats.avg_node_degree = 5.0;
@@ -1935,7 +1960,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         assert!(plan.steps.len() >= 2); // At least node access + expand
@@ -1945,7 +1972,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_with_where_clause() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.label_selectivity.insert("Person".to_string(), 300);
         stats.property_selectivity.insert("age".to_string(), 100);
@@ -1976,7 +2006,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         // Should include filter step for WHERE clause
@@ -1990,7 +2022,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_with_order_by() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.label_selectivity.insert("Person".to_string(), 300);
         drop(stats);
@@ -2016,7 +2051,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         // Should include sort step for ORDER BY
@@ -2030,7 +2067,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_with_limit() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.label_selectivity.insert("Person".to_string(), 300);
         drop(stats);
@@ -2056,7 +2096,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         // Estimated result size should respect limit

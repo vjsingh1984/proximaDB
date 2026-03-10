@@ -455,30 +455,46 @@ mod tests {
         let mut csr = CsrStorage::new();
 
         // Add edges: 0->1, 0->2, 1->2
-        csr.add_edge(0, 1, "e1".to_string()).unwrap();
-        csr.add_edge(0, 2, "e2".to_string()).unwrap();
-        csr.add_edge(1, 2, "e3".to_string()).unwrap();
+        csr.add_edge(0, 1, "e1".to_string())
+            .expect("Failed to add edge 0->1");
+        csr.add_edge(0, 2, "e2".to_string())
+            .expect("Failed to add edge 0->2");
+        csr.add_edge(1, 2, "e3".to_string())
+            .expect("Failed to add edge 1->2");
 
         // Rebuild to finalize structure
-        csr.rebuild().unwrap();
+        csr.rebuild().expect("Failed to rebuild CSR");
 
         assert_eq!(csr.node_count(), 3);
         assert_eq!(csr.edge_count(), 3);
 
         // Check neighbors
-        let neighbors_0 = csr.get_neighbors(0).unwrap();
+        let neighbors_0 = csr
+            .get_neighbors(0)
+            .expect("Failed to get neighbors for node 0");
         assert_eq!(neighbors_0.len(), 2);
         assert!(neighbors_0.contains(&1));
         assert!(neighbors_0.contains(&2));
 
-        let neighbors_1 = csr.get_neighbors(1).unwrap();
+        let neighbors_1 = csr
+            .get_neighbors(1)
+            .expect("Failed to get neighbors for node 1");
         assert_eq!(neighbors_1.len(), 1);
         assert_eq!(neighbors_1[0], 2);
 
         // Check degrees
-        assert_eq!(csr.get_degree(0).unwrap(), 2);
-        assert_eq!(csr.get_degree(1).unwrap(), 1);
-        assert_eq!(csr.get_degree(2).unwrap(), 0);
+        assert_eq!(
+            csr.get_degree(0).expect("Failed to get degree for node 0"),
+            2
+        );
+        assert_eq!(
+            csr.get_degree(1).expect("Failed to get degree for node 1"),
+            1
+        );
+        assert_eq!(
+            csr.get_degree(2).expect("Failed to get degree for node 2"),
+            0
+        );
     }
 
     #[test]
@@ -486,17 +502,29 @@ mod tests {
         let mut csr = CsrStorage::new();
 
         // Add edges
-        csr.add_edge(0, 1, "e1".to_string()).unwrap();
-        csr.add_edge(0, 2, "e2".to_string()).unwrap();
-        csr.rebuild().unwrap();
+        csr.add_edge(0, 1, "e1".to_string())
+            .expect("Failed to add edge 0->1");
+        csr.add_edge(0, 2, "e2".to_string())
+            .expect("Failed to add edge 0->2");
+        csr.rebuild().expect("Failed to rebuild CSR");
 
-        assert_eq!(csr.get_degree(0).unwrap(), 2);
+        assert_eq!(
+            csr.get_degree(0).expect("Failed to get degree for node 0"),
+            2
+        );
 
         // Remove one edge
-        csr.remove_edge(0, 1, &"e1".to_string()).unwrap();
+        csr.remove_edge(0, 1, &"e1".to_string())
+            .expect("Failed to remove edge 0->1");
 
-        assert_eq!(csr.get_degree(0).unwrap(), 1);
-        let neighbors = csr.get_neighbors(0).unwrap();
+        assert_eq!(
+            csr.get_degree(0)
+                .expect("Failed to get degree for node 0 after removal"),
+            1
+        );
+        let neighbors = csr
+            .get_neighbors(0)
+            .expect("Failed to get neighbors for node 0 after removal");
         assert_eq!(neighbors[0], 2);
     }
 
@@ -505,21 +533,29 @@ mod tests {
         let mut csr = CsrStorage::with_capacity(2, 4);
 
         // Add edge to a high-index node
-        csr.add_edge(10, 11, "e1".to_string()).unwrap();
-        csr.rebuild().unwrap();
+        csr.add_edge(10, 11, "e1".to_string())
+            .expect("Failed to add edge 10->11");
+        csr.rebuild().expect("Failed to rebuild CSR");
 
         assert_eq!(csr.node_count(), 12);
-        assert_eq!(csr.get_degree(10).unwrap(), 1);
+        assert_eq!(
+            csr.get_degree(10)
+                .expect("Failed to get degree for node 10"),
+            1
+        );
 
-        let neighbors = csr.get_neighbors(10).unwrap();
+        let neighbors = csr
+            .get_neighbors(10)
+            .expect("Failed to get neighbors for node 10");
         assert_eq!(neighbors[0], 11);
     }
 
     #[test]
     fn test_memory_stats() {
         let mut csr = CsrStorage::new();
-        csr.add_edge(0, 1, "e1".to_string()).unwrap();
-        csr.rebuild().unwrap();
+        csr.add_edge(0, 1, "e1".to_string())
+            .expect("Failed to add edge 0->1");
+        csr.rebuild().expect("Failed to rebuild CSR");
 
         let mut stats = csr.memory_usage();
         stats.calculate_total();

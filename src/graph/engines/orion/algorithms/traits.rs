@@ -221,7 +221,7 @@ pub enum GraphChange {
 /// use proximadb::graph::engines::orion::algorithms::traits::ParallelAlgorithm;
 /// use rayon::ThreadPoolBuilder;
 ///
-/// let pool = ThreadPoolBuilder::new().num_threads(8).build().unwrap();
+/// let pool = ThreadPoolBuilder::new().num_threads(8).build()?;
 /// let result = algo.execute_parallel(input, &pool)?;
 /// ```
 pub trait ParallelAlgorithm: GraphAlgorithm {

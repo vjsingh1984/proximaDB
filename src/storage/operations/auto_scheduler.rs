@@ -777,17 +777,16 @@ impl AutoScheduler {
             .await;
 
         if now - last_health_check > Duration::minutes(5) {
-            let _ = self
-                .schedule(
-                    self.create_operation(
-                        OperationType::HealthCheck,
-                        OperationPriority::Background,
-                        None,
-                    )
-                    .await
-                    .unwrap(),
+            if let Ok(operation) = self
+                .create_operation(
+                    OperationType::HealthCheck,
+                    OperationPriority::Background,
+                    None,
                 )
-                .await;
+                .await
+            {
+                let _ = self.schedule(operation).await;
+            }
         }
 
         // Schedule periodic stats collection (every minute)
@@ -796,17 +795,16 @@ impl AutoScheduler {
             .await;
 
         if now - last_stats > Duration::minutes(1) {
-            let _ = self
-                .schedule(
-                    self.create_operation(
-                        OperationType::StatsCollection,
-                        OperationPriority::Background,
-                        None,
-                    )
-                    .await
-                    .unwrap(),
+            if let Ok(operation) = self
+                .create_operation(
+                    OperationType::StatsCollection,
+                    OperationPriority::Background,
+                    None,
                 )
-                .await;
+                .await
+            {
+                let _ = self.schedule(operation).await;
+            }
         }
     }
 

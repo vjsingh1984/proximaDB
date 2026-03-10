@@ -57,9 +57,14 @@ impl UnifiedSSTReader {
         // Create the appropriate inner reader based on strategy
         let inner_reader = if strategy.should_use_cache() {
             // Use cached filesystem for selective reads
+            let Some(cached_fs) = cached_filesystem.as_ref() else {
+                return Err(anyhow::Error::msg(
+                    "Cache strategy requested but cached filesystem was not initialized",
+                ));
+            };
             Arc::new(UnifiedSstableReader::new(
                 filesystem_factory.clone(),
-                cached_filesystem.as_ref().unwrap().clone(),
+                cached_fs.clone(),
                 collection_id.clone(),
             ))
         } else {

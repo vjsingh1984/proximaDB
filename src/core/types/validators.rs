@@ -71,10 +71,17 @@ impl TextValidator {
     /// Default patterns to detect SQL injection attempts
     fn default_forbidden_patterns() -> Vec<Regex> {
         // Note: These are basic patterns. Production should use parameterized queries.
+        let compile = |pattern: &str| -> Regex {
+            match Regex::new(pattern) {
+                Ok(regex) => regex,
+                Err(err) => panic!("Invalid built-in regex pattern '{pattern}': {err}"),
+            }
+        };
+
         vec![
-            Regex::new(r"(?i);\s*(drop|delete|truncate|alter)\s+").unwrap(),
-            Regex::new(r"(?i)union\s+select").unwrap(),
-            Regex::new(r"(?i)--\s*$").unwrap(),
+            compile(r"(?i);\s*(drop|delete|truncate|alter)\s+"),
+            compile(r"(?i)union\s+select"),
+            compile(r"(?i)--\s*$"),
         ]
     }
 

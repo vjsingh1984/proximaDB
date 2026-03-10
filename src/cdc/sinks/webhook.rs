@@ -267,7 +267,10 @@ impl WebhookSink {
         let _ = (url, payload);
 
         // Simulate successful send
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.record_send(payload.len() as u64, 10.0);
 
         Ok(())
@@ -288,7 +291,10 @@ impl WebhookSink {
                     let backoff = self.config.retry.backoff_for_attempt(attempt);
                     tokio::time::sleep(Duration::from_millis(backoff)).await;
 
-                    let mut stats = self.stats.lock().unwrap();
+                    let mut stats = self
+                        .stats
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     stats.record_retry();
 
                     attempt += 1;
@@ -389,7 +395,10 @@ impl CdcSink for WebhookSink {
 
             self.send_with_retry(url, &batch_payload).await?;
 
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self
+                .stats
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             stats.events_sent += events.len() as u64 - 1; // Already counted 1 in send_with_retry
         } else {
             // Send individually
@@ -403,7 +412,10 @@ impl CdcSink for WebhookSink {
 
     async fn flush(&self) -> SinkResult<()> {
         let events = {
-            let mut buffer = self.buffer.lock().unwrap();
+            let mut buffer = self
+                .buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             std::mem::take(&mut *buffer)
         };
 
@@ -419,7 +431,10 @@ impl CdcSink for WebhookSink {
     }
 
     fn stats(&self) -> SinkStats {
-        self.stats.lock().unwrap().clone()
+        self.stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 

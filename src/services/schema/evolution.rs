@@ -1040,8 +1040,10 @@ impl SchemaEvolutionService {
 
         // Detect changes in existing columns
         for name in old_names.intersection(&new_names) {
-            let old_col = old_columns.get(name).expect("Column must exist");
-            let new_col = new_columns.get(name).expect("Column must exist");
+            let (Some(old_col), Some(new_col)) = (old_columns.get(name), new_columns.get(name))
+            else {
+                continue;
+            };
 
             // Type change
             if old_col.data_type != new_col.data_type {

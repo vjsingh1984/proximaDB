@@ -500,7 +500,10 @@ mod tests {
     async fn test_coordinator_begin() {
         let coordinator = TransactionCoordinator::new(TransactionConfig::default());
 
-        let txn_id = coordinator.begin(None).await.unwrap();
+        let txn_id = coordinator
+            .begin(None)
+            .await
+            .expect("Failed to begin transaction");
         assert!(!txn_id.is_empty());
 
         let state = coordinator.get_state(&txn_id).await;
@@ -515,19 +518,25 @@ mod tests {
     async fn test_coordinator_commit() {
         let coordinator = TransactionCoordinator::new(TransactionConfig::default());
 
-        let txn_id = coordinator.begin(None).await.unwrap();
+        let txn_id = coordinator
+            .begin(None)
+            .await
+            .expect("Failed to begin transaction");
 
         // Single store - no 2PC needed
         coordinator
             .involve_store(&txn_id, ParticipantType::Vector)
             .await
-            .unwrap();
+            .expect("Failed to involve store");
         coordinator
             .record_write(&txn_id, "vector", "vec1")
             .await
-            .unwrap();
+            .expect("Failed to record write");
 
-        coordinator.commit(&txn_id).await.unwrap();
+        coordinator
+            .commit(&txn_id)
+            .await
+            .expect("Failed to commit transaction");
 
         let state = coordinator.get_state(&txn_id).await;
         assert_eq!(state, Some(TransactionState::Committed));
@@ -540,13 +549,19 @@ mod tests {
     async fn test_coordinator_rollback() {
         let coordinator = TransactionCoordinator::new(TransactionConfig::default());
 
-        let txn_id = coordinator.begin(None).await.unwrap();
+        let txn_id = coordinator
+            .begin(None)
+            .await
+            .expect("Failed to begin transaction");
         coordinator
             .involve_store(&txn_id, ParticipantType::Vector)
             .await
-            .unwrap();
+            .expect("Failed to involve store");
 
-        coordinator.rollback(&txn_id).await.unwrap();
+        coordinator
+            .rollback(&txn_id)
+            .await
+            .expect("Failed to rollback transaction");
 
         let state = coordinator.get_state(&txn_id).await;
         assert_eq!(state, Some(TransactionState::Aborted));
@@ -563,18 +578,21 @@ mod tests {
         };
         let coordinator = TransactionCoordinator::new(config);
 
-        let txn_id = coordinator.begin(None).await.unwrap();
+        let txn_id = coordinator
+            .begin(None)
+            .await
+            .expect("Failed to begin transaction");
 
         coordinator
             .involve_store(&txn_id, ParticipantType::Vector)
             .await
-            .unwrap();
+            .expect("Failed to involve vector store");
         assert!(!coordinator.is_distributed(&txn_id).await);
 
         coordinator
             .involve_store(&txn_id, ParticipantType::Document)
             .await
-            .unwrap();
+            .expect("Failed to involve document store");
         assert!(coordinator.is_distributed(&txn_id).await);
     }
 
@@ -587,8 +605,14 @@ mod tests {
         let coordinator = TransactionCoordinator::new(config);
 
         // First two should succeed
-        coordinator.begin(None).await.unwrap();
-        coordinator.begin(None).await.unwrap();
+        coordinator
+            .begin(None)
+            .await
+            .expect("Failed to begin first transaction");
+        coordinator
+            .begin(None)
+            .await
+            .expect("Failed to begin second transaction");
 
         // Third should fail
         let result = coordinator.begin(None).await;
@@ -602,11 +626,11 @@ mod tests {
         let _txn1 = coordinator
             .begin(Some(IsolationLevel::ReadCommitted))
             .await
-            .unwrap();
+            .expect("Failed to begin ReadCommitted transaction");
         let _txn2 = coordinator
             .begin(Some(IsolationLevel::Serializable))
             .await
-            .unwrap();
+            .expect("Failed to begin Serializable transaction");
 
         let stats = coordinator.stats().await;
         assert_eq!(
@@ -623,8 +647,14 @@ mod tests {
     async fn test_coordinator_cleanup() {
         let coordinator = TransactionCoordinator::new(TransactionConfig::default());
 
-        let txn_id = coordinator.begin(None).await.unwrap();
-        coordinator.commit(&txn_id).await.unwrap();
+        let txn_id = coordinator
+            .begin(None)
+            .await
+            .expect("Failed to begin transaction");
+        coordinator
+            .commit(&txn_id)
+            .await
+            .expect("Failed to commit transaction");
 
         // Should still be there (within max_age)
         assert!(coordinator.get_state(&txn_id).await.is_some());

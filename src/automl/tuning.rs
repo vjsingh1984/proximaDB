@@ -347,7 +347,7 @@ impl HyperparameterTuner {
                 }
 
                 // Sort and keep top configurations
-                scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
                 // Update best before consuming scores
                 if let Some((config, score)) = scores.first() {
@@ -404,7 +404,12 @@ impl HyperparameterTuner {
                 }
                 SearchSpace::Categorical { choices } => {
                     use rand::seq::SliceRandom;
-                    ParameterValue::String(choices.choose(&mut rng).unwrap().clone())
+                    ParameterValue::String(
+                        choices
+                            .choose(&mut rng)
+                            .ok_or_else(|| anyhow::anyhow!("No categorical choices available"))?
+                            .clone(),
+                    )
                 }
                 SearchSpace::LogScale { min, max } => {
                     let log_min = min.ln();
@@ -433,7 +438,11 @@ impl HyperparameterTuner {
 
         // Split trials into good and bad based on quantile
         let mut sorted_trials = trials.clone();
-        sorted_trials.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        sorted_trials.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let quantile = (trials.len() as f64 * 0.25) as usize;
         let good_trials = &sorted_trials[..quantile];
@@ -454,13 +463,18 @@ impl HyperparameterTuner {
                 let random_params = self.sample_random(&[param.clone()])?;
                 params.insert(
                     param.name.clone(),
-                    random_params.into_values().next().unwrap(),
+                    random_params
+                        .into_values()
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("No parameter values found"))?,
                 );
             } else {
                 // Sample from good distribution (simplified)
                 use rand::seq::SliceRandom;
                 let mut rng = rand::thread_rng();
-                let value = good_values.choose(&mut rng).unwrap();
+                let value = good_values
+                    .choose(&mut rng)
+                    .ok_or_else(|| anyhow::anyhow!("No good values to sample from"))?;
                 params.insert(param.name.clone(), (*value).clone());
             }
         }
@@ -640,11 +654,14 @@ mod tests {
     async fn test_random_sampling() {
         let tuner = HyperparameterTuner::new(TuningConfig::default())
             .await
-            .unwrap();
+            .expect("Failed to create hyperparameter tuner");
 
         let params = ProximaDBHyperparameters::hnsw_params();
         for param in params {
-            tuner.add_parameter(param).await.unwrap();
+            tuner
+                .add_parameter(param)
+                .await
+                .expect("Failed to add parameter");
         }
 
         // Test objective function
@@ -657,7 +674,10 @@ mod tests {
             Ok(100.0 - m) // Prefer smaller M
         };
 
-        let best = tuner.tune(objective).await.unwrap();
+        let best = tuner
+            .tune(objective)
+            .await
+            .expect("Failed to complete tuning");
         assert!(best.contains_key("M"));
     }
 
@@ -690,7 +710,9 @@ mod tests {
             algorithm: TuningAlgorithm::Grid,
         };
 
-        let grid = tuner.generate_grid(&params).unwrap();
+        let grid = tuner
+            .generate_grid(&params)
+            .expect("Failed to generate grid");
         assert_eq!(grid.len(), 6); // 3 values × 2 choices
     }
 }

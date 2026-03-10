@@ -113,6 +113,22 @@ impl std::fmt::Debug for OrionPersistence {
 }
 
 impl OrionPersistence {
+    fn read_lock<'a, T>(
+        lock: &'a std::sync::RwLock<T>,
+        lock_name: &str,
+    ) -> Result<std::sync::RwLockReadGuard<'a, T>> {
+        lock.read()
+            .map_err(|_| ProximaDBError::Internal(format!("{lock_name} read lock poisoned")))
+    }
+
+    fn write_lock<'a, T>(
+        lock: &'a std::sync::RwLock<T>,
+        lock_name: &str,
+    ) -> Result<std::sync::RwLockWriteGuard<'a, T>> {
+        lock.write()
+            .map_err(|_| ProximaDBError::Internal(format!("{lock_name} write lock poisoned")))
+    }
+
     /// Create a new persistence manager for a specific graph
     pub async fn new(graph_id: String, base_url: String, enable_wal: bool) -> Result<Self> {
         // Create filesystem factory with default configuration and initialize filesystems
@@ -162,7 +178,10 @@ impl OrionPersistence {
 
             // Extract path component for WAL writer (strip file:// prefix if present)
             let wal_path_str = if wal_url.starts_with("file://") {
-                wal_url.strip_prefix("file://").unwrap().to_string()
+                wal_url
+                    .strip_prefix("file://")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| wal_url.clone())
             } else {
                 wal_url.clone()
             };
@@ -231,14 +250,8 @@ impl OrionPersistence {
             .collect::<Vec<_>>();
 
         // Get CSR data
-        let csr_outgoing = engine
-            .csr_outgoing
-            .read()
-            .expect("CSR outgoing read lock poisoned");
-        let csr_incoming = engine
-            .csr_incoming
-            .read()
-            .expect("CSR incoming read lock poisoned");
+        let csr_outgoing = Self::read_lock(&engine.csr_outgoing, "CSR outgoing")?;
+        let csr_incoming = Self::read_lock(&engine.csr_incoming, "CSR incoming")?;
 
         // Build node_to_index mapping
         let node_to_index = engine
@@ -323,13 +336,12 @@ impl OrionPersistence {
         info!("Loading ORION snapshot from {:?}", snapshot_path.as_ref());
 
         // Read compressed snapshot
-        let compressed = self
-            .filesystem_factory
-            .read(snapshot_path.as_ref().to_str().unwrap())
-            .await
-            .map_err(|e| {
-                ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
-            })?;
+        let path_str = snapshot_path.as_ref().to_str().ok_or_else(|| {
+            ProximaDBError::InvalidInput("Snapshot path contains invalid UTF-8".to_string())
+        })?;
+        let compressed = self.filesystem_factory.read(path_str).await.map_err(|e| {
+            ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
+        })?;
 
         // Decompress data
         let decompressed = self.decompress_data(&compressed)?;
@@ -361,19 +373,13 @@ impl OrionPersistence {
 
         // Restore CSR structures
         {
-            let mut csr_out = engine
-                .csr_outgoing
-                .write()
-                .expect("CSR outgoing write lock poisoned");
+            let mut csr_out = Self::write_lock(&engine.csr_outgoing, "CSR outgoing")?;
             csr_out.offsets = snapshot.csr_outgoing_offsets;
             csr_out.targets = snapshot.csr_outgoing_targets;
         }
 
         {
-            let mut csr_in = engine
-                .csr_incoming
-                .write()
-                .expect("CSR incoming write lock poisoned");
+            let mut csr_in = Self::write_lock(&engine.csr_incoming, "CSR incoming")?;
             csr_in.offsets = snapshot.csr_incoming_offsets;
             csr_in.targets = snapshot.csr_incoming_sources;
         }
@@ -385,10 +391,7 @@ impl OrionPersistence {
 
         // Rebuild index_to_node
         {
-            let mut index_to_node = engine
-                .index_to_node
-                .write()
-                .expect("index_to_node write lock poisoned");
+            let mut index_to_node = Self::write_lock(&engine.index_to_node, "index_to_node")?;
             index_to_node.clear();
             let mut node_indices: Vec<(NodeId, usize)> = engine
                 .node_to_index
@@ -404,7 +407,10 @@ impl OrionPersistence {
 
         // Update stats
         {
-            let mut stats = engine.stats.write().expect("stats write lock poisoned");
+            let mut stats = engine
+                .stats
+                .write()
+                .map_err(|_| ProximaDBError::Internal("stats write lock poisoned".to_string()))?;
             stats.nodes_created = engine.memory_pool.nodes.len() as u64;
             stats.edges_created = engine.edge_metadata.len() as u64;
         }

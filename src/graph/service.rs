@@ -57,6 +57,8 @@
 //! - **Transaction Management**: ACID transactions with rollback support
 //! - **Performance Optimization**: SIMD-ready operations and cache-friendly access patterns
 
+#[path = "service_advanced.rs"]
+pub mod service_advanced;
 #[path = "service_edge_ops.rs"]
 mod service_edge_ops;
 #[path = "service_engine_factory.rs"]
@@ -2273,11 +2275,12 @@ mod tests {
     // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]
-    async fn test_service_creation() {
+    async fn test_service_creation() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         assert_eq!(service.mode(), OperationMode::Unified);
         assert!(service.graph_enabled());
         assert!(service.vector_enabled());
+        Ok(())
     }
 
     fn pv_str(s: &str) -> PropertyValue {
@@ -2296,7 +2299,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_schema_property_type_and_constraints() {
+    async fn test_schema_property_type_and_constraints() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         let mut props = std::collections::HashMap::new();
         // Define age property schema: INTEGER, 18..=120
@@ -2339,7 +2342,7 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        service.create_graph_collection(req).await.unwrap();
+        service.create_graph_collection(req).await?;
 
         // Wrong type (string) should fail
         let mut n1_props = std::collections::HashMap::new();
@@ -2379,10 +2382,11 @@ mod tests {
             updated_at_ms: 0,
         };
         assert!(service.create_node("g_schema", n3).await.is_ok());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_edge_cardinality_constraints() {
+    async fn test_edge_cardinality_constraints() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         // Schema with ONE_TO_ONE edge type MARRIED_TO between Person
         let edge_schema = crate::proto::proximadb_v1::EdgeTypeSchema {
@@ -2417,7 +2421,7 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        service.create_graph_collection(req).await.unwrap();
+        service.create_graph_collection(req).await?;
         // Nodes
         let mk = |id: &str| crate::proto::proximadb_v1::Node {
             id: id.to_string(),
@@ -2428,7 +2432,7 @@ mod tests {
             updated_at_ms: 0,
         };
         for id in ["A", "B", "C", "D"] {
-            service.create_node("g_card", mk(id)).await.unwrap();
+            service.create_node("g_card", mk(id)).await?;
         }
         // First marriage A->B ok
         let e1 = crate::proto::proximadb_v1::Edge {
@@ -2441,7 +2445,7 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_edge("g_card", e1).await.unwrap();
+        service.create_edge("g_card", e1).await?;
         // Second marriage from A to C should fail (ONE_TO_ONE violates outgoing)
         let e2 = crate::proto::proximadb_v1::Edge {
             id: "e2".to_string(),
@@ -2466,10 +2470,11 @@ mod tests {
             updated_at_ms: 0,
         };
         assert!(service.create_edge("g_card", e3).await.is_err());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_multi_unique_constraints() {
+    async fn test_multi_unique_constraints() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         // Unique on (email, tenant) for Person
         let uc = crate::proto::proximadb_v1::UniqueConstraint {
@@ -2500,7 +2505,7 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        service.create_graph_collection(req).await.unwrap();
+        service.create_graph_collection(req).await?;
         let mut p1 = std::collections::HashMap::new();
         p1.insert("email".to_string(), pv_str("a@test"));
         p1.insert("tenant".to_string(), pv_str("t1"));
@@ -2534,14 +2539,15 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node("g_uniq", n1).await.unwrap();
+        service.create_node("g_uniq", n1).await?;
         assert!(service.create_node("g_uniq", n2).await.is_err());
         assert!(service.create_node("g_uniq", n3).await.is_ok());
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg(feature = "distributed-graph")]
-    async fn test_pulsar_traversal_path() {
+    async fn test_pulsar_traversal_path() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         // Create graph with PULSAR engine
         let engine_cfg = crate::proto::proximadb_v1::GraphEngineConfig {
@@ -2561,7 +2567,7 @@ mod tests {
             engine_config: Some(engine_cfg),
             access_control: None,
         };
-        service.create_graph_collection(req).await.unwrap();
+        service.create_graph_collection(req).await?;
         // Create small chain A->B->C
         let mk = |id: &str| crate::proto::proximadb_v1::Node {
             id: id.to_string(),
@@ -2571,9 +2577,9 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node("g_pulsar", mk("A")).await.unwrap();
-        service.create_node("g_pulsar", mk("B")).await.unwrap();
-        service.create_node("g_pulsar", mk("C")).await.unwrap();
+        service.create_node("g_pulsar", mk("A")).await?;
+        service.create_node("g_pulsar", mk("B")).await?;
+        service.create_node("g_pulsar", mk("C")).await?;
         let eab = crate::proto::proximadb_v1::Edge {
             id: "eab".to_string(),
             from_node_id: "A".to_string(),
@@ -2594,8 +2600,8 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_edge("g_pulsar", eab).await.unwrap();
-        service.create_edge("g_pulsar", ebc).await.unwrap();
+        service.create_edge("g_pulsar", eab).await?;
+        service.create_edge("g_pulsar", ebc).await?;
         let tr = crate::proto::proximadb_v1::TraversalRequest {
             graph_id: "g_pulsar".to_string(),
             start_node_id: "A".to_string(),
@@ -2608,8 +2614,9 @@ mod tests {
             timeout_ms: None,
             max_frontier: None,
         };
-        let resp = service.traverse("g_pulsar", tr).await.unwrap();
+        let resp = service.traverse("g_pulsar", tr).await?;
         assert!(resp.nodes.len() >= 2);
+        Ok(())
     }
 
     #[tokio::test]

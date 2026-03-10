@@ -1505,9 +1505,15 @@ mod tests {
     fn test_fulltext_index_basic() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "The quick brown fox").unwrap();
-        index.add_document("doc2", "A lazy brown dog").unwrap();
-        index.add_document("doc3", "The quick blue bird").unwrap();
+        index
+            .add_document("doc1", "The quick brown fox")
+            .expect("Failed to add doc1");
+        index
+            .add_document("doc2", "A lazy brown dog")
+            .expect("Failed to add doc2");
+        index
+            .add_document("doc3", "The quick blue bird")
+            .expect("Failed to add doc3");
 
         assert_eq!(index.document_count(), 3);
         assert!(index.term_count() > 0);
@@ -1519,13 +1525,13 @@ mod tests {
 
         index
             .add_document("doc1", "The quick brown fox jumps over")
-            .unwrap();
+            .expect("Failed to add doc1");
         index
             .add_document("doc2", "A lazy brown dog sleeps")
-            .unwrap();
+            .expect("Failed to add doc2");
         index
             .add_document("doc3", "The quick blue bird flies")
-            .unwrap();
+            .expect("Failed to add doc3");
 
         let results = index.search("quick brown", 10);
 
@@ -1549,12 +1555,18 @@ mod tests {
     fn test_remove_document() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "Hello world").unwrap();
-        index.add_document("doc2", "Hello there").unwrap();
+        index
+            .add_document("doc1", "Hello world")
+            .expect("Failed to add doc1");
+        index
+            .add_document("doc2", "Hello there")
+            .expect("Failed to add doc2");
 
         assert_eq!(index.document_count(), 2);
 
-        index.remove_document("doc1").unwrap();
+        index
+            .remove_document("doc1")
+            .expect("Failed to remove doc1");
         assert_eq!(index.document_count(), 1);
         assert!(!index.contains_document("doc1"));
         assert!(index.contains_document("doc2"));
@@ -1568,7 +1580,7 @@ mod tests {
         builder.add_document("doc1".to_string(), "First document text".to_string());
         builder.add_document("doc2".to_string(), "Second document text".to_string());
 
-        let index = builder.build().unwrap();
+        let index = builder.build().expect("Failed to build index");
         assert_eq!(index.document_count(), 2);
     }
 
@@ -1576,9 +1588,15 @@ mod tests {
     fn test_document_frequency() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "hello world").unwrap();
-        index.add_document("doc2", "hello there").unwrap();
-        index.add_document("doc3", "goodbye world").unwrap();
+        index
+            .add_document("doc1", "hello world")
+            .expect("Failed to add doc1");
+        index
+            .add_document("doc2", "hello there")
+            .expect("Failed to add doc2");
+        index
+            .add_document("doc3", "goodbye world")
+            .expect("Failed to add doc3");
 
         let hello_df = index.get_document_frequency("hello");
         assert_eq!(hello_df, 2);
@@ -1594,9 +1612,15 @@ mod tests {
     fn test_search_with_options() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "quick brown fox").unwrap();
-        index.add_document("doc2", "quick").unwrap();
-        index.add_document("doc3", "slow brown tortoise").unwrap();
+        index
+            .add_document("doc1", "quick brown fox")
+            .expect("Failed to add doc1");
+        index
+            .add_document("doc2", "quick")
+            .expect("Failed to add doc2");
+        index
+            .add_document("doc3", "slow brown tortoise")
+            .expect("Failed to add doc3");
 
         // Require all terms
         let results =
@@ -1611,7 +1635,9 @@ mod tests {
     fn test_prefix_terms() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "testing tested tester").unwrap();
+        index
+            .add_document("doc1", "testing tested tester")
+            .expect("Failed to add doc1");
 
         let terms = index.get_terms_with_prefix("test", 10);
         assert!(!terms.is_empty());
@@ -1624,10 +1650,12 @@ mod tests {
     fn test_statistics() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "one two three").unwrap();
+        index
+            .add_document("doc1", "one two three")
+            .expect("Failed to add doc1");
         index
             .add_document("doc2", "four five six seven eight")
-            .unwrap();
+            .expect("Failed to add doc2");
 
         let stats = index.statistics();
         assert_eq!(stats.total_documents, 2);

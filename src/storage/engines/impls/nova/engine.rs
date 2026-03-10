@@ -988,7 +988,9 @@ impl NovaEngine {
                         let string_builder = builder
                             .as_any_mut()
                             .downcast_mut::<StringBuilder>()
-                            .unwrap();
+                            .ok_or_else(|| {
+                            anyhow!("Failed to downcast metadata builder to StringBuilder")
+                        })?;
                         if let Some(value) = metadata_value {
                             if let Some(s) = value.value.as_ref().and_then(|v| match v {
                                 crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
@@ -1005,8 +1007,12 @@ impl NovaEngine {
                         }
                     }
                     arrow_schema::DataType::Int64 => {
-                        let int_builder =
-                            builder.as_any_mut().downcast_mut::<Int64Builder>().unwrap();
+                        let int_builder = builder
+                            .as_any_mut()
+                            .downcast_mut::<Int64Builder>()
+                            .ok_or_else(|| {
+                                anyhow!("Failed to downcast metadata builder to Int64Builder")
+                            })?;
                         if let Some(value) = metadata_value {
                             if let Some(i) = value.value.as_ref().and_then(|v| match v {
                                 crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
@@ -1026,7 +1032,9 @@ impl NovaEngine {
                         let float_builder = builder
                             .as_any_mut()
                             .downcast_mut::<Float64Builder>()
-                            .unwrap();
+                            .ok_or_else(|| {
+                            anyhow!("Failed to downcast metadata builder to Float64Builder")
+                        })?;
                         if let Some(value) = metadata_value {
                             if let Some(f) = value.value.as_ref().and_then(|v| match v {
                                 crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
@@ -1046,7 +1054,9 @@ impl NovaEngine {
                         let bool_builder = builder
                             .as_any_mut()
                             .downcast_mut::<BooleanBuilder>()
-                            .unwrap();
+                            .ok_or_else(|| {
+                                anyhow!("Failed to downcast metadata builder to BooleanBuilder")
+                            })?;
                         if let Some(value) = metadata_value {
                             if let Some(b) = value.value.as_ref().and_then(|v| match v {
                                 crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
@@ -1067,7 +1077,9 @@ impl NovaEngine {
                         let string_builder = builder
                             .as_any_mut()
                             .downcast_mut::<StringBuilder>()
-                            .unwrap();
+                            .ok_or_else(|| {
+                            anyhow!("Failed to downcast fallback metadata builder to StringBuilder")
+                        })?;
                         string_builder.append_null();
                     }
                 }

@@ -197,9 +197,25 @@ impl MemoryPools {
         }
     }
 
+    fn lock_pool<'a, T>(
+        pool: &'a std::sync::Mutex<Vec<T>>,
+        pool_name: &str,
+    ) -> std::sync::MutexGuard<'a, Vec<T>> {
+        match pool.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!(
+                    pool = pool_name,
+                    "Memory pool mutex poisoned; recovering inner pool"
+                );
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Get or allocate FP32 vector
     fn fp32_vector(&self, size: usize) -> Vec<f32> {
-        let mut pool = self.fp32_pool.lock().unwrap();
+        let mut pool = Self::lock_pool(&self.fp32_pool, "fp32_pool");
         if let Some(mut vec) = pool.pop() {
             vec.clear();
             vec.reserve(size);
@@ -213,7 +229,7 @@ impl MemoryPools {
     fn return_fp32_vector(&self, vec: Vec<f32>) {
         if vec.capacity() <= 4096 {
             // Don't pool very large vectors
-            let mut pool = self.fp32_pool.lock().unwrap();
+            let mut pool = Self::lock_pool(&self.fp32_pool, "fp32_pool");
             if pool.len() < 100 {
                 // Limit pool size
                 pool.push(vec);
@@ -224,7 +240,7 @@ impl MemoryPools {
     /// Get or allocate INT8 vector
     #[allow(dead_code)]
     fn get_int8_vector(&self, size: usize) -> Vec<i8> {
-        let mut pool = self.int8_pool.lock().unwrap();
+        let mut pool = Self::lock_pool(&self.int8_pool, "int8_pool");
         if let Some(mut vec) = pool.pop() {
             vec.clear();
             vec.reserve(size);
@@ -238,7 +254,7 @@ impl MemoryPools {
     #[allow(dead_code)]
     fn return_int8_vector(&self, vec: Vec<i8>) {
         if vec.capacity() <= 4096 {
-            let mut pool = self.int8_pool.lock().unwrap();
+            let mut pool = Self::lock_pool(&self.int8_pool, "int8_pool");
             if pool.len() < 100 {
                 pool.push(vec);
             }
@@ -248,7 +264,7 @@ impl MemoryPools {
     /// Get or allocate binary vector
     #[allow(dead_code)]
     fn get_binary_vector(&self, size: usize) -> Vec<u8> {
-        let mut pool = self.binary_pool.lock().unwrap();
+        let mut pool = Self::lock_pool(&self.binary_pool, "binary_pool");
         if let Some(mut vec) = pool.pop() {
             vec.clear();
             vec.reserve(size);
@@ -263,7 +279,7 @@ impl MemoryPools {
     fn return_binary_vector(&self, vec: Vec<u8>) {
         if vec.capacity() <= 2048 {
             // Binary vectors are smaller
-            let mut pool = self.binary_pool.lock().unwrap();
+            let mut pool = Self::lock_pool(&self.binary_pool, "binary_pool");
             if pool.len() < 100 {
                 pool.push(vec);
             }
@@ -501,26 +517,57 @@ impl ColumnarSerializer {
         let vectors = match selected_format {
             SelectedFormat::FP32 => {
                 let vector_key = "vector";
-                self.deserialize_fp32_vectors(arrays.get(vector_key).unwrap())?
+                let array = arrays.get(vector_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        vector_key
+                    ))
+                })?;
+                self.deserialize_fp32_vectors(array)?
             }
             SelectedFormat::Binary => {
                 let binary_key = "vector_binary";
-                self.deserialize_binary_vectors(arrays.get(binary_key).unwrap())
-                    .await?
+                let array = arrays.get(binary_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        binary_key
+                    ))
+                })?;
+                self.deserialize_binary_vectors(array).await?
             }
             SelectedFormat::INT8 => {
                 let vector_key = "vector_int8";
                 let scale_key = "int8_scale";
                 let zero_point_key = "int8_zero_point";
-                let vector_array = arrays.get(vector_key).unwrap();
-                let scale_array = arrays.get(scale_key).unwrap();
-                let zero_point_array = arrays.get(zero_point_key).unwrap();
+                let vector_array = arrays.get(vector_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        vector_key
+                    ))
+                })?;
+                let scale_array = arrays.get(scale_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        scale_key
+                    ))
+                })?;
+                let zero_point_array = arrays.get(zero_point_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        zero_point_key
+                    ))
+                })?;
                 self.deserialize_int8_vectors(vector_array, scale_array, zero_point_array)?
             }
             SelectedFormat::PQ => {
                 let pq_key = "vector_pq";
-                self.deserialize_pq_vectors(arrays.get(pq_key).unwrap())
-                    .await?
+                let array = arrays.get(pq_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        pq_key
+                    ))
+                })?;
+                self.deserialize_pq_vectors(array).await?
             }
         };
 

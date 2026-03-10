@@ -414,10 +414,18 @@ impl NativeMetadataHandler {
                 for value in values {
                     match value {
                         Some(JsonValue::Number(n)) if n.is_i64() => {
-                            builder.append_value(n.as_i64().unwrap())
+                            if let Some(i64_val) = n.as_i64() {
+                                builder.append_value(i64_val);
+                            } else {
+                                builder.append_null();
+                            }
                         }
                         Some(JsonValue::Number(n)) if n.is_u64() => {
-                            builder.append_value(n.as_u64().unwrap() as i64)
+                            if let Some(u64_val) = n.as_u64() {
+                                builder.append_value(u64_val as i64);
+                            } else {
+                                builder.append_null();
+                            }
                         }
                         None => builder.append_null(),
                         _ => builder.append_null(),

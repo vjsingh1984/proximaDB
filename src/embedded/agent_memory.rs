@@ -484,9 +484,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_creation() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .context("Failed to create temp directory")
+            .unwrap();
         let manager = CheckpointManager::new(temp_dir.path());
-        manager.init().await.unwrap();
+        manager
+            .init()
+            .await
+            .context("Failed to initialize checkpoint manager")
+            .unwrap();
 
         let collections = vec![CollectionCheckpointState {
             name: "test_collection".to_string(),
@@ -499,6 +505,7 @@ mod tests {
         let info = manager
             .create_checkpoint("test_checkpoint", 100, collections)
             .await
+            .context("Failed to create checkpoint")
             .unwrap();
 
         assert_eq!(info.name, "test_checkpoint");
@@ -508,9 +515,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_list() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .context("Failed to create temp directory")
+            .unwrap();
         let manager = CheckpointManager::new(temp_dir.path());
-        manager.init().await.unwrap();
+        manager
+            .init()
+            .await
+            .context("Failed to initialize checkpoint manager")
+            .unwrap();
 
         // Create multiple checkpoints
         for i in 0..3 {
@@ -518,6 +531,7 @@ mod tests {
             manager
                 .create_checkpoint(&name, i as u64 * 100, vec![])
                 .await
+                .with_context(|| format!("Failed to create checkpoint '{}'", name))
                 .unwrap();
         }
 
@@ -527,9 +541,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_delta_save_load() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .context("Failed to create temp directory")
+            .unwrap();
         let manager = CheckpointManager::new(temp_dir.path());
-        manager.init().await.unwrap();
+        manager
+            .init()
+            .await
+            .context("Failed to initialize checkpoint manager")
+            .unwrap();
 
         let delta_path = temp_dir
             .path()
@@ -559,6 +579,7 @@ mod tests {
         let info = manager
             .save_delta(&delta_path, entries.clone(), None, 1, 2)
             .await
+            .context("Failed to save delta")
             .unwrap();
 
         assert_eq!(info.entry_count, 2);
@@ -566,7 +587,11 @@ mod tests {
         assert_eq!(info.end_lsn, 2);
 
         // Load and verify
-        let (header, loaded_entries) = manager.load_delta(&delta_path).await.unwrap();
+        let (header, loaded_entries) = manager
+            .load_delta(&delta_path)
+            .await
+            .context("Failed to load delta")
+            .unwrap();
         assert_eq!(header.entry_count, 2);
         assert_eq!(loaded_entries.len(), 2);
         assert_eq!(loaded_entries[0].lsn, 1);

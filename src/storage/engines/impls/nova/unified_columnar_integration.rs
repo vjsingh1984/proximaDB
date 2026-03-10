@@ -944,7 +944,11 @@ impl NovaUnifiedEngine {
         _search_options: &AdvancedSearchOptions,
     ) -> Result<Vec<NovaSearchResult>> {
         // Sort by distance and take top_k
-        distance_results.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap());
+        distance_results.sort_by(|a, b| {
+            a.similarity
+                .partial_cmp(&b.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let results = distance_results
             .into_iter()

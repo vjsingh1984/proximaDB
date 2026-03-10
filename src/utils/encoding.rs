@@ -128,7 +128,7 @@ pub fn base64_encode_config(data: &[u8], config: Base64Config) -> String {
         _ => {}
     }
 
-    String::from_utf8(result).unwrap()
+    String::from_utf8_lossy(&result).into_owned()
 }
 
 /// Decode base64 string using specified configuration
@@ -254,7 +254,7 @@ pub mod helpers {
             if i > 0 {
                 wrapped.push('\n');
             }
-            wrapped.push_str(std::str::from_utf8(chunk).unwrap());
+            wrapped.push_str(&String::from_utf8_lossy(chunk));
         }
         wrapped
     }
@@ -289,7 +289,7 @@ mod tests {
             let encoded = base64_encode(input);
             assert_eq!(encoded, expected);
 
-            let decoded = base64_decode(&encoded).unwrap();
+            let decoded = base64_decode(&encoded).expect("Valid base64 should decode successfully");
             assert_eq!(decoded, input);
         }
     }
@@ -303,7 +303,8 @@ mod tests {
         assert_eq!(standard, "c3VyZS4=");
         assert_eq!(url_safe, "c3VyZS4"); // No padding
 
-        let decoded = base64_decode_url_safe(&url_safe).unwrap();
+        let decoded =
+            base64_decode_url_safe(&url_safe).expect("URL-safe base64 should decode successfully");
         assert_eq!(decoded, data);
     }
 
@@ -319,7 +320,8 @@ mod tests {
         let wrapped = helpers::base64_encode_wrap(data, 16);
         assert!(wrapped.contains('\n'));
 
-        let decoded = helpers::base64_decode_ignore_whitespace(&wrapped).unwrap();
+        let decoded = helpers::base64_decode_ignore_whitespace(&wrapped)
+            .expect("Wrapped base64 should decode successfully");
         assert_eq!(decoded, data);
     }
 
@@ -331,7 +333,7 @@ mod tests {
         for i in 0..=255u8 {
             let data = [i];
             let encoded = base64_encode(&data);
-            let decoded = base64_decode(&encoded).unwrap();
+            let decoded = base64_decode(&encoded).expect("Valid base64 should decode successfully");
             assert_eq!(decoded, data, "Failed for byte {:#04x}", i);
         }
     }
@@ -341,7 +343,7 @@ mod tests {
         // Test with random binary data
         let binary_data: Vec<u8> = (0..1000).map(|i| ((i * 173) % 256) as u8).collect();
         let encoded = base64_encode(&binary_data);
-        let decoded = base64_decode(&encoded).unwrap();
+        let decoded = base64_decode(&encoded).expect("Valid base64 should decode successfully");
         assert_eq!(decoded, binary_data);
     }
 
@@ -350,7 +352,7 @@ mod tests {
         // Test with large data (10MB)
         let large_data = vec![0xAA; 10_000_000];
         let encoded = base64_encode(&large_data);
-        let decoded = base64_decode(&encoded).unwrap();
+        let decoded = base64_decode(&encoded).expect("Valid base64 should decode successfully");
         assert_eq!(decoded, large_data);
     }
 
@@ -360,7 +362,7 @@ mod tests {
         for size in [1, 2, 3, 4, 5, 6, 7, 8, 9, 63, 64, 65, 127, 128, 129] {
             let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
             let encoded = base64_encode(&data);
-            let decoded = base64_decode(&encoded).unwrap();
+            let decoded = base64_decode(&encoded).expect("Valid base64 should decode successfully");
             assert_eq!(decoded, data, "Failed for size {}", size);
         }
     }
@@ -403,13 +405,15 @@ mod tests {
 
         // Test with standard config
         let standard_config = Base64Config::standard();
-        let decoded_standard = base64_decode_config(&encoded, standard_config).unwrap();
+        let decoded_standard = base64_decode_config(&encoded, standard_config)
+            .expect("Standard config should decode successfully");
         assert_eq!(decoded_standard, data);
 
         // Test with URL-safe config
         let url_safe_encoded = base64_encode_url_safe(data);
         let url_safe_config = Base64Config::url_safe();
-        let decoded_url_safe = base64_decode_config(&url_safe_encoded, url_safe_config).unwrap();
+        let decoded_url_safe = base64_decode_config(&url_safe_encoded, url_safe_config)
+            .expect("URL-safe config should decode successfully");
         assert_eq!(decoded_url_safe, data);
     }
 
@@ -445,8 +449,15 @@ mod tests {
             assert_eq!(url_safe, without_padding);
 
             // Both should decode correctly
-            assert_eq!(base64_decode(&standard).unwrap(), data);
-            assert_eq!(base64_decode_url_safe(&url_safe).unwrap(), data);
+            assert_eq!(
+                base64_decode(&standard).expect("Standard base64 should decode successfully"),
+                data
+            );
+            assert_eq!(
+                base64_decode_url_safe(&url_safe)
+                    .expect("URL-safe base64 should decode successfully"),
+                data
+            );
         }
     }
 
@@ -477,12 +488,25 @@ mod tests {
         let data = b"sure.";
 
         // Test with different padding scenarios
-        assert_eq!(base64_decode("c3VyZS4=").unwrap(), data); // Correct padding
-        assert_eq!(base64_decode("c3VyZS4").unwrap(), data); // No padding
+        assert_eq!(
+            base64_decode("c3VyZS4=").expect("Padded base64 should decode successfully"),
+            data
+        ); // Correct padding
+        assert_eq!(
+            base64_decode("c3VyZS4").expect("Unpadded base64 should decode successfully"),
+            data
+        ); // No padding
 
         // URL-safe should handle both
-        assert_eq!(base64_decode_url_safe("c3VyZS4").unwrap(), data);
-        assert_eq!(base64_decode_url_safe("c3VyZS4=").unwrap(), data);
+        assert_eq!(
+            base64_decode_url_safe("c3VyZS4").expect("URL-safe base64 should decode successfully"),
+            data
+        );
+        assert_eq!(
+            base64_decode_url_safe("c3VyZS4=")
+                .expect("URL-safe padded base64 should decode successfully"),
+            data
+        );
     }
 
     #[test]
@@ -500,9 +524,12 @@ mod tests {
         assert!(url_safe.contains('-') || url_safe.contains('_'));
 
         // Both should decode to same data
-        assert_eq!(base64_decode(&standard).unwrap(), data_with_special);
         assert_eq!(
-            base64_decode_url_safe(&url_safe).unwrap(),
+            base64_decode(&standard).expect("Standard base64 should decode successfully"),
+            data_with_special
+        );
+        assert_eq!(
+            base64_decode_url_safe(&url_safe).expect("URL-safe base64 should decode successfully"),
             data_with_special
         );
     }
@@ -559,11 +586,13 @@ mod tests {
             &encoded[8..]
         );
 
-        let decoded = helpers::base64_decode_ignore_whitespace(&with_whitespace).unwrap();
+        let decoded = helpers::base64_decode_ignore_whitespace(&with_whitespace)
+            .expect("Base64 with whitespace should decode successfully");
         assert_eq!(decoded, data);
 
         // Test with only whitespace
-        let whitespace_result = helpers::base64_decode_ignore_whitespace("   \t\r\n   ").unwrap();
+        let whitespace_result = helpers::base64_decode_ignore_whitespace("   \t\r\n   ")
+            .expect("Whitespace-only should decode to empty");
         assert_eq!(whitespace_result, b"");
     }
 
@@ -573,12 +602,14 @@ mod tests {
 
         // Standard encoding/decoding
         let standard_encoded = base64_encode(data);
-        let standard_decoded = base64_decode(&standard_encoded).unwrap();
+        let standard_decoded =
+            base64_decode(&standard_encoded).expect("Standard base64 should decode successfully");
         assert_eq!(standard_decoded, data);
 
         // URL-safe encoding/decoding
         let url_safe_encoded = base64_encode_url_safe(data);
-        let url_safe_decoded = base64_decode_url_safe(&url_safe_encoded).unwrap();
+        let url_safe_decoded = base64_decode_url_safe(&url_safe_encoded)
+            .expect("URL-safe base64 should decode successfully");
         assert_eq!(url_safe_decoded, data);
 
         // Cross-decoding with custom configs
@@ -587,13 +618,15 @@ mod tests {
 
         // Standard encoded should decode with standard config
         assert_eq!(
-            base64_decode_config(&standard_encoded, std_config.clone()).unwrap(),
+            base64_decode_config(&standard_encoded, std_config.clone())
+                .expect("Standard config should decode successfully"),
             data
         );
 
         // URL-safe encoded should decode with URL-safe config
         assert_eq!(
-            base64_decode_config(&url_safe_encoded, url_config.clone()).unwrap(),
+            base64_decode_config(&url_safe_encoded, url_config.clone())
+                .expect("URL-safe config should decode successfully"),
             data
         );
     }
@@ -614,21 +647,25 @@ mod tests {
 
                 for _ in 0..1000 {
                     let encoded = base64_encode(&data);
-                    let decoded = base64_decode(&encoded).unwrap();
+                    let decoded =
+                        base64_decode(&encoded).expect("Concurrent base64 decode should succeed");
                     local_results.push((encoded, decoded));
                 }
 
-                results.lock().unwrap().extend(local_results);
+                results
+                    .lock()
+                    .expect("Mutex should not be poisoned")
+                    .extend(local_results);
             });
 
             handles.push(handle);
         }
 
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("Thread should not panic");
         }
 
-        let all_results = results.lock().unwrap();
+        let all_results = results.lock().expect("Mutex should not be poisoned");
         let (first_encoded, first_decoded) = &all_results[0];
 
         // All results should be identical
@@ -672,9 +709,13 @@ mod tests {
         assert!(url_safe_chars.len() > 50);
 
         // Both should decode correctly
-        assert_eq!(base64_decode(&encoded).unwrap(), test_data);
         assert_eq!(
-            base64_decode_url_safe(&url_safe_encoded).unwrap(),
+            base64_decode(&encoded).expect("Full alphabet coverage should decode successfully"),
+            test_data
+        );
+        assert_eq!(
+            base64_decode_url_safe(&url_safe_encoded)
+                .expect("URL-safe full alphabet should decode successfully"),
             test_data
         );
     }
@@ -696,7 +737,8 @@ mod tests {
         }
 
         // For proper streaming, we'd need more complex logic, but this tests basic chunking
-        let full_decoded = base64_decode(&full_encoded).unwrap();
+        let full_decoded =
+            base64_decode(&full_encoded).expect("Full encoded should decode successfully");
         assert_eq!(full_decoded, data);
     }
 
@@ -708,7 +750,7 @@ mod tests {
         let start = std::time::Instant::now();
         for _ in 0..100 {
             let encoded = base64_encode(&data);
-            let _ = base64_decode(&encoded).unwrap();
+            let _ = base64_decode(&encoded).expect("Performance test decode should succeed");
         }
         let duration = start.elapsed();
 

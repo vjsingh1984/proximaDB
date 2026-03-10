@@ -281,8 +281,10 @@ mod tests {
         values.extend(vec![2i32; 100]);
         values.extend(vec![3i32; 100]);
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values).expect("failed to encode i32 values for repeated values test");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("failed to decode i32 values for repeated values test");
 
         assert_eq!(values, decoded);
 
@@ -298,8 +300,10 @@ mod tests {
             200i32, 200, 404, 200, 500, 200, 404, 200, 200, 404, 500, 200, 200, 404, 200, 200,
         ];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values).expect("failed to encode i32 values for categorical test");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("failed to decode i32 values for categorical test");
 
         assert_eq!(values, decoded);
 
@@ -316,8 +320,9 @@ mod tests {
             1.0f32, 2.0, 1.0, 3.0, 2.0, 1.0, 3.0, 2.0, 1.0, 1.0, 2.0, 3.0, 1.0, 2.0, 1.0, 3.0,
         ];
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("failed to encode f32 values for roundtrip test");
+        let decoded = decode_f32(&encoded, values.len())
+            .expect("failed to decode f32 values for roundtrip test");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -332,8 +337,9 @@ mod tests {
             1000, 3000,
         ];
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("failed to encode i64 values for roundtrip test");
+        let decoded = decode_i64(&encoded, values.len())
+            .expect("failed to decode i64 values for roundtrip test");
 
         assert_eq!(values, decoded);
     }
@@ -341,10 +347,10 @@ mod tests {
     #[test]
     fn test_dictionary_empty() {
         let values: Vec<i32> = vec![];
-        let encoded = encode_i32(&values).unwrap();
+        let encoded = encode_i32(&values).expect("failed to encode empty i32 values");
         assert!(encoded.is_empty());
 
-        let decoded = decode_i32(&encoded, 0).unwrap();
+        let decoded = decode_i32(&encoded, 0).expect("failed to decode empty i32 values");
         assert!(decoded.is_empty());
     }
 
@@ -353,8 +359,10 @@ mod tests {
         // All same value
         let values = vec![42i32; 1000];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values).expect("failed to encode i32 values for single unique test");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("failed to decode i32 values for single unique test");
 
         assert_eq!(values, decoded);
 
@@ -368,8 +376,10 @@ mod tests {
         // All unique values - worst case for dictionary
         let values: Vec<i32> = (0..100).collect();
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values).expect("failed to encode i32 values for many unique test");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("failed to decode i32 values for many unique test");
 
         assert_eq!(values, decoded);
 
@@ -391,8 +401,10 @@ mod tests {
             values.push(5i32);
         }
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values).expect("failed to encode i32 values for compression ratio test");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("failed to decode i32 values for compression ratio test");
 
         assert_eq!(values, decoded);
 
@@ -412,8 +424,10 @@ mod tests {
             4, 5,
         ];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values).expect("failed to encode i32 values for user ratings test");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("failed to decode i32 values for user ratings test");
 
         assert_eq!(values, decoded);
 
@@ -430,8 +444,10 @@ mod tests {
             values.push(if i % 2 == 0 { 1i32 } else { 2i32 });
         }
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values).expect("failed to encode i32 values for alternating pattern test");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("failed to decode i32 values for alternating pattern test");
 
         assert_eq!(values, decoded);
 

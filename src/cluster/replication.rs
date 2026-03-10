@@ -600,7 +600,10 @@ impl EngineReplication {
                     let local_node_id = local_node_id.clone();
 
                     Box::pin(async move {
-                        let _permit = semaphore.acquire().await.unwrap();
+                        let _permit = semaphore
+                            .acquire()
+                            .await
+                            .map_err(|e| anyhow!("Replication semaphore closed: {}", e))?;
                         replicate_to_node_with_rpc(
                             &replica,
                             &entry,
@@ -627,7 +630,10 @@ impl EngineReplication {
                     let config = self.config.retry_config.clone();
 
                     Box::pin(async move {
-                        let _permit = semaphore.acquire().await.unwrap();
+                        let _permit = semaphore
+                            .acquire()
+                            .await
+                            .map_err(|e| anyhow!("Replication semaphore closed: {}", e))?;
                         Self::replicate_to_node_with_retry(&replica, &entry, &config).await
                     }) as ReplicationFuture
                 })

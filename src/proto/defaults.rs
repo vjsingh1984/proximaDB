@@ -112,7 +112,7 @@ pub fn apply_vector_record_defaults(record: &mut VectorRecord) {
         use std::time::{SystemTime, UNIX_EPOCH};
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs() as i64;
         record.timestamp = Some(now);
     }

@@ -312,7 +312,10 @@ impl Flush {
         // Ensure the data directory exists before writing
         // Strip file:// prefix if present for local filesystem operations
         let dir_path = if data_url.starts_with("file://") {
-            data_url.strip_prefix("file://").unwrap().to_string()
+            data_url
+                .strip_prefix("file://")
+                .unwrap_or(&data_url)
+                .to_string()
         } else {
             data_url.clone()
         };

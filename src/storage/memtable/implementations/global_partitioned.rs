@@ -237,8 +237,8 @@ impl CollectionPartition {
                     let sequence = batch
                         .timestamp
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis() as u64;
+                        .map(|duration| duration.as_millis() as u64)
+                        .unwrap_or(0);
                     let version = vector_record.version;
 
                     // Check if this is a newer version (prioritize version number over timestamp)
@@ -335,8 +335,8 @@ impl CollectionPartition {
                 let sequence = batch
                     .timestamp
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
+                    .map(|duration| duration.as_millis() as u64)
+                    .unwrap_or(0);
                 let version = vector_record.version;
 
                 if !vector_record.id.is_empty() {
@@ -456,8 +456,8 @@ impl CollectionPartition {
                 let sequence = wal_batch
                     .timestamp
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
+                    .map(|duration| duration.as_millis() as u64)
+                    .unwrap_or(0);
                 let version = vector_record.version;
 
                 if !vector_record.id.is_empty() {

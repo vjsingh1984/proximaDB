@@ -80,7 +80,9 @@ impl QueryPreprocessor {
             "QueryPreprocessor::new called with cache_size: {}",
             cache_size
         );
-        let cache_size = NonZeroUsize::new(cache_size).unwrap_or(NonZeroUsize::new(100).unwrap());
+        let cache_size = NonZeroUsize::new(cache_size)
+            .map(NonZeroUsize::get)
+            .unwrap_or(100);
 
         // Initialize quantization engine with default configuration
         // TEMPORARILY DISABLED TO DEBUG SEGFAULT
@@ -113,7 +115,7 @@ impl QueryPreprocessor {
 
         trace!("QueryPreprocessor creation complete");
         Self {
-            cache: Arc::new(RwLock::new(LruCache::new(cache_size.get()))),
+            cache: Arc::new(RwLock::new(LruCache::new(cache_size))),
             quantization_engine,
             hardware,
             stats: Arc::new(RwLock::new(CacheStats::default())),

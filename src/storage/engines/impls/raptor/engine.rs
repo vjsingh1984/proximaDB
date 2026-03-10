@@ -1,4 +1,4 @@
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 use crate::utils::StoragePath;
 use crate::utils::uuid::Uuid;
 use anyhow::Result;
@@ -2144,9 +2144,7 @@ impl UnifiedStorageEngine for RaptorEngine {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.dimension)
             .ok_or_else(|| {
-                ProximaDBError::Config(crate::core::errors::ConfigError::MissingField {
-                    field: "dimension".to_string(),
-                })
+                ProximaDBError::Config("Missing dimension field in collection config".to_string())
             })?;
 
         debug!(
@@ -2253,9 +2251,7 @@ impl UnifiedStorageEngine for RaptorEngine {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.dimension)
             .ok_or_else(|| {
-                ProximaDBError::Config(crate::core::errors::ConfigError::MissingField {
-                    field: "dimension".to_string(),
-                })
+                ProximaDBError::Config("Missing dimension field in collection config".to_string())
             })?;
 
         tracing::debug!(

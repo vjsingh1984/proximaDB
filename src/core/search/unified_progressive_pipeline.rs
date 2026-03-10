@@ -440,7 +440,11 @@ impl UnifiedProgressiveSearchPipeline {
         // Extract top k candidates
         let mut final_candidates = Vec::new();
         while !candidates.is_empty() && final_candidates.len() < top_k {
-            final_candidates.push(candidates.pop().unwrap());
+            if let Some(candidate) = candidates.pop() {
+                final_candidates.push(candidate);
+            } else {
+                break;
+            }
         }
 
         Ok(final_candidates)
@@ -810,8 +814,8 @@ impl UnifiedProgressiveSearchPipeline {
         use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64
+            .map(|duration| duration.as_nanos() as u64)
+            .unwrap_or(0)
     }
 }
 

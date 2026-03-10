@@ -1392,9 +1392,14 @@ pub fn initialize_hardware_capabilities_default() -> Result<()> {
 /// # Panics
 /// Panics if called before initialize_hardware_capabilities()
 pub fn hardware_capabilities() -> Arc<HardwareCapabilities> {
-    HARDWARE_CAPABILITIES.get()
-        .expect("Hardware capabilities not initialized. Call initialize_hardware_capabilities() at startup.")
-        .clone()
+    match HARDWARE_CAPABILITIES.get() {
+        Some(caps) => caps.clone(),
+        None => {
+            panic!(
+                "Hardware capabilities not initialized. Call initialize_hardware_capabilities() at startup."
+            )
+        }
+    }
 }
 
 /// Try to get hardware capabilities without panicking

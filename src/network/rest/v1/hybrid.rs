@@ -1,13 +1,16 @@
-//! # Hybrid Search API
+//! # Experimental Hybrid Search API
 //!
-//! REST API for hybrid search combining BM25 full-text search with vector similarity.
+//! Experimental REST API for hybrid search combining BM25 full-text search with vector similarity.
+//!
+//! This module is mock-backed and intended for fusion strategy experimentation.
+//! Production hybrid search lives in `handlers.rs` at `/api/v1/hybrid/search`.
 //!
 //! ## Available Endpoints
 //!
 //! | Endpoint | Method | Description |
 //! |----------|--------|-------------|
-//! | `/api/v1/hybrid/search` | POST | Hybrid BM25 + vector search |
-//! | `/api/v1/hybrid/strategies` | GET | List available fusion strategies |
+//! | `/api/v1/experimental/hybrid/search` | POST | Mock-backed hybrid search |
+//! | `/api/v1/experimental/hybrid/strategies` | GET | List available fusion strategies |
 //!
 //! ## Fusion Strategies
 //!
@@ -28,7 +31,7 @@
 //!
 //! ```bash
 //! # Basic hybrid search
-//! curl -X POST http://localhost:5678/api/v1/hybrid/search \
+//! curl -X POST http://localhost:5678/api/v1/experimental/hybrid/search \
 //!   -H "Content-Type: application/json" \
 //!   -d '{
 //!     "collection": "products",
@@ -39,7 +42,7 @@
 //!   }'
 //!
 //! # List available strategies
-//! curl http://localhost:5678/api/v1/hybrid/strategies
+//! curl http://localhost:5678/api/v1/experimental/hybrid/strategies
 //! ```
 
 use axum::{
@@ -196,7 +199,7 @@ pub fn create_router() -> Router<HybridSearchApiState> {
         .route("/strategies", get(list_strategies))
 }
 
-/// POST /api/v1/hybrid/search
+/// POST /api/v1/experimental/hybrid/search
 ///
 /// Execute hybrid search combining BM25 and vector search
 ///
@@ -301,7 +304,7 @@ async fn execute_hybrid_search(
     }))
 }
 
-/// GET /api/v1/hybrid/strategies
+/// GET /api/v1/experimental/hybrid/strategies
 ///
 /// List all available fusion strategies
 ///
@@ -491,16 +494,22 @@ fn create_mock_results(request: &HybridSearchRequest) -> (Vec<BM25Result>, Vec<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use hyper::body::to_bytes;
+    use tower::ServiceExt;
 
     #[test]
     fn test_parse_fusion_strategy() {
-        let rrf = parse_fusion_strategy("rrf").unwrap();
+        let rrf = parse_fusion_strategy("rrf").expect("Should parse valid fusion strategy");
         match rrf {
             FusionStrategy::ReciprocalRank { k } => assert_eq!(k, 60),
             _ => panic!("Expected RRF"),
         }
 
-        let borda = parse_fusion_strategy("borda_count").unwrap();
+        let borda =
+            parse_fusion_strategy("borda_count").expect("Should parse valid fusion strategy");
         assert!(matches!(borda, FusionStrategy::BordaCount));
 
         let invalid = parse_fusion_strategy("invalid_strategy");
@@ -511,5 +520,83 @@ mod tests {
     fn test_default_values() {
         assert_eq!(default_fusion_strategy(), "rrf");
         assert_eq!(default_top_k(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_experimental_hybrid_search_route_available() {
+        let router = Router::new().nest(
+            "/api/v1/experimental/hybrid",
+            create_router().with_state(HybridSearchApiState::new()),
+        );
+
+        let request_body = serde_json::json!({
+            "collection": "products",
+            "text_query": "laptop computer",
+            "query_vector": [0.1, 0.2, 0.3],
+            "fusion_strategy": "rrf",
+            "top_k": 3
+        });
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/experimental/hybrid/search")
+            .header("content-type", "application/json")
+            .body(Body::from(request_body.to_string()))
+            .expect("Should create request successfully");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("Should get response successfully");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("Should read response body successfully");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("Should parse JSON response successfully");
+        assert_eq!(payload["fusion_strategy"], "rrf");
+        assert!(payload["results"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_experimental_router_does_not_expose_production_path() {
+        let router = Router::new().nest(
+            "/api/v1/experimental/hybrid",
+            create_router().with_state(HybridSearchApiState::new()),
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/hybrid/search")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .expect("Should create request successfully");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("Should get response successfully");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_experimental_hybrid_strategies_route_available() {
+        let router = Router::new().nest(
+            "/api/v1/experimental/hybrid",
+            create_router().with_state(HybridSearchApiState::new()),
+        );
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/api/v1/experimental/hybrid/strategies")
+            .body(Body::empty())
+            .expect("Should create request successfully");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("Should get response successfully");
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

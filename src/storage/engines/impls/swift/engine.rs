@@ -644,7 +644,8 @@ impl SwiftEngine {
         // Sort superblocks by distance and select top candidates
         let mut superblock_candidates: Vec<(usize, f32)> =
             superblock_distances.into_iter().enumerate().collect();
-        superblock_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        superblock_candidates
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Phase 2: Search within top superblocks using quantization
         let search_superblocks = std::cmp::min(superblock_candidates.len(), top_k * 2); // Search 2x more superblocks
@@ -674,7 +675,7 @@ impl SwiftEngine {
         }
 
         // Sort and return top-k results
-        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(top_k);
 
         Ok(results)

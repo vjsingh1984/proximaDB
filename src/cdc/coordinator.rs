@@ -373,16 +373,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_creation() {
-        let coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
         assert_eq!(coordinator.status(), CoordinatorStatus::Created);
     }
 
     #[tokio::test]
     async fn test_register_source() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
 
         let source = Box::new(MockSource::new("test_source", vec![]));
-        coordinator.register_source(source).await.unwrap();
+        coordinator
+            .register_source(source)
+            .await
+            .expect("Failed to register source");
 
         assert!(
             coordinator
@@ -393,12 +400,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_duplicate_source_registration() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
 
         let source1 = Box::new(MockSource::new("test", vec![]));
         let source2 = Box::new(MockSource::new("test", vec![]));
 
-        coordinator.register_source(source1).await.unwrap();
+        coordinator
+            .register_source(source1)
+            .await
+            .expect("Failed to register first source");
         let result = coordinator.register_source(source2).await;
 
         assert!(matches!(result, Err(CdcError::AlreadyExists(_))));
@@ -406,20 +418,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_sink() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
 
         let sink = SinkConfig::kafka("kafka_sink", "localhost:9092");
-        coordinator.register_sink(sink).await.unwrap();
+        coordinator
+            .register_sink(sink)
+            .await
+            .expect("Failed to register sink");
 
         assert!(coordinator.sink_names().contains(&"kafka_sink".to_string()));
     }
 
     #[tokio::test]
     async fn test_register_transform() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
 
         let transform = TransformConfig::vectorization("vectorize");
-        coordinator.register_transform(transform).await.unwrap();
+        coordinator
+            .register_transform(transform)
+            .await
+            .expect("Failed to register transform");
 
         assert!(
             coordinator
@@ -430,13 +452,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_start_stop() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
 
         let events = vec![create_test_event("1"), create_test_event("2")];
         let source = Box::new(MockSource::new("mock", events));
-        coordinator.register_source(source).await.unwrap();
+        coordinator
+            .register_source(source)
+            .await
+            .expect("Failed to register source");
 
-        let handle = coordinator.start().await.unwrap();
+        let handle = coordinator
+            .start()
+            .await
+            .expect("Failed to start coordinator");
         assert_eq!(coordinator.status(), CoordinatorStatus::Running);
 
         // Process events
@@ -450,21 +480,32 @@ mod tests {
         assert_eq!(processed, 2);
 
         handle.stop();
-        coordinator.stop().await.unwrap();
+        coordinator
+            .stop()
+            .await
+            .expect("Failed to stop coordinator");
         assert_eq!(coordinator.status(), CoordinatorStatus::Stopped);
     }
 
     #[tokio::test]
     async fn test_source_status() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
 
         let source = Box::new(MockSource::new("mock", vec![]));
-        coordinator.register_source(source).await.unwrap();
+        coordinator
+            .register_source(source)
+            .await
+            .expect("Failed to register source");
 
         let status = coordinator.source_status("mock").await;
         assert_eq!(status, Some(SourceStatus::Created));
 
-        coordinator.start().await.unwrap();
+        coordinator
+            .start()
+            .await
+            .expect("Failed to start coordinator");
 
         let status = coordinator.source_status("mock").await;
         assert_eq!(status, Some(SourceStatus::Streaming));
@@ -472,16 +513,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_source_statuses() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
 
         coordinator
             .register_source(Box::new(MockSource::new("source1", vec![])))
             .await
-            .unwrap();
+            .expect("Failed to register source1");
         coordinator
             .register_source(Box::new(MockSource::new("source2", vec![])))
             .await
-            .unwrap();
+            .expect("Failed to register source2");
 
         let statuses = coordinator.all_source_statuses().await;
         assert_eq!(statuses.len(), 2);
@@ -489,13 +532,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_integration() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
 
         let events = vec![create_test_event("1")];
         let source = Box::new(MockSource::new("mock", events));
-        coordinator.register_source(source).await.unwrap();
+        coordinator
+            .register_source(source)
+            .await
+            .expect("Failed to register source");
 
-        coordinator.start().await.unwrap();
+        coordinator
+            .start()
+            .await
+            .expect("Failed to start coordinator");
 
         // Wait for event processing
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -508,8 +559,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_double_start() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
-        coordinator.start().await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
+        coordinator
+            .start()
+            .await
+            .expect("Failed to start coordinator");
 
         let result = coordinator.start().await;
         assert!(matches!(result, Err(CdcError::InvalidState(_))));
@@ -517,8 +573,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_without_start() {
-        let mut coordinator = CdcCoordinator::new(test_config()).await.unwrap();
+        let mut coordinator = CdcCoordinator::new(test_config())
+            .await
+            .expect("Failed to create coordinator");
         // Should not error
-        coordinator.stop().await.unwrap();
+        coordinator
+            .stop()
+            .await
+            .expect("Failed to stop coordinator");
     }
 }

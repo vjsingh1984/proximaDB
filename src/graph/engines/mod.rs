@@ -70,6 +70,12 @@ pub mod pulsar {
         pub shard_count: usize,
         /// Replication factor (stub field for API compatibility)
         pub replication_factor: u8,
+        /// Consistency level (stub - uses default Quorum)
+        pub consistency_level: u8,
+        /// Enable cross-shard query optimization (stub field for API compatibility)
+        pub cross_shard_optimization: bool,
+        /// Maximum concurrent queries (stub field for API compatibility)
+        pub max_concurrent_queries: usize,
     }
 
     /// PULSAR engine (stub - requires distributed-graph feature)
@@ -208,8 +214,18 @@ pub mod quasar {
     pub struct QuasarConfig {
         /// Maximum size of hot tier (in number of nodes) - stub field for API compatibility
         pub hot_tier_max_nodes: usize,
+        /// Maximum hot tier memory in MB (stub field for API compatibility)
+        pub hot_tier_max_memory_mb: usize,
         /// Cold tier storage path (stub field for API compatibility)
         pub cold_tier_path: std::path::PathBuf,
+        /// Cold migration threshold in seconds (stub field for API compatibility)
+        pub cold_migration_threshold_secs: u64,
+        /// Hot promotion threshold in seconds (stub field for API compatibility)
+        pub hot_promotion_threshold_secs: u64,
+        /// Migration interval in seconds (stub field for API compatibility)
+        pub migration_interval_secs: u64,
+        /// Cold storage backend (0=Sst, 1=Parquet, 2=Json) - stub field for API compatibility
+        pub cold_storage_backend: u8,
     }
 
     /// QUASAR engine (stub - requires tiered-graph feature)

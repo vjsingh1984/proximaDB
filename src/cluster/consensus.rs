@@ -1284,10 +1284,9 @@ impl RaftConsensus {
     /// Update commit index if a majority has replicated entries
     async fn maybe_update_commit_index(&self) {
         let leader_state = self.leader_state.read().await;
-        if leader_state.is_none() {
+        let Some(ls) = leader_state.as_ref() else {
             return;
-        }
-        let ls = leader_state.as_ref().expect("checked above");
+        };
 
         let mut match_indices: Vec<u64> = ls.match_index.values().copied().collect();
         // Add our own log length as our match index
@@ -1474,7 +1473,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_initial_state() {
-        let consensus = RaftConsensus::new(ConsensusConfig::default()).unwrap();
+        let consensus = RaftConsensus::new(ConsensusConfig::default())
+            .expect("failed to create consensus instance");
 
         assert_eq!(consensus.get_state().await, ConsensusState::Follower);
         assert_eq!(consensus.current_term().await, 0);
@@ -1483,18 +1483,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_stop() {
-        let mut consensus = RaftConsensus::new(ConsensusConfig::default()).unwrap();
+        let mut consensus = RaftConsensus::new(ConsensusConfig::default())
+            .expect("failed to create consensus instance");
 
-        consensus.start().await.unwrap();
+        consensus.start().await.expect("failed to start consensus");
         assert!(*consensus.running.read().await);
 
-        consensus.stop().await.unwrap();
+        consensus.stop().await.expect("failed to stop consensus");
         assert!(!*consensus.running.read().await);
     }
 
     #[tokio::test]
     async fn test_request_vote_term_check() {
-        let consensus = RaftConsensus::new(ConsensusConfig::default()).unwrap();
+        let consensus = RaftConsensus::new(ConsensusConfig::default())
+            .expect("failed to create consensus instance");
 
         // Set current term to 5
         {
@@ -1522,10 +1524,8 @@ mod tests {
             NodeEndpoint::new("node-3", "127.0.0.1:5681"),
         ];
 
-        let consensus = RaftConsensus::with_transport(config, "node-1", transport, peers);
-        assert!(consensus.is_ok());
-
-        let consensus = consensus.unwrap();
+        let consensus = RaftConsensus::with_transport(config, "node-1", transport, peers)
+            .expect("failed to create consensus with transport");
         assert_eq!(consensus.node_id(), "node-1");
         assert!(consensus.transport.is_some());
         assert!(consensus._connection_manager.is_some());
@@ -1539,7 +1539,8 @@ mod tests {
     async fn test_add_remove_peer() {
         let config = ConsensusConfig::default();
         let transport = Arc::new(MockConsensusTransport::new(true, true));
-        let consensus = RaftConsensus::with_transport(config, "node-1", transport, vec![]).unwrap();
+        let consensus = RaftConsensus::with_transport(config, "node-1", transport, vec![])
+            .expect("failed to create consensus instance");
 
         // Add a peer
         let peer = NodeEndpoint::new("node-2", "127.0.0.1:5680");
@@ -1561,12 +1562,14 @@ mod tests {
         let transport = Arc::new(MockConsensusTransport::new(true, true));
 
         // Single node cluster (no peers)
-        let consensus = RaftConsensus::with_transport(config, "node-1", transport, vec![]).unwrap();
+        let consensus = RaftConsensus::with_transport(config, "node-1", transport, vec![])
+            .expect("failed to create consensus instance");
 
         // Start election should succeed and become leader
         let result = consensus.start_election().await;
         assert!(result.is_ok());
-        assert!(result.unwrap()); // Should become leader
+        let became_leader = result.expect("election result should be Ok");
+        assert!(became_leader, "should become leader in single node cluster");
 
         assert_eq!(consensus.get_state().await, ConsensusState::Leader);
         assert_eq!(consensus.get_leader().await, Some("node-1".to_string()));
@@ -1584,13 +1587,14 @@ mod tests {
             NodeEndpoint::new("node-3", "127.0.0.1:5681"),
         ];
 
-        let consensus =
-            RaftConsensus::with_transport(config, "node-1", transport.clone(), peers).unwrap();
+        let consensus = RaftConsensus::with_transport(config, "node-1", transport.clone(), peers)
+            .expect("failed to create consensus instance");
 
         // Start election - should get majority (self + 2 votes from mocks)
         let result = consensus.start_election().await;
         assert!(result.is_ok());
-        assert!(result.unwrap()); // Should become leader
+        let became_leader = result.expect("election result should be Ok");
+        assert!(became_leader, "should become leader with majority");
 
         assert_eq!(consensus.get_state().await, ConsensusState::Leader);
         // Both peers should have been contacted
@@ -1610,13 +1614,14 @@ mod tests {
             NodeEndpoint::new("node-3", "127.0.0.1:5681"),
         ];
 
-        let consensus =
-            RaftConsensus::with_transport(config, "node-1", transport.clone(), peers).unwrap();
+        let consensus = RaftConsensus::with_transport(config, "node-1", transport.clone(), peers)
+            .expect("failed to create consensus instance");
 
         // Start election - should fail (only self vote)
         let result = consensus.start_election().await;
         assert!(result.is_ok());
-        assert!(!result.unwrap()); // Should NOT become leader
+        let became_leader = result.expect("election result should be Ok");
+        assert!(!became_leader, "should NOT become leader without majority");
 
         // Should revert to follower
         assert_eq!(consensus.get_state().await, ConsensusState::Follower);
@@ -1631,8 +1636,8 @@ mod tests {
             NodeEndpoint::new("node-3", "127.0.0.1:5681"),
         ];
 
-        let consensus =
-            RaftConsensus::with_transport(config, "node-1", transport.clone(), peers).unwrap();
+        let consensus = RaftConsensus::with_transport(config, "node-1", transport.clone(), peers)
+            .expect("failed to create consensus instance");
 
         // First become leader
         {
@@ -1651,7 +1656,7 @@ mod tests {
 
         // Send heartbeat
         let result = consensus.send_heartbeat().await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "heartbeat should succeed");
 
         // Both peers should have received heartbeat
         assert_eq!(transport.append_count.load(Ordering::SeqCst), 2);
@@ -1663,12 +1668,15 @@ mod tests {
         let transport = Arc::new(MockConsensusTransport::new(true, true));
         let peers = vec![NodeEndpoint::new("node-2", "127.0.0.1:5680")];
 
-        let consensus =
-            RaftConsensus::with_transport(config, "node-1", transport.clone(), peers).unwrap();
+        let consensus = RaftConsensus::with_transport(config, "node-1", transport.clone(), peers)
+            .expect("failed to create consensus instance");
 
         // As a follower, heartbeat should not be sent
         let result = consensus.send_heartbeat().await;
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "heartbeat should return Ok even as follower"
+        );
 
         // No append entries should have been sent
         assert_eq!(transport.append_count.load(Ordering::SeqCst), 0);
@@ -1680,7 +1688,7 @@ mod tests {
             election_timeout_ms: (100, 200),
             ..Default::default()
         };
-        let consensus = RaftConsensus::new(config).unwrap();
+        let consensus = RaftConsensus::new(config).expect("failed to create consensus instance");
 
         // Generate multiple timeouts and verify they're in range
         for _ in 0..100 {
@@ -1705,8 +1713,8 @@ mod tests {
 
         // Convert back
         let converted = RaftConsensus::rpc_to_log_entry(&rpc_entry);
-        assert!(converted.is_some());
-        let converted = converted.unwrap();
+        assert!(converted.is_some(), "conversion should succeed");
+        let converted = converted.expect("converted entry should be Some");
         assert_eq!(converted.term, 5);
         assert_eq!(converted.index, 10);
         assert!(matches!(converted.command, Command::Noop));
@@ -1715,7 +1723,7 @@ mod tests {
     #[tokio::test]
     async fn test_step_down() {
         let config = ConsensusConfig::default();
-        let consensus = RaftConsensus::new(config).unwrap();
+        let consensus = RaftConsensus::new(config).expect("failed to create consensus instance");
 
         // Set up as leader
         {
@@ -1751,27 +1759,28 @@ mod tests {
         let transport = Arc::new(MockConsensusTransport::new(true, true));
         let peers = vec![NodeEndpoint::new("node-2", "127.0.0.1:5680")];
 
-        let mut consensus =
-            RaftConsensus::with_transport(config, "node-1", transport, peers).unwrap();
+        let mut consensus = RaftConsensus::with_transport(config, "node-1", transport, peers)
+            .expect("failed to create consensus instance");
 
         // Start should create background tasks
-        consensus.start().await.unwrap();
+        consensus.start().await.expect("failed to start consensus");
         assert!(*consensus.running.read().await);
         assert!(!consensus.task_handles.read().await.is_empty());
 
         // Stop should clean up tasks
-        consensus.stop().await.unwrap();
+        consensus.stop().await.expect("failed to stop consensus");
         assert!(!*consensus.running.read().await);
     }
 
     #[tokio::test]
     async fn test_no_transport_election_returns_false() {
         let config = ConsensusConfig::default();
-        let consensus = RaftConsensus::new(config).unwrap();
+        let consensus = RaftConsensus::new(config).expect("failed to create consensus instance");
 
         // Without transport, election should return false
         let result = consensus.start_election().await;
         assert!(result.is_ok());
-        assert!(!result.unwrap());
+        let became_leader = result.expect("election result should be Ok");
+        assert!(!became_leader, "should not become leader without transport");
     }
 }

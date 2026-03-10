@@ -329,8 +329,8 @@ fn calculate_value_range(data: &[f32]) -> (i64, i64, u64) {
     }
 
     let bits: Vec<i32> = data.iter().map(|&v| v.to_bits() as i32).collect();
-    let min = *bits.iter().min().unwrap() as i64;
-    let max = *bits.iter().max().unwrap() as i64;
+    let min = bits.iter().copied().min().unwrap_or(0) as i64;
+    let max = bits.iter().copied().max().unwrap_or(0) as i64;
     let range = (max - min).unsigned_abs();
 
     (min, max, range)

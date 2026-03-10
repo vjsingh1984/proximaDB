@@ -466,12 +466,14 @@ impl ProximaDB {
             .with_data_dir(config.server.data_dir.clone());
 
         // Add TLS configuration if enabled
-        if config.api.enable_tls.unwrap_or(false) && config.tls.is_some() {
+        if config.api.enable_tls.unwrap_or(false) {
             tracing::debug!("🔧 ProximaDB::new - Adding TLS configuration...");
-            let tls_config = config.tls.as_ref().unwrap();
-            if let (Some(cert_file), Some(key_file)) = (&tls_config.cert_file, &tls_config.key_file)
-            {
-                builder = builder.with_tls(cert_file.clone(), key_file.clone());
+            if let Some(tls_config) = config.tls.as_ref() {
+                if let (Some(cert_file), Some(key_file)) =
+                    (&tls_config.cert_file, &tls_config.key_file)
+                {
+                    builder = builder.with_tls(cert_file.clone(), key_file.clone());
+                }
             }
         }
 
@@ -598,7 +600,9 @@ impl ProximaDB {
             "🗺️ ProximaDB::start - Step 4: Recovering assignments from collection metadata..."
         );
         // TODO: When AssignmentService is added to SharedServices, call:
-        // self.multi_server.as_ref().unwrap().shared_services.assignment_service.recover_assignments().await?;
+        // if let Some(ms) = self.multi_server.as_ref() {
+        //     ms.shared_services.assignment_service.recover_assignments().await?;
+        // }
         tracing::info!(
             "✅ ProximaDB::start - Assignment recovery completed (or skipped if no service)"
         );

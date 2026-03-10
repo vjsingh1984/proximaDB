@@ -22,7 +22,7 @@
 use crate::core::error::ProximaDBError;
 use crate::storage::engines::impls::eventlog::{EntityId, Event, EventSequence, EventType};
 use chrono::{DateTime, Utc};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -76,7 +76,8 @@ impl EventIndex {
         // Update entity index
         {
             let mut index = self.entity_index.write().await;
-            index.entry(entity_id.clone())
+            index
+                .entry(entity_id.clone())
                 .or_insert_with(Vec::new)
                 .push(seq);
         }
@@ -84,7 +85,8 @@ impl EventIndex {
         // Update type index
         {
             let mut index = self.type_index.write().await;
-            index.entry(event_type.clone())
+            index
+                .entry(event_type.clone())
                 .or_insert_with(Vec::new)
                 .push(seq);
         }
@@ -93,7 +95,8 @@ impl EventIndex {
         {
             let mut index = self.timestamp_index.write().await;
             let timestamp_key = timestamp.timestamp();
-            index.entry(timestamp_key)
+            index
+                .entry(timestamp_key)
                 .or_insert_with(Vec::new)
                 .push(seq);
         }
@@ -101,7 +104,7 @@ impl EventIndex {
         // Update reverse index
         {
             let mut index = self.reverse_index.write().await;
-            index.insert(seq, (entity_id, event_type, timestamp));
+            index.insert(seq, (entity_id.clone(), event_type, timestamp));
         }
 
         debug!("Indexed event {} for entity {}", seq, entity_id);
@@ -117,15 +120,15 @@ impl EventIndex {
     ) -> Result<Vec<EventSequence>> {
         let index = self.entity_index.read().await;
 
-        let sequences = index.get(entity_id)
-            .map(|seqs| {
-                seqs.iter()
-                    .filter(|&&s| s >= from_sequence)
-                    .take(limit)
-                    .copied()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let sequences = match index.get(entity_id) {
+            Some(seqs) => seqs
+                .iter()
+                .filter(|&&s| s >= from_sequence)
+                .take(limit)
+                .copied()
+                .collect::<Vec<_>>(),
+            None => Vec::new(),
+        };
 
         Ok(sequences)
     }
@@ -139,15 +142,15 @@ impl EventIndex {
     ) -> Result<Vec<EventSequence>> {
         let index = self.type_index.read().await;
 
-        let sequences = index.get(event_type)
-            .map(|seqs| {
-                seqs.iter()
-                    .filter(|&&s| s >= from_sequence)
-                    .take(limit)
-                    .copied()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let sequences = match index.get(event_type) {
+            Some(seqs) => seqs
+                .iter()
+                .filter(|&&s| s >= from_sequence)
+                .take(limit)
+                .copied()
+                .collect::<Vec<_>>(),
+            None => Vec::new(),
+        };
 
         Ok(sequences)
     }
@@ -217,8 +220,10 @@ impl EventIndex {
     pub async fn purge_entity(&self, entity_id: &EntityId) -> Result<Vec<EventSequence>> {
         let mut entity_index = self.entity_index.write().await;
 
-        let sequences = entity_index.remove(entity_id)
-            .unwrap_or_default();
+        let sequences = match entity_index.remove(entity_id) {
+            Some(seqs) => seqs,
+            None => Vec::new(),
+        };
 
         // Remove from other indices
         for &seq in &sequences {
@@ -264,7 +269,7 @@ mod tests {
     #[test]
     fn test_index_creation() {
         let base_dir = PathBuf::from("/tmp/test_event_index");
-        let index = EventIndex::new(base_dir).unwrap();
+        let index = EventIndex::new(base_dir.clone()).unwrap();
         assert_eq!(index.base_dir, base_dir);
     }
 
@@ -287,7 +292,10 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify entity index
-        let entity_events = index.get_entity_events(&"account:123".to_string(), 0, 10).await.unwrap();
+        let entity_events = index
+            .get_entity_events(&"account:123".to_string(), 0, 10)
+            .await
+            .unwrap();
         assert_eq!(entity_events, vec![1]);
 
         // Cleanup
@@ -315,11 +323,17 @@ mod tests {
         }
 
         // Get all events
-        let events = index.get_entity_events(&"order:456".to_string(), 0, 10).await.unwrap();
+        let events = index
+            .get_entity_events(&"order:456".to_string(), 0, 10)
+            .await
+            .unwrap();
         assert_eq!(events, vec![1, 2, 3]);
 
         // Get from sequence 2
-        let events = index.get_entity_events(&"order:456".to_string(), 2, 10).await.unwrap();
+        let events = index
+            .get_entity_events(&"order:456".to_string(), 2, 10)
+            .await
+            .unwrap();
         assert_eq!(events, vec![2, 3]);
 
         // Cleanup

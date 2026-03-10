@@ -362,7 +362,14 @@ impl ProvenanceRegistry for InMemoryProvenanceRegistry {
             });
         }
 
-        let provenance = provenance.unwrap();
+        let Some(provenance) = provenance else {
+            return Ok(ProvenanceValidation {
+                is_valid: false,
+                missing_sources: vec![],
+                missing_chunks: vec![],
+                validation_errors: vec!["No provenance found".to_string()],
+            });
+        };
         let mut validation = ProvenanceValidation {
             is_valid: true,
             missing_sources: vec![],

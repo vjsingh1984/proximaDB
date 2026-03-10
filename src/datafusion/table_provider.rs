@@ -244,15 +244,12 @@ impl TableProvider for ProximaDBTableProvider {
         };
 
         // Combine filters with AND
-        let combined_filter = if storage_filters.is_empty() {
-            None
-        } else if storage_filters.len() == 1 {
-            Some(storage_filters.into_iter().next().unwrap())
-        } else {
-            // Combine multiple filters with AND
-            Some(crate::storage::formats::FilterExpression::And(
+        let combined_filter = match storage_filters.len() {
+            0 => None,
+            1 => storage_filters.into_iter().next(),
+            _ => Some(crate::storage::formats::FilterExpression::And(
                 storage_filters,
-            ))
+            )),
         };
 
         // Create scan executor
@@ -428,8 +425,14 @@ impl ProximaDataFusionTable {
     /// Set pre-computed splits.
     pub fn with_splits(self, splits: Vec<FileSplit>) -> Self {
         let stats = PruningStatistics::from_splits(&splits);
-        *self.cached_splits.write().unwrap() = Some(splits);
-        *self.pruning_stats.write().unwrap() = Some(stats);
+        *self
+            .cached_splits
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(splits);
+        *self
+            .pruning_stats
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(stats);
         self
     }
 
@@ -523,7 +526,10 @@ impl TableProvider for ProximaDataFusionTable {
 
         // Get or create splits
         let splits = {
-            let cached = self.cached_splits.read().unwrap();
+            let cached = self
+                .cached_splits
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(ref splits) = *cached {
                 splits.clone()
             } else {
@@ -573,12 +579,18 @@ impl ProximaTableProvider for ProximaDataFusionTable {
     }
 
     async fn get_splits(&self, _filters: &[Expr]) -> DFResult<Vec<FileSplit>> {
-        let cached = self.cached_splits.read().unwrap();
+        let cached = self
+            .cached_splits
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         Ok(cached.clone().unwrap_or_default())
     }
 
     fn pruning_stats(&self) -> Option<PruningStatistics> {
-        self.pruning_stats.read().unwrap().clone()
+        self.pruning_stats
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 

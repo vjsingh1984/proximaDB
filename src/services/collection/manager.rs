@@ -1670,7 +1670,7 @@ mod tests {
     use crate::proto::proximadb_v1::CollectionConfig;
 
     #[tokio::test]
-    async fn test_collection_validation() {
+    async fn test_collection_validation() -> Result<()> {
         // Use filestore backend with temporary directory for testing
         use crate::storage::metadata::backends::universal_backend::{
             UniversalMetadataBackend, UniversalMetadataConfig,
@@ -1678,7 +1678,7 @@ mod tests {
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
 
         let filestore_config = UniversalMetadataConfig {
@@ -1692,19 +1692,22 @@ mod tests {
         };
 
         let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory =
-            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(filesystem_config)
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
 
         let backend = Arc::new(
             UniversalMetadataBackend::new(filestore_config, filesystem_factory)
                 .await
-                .unwrap(),
+                .context("Failed to create metadata backend for test")?,
         );
 
         let storage_config = StorageConfig::default();
         let service = CollectionService::new(backend, storage_config)
             .await
-            .unwrap();
+            .context("Failed to create collection service for test")?;
 
         // Valid config
         let valid_config = CollectionConfig {
@@ -1729,7 +1732,10 @@ mod tests {
         };
 
         // Test create with valid config
-        let result = service.create_collection(&valid_config).await.unwrap();
+        let result = service
+            .create_collection(&valid_config)
+            .await
+            .context("Failed to create valid collection")?;
         assert!(result.success);
 
         // Test empty name
@@ -1737,10 +1743,17 @@ mod tests {
             name: "".to_string(),
             ..valid_config.clone()
         };
-        let result = service.create_collection(&empty_name).await.unwrap();
+        let result = service
+            .create_collection(&empty_name)
+            .await
+            .context("Failed to create collection with empty name")?;
         assert!(!result.success);
         assert!(
-            result.error_code.as_ref().unwrap().contains("INVALID_NAME"),
+            result
+                .error_code
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Error code missing"))?
+                .contains("INVALID_NAME"),
             "Error code should contain INVALID_NAME, got: {:?}",
             result.error_code
         );
@@ -1750,13 +1763,16 @@ mod tests {
             name: "short".to_string(),
             ..valid_config.clone()
         };
-        let result = service.create_collection(&short_name).await.unwrap();
+        let result = service
+            .create_collection(&short_name)
+            .await
+            .context("Failed to create collection with short name")?;
         assert!(!result.success);
         assert!(
             result
                 .error_code
                 .as_ref()
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("Error code missing"))?
                 .contains("INVALID_NAME_LENGTH"),
             "Error code should contain INVALID_NAME_LENGTH, got: {:?}",
             result.error_code
@@ -1767,7 +1783,10 @@ mod tests {
             name: "exactly8".to_string(),
             ..valid_config.clone()
         };
-        let result = service.create_collection(&eight_chars).await.unwrap();
+        let result = service
+            .create_collection(&eight_chars)
+            .await
+            .context("Failed to create collection with 8-character name")?;
         assert!(result.success);
 
         // Test invalid dimension
@@ -1776,21 +1795,26 @@ mod tests {
             dimension: 0,
             ..valid_config.clone()
         };
-        let result = service.create_collection(&invalid_dimension).await.unwrap();
+        let result = service
+            .create_collection(&invalid_dimension)
+            .await
+            .context("Failed to create collection with invalid dimension")?;
         assert!(!result.success);
         assert!(
             result
                 .error_code
                 .as_ref()
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("Error code missing"))?
                 .contains("INVALID_DIMENSION"),
             "Error code should contain INVALID_DIMENSION, got: {:?}",
             result.error_code
         );
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_collection_name_length_validation() {
+    async fn test_collection_name_length_validation() -> Result<()> {
         // Create a minimal test setup
         use crate::storage::metadata::backends::universal_backend::{
             UniversalMetadataBackend, UniversalMetadataConfig,
@@ -1798,7 +1822,7 @@ mod tests {
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
 
         let filestore_config = UniversalMetadataConfig {
@@ -1812,19 +1836,22 @@ mod tests {
         };
 
         let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory =
-            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(filesystem_config)
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
 
         let backend = Arc::new(
             UniversalMetadataBackend::new(filestore_config, filesystem_factory)
                 .await
-                .unwrap(),
+                .context("Failed to create metadata backend for test")?,
         );
 
         let storage_config = StorageConfig::default();
         let service = CollectionService::new(backend, storage_config)
             .await
-            .unwrap();
+            .context("Failed to create collection service for test")?;
 
         // Test cases for collection name length
         let test_cases = vec![
@@ -1859,7 +1886,10 @@ mod tests {
                 text_storage_configs: vec![],
             };
 
-            let result = service.create_collection(&config).await.unwrap();
+            let result = service
+                .create_collection(&config)
+                .await
+                .context(format!("Failed to create collection with name '{}'", name))?;
 
             assert_eq!(
                 result.success, should_succeed,
@@ -1872,7 +1902,7 @@ mod tests {
                     result
                         .error_code
                         .as_ref()
-                        .unwrap()
+                        .ok_or_else(|| anyhow::anyhow!("Error code missing for name '{}'", name))?
                         .contains(expected_error_code),
                     "Name '{}' error code mismatch: expected to contain '{}', got '{:?}'",
                     name,
@@ -1881,6 +1911,8 @@ mod tests {
                 );
             }
         }
+
+        Ok(())
     }
 
     #[test]

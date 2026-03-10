@@ -1,13 +1,15 @@
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 use tokio::sync::OnceCell;
 
-use crate::core::{VectorRecord, Collection};
-use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
 use crate::compute::quantization::global_cache::GlobalQuantizationCache;
 use crate::compute::quantization::selection::QuantizationSelector;
-use crate::compute::quantization::unified::{UnifiedQuantizationLevel, UnifiedQuantizationEngine};
+use crate::compute::quantization::storage_engine::{
+    StorageQuantizationConfig, StorageQuantizationEngine,
+};
+use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use crate::core::memory::pool::VectorMemoryPool;
+use crate::core::{Collection, VectorRecord};
 
 /// Pairs original records with their quantized representations
 /// This is the standard format for all engines
@@ -60,20 +62,24 @@ impl QuantizedBatch {
 
     /// Check if batch has binary quantization
     pub fn has_binary(&self) -> bool {
-        self.quantized.iter()
+        self.quantized
+            .iter()
             .any(|q| q.as_ref().map_or(false, |v| v.binary.is_some()))
     }
 
     /// Check if batch has INT8 quantization
     pub fn has_int8(&self) -> bool {
-        self.quantized.iter()
+        self.quantized
+            .iter()
             .any(|q| q.as_ref().map_or(false, |v| v.int8.is_some()))
     }
 
     /// Check if batch has PQ quantization
     pub fn has_pq(&self) -> bool {
-        self.quantized.iter()
-            .any(|q| q.as_ref().map_or(false, |v| v.pq8.is_some() || v.pq16.is_some()))
+        self.quantized.iter().any(|q| {
+            q.as_ref()
+                .map_or(false, |v| v.pq8.is_some() || v.pq16.is_some())
+        })
     }
 
     /// Iterator over paired items
@@ -123,9 +129,17 @@ impl QuantizationPrecomputeService {
     /// Global singleton instance
     pub fn global() -> Arc<Self> {
         static INSTANCE: OnceCell<Arc<QuantizationPrecomputeService>> = OnceCell::const_new();
-        INSTANCE.get_or_init(|| async {
-            Arc::new(Self::new_with_config(PrecomputeConfig::default()).await.expect("Failed to create QuantizationPrecomputeService"))
-        }).clone()
+        INSTANCE
+            .get_or_init(|| async {
+                Arc::new(
+                    Self::new_with_config(PrecomputeConfig::default())
+                        .await
+                        .unwrap_or_else(|e| {
+                            panic!("Failed to create QuantizationPrecomputeService: {}", e)
+                        }),
+                )
+            })
+            .clone()
     }
 
     /// Create new instance with config
@@ -169,7 +183,9 @@ impl QuantizationPrecomputeService {
         let mut all_quantized = Vec::with_capacity(records.len());
 
         for chunk in records.chunks(batch_size) {
-            let quantized = self.process_batch(chunk, &levels, collection_config).await?;
+            let quantized = self
+                .process_batch(chunk, &levels, collection_config)
+                .await?;
             all_quantized.extend(quantized);
         }
 
@@ -187,7 +203,8 @@ impl QuantizationPrecomputeService {
     ) -> Result<QuantizedBatch> {
         // Compaction MUST recalculate quantization for merged data
         // because thresholds, min/max, and codebooks change with data distribution
-        self.quantize_for_flush(merged_records, collection_config).await
+        self.quantize_for_flush(merged_records, collection_config)
+            .await
     }
 
     /// Process a batch of vectors
@@ -200,9 +217,7 @@ impl QuantizationPrecomputeService {
         let start_time = std::time::Instant::now();
 
         // Extract vectors for quantization
-        let vectors: Vec<Vec<f32>> = batch.iter()
-            .map(|r| r.values.clone())
-            .collect();
+        let vectors: Vec<Vec<f32>> = batch.iter().map(|r| r.values.clone()).collect();
 
         if vectors.is_empty() {
             return Ok(vec![]);
@@ -242,7 +257,7 @@ impl QuantizationPrecomputeService {
                         if let Some(ref mut cb) = quantized.codebooks {
                             cb.binary_threshold = Some(threshold);
                         }
-                    },
+                    }
                     UnifiedQuantizationLevel::Int8 => {
                         let (int8_data, min_val, max_val) = engine.quantize_int8(&vectors[i])?;
                         quantized.int8 = Some(int8_data);
@@ -252,31 +267,29 @@ impl QuantizationPrecomputeService {
                         if let Some(ref mut cb) = quantized.codebooks {
                             cb.int8_min_max = Some((min_val, max_val));
                         }
-                    },
-                    UnifiedQuantizationLevel::PQ(subvector_dim) => {
-                        match subvector_dim {
-                            8 => {
-                                let (pq_data, codebooks) = engine.quantize_pq(&vectors[i], 8)?;
-                                quantized.pq8 = Some(pq_data);
-                                if quantized.codebooks.is_none() {
-                                    quantized.codebooks = Some(QuantizationCodebooks::default());
-                                }
-                                if let Some(ref mut cb) = quantized.codebooks {
-                                    cb.pq_codebooks = Some(codebooks);
-                                }
-                            },
-                            16 => {
-                                let (pq_data, codebooks) = engine.quantize_pq(&vectors[i], 16)?;
-                                quantized.pq16 = Some(pq_data);
-                                if quantized.codebooks.is_none() {
-                                    quantized.codebooks = Some(QuantizationCodebooks::default());
-                                }
-                                if let Some(ref mut cb) = quantized.codebooks {
-                                    cb.pq_codebooks = Some(codebooks);
-                                }
-                            },
-                            _ => {}
+                    }
+                    UnifiedQuantizationLevel::PQ(subvector_dim) => match subvector_dim {
+                        8 => {
+                            let (pq_data, codebooks) = engine.quantize_pq(&vectors[i], 8)?;
+                            quantized.pq8 = Some(pq_data);
+                            if quantized.codebooks.is_none() {
+                                quantized.codebooks = Some(QuantizationCodebooks::default());
+                            }
+                            if let Some(ref mut cb) = quantized.codebooks {
+                                cb.pq_codebooks = Some(codebooks);
+                            }
                         }
+                        16 => {
+                            let (pq_data, codebooks) = engine.quantize_pq(&vectors[i], 16)?;
+                            quantized.pq16 = Some(pq_data);
+                            if quantized.codebooks.is_none() {
+                                quantized.codebooks = Some(QuantizationCodebooks::default());
+                            }
+                            if let Some(ref mut cb) = quantized.codebooks {
+                                cb.pq_codebooks = Some(codebooks);
+                            }
+                        }
+                        _ => {}
                     },
                     _ => {}
                 }
@@ -308,18 +321,22 @@ impl QuantizationPrecomputeService {
     }
 
     /// Select quantization levels for collection
-    fn select_levels_for_collection(&self, collection: &Collection) -> Result<Vec<UnifiedQuantizationLevel>> {
+    fn select_levels_for_collection(
+        &self,
+        collection: &Collection,
+    ) -> Result<Vec<UnifiedQuantizationLevel>> {
         if let Some(levels) = &collection.config.quantization.levels {
             // Use explicitly configured levels
-            Ok(levels.iter().map(|s| {
-                match s.as_str() {
+            Ok(levels
+                .iter()
+                .map(|s| match s.as_str() {
                     "binary" => UnifiedQuantizationLevel::Binary,
                     "int8" => UnifiedQuantizationLevel::Int8,
                     "pq8" => UnifiedQuantizationLevel::PQ(8),
                     "pq16" => UnifiedQuantizationLevel::PQ(16),
                     _ => UnifiedQuantizationLevel::Int8,
-                }
-            }).collect())
+                })
+                .collect())
         } else {
             // Use selector to choose optimal levels
             self.selector.select_for_dimension(collection.dimension)
@@ -391,11 +408,11 @@ impl QuantizationPrecomputeService {
                 UnifiedQuantizationLevel::Binary => {
                     let (binary_data, _) = engine.quantize_binary(query)?;
                     quantized.binary = Some(binary_data);
-                },
+                }
                 UnifiedQuantizationLevel::Int8 => {
                     let (int8_data, _, _) = engine.quantize_int8(query)?;
                     quantized.int8 = Some(int8_data);
-                },
+                }
                 UnifiedQuantizationLevel::PQ(dim) => {
                     let (pq_data, _) = engine.quantize_pq(query, *dim)?;
                     match dim {
@@ -403,7 +420,7 @@ impl QuantizationPrecomputeService {
                         16 => quantized.pq16 = Some(pq_data),
                         _ => {}
                     }
-                },
+                }
                 _ => {}
             }
         }

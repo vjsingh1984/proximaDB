@@ -218,8 +218,14 @@ impl TenantPerformanceMonitor {
         debug!(
             "📊 Updated metrics for tenant {}: {:.1} QPS, {:.1}ms avg response time",
             tenant_id,
-            metrics_map.get(tenant_id).unwrap().current_qps,
-            metrics_map.get(tenant_id).unwrap().avg_response_time_ms
+            metrics_map
+                .get(tenant_id)
+                .map(|m| m.current_qps)
+                .unwrap_or(0.0),
+            metrics_map
+                .get(tenant_id)
+                .map(|m| m.avg_response_time_ms)
+                .unwrap_or(0.0)
         );
 
         Ok(())

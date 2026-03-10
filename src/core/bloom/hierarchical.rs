@@ -374,7 +374,9 @@ mod tests {
         let mut hierarchy = HierarchicalBloomFilters::with_defaults();
 
         let all_keys: Vec<&[u8]> = vec![b"key1", b"key2", b"key3", b"key4"];
-        hierarchy.build_file_bloom(&all_keys).unwrap();
+        hierarchy
+            .build_file_bloom(&all_keys)
+            .expect("Failed to build file bloom filter");
 
         assert!(hierarchy.file_bloom.is_some());
         assert_eq!(hierarchy.stats.total_keys, 4);
@@ -387,8 +389,12 @@ mod tests {
         let keys1: Vec<&[u8]> = vec![b"key1", b"key2"];
         let keys2: Vec<&[u8]> = vec![b"key3", b"key4"];
 
-        hierarchy.add_block_bloom(&keys1).unwrap();
-        hierarchy.add_block_bloom(&keys2).unwrap();
+        hierarchy
+            .add_block_bloom(&keys1)
+            .expect("Failed to add block bloom filter");
+        hierarchy
+            .add_block_bloom(&keys2)
+            .expect("Failed to add block bloom filter");
 
         assert_eq!(hierarchy.block_blooms.len(), 2);
         assert_eq!(hierarchy.stats.num_blocks, 2);
@@ -399,12 +405,18 @@ mod tests {
         let mut hierarchy = HierarchicalBloomFilters::with_defaults();
 
         let all_keys: Vec<&[u8]> = vec![b"key1", b"key2", b"key3", b"key4"];
-        hierarchy.build_file_bloom(&all_keys).unwrap();
+        hierarchy
+            .build_file_bloom(&all_keys)
+            .expect("Failed to build file bloom filter");
 
         let block1_keys: Vec<&[u8]> = vec![b"key1", b"key2"];
-        hierarchy.add_block_bloom(&block1_keys).unwrap();
+        hierarchy
+            .add_block_bloom(&block1_keys)
+            .expect("Failed to add block bloom filter");
         let block2_keys: Vec<&[u8]> = vec![b"key3", b"key4"];
-        hierarchy.add_block_bloom(&block2_keys).unwrap();
+        hierarchy
+            .add_block_bloom(&block2_keys)
+            .expect("Failed to add block bloom filter");
 
         hierarchy.finalize_stats();
 
@@ -421,18 +433,26 @@ mod tests {
 
         // Build hierarchy
         let all_keys: Vec<&[u8]> = vec![b"alice", b"bob", b"charlie", b"david"];
-        hierarchy.build_file_bloom(&all_keys).unwrap();
+        hierarchy
+            .build_file_bloom(&all_keys)
+            .expect("Failed to build file bloom filter");
 
         let block1_keys: Vec<&[u8]> = vec![b"alice", b"bob"];
         let block2_keys: Vec<&[u8]> = vec![b"charlie", b"david"];
 
-        hierarchy.add_block_bloom(&block1_keys).unwrap();
-        hierarchy.add_block_bloom(&block2_keys).unwrap();
+        hierarchy
+            .add_block_bloom(&block1_keys)
+            .expect("Failed to add block bloom filter");
+        hierarchy
+            .add_block_bloom(&block2_keys)
+            .expect("Failed to add block bloom filter");
 
         hierarchy.finalize_stats();
 
         // Query for existing key
-        let candidates = hierarchy.filter_blocks(b"alice").unwrap();
+        let candidates = hierarchy
+            .filter_blocks(b"alice")
+            .expect("Failed to filter blocks");
         assert!(
             !candidates.is_empty(),
             "Expected non-empty candidates for 'alice'"
@@ -440,7 +460,9 @@ mod tests {
 
         // Query for non-existent key
         // Due to FPR, might get false positives, but should filter most blocks
-        let candidates = hierarchy.filter_blocks(b"eve").unwrap();
+        let candidates = hierarchy
+            .filter_blocks(b"eve")
+            .expect("Failed to filter blocks");
         assert!(candidates.len() <= 2); // Should eliminate some blocks
     }
 
@@ -450,8 +472,12 @@ mod tests {
 
         // Build sparse blooms (should compress well)
         let sparse_keys: Vec<&[u8]> = vec![b"key1", b"key2"];
-        hierarchy.build_file_bloom(&sparse_keys).unwrap();
-        hierarchy.add_block_bloom(&sparse_keys).unwrap();
+        hierarchy
+            .build_file_bloom(&sparse_keys)
+            .expect("Failed to build file bloom filter");
+        hierarchy
+            .add_block_bloom(&sparse_keys)
+            .expect("Failed to add block bloom filter");
 
         hierarchy.finalize_stats();
 
@@ -472,9 +498,15 @@ mod tests {
         let keys2: Vec<&[u8]> = vec![b"key2"];
         let keys3: Vec<&[u8]> = vec![b"key3"];
 
-        hierarchy.add_block_bloom(&keys1).unwrap();
-        hierarchy.add_block_bloom(&keys2).unwrap();
-        hierarchy.add_block_bloom(&keys3).unwrap();
+        hierarchy
+            .add_block_bloom(&keys1)
+            .expect("Failed to add block bloom filter");
+        hierarchy
+            .add_block_bloom(&keys2)
+            .expect("Failed to add block bloom filter");
+        hierarchy
+            .add_block_bloom(&keys3)
+            .expect("Failed to add block bloom filter");
 
         hierarchy.finalize_stats();
 
@@ -490,24 +522,33 @@ mod tests {
 
         // Build file bloom
         let all_keys: Vec<&[u8]> = vec![b"key1", b"key2", b"key3", b"key4"];
-        hierarchy.build_file_bloom(&all_keys).unwrap();
+        hierarchy
+            .build_file_bloom(&all_keys)
+            .expect("Failed to build file bloom filter");
 
         // Add superblock bloom
         let sb_keys: Vec<&[u8]> = vec![b"key1", b"key2"];
-        hierarchy.add_superblock_bloom(&sb_keys).unwrap();
+        hierarchy
+            .add_superblock_bloom(&sb_keys)
+            .expect("Failed to add superblock bloom filter");
 
         // Add block blooms
         let block1_keys: Vec<&[u8]> = vec![b"key1"];
         let block2_keys: Vec<&[u8]> = vec![b"key2"];
 
-        hierarchy.add_block_bloom(&block1_keys).unwrap();
-        hierarchy.add_block_bloom(&block2_keys).unwrap();
+        hierarchy
+            .add_block_bloom(&block1_keys)
+            .expect("Failed to add block bloom filter");
+        hierarchy
+            .add_block_bloom(&block2_keys)
+            .expect("Failed to add block bloom filter");
 
         hierarchy.finalize_stats();
 
         // Filter with 2 blocks per superblock
-        let (sb_candidates, block_candidates) =
-            hierarchy.filter_with_superblocks(b"key1", 2).unwrap();
+        let (sb_candidates, block_candidates) = hierarchy
+            .filter_with_superblocks(b"key1", 2)
+            .expect("Failed to filter with superblocks");
 
         assert!(!sb_candidates.is_empty());
         assert!(!block_candidates.is_empty());

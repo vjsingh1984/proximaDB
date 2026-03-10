@@ -927,20 +927,23 @@ mod lowering_tests {
 
         let config = UniversalMetadataConfig::default();
         let filesystem_config = Default::default();
-        let filesystem_factory =
-            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(filesystem_config)
+                .await
+                .expect("FilesystemFactory creation should not fail in test"),
+        );
         let backend =
             crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(
                 config,
                 filesystem_factory,
             )
             .await
-            .unwrap();
+            .expect("UniversalMetadataBackend creation should not fail in test");
         let storage_config = StorageConfig::default();
         let service = Arc::new(
             CollectionService::new(Arc::new(backend), storage_config)
                 .await
-                .unwrap(),
+                .expect("CollectionService creation should not fail in test"),
         );
 
         // Create test collection "products"
@@ -962,7 +965,10 @@ mod lowering_tests {
         let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT id, metadata FROM products LIMIT 10";
 
-        let ast = lowering.lower_sql(sql).await.unwrap();
+        let ast = lowering
+            .lower_sql(sql)
+            .await
+            .expect("SQL lowering should not fail in test");
 
         match ast {
             Query::Select(select) => {
@@ -989,7 +995,10 @@ mod lowering_tests {
         let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT * FROM products WHERE metadata.category = 'electronics'";
 
-        let ast = lowering.lower_sql(sql).await.unwrap();
+        let ast = lowering
+            .lower_sql(sql)
+            .await
+            .expect("SQL lowering should not fail in test");
 
         match ast {
             Query::Select(select) => {
@@ -1018,7 +1027,10 @@ mod lowering_tests {
         let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT * FROM products ORDER BY VECTOR_SIMILARITY(embedding, [0.1, 0.2, 0.3], 'cosine') DESC LIMIT 5";
 
-        let ast = lowering.lower_sql(sql).await.unwrap();
+        let ast = lowering
+            .lower_sql(sql)
+            .await
+            .expect("SQL lowering should not fail in test");
 
         match ast {
             Query::Select(select) => {
@@ -1042,7 +1054,10 @@ mod lowering_tests {
         let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT * FROM products WHERE category = $1 AND price > $2";
 
-        let ast = lowering.lower_sql(sql).await.unwrap();
+        let ast = lowering
+            .lower_sql(sql)
+            .await
+            .expect("SQL lowering should not fail in test");
 
         match ast {
             Query::Select(select) => {
@@ -1095,7 +1110,7 @@ mod lowering_tests {
         let ast = lowering
             .lower_sql(&format!("SELECT * FROM products {}", sql))
             .await
-            .unwrap();
+            .expect("SQL lowering should not fail in test");
 
         // The lowered AST should represent metadata access in a way that
         // the execution engine can optimize to O(1) HashMap lookups
@@ -1108,7 +1123,10 @@ mod lowering_tests {
         let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT * FROM products";
 
-        let ast = lowering.lower_sql(sql).await.unwrap();
+        let ast = lowering
+            .lower_sql(sql)
+            .await
+            .expect("SQL lowering should not fail in test");
 
         match ast {
             Query::Select(select) => {
@@ -1116,7 +1134,11 @@ mod lowering_tests {
                 assert!(!select.from.is_empty());
                 assert!(select.from[0].name.is_some());
                 // The name should be resolved to collection ID (UUID format)
-                let table_name = select.from[0].name.as_ref().unwrap();
+                let table_name = select.from[0]
+                    .name
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Collection name should be resolved"))
+                    .expect("Collection name should not be None in test");
                 assert!(!table_name.is_empty(), "Collection name should be resolved");
             }
             Query::With { .. } => panic!("WITH queries not implemented yet"),

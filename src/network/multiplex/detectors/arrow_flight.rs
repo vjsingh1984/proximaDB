@@ -118,7 +118,8 @@ impl ProtocolDetector for ArrowFlightDetector {
     }
 
     fn priority(&self) -> u32 {
-        self.priority.unwrap_or(ARROW_FLIGHT_DETECTOR_PRIORITY)
+        self.priority
+            .unwrap_or_else(|| ARROW_FLIGHT_DETECTOR_PRIORITY)
     }
 
     fn target_protocol(&self) -> DetectedProtocol {
@@ -141,11 +142,11 @@ mod tests {
         let request = make_request()
             .uri("/arrow.flight.protocol.FlightService/DoGet")
             .body(())
-            .unwrap();
+            .expect("failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());
-        let result = result.unwrap();
+        let result = result.expect("detection result should be present");
         assert_eq!(result.protocol, DetectedProtocol::ArrowFlight);
         assert_eq!(result.confidence, 1.0);
     }
@@ -154,11 +155,14 @@ mod tests {
     fn test_arrow_flight_short_path() {
         let detector = ArrowFlightDetector::new();
 
-        let request = make_request().uri("/FlightService/DoGet").body(()).unwrap();
+        let request = make_request()
+            .uri("/FlightService/DoGet")
+            .body(())
+            .expect("failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());
-        let result = result.unwrap();
+        let result = result.expect("detection result should be present");
         assert_eq!(result.protocol, DetectedProtocol::ArrowFlight);
         assert_eq!(result.confidence, 1.0);
     }
@@ -169,11 +173,15 @@ mod tests {
 
         for method in ArrowFlightDetector::FLIGHT_METHODS {
             let path = format!("/FlightService/{}", method);
-            let request = make_request().uri(path.as_str()).body(()).unwrap();
+            let request = make_request()
+                .uri(path.as_str())
+                .body(())
+                .expect("failed to build test request");
 
             let result = detector.detect(&request);
             assert!(result.is_some(), "Should detect Flight method: {}", method);
-            assert_eq!(result.unwrap().protocol, DetectedProtocol::ArrowFlight);
+            let result = result.expect("detection result should be present");
+            assert_eq!(result.protocol, DetectedProtocol::ArrowFlight);
         }
     }
 
@@ -185,7 +193,7 @@ mod tests {
             .uri("/proximadb.v1.VectorService/Search")
             .header("content-type", "application/grpc")
             .body(())
-            .unwrap();
+            .expect("failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_none());
@@ -199,7 +207,7 @@ mod tests {
             .uri("/api/v1/vectors")
             .header("content-type", "application/json")
             .body(())
-            .unwrap();
+            .expect("failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_none());
@@ -214,11 +222,11 @@ mod tests {
             .header("content-type", "application/grpc")
             .header("x-arrow-flight-descriptor", "test")
             .body(())
-            .unwrap();
+            .expect("failed to build test request");
 
         let result = detector.detect(&request);
         assert!(result.is_some());
-        let result = result.unwrap();
+        let result = result.expect("detection result should be present");
         assert_eq!(result.protocol, DetectedProtocol::ArrowFlight);
         assert!(result.confidence >= 0.9);
     }

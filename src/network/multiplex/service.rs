@@ -189,7 +189,7 @@ impl Service<Request<Body>> for MultiplexService {
             .uri(request.uri().clone())
             .version(request.version())
             .body(())
-            .expect("building detection request should not fail");
+            .unwrap_or_else(|_| Request::new(()));
 
         // Copy headers from original request to detection request
         // We need to rebuild since Request doesn't allow header modification after creation
@@ -204,7 +204,7 @@ impl Service<Request<Body>> for MultiplexService {
         }
         let detection_request = detection_builder
             .body(())
-            .expect("building detection request should not fail");
+            .unwrap_or_else(|_| Request::new(()));
 
         // Detect protocol
         let detection = self.detect_protocol(&detection_request);

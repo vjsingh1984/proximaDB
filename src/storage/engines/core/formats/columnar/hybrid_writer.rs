@@ -986,7 +986,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hybrid_writer_streaming_mode() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create temp directory for test");
         let file_path = dir.path().join("test_hybrid_streaming.parquet");
 
         let config = HybridWriterConfig {
@@ -997,7 +997,7 @@ mod tests {
 
         let writer = HybridParquetWriter::new(&file_path, 128, config)
             .await
-            .unwrap();
+            .expect("Failed to create hybrid writer in streaming mode");
 
         // Write small batches (streaming pattern)
         for i in 0..10 {
@@ -1012,10 +1012,16 @@ mod tests {
                 source: None,
             }];
 
-            writer.write(&records).await.unwrap();
+            writer
+                .write(&records)
+                .await
+                .expect("Failed to write records in streaming mode");
         }
 
-        let (stats, _collector) = writer.finalize().await.unwrap();
+        let (stats, _collector) = writer
+            .finalize()
+            .await
+            .expect("Failed to finalize streaming writer");
         assert_eq!(stats.total_records, 10);
         // Note: These fields are on HybridWriterStats, not StreamingParquetWriterStats
         // The test needs to be rewritten or we need to track these separately
@@ -1023,7 +1029,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hybrid_writer_batch_mode() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create temp directory for test");
         let file_path = dir.path().join("test_hybrid_batch.parquet");
 
         let config = HybridWriterConfig {
@@ -1034,7 +1040,7 @@ mod tests {
 
         let writer = HybridParquetWriter::new(&file_path, 128, config)
             .await
-            .unwrap();
+            .expect("Failed to create hybrid writer in batch mode");
 
         // Write large batch (batch pattern)
         let records: Vec<_> = (0..1000)
@@ -1050,22 +1056,28 @@ mod tests {
             })
             .collect();
 
-        writer.write(&records).await.unwrap();
+        writer
+            .write(&records)
+            .await
+            .expect("Failed to write batch records");
 
-        let (stats, _collector) = writer.finalize().await.unwrap();
+        let (stats, _collector) = writer
+            .finalize()
+            .await
+            .expect("Failed to finalize batch writer");
         assert_eq!(stats.total_records, 1000);
         // Note: streaming_writes and batch_writes are internal HybridWriterStats fields
     }
 
     #[tokio::test]
     async fn test_pattern_detection() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create temp directory for test");
         let file_path = dir.path().join("test_pattern.parquet");
 
         let config = HybridWriterConfig::default();
         let writer = HybridParquetWriter::new(&file_path, 128, config)
             .await
-            .unwrap();
+            .expect("Failed to create hybrid writer for pattern detection test");
 
         // Simulate streaming pattern
         for _ in 0..20 {

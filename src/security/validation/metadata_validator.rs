@@ -317,8 +317,10 @@ pub struct CollectionNameValidator {
 
 /// Valid collection name pattern: alphanumeric, underscore, hyphen
 /// Must start with a letter or underscore
-static COLLECTION_NAME_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_-]*$").expect("Invalid collection name regex"));
+static COLLECTION_NAME_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+        .unwrap_or_else(|_| panic!("Invalid collection name regex"))
+});
 
 /// Reserved collection names
 static RESERVED_NAMES: Lazy<Vec<&str>> = Lazy::new(|| {

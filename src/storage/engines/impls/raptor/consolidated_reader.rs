@@ -655,14 +655,18 @@ impl RaptorReader {
                     };
 
                     rowgroups_loaded += 1;
-                    _bytes_read += self.estimate_rowgroup_size(
-                        footer
-                            .file_metadata
-                            .row_groups
-                            .iter()
-                            .find(|rg| rg.id == rowgroup_id)
-                            .unwrap(),
-                    );
+                    let rowgroup = footer
+                        .file_metadata
+                        .row_groups
+                        .iter()
+                        .find(|rg| rg.id == rowgroup_id)
+                        .ok_or_else(|| {
+                            crate::core::error::ProximaDBError::InvalidInput(format!(
+                                "Rowgroup {} not found in footer metadata",
+                                rowgroup_id
+                            ))
+                        })?;
+                    _bytes_read += self.estimate_rowgroup_size(rowgroup);
                     all_vectors.extend(filtered_vectors);
                 }
                 Err(e) => {
@@ -895,7 +899,11 @@ impl RaptorReader {
                 let fixed_array = vector_col
                     .as_any()
                     .downcast_ref::<arrow_array::FixedSizeListArray>()
-                    .unwrap();
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Vector column expected FixedSizeListArray when fixed-size flag is set"
+                        )
+                    })?;
                 if !fixed_array.is_null(row_idx) {
                     let vector_list = fixed_array.value(row_idx);
                     if let Some(float_array) =
@@ -908,7 +916,9 @@ impl RaptorReader {
                 let list_array = vector_col
                     .as_any()
                     .downcast_ref::<arrow_array::ListArray>()
-                    .unwrap();
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Vector column expected ListArray when list flag is set")
+                    })?;
                 if !list_array.is_null(row_idx) {
                     let vector_list = list_array.value(row_idx);
                     if let Some(float_array) =
@@ -1173,10 +1183,7 @@ impl RaptorReader {
         }
 
         // Step 3: Select top-k centroids (which map 1:1 to rowgroups)
-        // SAFETY: partial_cmp().unwrap() is safe here because distances are computed from
-        // valid vector operations and cannot be NaN. Distance calculations always produce
-        // finite f32 values (L2, cosine, dot product all return finite results for finite inputs).
-        centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        centroid_distances.sort_by(|a, b| a.1.total_cmp(&b.1));
         let num_centroids_to_search = (ef / 10).max(1).min(kxk_matrix.num_centroids as usize);
 
         let mut all_candidates = Vec::new();
@@ -1208,9 +1215,7 @@ impl RaptorReader {
         }
 
         // Step 5: Sort all candidates and return top-ef
-        // SAFETY: partial_cmp().unwrap() is safe - distances are computed using valid
-        // vector operations that cannot produce NaN values.
-        all_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
 
         let final_candidates: Vec<String> = all_candidates
             .into_iter()
@@ -1397,7 +1402,15 @@ impl RaptorReader {
 
         // Step 1: Compute distance from query to all centroids
         for centroid_id in 0..footer.centroids.count as usize {
-            let centroid = footer.centroids.get_centroid(centroid_id as u16).unwrap();
+            let centroid = footer
+                .centroids
+                .get_centroid(centroid_id as u16)
+                .ok_or_else(|| {
+                    crate::core::error::ProximaDBError::Internal(format!(
+                        "Centroid {} not found (centroid count mismatch)",
+                        centroid_id
+                    ))
+                })?;
             let dist = distance_compute
                 .calculate_distance(query, &centroid, &metric)
                 .raw_value;
@@ -1413,7 +1426,7 @@ impl RaptorReader {
         }
 
         // Step 2: Sort and select primary centroids
-        all_distances.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        all_distances.sort_by(|a, b| a.distance.total_cmp(&b.distance));
         let primary_centroids: Vec<CentroidSelection> =
             all_distances.iter().take(num_centroids).cloned().collect();
 
@@ -1590,7 +1603,7 @@ impl RaptorReader {
 
             // Update dynamic threshold
             if candidate_distances.len() >= ef {
-                candidate_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                candidate_distances.sort_by(|a, b| a.total_cmp(b));
                 candidate_distances.truncate(ef);
                 threshold = candidate_distances
                     .last()
@@ -1601,7 +1614,7 @@ impl RaptorReader {
         }
 
         // Sort and return top distances
-        candidate_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        candidate_distances.sort_by(|a, b| a.total_cmp(b));
         candidate_distances.truncate(ef);
 
         tracing::debug!(
@@ -2886,7 +2899,7 @@ impl RaptorReader {
         }
 
         // Sort by distance to find nearest vectors
-        query_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        query_distances.sort_by(|a, b| a.1.total_cmp(&b.1));
 
         // Step 2: Use P² matrix to identify dense clusters around top candidates
         // This helps find vectors that are similar to each other AND the query
@@ -2944,7 +2957,7 @@ impl RaptorReader {
         }
 
         // Sort final candidates by distance and return top-k
-        final_candidates.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        final_candidates.sort_by(|a, b| a.distance.total_cmp(&b.distance));
         final_candidates.truncate(k);
 
         tracing::debug!(

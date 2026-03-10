@@ -302,22 +302,34 @@ impl Default for EngineStats {
 impl EngineStats {
     /// Get compression ratio (requires read lock)
     pub fn get_compression_ratio(&self) -> f32 {
-        *self.avg_compression_ratio.read().unwrap()
+        *self
+            .avg_compression_ratio
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Update compression ratio (requires write lock)
     pub fn update_compression_ratio(&self, ratio: f32) {
-        *self.avg_compression_ratio.write().unwrap() = ratio;
+        *self
+            .avg_compression_ratio
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = ratio;
     }
 
     /// Get ML prediction accuracy (requires read lock)
     pub fn get_ml_accuracy(&self) -> f32 {
-        *self.avg_ml_prediction_accuracy.read().unwrap()
+        *self
+            .avg_ml_prediction_accuracy
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Update ML prediction accuracy (requires write lock)  
     pub fn update_ml_accuracy(&self, accuracy: f32) {
-        *self.avg_ml_prediction_accuracy.write().unwrap() = accuracy;
+        *self
+            .avg_ml_prediction_accuracy
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = accuracy;
     }
 }
 

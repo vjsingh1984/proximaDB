@@ -313,19 +313,23 @@ mod tests {
         let mut scan =
             NodeScanOperator::new(engine, Some("Person".to_string()), vec![], "p".to_string());
 
-        scan.open().unwrap();
+        scan.open().expect("Failed to open scan operator");
 
         let mut count = 0;
-        while let Some(tuple) = scan.next().unwrap() {
+        while let Some(tuple) = scan.next().expect("Failed to get next tuple") {
             assert!(tuple.contains("p"));
-            let node = tuple.get("p").unwrap().as_node().unwrap();
+            let node = tuple
+                .get("p")
+                .expect("Tuple missing 'p' binding")
+                .as_node()
+                .expect("Value is not a node");
             assert!(node.labels.contains(&"Person".to_string()));
             count += 1;
         }
 
         assert_eq!(count, 2); // Only Person nodes
 
-        scan.close().unwrap();
+        scan.close().expect("Failed to close scan operator");
     }
 
     #[test]
@@ -353,11 +357,15 @@ mod tests {
             "p".to_string(),
         );
 
-        scan.open().unwrap();
+        scan.open().expect("Failed to open scan operator");
 
         let mut count = 0;
-        while let Some(tuple) = scan.next().unwrap() {
-            let node = tuple.get("p").unwrap().as_node().unwrap();
+        while let Some(tuple) = scan.next().expect("Failed to get next tuple") {
+            let node = tuple
+                .get("p")
+                .expect("Tuple missing 'p' binding")
+                .as_node()
+                .expect("Value is not a node");
             if let Some(age_value) = node.properties.get("age") {
                 if let Some(Value::IntValue(age)) = &age_value.value {
                     assert!(*age > 25);
@@ -368,7 +376,7 @@ mod tests {
 
         assert_eq!(count, 1); // Only n1 with age 30
 
-        scan.close().unwrap();
+        scan.close().expect("Failed to close scan operator");
     }
 
     #[test]
@@ -381,15 +389,15 @@ mod tests {
         let engine = Arc::new(MockEngine::new(nodes));
         let mut scan = NodeScanOperator::new(engine, None, vec![], "n".to_string());
 
-        scan.open().unwrap();
+        scan.open().expect("Failed to open scan operator");
 
         let mut count = 0;
-        while scan.next().unwrap().is_some() {
+        while scan.next().expect("Failed to get next tuple").is_some() {
             count += 1;
         }
 
         assert_eq!(count, 2); // All nodes
 
-        scan.close().unwrap();
+        scan.close().expect("Failed to close scan operator");
     }
 }

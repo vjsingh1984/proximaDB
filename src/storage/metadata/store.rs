@@ -186,7 +186,7 @@ impl MetadataStore {
         for url in &config.metadata_storage_urls {
             if url.starts_with("file://") || !url.contains("://") {
                 let path = if url.starts_with("file://") {
-                    url.strip_prefix("file://").unwrap()
+                    url.strip_prefix("file://").unwrap_or(url)
                 } else {
                     url
                 };

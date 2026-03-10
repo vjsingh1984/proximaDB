@@ -80,7 +80,10 @@ impl FullTextIndex {
         let _id_field = schema_builder.add_text_field("_id", STORED);
 
         // Copy existing fields
-        let existing_fields = self.text_fields.read().unwrap();
+        let existing_fields = self
+            .text_fields
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for (existing_path, _) in existing_fields.iter() {
             schema_builder.add_text_field(existing_path, TEXT);
         }
@@ -90,7 +93,10 @@ impl FullTextIndex {
         drop(existing_fields);
 
         // Update text fields
-        let mut text_fields = self.text_fields.write().unwrap();
+        let mut text_fields = self
+            .text_fields
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         text_fields.insert(path.to_string(), field);
 
         Ok(())
@@ -104,7 +110,10 @@ impl FullTextIndex {
         tantivy_doc.add_text(self.id_field, doc_id);
 
         // Extract text from indexed paths
-        let text_fields = self.text_fields.read().unwrap();
+        let text_fields = self
+            .text_fields
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for (path, field) in text_fields.iter() {
             if let Some(text) = self.extract_text(document, path) {
                 tantivy_doc.add_text(*field, &text);
@@ -112,7 +121,10 @@ impl FullTextIndex {
         }
 
         // Add to index
-        let writer = self.writer.write().unwrap();
+        let writer = self
+            .writer
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         writer.add_document(tantivy_doc)?;
 
         Ok(())
@@ -122,7 +134,10 @@ impl FullTextIndex {
     pub fn remove_document(&self, doc_id: &str) -> Result<()> {
         let term = tantivy::Term::from_field_text(self.id_field, doc_id);
 
-        let writer = self.writer.write().unwrap();
+        let writer = self
+            .writer
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         writer.delete_term(term);
 
         Ok(())
@@ -130,7 +145,10 @@ impl FullTextIndex {
 
     /// Commit pending changes
     pub fn commit(&self) -> Result<()> {
-        let mut writer = self.writer.write().unwrap();
+        let mut writer = self
+            .writer
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         writer.commit()?;
         Ok(())
     }
@@ -138,7 +156,13 @@ impl FullTextIndex {
     /// Search for documents matching query
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<(String, f32)>> {
         // Get all text fields for query parser
-        let text_fields: Vec<Field> = self.text_fields.read().unwrap().values().cloned().collect();
+        let text_fields: Vec<Field> = self
+            .text_fields
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .cloned()
+            .collect();
 
         if text_fields.is_empty() {
             return Ok(vec![]);

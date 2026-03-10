@@ -20,9 +20,9 @@
 //! enabling point-in-time state reconstruction and event replay.
 
 use crate::core::error::ProximaDBError;
-use crate::storage::engines::impls::eventlog::{EntityId, Event, EventLogConfig, EventSequence};
 use crate::storage::engines::impls::eventlog::index::EventIndex;
 use crate::storage::engines::impls::eventlog::snapshot::SnapshotManager;
+use crate::storage::engines::impls::eventlog::{EntityId, Event, EventLogConfig, EventSequence};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tracing::debug;
@@ -74,7 +74,9 @@ impl TemporalQueryEngine {
 
         // Try to find a snapshot before the as_of time
         let snapshot_sequence = if let Some(time) = as_of {
-            self.snapshot_manager.find_snapshot_before(entity_id, time).await?
+            self.snapshot_manager
+                .find_snapshot_before(entity_id, time)
+                .await?
         } else {
             None
         };
@@ -86,7 +88,9 @@ impl TemporalQueryEngine {
         let sequences = if let Some(time) = as_of {
             self.get_sequences_before(entity_id, time).await?
         } else {
-            self.event_index.get_entity_events(entity_id, from_sequence, usize::MAX).await?
+            self.event_index
+                .get_entity_events(entity_id, from_sequence, usize::MAX)
+                .await?
         };
 
         // Load events and replay
@@ -102,14 +106,17 @@ impl TemporalQueryEngine {
         // Apply events
         for sequence in sequences {
             // Skip if before snapshot
-            if snapshot_sequence.is_some() && sequence <= snapshot_sequence.unwrap() {
-                continue;
+            if let Some(snapshot_seq) = snapshot_sequence {
+                if sequence <= snapshot_seq {
+                    continue;
+                }
             }
 
             // Load event
             let event_info = self.event_index.get_event_info(sequence).await?;
-            let (event_entity_id, _event_type, _timestamp) = event_info
-                .ok_or_else(|| ProximaDBError::Internal(format!("Event {} not indexed", sequence)))?;
+            let (event_entity_id, _event_type, _timestamp) = event_info.ok_or_else(|| {
+                ProximaDBError::Internal(format!("Event {} not indexed", sequence))
+            })?;
 
             // In production, we'd load the full event from storage here
             // For now, apply a placeholder update
@@ -128,14 +135,17 @@ impl TemporalQueryEngine {
         before: DateTime<Utc>,
     ) -> Result<Vec<EventSequence>> {
         // Get all entity events
-        let all_sequences = self.event_index
+        let all_sequences = self
+            .event_index
             .get_entity_events(entity_id, 0, usize::MAX)
             .await?;
 
         // Filter by timestamp
         let mut filtered = Vec::new();
         for sequence in all_sequences {
-            if let Some((_entity_id, _event_type, timestamp)) = self.event_index.get_event_info(sequence).await? {
+            if let Some((_entity_id, _event_type, timestamp)) =
+                self.event_index.get_event_info(sequence).await?
+            {
                 if timestamp <= before {
                     filtered.push(sequence);
                 } else {
@@ -164,17 +174,22 @@ impl TemporalQueryEngine {
         from_sequence: EventSequence,
         to_sequence: Option<EventSequence>,
     ) -> Result<Vec<Event>> {
-        debug!("Replaying events for {} from {} to {:?}",
-            entity_id, from_sequence, to_sequence);
+        debug!(
+            "Replaying events for {} from {} to {:?}",
+            entity_id, from_sequence, to_sequence
+        );
 
-        let limit = to_sequence.map(|s| (s - from_sequence + 1) as usize).unwrap_or(usize::MAX);
-        let sequences = self.event_index.get_entity_events(entity_id, from_sequence, limit).await?;
+        let limit = to_sequence
+            .map(|s| (s - from_sequence + 1) as usize)
+            .unwrap_or(usize::MAX);
+        let sequences = self
+            .event_index
+            .get_entity_events(entity_id, from_sequence, limit)
+            .await?;
 
         // Filter by to_sequence if specified
         let sequences: Vec<EventSequence> = if let Some(to_seq) = to_sequence {
-            sequences.into_iter()
-                .filter(|&s| s <= to_seq)
-                .collect()
+            sequences.into_iter().filter(|&s| s <= to_seq).collect()
         } else {
             sequences
         };
@@ -183,7 +198,9 @@ impl TemporalQueryEngine {
         // For now, return placeholder events with sequence numbers
         let mut events = Vec::new();
         for sequence in sequences {
-            if let Some((entity_id, event_type, timestamp)) = self.event_index.get_event_info(sequence).await? {
+            if let Some((entity_id, event_type, timestamp)) =
+                self.event_index.get_event_info(sequence).await?
+            {
                 events.push(Event {
                     sequence,
                     entity_id,
@@ -214,13 +231,21 @@ impl TemporalQueryEngine {
         entity_id: &EntityId,
         limit: usize,
     ) -> Result<Vec<(EventSequence, DateTime<Utc>, String)>> {
-        debug!("Getting version history for {} (limit {})", entity_id, limit);
+        debug!(
+            "Getting version history for {} (limit {})",
+            entity_id, limit
+        );
 
-        let sequences = self.event_index.get_entity_events(entity_id, 0, limit).await?;
+        let sequences = self
+            .event_index
+            .get_entity_events(entity_id, 0, limit)
+            .await?;
 
         let mut history = Vec::new();
         for sequence in sequences {
-            if let Some((_entity_id, event_type, timestamp)) = self.event_index.get_event_info(sequence).await? {
+            if let Some((_entity_id, event_type, timestamp)) =
+                self.event_index.get_event_info(sequence).await?
+            {
                 history.push((sequence, timestamp, event_type));
             }
         }
@@ -236,18 +261,19 @@ impl TemporalQueryEngine {
     ) -> serde_json::Value {
         // In production, this would call event-specific handlers
         // For now, just update a placeholder
+        let current_version = state.get("version").and_then(|v| v.as_i64()).unwrap_or(0);
+
         if let Some(obj) = state.as_object_mut() {
-            obj.insert("version", serde_json::json!(state.get("version").and_then(|v| v.as_i64()).unwrap_or(0) + 1));
+            obj.insert(
+                "version".to_string(),
+                serde_json::json!(current_version + 1),
+            );
         }
         state
     }
 
     /// Check if entity exists at a point in time
-    pub async fn entity_exists_at(
-        &self,
-        entity_id: &EntityId,
-        at: DateTime<Utc>,
-    ) -> Result<bool> {
+    pub async fn entity_exists_at(&self, entity_id: &EntityId, at: DateTime<Utc>) -> Result<bool> {
         let sequences = self.get_sequences_before(entity_id, at).await?;
         Ok(!sequences.is_empty())
     }
@@ -257,27 +283,40 @@ impl TemporalQueryEngine {
 mod tests {
     use super::*;
     use crate::storage::engines::impls::eventlog::{Event, EventLogConfig};
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     #[tokio::test]
     async fn test_temporal_engine_creation() {
         let base_dir = PathBuf::from("/tmp/test_temporal_engine");
-        let event_index = Arc::new(EventIndex::new(base_dir.clone()).unwrap());
-        let snapshot_manager = Arc::new(SnapshotManager::new(base_dir.clone()).unwrap());
+        let event_index = Arc::new(
+            EventIndex::new(base_dir.clone()).expect("Failed to create event index for test"),
+        );
+        let snapshot_manager = Arc::new(
+            SnapshotManager::new(base_dir.clone())
+                .expect("Failed to create snapshot manager for test"),
+        );
         let config = EventLogConfig::default();
 
-        let engine = TemporalQueryEngine::new(event_index, snapshot_manager, config).unwrap();
+        let engine = TemporalQueryEngine::new(event_index, snapshot_manager, config)
+            .expect("Failed to create temporal query engine for test");
         assert_eq!(engine.config.snapshot_interval, 1000);
     }
 
     #[tokio::test]
     async fn test_entity_exists_at() {
         let base_dir = PathBuf::from("/tmp/test_entity_exists");
-        let event_index = Arc::new(EventIndex::new(base_dir.clone()).unwrap());
-        let snapshot_manager = Arc::new(SnapshotManager::new(base_dir.clone()).unwrap());
+        let event_index = Arc::new(
+            EventIndex::new(base_dir.clone()).expect("Failed to create event index for test"),
+        );
+        let snapshot_manager = Arc::new(
+            SnapshotManager::new(base_dir.clone())
+                .expect("Failed to create snapshot manager for test"),
+        );
         let config = EventLogConfig::default();
 
-        let engine = TemporalQueryEngine::new(event_index, snapshot_manager, config).unwrap();
+        let engine = TemporalQueryEngine::new(event_index, snapshot_manager, config)
+            .expect("Failed to create temporal query engine for test");
 
         // Index an event
         let event = Event {
@@ -290,15 +329,25 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        engine.event_index.index_event(&event).await.unwrap();
+        engine
+            .event_index
+            .index_event(&event)
+            .await
+            .expect("Failed to index event in test");
 
         // Check existence
-        let exists = engine.entity_exists_at(&"account:test".to_string(), Utc::now()).await.unwrap();
+        let exists = engine
+            .entity_exists_at(&"account:test".to_string(), Utc::now())
+            .await
+            .expect("Failed to check entity existence in test");
         assert!(exists);
 
         // Check before event (should not exist)
         let before = Utc::now() - chrono::Duration::hours(1);
-        let exists_before = engine.entity_exists_at(&"account:test".to_string(), before).await.unwrap();
+        let exists_before = engine
+            .entity_exists_at(&"account:test".to_string(), before)
+            .await
+            .expect("Failed to check entity existence in test");
         assert!(!exists_before);
 
         // Cleanup

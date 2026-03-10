@@ -60,7 +60,7 @@ pub type NodeEmbeddings = HashMap<String, Vec<f32>>;
 ///     10,   // walks per node
 ///     128,  // embedding dimension
 /// );
-/// let embeddings = node2vec.execute(()).unwrap();
+/// let embeddings = node2vec.execute(())?;
 /// ```
 pub struct Node2VecEmbeddings {
     engine: Arc<OrionGraphEngine>,

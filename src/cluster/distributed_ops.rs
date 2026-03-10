@@ -440,7 +440,16 @@ impl DistributedCollectionOps {
                 let node_registry = node_registry.clone();
 
                 async move {
-                    let _permit = semaphore.acquire().await.unwrap();
+                    let _permit = match semaphore.acquire().await {
+                        Ok(permit) => permit,
+                        Err(e) => {
+                            return (
+                                shard.id.id().to_string(),
+                                0,
+                                Err(anyhow!("Semaphore acquire failed: {}", e)),
+                            );
+                        }
+                    };
                     let shard_start = Instant::now();
 
                     let result = Self::search_single_shard(
@@ -650,7 +659,11 @@ impl DistributedCollectionOps {
         let mut all_results: Vec<SearchResult> = shard_results.into_iter().flatten().collect();
 
         // Sort by distance (ascending - lower is better)
-        all_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        all_results.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Take top_k
         all_results.truncate(top_k);
@@ -897,9 +910,25 @@ impl DistributedCollectionOps {
 
             // Determine target shard based on routing strategy
             let shard_id = if use_tenant_routing {
-                self.route_by_tenant(tenant_id.unwrap(), shards, &record.id)
+                if let Some(tid) = tenant_id {
+                    self.route_by_tenant(tid, shards, &record.id)
+                } else {
+                    let mut hasher = DefaultHasher::new();
+                    record.id.hash(&mut hasher);
+                    let hash = hasher.finish();
+                    let shard_idx = (hash as usize) % shards.len();
+                    shards[shard_idx].id.clone()
+                }
             } else if use_domain_routing {
-                self.route_by_domain(domain_id.unwrap(), shards, &record.id)
+                if let Some(did) = domain_id {
+                    self.route_by_domain(did, shards, &record.id)
+                } else {
+                    let mut hasher = DefaultHasher::new();
+                    record.id.hash(&mut hasher);
+                    let hash = hasher.finish();
+                    let shard_idx = (hash as usize) % shards.len();
+                    shards[shard_idx].id.clone()
+                }
             } else {
                 // Default: hash-based routing on record ID
                 let mut hasher = DefaultHasher::new();
@@ -1283,11 +1312,18 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     async fn create_test_coordinator() -> DistributedCollectionOps {
-        let shard_manager = Arc::new(ShardManager::new(ShardConfig::default()).unwrap());
-        let routing_service = Arc::new(RoutingService::new(RoutingConfig::default()).unwrap());
-        let node_registry = Arc::new(NodeRegistry::new(NodeRegistryConfig::default()).unwrap());
+        let shard_manager = Arc::new(
+            ShardManager::new(ShardConfig::default()).expect("Failed to create ShardManager"),
+        );
+        let routing_service = Arc::new(
+            RoutingService::new(RoutingConfig::default()).expect("Failed to create RoutingService"),
+        );
+        let node_registry = Arc::new(
+            NodeRegistry::new(NodeRegistryConfig::default())
+                .expect("Failed to create NodeRegistry"),
+        );
         let consensus = Arc::new(RwLock::new(
-            RaftConsensus::new(ConsensusConfig::default()).unwrap(),
+            RaftConsensus::new(ConsensusConfig::default()).expect("Failed to create RaftConsensus"),
         ));
 
         DistributedCollectionOps::new(
@@ -1534,7 +1570,10 @@ mod tests {
             query_context: Some(QueryContext::with_tenant("tenant-1").domain("domain-1")),
         };
 
-        let ctx = request.query_context.as_ref().unwrap();
+        let ctx = request
+            .query_context
+            .as_ref()
+            .expect("query_context should be present");
         assert_eq!(ctx.tenant_id, Some("tenant-1".to_string()));
         assert_eq!(ctx.domain_id, Some("domain-1".to_string()));
     }
@@ -1668,11 +1707,18 @@ mod tests {
     async fn create_test_coordinator_with_fanout(
         fanout: Arc<dyn SearchFanout>,
     ) -> DistributedCollectionOps {
-        let shard_manager = Arc::new(ShardManager::new(ShardConfig::default()).unwrap());
-        let routing_service = Arc::new(RoutingService::new(RoutingConfig::default()).unwrap());
-        let node_registry = Arc::new(NodeRegistry::new(NodeRegistryConfig::default()).unwrap());
+        let shard_manager = Arc::new(
+            ShardManager::new(ShardConfig::default()).expect("Failed to create ShardManager"),
+        );
+        let routing_service = Arc::new(
+            RoutingService::new(RoutingConfig::default()).expect("Failed to create RoutingService"),
+        );
+        let node_registry = Arc::new(
+            NodeRegistry::new(NodeRegistryConfig::default())
+                .expect("Failed to create NodeRegistry"),
+        );
         let consensus = Arc::new(RwLock::new(
-            RaftConsensus::new(ConsensusConfig::default()).unwrap(),
+            RaftConsensus::new(ConsensusConfig::default()).expect("Failed to create RaftConsensus"),
         ));
 
         DistributedCollectionOps::with_fanout(
@@ -1716,7 +1762,10 @@ mod tests {
 
     /// Helper to create a node registry with test nodes pre-registered
     async fn create_node_registry_with_nodes() -> Arc<NodeRegistry> {
-        let registry = Arc::new(NodeRegistry::new(NodeRegistryConfig::default()).unwrap());
+        let registry = Arc::new(
+            NodeRegistry::new(NodeRegistryConfig::default())
+                .expect("Failed to create NodeRegistry"),
+        );
 
         // Register a remote test node
         registry
@@ -1726,7 +1775,7 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .expect("Failed to register remote test node");
 
         // Register local test node
         registry
@@ -1736,7 +1785,7 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .expect("Failed to register local test node");
 
         registry
     }
@@ -1784,7 +1833,7 @@ mod tests {
         assert_eq!(fanout.search_calls(), 1);
 
         // Verify results were converted correctly
-        let results = result.unwrap();
+        let results = result.expect("Remote search should succeed");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].id, "remote-result-1");
         assert_eq!(results[0].distance, 0.1);
@@ -1827,7 +1876,7 @@ mod tests {
 
         // Should fail because no fanout
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.expect_err("Should have failed without fanout");
         assert!(err.to_string().contains("No SearchFanout implementation"));
     }
 
@@ -1886,7 +1935,7 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .expect("Failed to register remote node in coordinator");
 
         // Create a shard that is on a remote node
         let mut shard = Shard::new("test-collection", 0);
@@ -1919,7 +1968,7 @@ mod tests {
         // Verify RPC was called and succeeded
         assert!(result.is_ok());
         assert_eq!(fanout.write_calls(), 1);
-        assert_eq!(result.unwrap(), 3); // replicas_acked from mock
+        assert_eq!(result.expect("Write should succeed"), 3); // replicas_acked from mock
     }
 
     #[tokio::test]
@@ -1936,7 +1985,7 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .expect("Failed to register remote node");
 
         // Create a shard that is on a remote node
         let mut shard = Shard::new("test-collection", 0);
@@ -1961,7 +2010,7 @@ mod tests {
 
         // Should fail because no fanout is configured
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.expect_err("Should have failed without fanout");
         assert!(
             err.to_string().contains("SearchFanout"),
             "Expected SearchFanout error, got: {}",

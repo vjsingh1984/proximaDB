@@ -770,7 +770,8 @@ mod tests {
         let input = [0b10101010u8];
         let mut output = vec![0.0f32; 8];
 
-        let count = fused_decode_binary_to_f32(&input, &mut output, true).unwrap();
+        let count = fused_decode_binary_to_f32(&input, &mut output, true)
+            .expect("failed to decode binary bipolar data");
 
         assert_eq!(count, 8);
         let expected = [-1.0f32, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0];
@@ -791,7 +792,8 @@ mod tests {
         let input = [0b10101010u8];
         let mut output = vec![0.0f32; 8];
 
-        let count = fused_decode_binary_to_f32(&input, &mut output, false).unwrap();
+        let count = fused_decode_binary_to_f32(&input, &mut output, false)
+            .expect("failed to decode binary unipolar data");
 
         assert_eq!(count, 8);
         let expected = [0.0f32, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
@@ -813,7 +815,8 @@ mod tests {
         let mut output = vec![0.0f32; 4];
         let params = QuantizationParams::symmetric(0.1);
 
-        let count = fused_decode_int4_to_f32(&input, &mut output, &params).unwrap();
+        let count = fused_decode_int4_to_f32(&input, &mut output, &params)
+            .expect("failed to decode INT4 data");
 
         assert_eq!(count, 4);
         let expected = [0.1f32, 0.2, 0.3, 0.4];
@@ -834,7 +837,8 @@ mod tests {
         let mut output = vec![0.0f32; 4];
         let params = QuantizationParams::symmetric(0.01);
 
-        let count = fused_decode_int8_to_f32(&input, &mut output, &params).unwrap();
+        let count = fused_decode_int8_to_f32(&input, &mut output, &params)
+            .expect("failed to decode INT8 data");
 
         assert_eq!(count, 4);
 
@@ -857,7 +861,8 @@ mod tests {
         let mut output = vec![0.0f32; 3];
         let params = QuantizationParams::asymmetric(0.1, 128);
 
-        let count = fused_decode_int8_to_f32(&input, &mut output, &params).unwrap();
+        let count = fused_decode_int8_to_f32(&input, &mut output, &params)
+            .expect("failed to decode INT8 data with zero point");
 
         assert_eq!(count, 3);
 
@@ -883,7 +888,8 @@ mod tests {
         let mut output = vec![0.0f32; 8];
         let params = QuantizationParams::symmetric(0.01);
 
-        let count = progressive_decode_binary_int8_f32(&input, &mut output, &params, true).unwrap();
+        let count = progressive_decode_binary_int8_f32(&input, &mut output, &params, true)
+            .expect("failed to progressively decode binary to INT8 to FP32");
 
         assert_eq!(count, 8);
 
@@ -903,15 +909,16 @@ mod tests {
         let input: Vec<u8> = vec![];
         let mut output = vec![0.0f32; 10];
 
-        let count = fused_decode_binary_to_f32(&input, &mut output, true).unwrap();
+        let count = fused_decode_binary_to_f32(&input, &mut output, true)
+            .expect("failed to decode empty binary data");
         assert_eq!(count, 0);
 
-        let count =
-            fused_decode_int4_to_f32(&input, &mut output, &QuantizationParams::default()).unwrap();
+        let count = fused_decode_int4_to_f32(&input, &mut output, &QuantizationParams::default())
+            .expect("failed to decode empty INT4 data");
         assert_eq!(count, 0);
 
-        let count =
-            fused_decode_int8_to_f32(&input, &mut output, &QuantizationParams::default()).unwrap();
+        let count = fused_decode_int8_to_f32(&input, &mut output, &QuantizationParams::default())
+            .expect("failed to decode empty INT8 data");
         assert_eq!(count, 0);
     }
 
@@ -921,7 +928,8 @@ mod tests {
         let input: Vec<u8> = (0..=124).cycle().take(size / 8 + 1).collect();
         let mut output = vec![0.0f32; size];
 
-        let count = fused_decode_binary_to_f32(&input, &mut output, true).unwrap();
+        let count = fused_decode_binary_to_f32(&input, &mut output, true)
+            .expect("failed to decode large binary data");
         assert_eq!(count, size);
 
         // Verify all values are either -1 or 1

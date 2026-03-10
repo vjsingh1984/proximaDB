@@ -32,7 +32,12 @@ impl super::GraphOperationsService {
                 if label_schema.is_none() {
                     continue;
                 }
-                let ls = label_schema.unwrap();
+                let ls = label_schema.as_ref().ok_or_else(|| {
+                    ProximaDBError::Internal(format!(
+                        "Label schema not found for label '{}'",
+                        label
+                    ))
+                })?;
                 // Required properties present
                 for req in &ls.required_properties {
                     if !node.properties.contains_key(req) {
@@ -105,7 +110,12 @@ impl super::GraphOperationsService {
             if ets.is_none() {
                 return Ok(());
             }
-            let ets = ets.unwrap();
+            let ets = ets.as_ref().ok_or_else(|| {
+                ProximaDBError::Internal(format!(
+                    "Edge type schema not found for edge type '{}'",
+                    edge.edge_type
+                ))
+            })?;
             // Required properties present
             for req in &ets.required_properties {
                 if !edge.properties.contains_key(req) {
@@ -208,7 +218,10 @@ impl super::GraphOperationsService {
     ) -> Result<()> {
         use crate::proto::proximadb_v1::property_constraint::Constraint as C;
         use crate::proto::proximadb_v1::property_value::Value as PV;
-        match constraint.constraint.as_ref().unwrap() {
+        let constraint_type = constraint.constraint.as_ref().ok_or_else(|| {
+            ProximaDBError::InvalidInput("Property constraint has no type specified".to_string())
+        })?;
+        match constraint_type {
             C::StringConstraint(sc) => {
                 if let Some(PV::StringValue(s)) = &value.value {
                     if let Some(min) = sc.min_length {

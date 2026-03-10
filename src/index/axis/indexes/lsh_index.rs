@@ -286,7 +286,9 @@ impl AxisLshIndex {
             });
 
         // Insert vector into the zero-overhead collection
-        let mut coll = collection.write().unwrap();
+        let mut coll = collection
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         coll.add_fp32(vector_id.clone(), &vector_data)?;
 
         self.vector_count.fetch_add(1, Ordering::Relaxed);
@@ -357,7 +359,9 @@ impl AxisLshIndex {
             .vectors
             .get(&collection_id.unwrap_or("default").to_string())
         {
-            let coll = collection.read().unwrap();
+            let coll = collection
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
 
             for id in &candidates {
                 if let Some(view) = coll.get(id) {
@@ -380,7 +384,7 @@ impl AxisLshIndex {
         }
 
         // Sort by distance and return top-k
-        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(k);
 
         debug!(
@@ -400,7 +404,9 @@ impl AxisLshIndex {
             .vectors
             .get(&collection_id.unwrap_or("default").to_string())
         {
-            let coll = collection.write().unwrap();
+            let coll = collection
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
 
             // Get the vector data before removing it (needed to update hash tables)
             let vector_data = if let Some(view) = coll.get(id) {

@@ -1226,7 +1226,9 @@ mod tests {
             order_by: None,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         // Most selective should be first (lowest selectivity value)
         // Vector search with top_k=1 is most selective (selectivity ~0.000001)
@@ -1271,7 +1273,9 @@ mod tests {
         assert_eq!(stats.total_queries(), 3);
 
         // Check average for specific query
-        let avg = stats.get_avg_execution_time(12345).unwrap();
+        let avg = stats
+            .get_avg_execution_time(12345)
+            .expect("should have average execution time");
         assert_eq!(avg, 4750); // (5000 + 4500) / 2
     }
 
@@ -1289,7 +1293,9 @@ mod tests {
 
         stats.update_collection_stats(collection_stats);
 
-        let retrieved = stats.get_collection_stats("products").unwrap();
+        let retrieved = stats
+            .get_collection_stats("products")
+            .expect("should have collection stats");
         assert_eq!(retrieved.row_count, 1_000_000);
     }
 
@@ -1319,11 +1325,21 @@ mod tests {
             order_by: None,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         // Vector must come before document due to dependency
-        let vec_pos = plan.execution_order.iter().position(|&x| x == 0).unwrap();
-        let doc_pos = plan.execution_order.iter().position(|&x| x == 1).unwrap();
+        let vec_pos = plan
+            .execution_order
+            .iter()
+            .position(|&x| x == 0)
+            .expect("vector component should be in execution order");
+        let doc_pos = plan
+            .execution_order
+            .iter()
+            .position(|&x| x == 1)
+            .expect("document component should be in execution order");
         assert!(
             vec_pos < doc_pos,
             "Vector must execute before dependent document query"
@@ -1350,7 +1366,9 @@ mod tests {
             order_by: None,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         // Should have optimization notes
         assert!(!plan.notes.is_empty(), "Should have optimization notes");
@@ -1378,7 +1396,9 @@ mod tests {
             order_by: None,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         assert!(
             plan.estimated_cost > 0.0,
@@ -1419,14 +1439,20 @@ mod tests {
         };
 
         // First call should be a cache miss
-        let _plan1 = optimizer.optimize(&query).unwrap();
-        let cache = optimizer.plan_cache().unwrap();
+        let _plan1 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
+        let cache = optimizer
+            .plan_cache()
+            .expect("plan cache should be enabled");
         let stats1 = cache.stats();
         assert_eq!(stats1.misses, 1, "First call should be a miss");
         assert_eq!(stats1.hits, 0, "First call should have no hits");
 
         // Second call with same query should be a cache hit
-        let _plan2 = optimizer.optimize(&query).unwrap();
+        let _plan2 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
         let stats2 = cache.stats();
         assert_eq!(stats2.hits, 1, "Second call should be a hit");
         assert_eq!(stats2.misses, 1, "Misses should remain 1");
@@ -1455,10 +1481,16 @@ mod tests {
         };
 
         // Two different queries should both be misses
-        let _plan1 = optimizer.optimize(&query1).unwrap();
-        let _plan2 = optimizer.optimize(&query2).unwrap();
+        let _plan1 = optimizer
+            .optimize(&query1)
+            .expect("optimization should succeed");
+        let _plan2 = optimizer
+            .optimize(&query2)
+            .expect("optimization should succeed");
 
-        let cache = optimizer.plan_cache().unwrap();
+        let cache = optimizer
+            .plan_cache()
+            .expect("plan cache should be enabled");
         let stats = cache.stats();
         assert_eq!(stats.misses, 2, "Both queries should be misses");
         assert_eq!(stats.size, 2, "Cache should have 2 entries");
@@ -1478,8 +1510,12 @@ mod tests {
         };
 
         // Cache a plan
-        let _plan1 = optimizer.optimize(&query).unwrap();
-        let cache = optimizer.plan_cache().unwrap();
+        let _plan1 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
+        let cache = optimizer
+            .plan_cache()
+            .expect("plan cache should be enabled");
         assert_eq!(cache.stats().size, 1, "Cache should have 1 entry");
 
         // Invalidate all
@@ -1491,7 +1527,9 @@ mod tests {
         );
 
         // Next call should be a miss
-        let _plan2 = optimizer.optimize(&query).unwrap();
+        let _plan2 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
         let stats = cache.stats();
         assert_eq!(stats.misses, 2, "Should have 2 misses total");
     }
@@ -1654,8 +1692,12 @@ mod tests {
         };
 
         // Should work without cache
-        let plan1 = optimizer.optimize(&query).unwrap();
-        let plan2 = optimizer.optimize(&query).unwrap();
+        let plan1 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
+        let plan2 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         // Both should succeed and produce same result
         assert_eq!(plan1.estimated_cost, plan2.estimated_cost);

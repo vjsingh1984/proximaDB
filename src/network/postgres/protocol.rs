@@ -1528,8 +1528,10 @@ impl PostgresProtocol {
             return self.send_command_complete("INSERT 0 1").await;
         }
 
-        let id = id.unwrap();
-        let vector = vector.unwrap();
+        let (id, vector) = match (id, vector) {
+            (Some(id), Some(vector)) => (id, vector),
+            _ => return self.send_command_complete("INSERT 0 1").await,
+        };
 
         debug!(
             "Inserting vector '{}' into collection '{}' (dim={})",
@@ -1586,7 +1588,10 @@ impl PostgresProtocol {
             return self.send_command_complete("INSERT 0 0").await;
         }
 
-        let id = id.unwrap();
+        let id = match id {
+            Some(id) => id,
+            None => return self.send_command_complete("INSERT 0 0").await,
+        };
         let json_data = json_str.unwrap_or_else(|| "{}".to_string());
 
         debug!(

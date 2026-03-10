@@ -176,7 +176,9 @@ impl IndexRecoveryManager {
         let mut tasks = Vec::new();
 
         for collection_id in collections {
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
+            let permit = semaphore.clone().acquire_owned().await.map_err(|e| {
+                SerializationError::NotSupported(format!("Recovery semaphore closed: {}", e))
+            })?;
             let manager = self.clone();
             let collection_id = collection_id.clone();
 

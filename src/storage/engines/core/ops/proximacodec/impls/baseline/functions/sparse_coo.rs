@@ -239,8 +239,8 @@ mod tests {
         values[500] = 3.5;
         values[999] = 4.5;
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode f32 values");
 
         assert_eq!(values, decoded);
     }
@@ -253,8 +253,8 @@ mod tests {
         values[5000] = 100;
         values[9999] = 200;
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("Failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("Failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -267,8 +267,8 @@ mod tests {
             values[i * 10000] = (i as i32 + 1) * 10;
         }
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
 
@@ -288,8 +288,8 @@ mod tests {
     fn test_sparse_coo_all_zeros() {
         let values = vec![0i64; 1000];
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("Failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("Failed to decode i64 values");
 
         assert_eq!(values, decoded);
 
@@ -303,8 +303,8 @@ mod tests {
         let mut values = vec![0i32; 100000];
         values[50000] = 42; // Only 1 non-zero
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
 
@@ -321,10 +321,10 @@ mod tests {
     fn test_sparse_coo_empty() {
         let values: Vec<f32> = vec![];
 
-        let encoded = encode_f32(&values).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 values");
         assert!(encoded.is_empty());
 
-        let decoded = decode_f32(&encoded, 0).unwrap();
+        let decoded = decode_f32(&encoded, 0).expect("Failed to decode f32 values");
         assert!(decoded.is_empty());
     }
 
@@ -333,8 +333,8 @@ mod tests {
         let mut values = vec![0.0f32; 10000];
         values[5000] = 42.5;
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode f32 values");
 
         assert_eq!(values, decoded);
 
@@ -350,8 +350,8 @@ mod tests {
         values[11] = 2;
         values[12] = 3;
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
     }

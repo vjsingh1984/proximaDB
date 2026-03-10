@@ -178,7 +178,9 @@ impl AccessPatternTracker {
                     }
 
                     let avg_interval = intervals.iter().sum::<Duration>() / intervals.len() as u32;
-                    let last_access = entry.access_times.back().unwrap();
+                    let Some(last_access) = entry.access_times.back() else {
+                        return AccessPrediction::Unlikely(0.0);
+                    };
                     let time_since_last = Instant::now().duration_since(*last_access);
 
                     if time_since_last < avg_interval * 2 {

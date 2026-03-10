@@ -181,7 +181,7 @@ impl CompactVector {
             vector_size
         };
         let id_bytes = &self.data[id_start..];
-        std::str::from_utf8(id_bytes).expect("Invalid UTF-8 in ID")
+        std::str::from_utf8(id_bytes).unwrap_or_default()
     }
 
     /// Get total size in bytes

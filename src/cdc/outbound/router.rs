@@ -410,14 +410,20 @@ impl EventRouter {
 
     /// Add a routing rule
     pub fn add_rule(&self, rule: RouteRule) {
-        let mut rules = self.rules.write().unwrap();
+        let mut rules = self
+            .rules
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         rules.push(rule);
         rules.sort_by_key(|r| r.priority);
     }
 
     /// Remove a rule by name
     pub fn remove_rule(&self, name: &str) -> bool {
-        let mut rules = self.rules.write().unwrap();
+        let mut rules = self
+            .rules
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let len_before = rules.len();
         rules.retain(|r| r.name != name);
         rules.len() < len_before
@@ -425,16 +431,25 @@ impl EventRouter {
 
     /// Set default sinks
     pub fn set_default_sinks(&self, sinks: Vec<String>) {
-        *self.default_sinks.write().unwrap() = sinks;
+        *self
+            .default_sinks
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = sinks;
     }
 
     /// Route an event
     pub fn route(&self, event: ChangeEvent) -> RoutingDecision {
-        let rules = self.rules.read().unwrap();
+        let rules = self
+            .rules
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut matched_rules = Vec::new();
         let mut sink_ids = Vec::new();
 
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self
+            .stats
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.events_routed += 1;
 
         for rule in rules.iter() {
@@ -466,7 +481,10 @@ impl EventRouter {
         }
 
         // Use default sinks if no rules matched
-        let default_sinks = self.default_sinks.read().unwrap();
+        let default_sinks = self
+            .default_sinks
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !default_sinks.is_empty() {
             stats.events_default += 1;
             for sink_id in default_sinks.iter() {
@@ -490,22 +508,34 @@ impl EventRouter {
 
     /// Get current rules
     pub fn rules(&self) -> Vec<RouteRule> {
-        self.rules.read().unwrap().clone()
+        self.rules
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Get statistics
     pub fn stats(&self) -> RouterStats {
-        self.stats.read().unwrap().clone()
+        self.stats
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Reset statistics
     pub fn reset_stats(&self) {
-        *self.stats.write().unwrap() = RouterStats::default();
+        *self
+            .stats
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = RouterStats::default();
     }
 
     /// Enable/disable a rule
     pub fn set_rule_enabled(&self, name: &str, enabled: bool) -> bool {
-        let mut rules = self.rules.write().unwrap();
+        let mut rules = self
+            .rules
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for rule in rules.iter_mut() {
             if rule.name == name {
                 rule.enabled = enabled;

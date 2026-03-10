@@ -273,8 +273,9 @@ mod tests {
         // Values that fit in 3 bits (0-7)
         let values = vec![1i32, 2, 3, 4, 5, 6, 7, 0];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("encoding should succeed for valid small values");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("decoding should succeed for valid encoded data");
 
         assert_eq!(values, decoded);
     }
@@ -284,8 +285,9 @@ mod tests {
         // All zeros - should use selector 0
         let values = vec![0i32; 240];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("encoding should succeed for zero values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("decoding should succeed for zero values");
 
         assert_eq!(values, decoded);
 
@@ -298,8 +300,9 @@ mod tests {
         // Mix of small and medium values
         let values = vec![1i32, 2, 15, 31, 63, 127, 255, 511];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("encoding should succeed for mixed size values");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("decoding should succeed for mixed size values");
 
         assert_eq!(values, decoded);
     }
@@ -308,8 +311,9 @@ mod tests {
     fn test_simple8b_i64_roundtrip() {
         let values = vec![0i64, 1, 10, 100, 1000, 10000];
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("encoding should succeed for i64 values");
+        let decoded =
+            decode_i64(&encoded, values.len()).expect("decoding should succeed for i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -318,8 +322,9 @@ mod tests {
     fn test_simple8b_f32_roundtrip() {
         let values = vec![0.0f32, 1.0, 2.0, 3.0, 4.0];
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("encoding should succeed for f32 values");
+        let decoded =
+            decode_f32(&encoded, values.len()).expect("decoding should succeed for f32 values");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -330,10 +335,11 @@ mod tests {
     #[test]
     fn test_simple8b_empty() {
         let values: Vec<i32> = vec![];
-        let encoded = encode_i32(&values).unwrap();
+        let encoded = encode_i32(&values).expect("encoding should succeed for empty values");
         assert!(encoded.is_empty());
 
-        let decoded = decode_i32(&encoded, 0).unwrap();
+        let decoded =
+            decode_i32(&encoded, 0).expect("decoding should succeed for empty encoded data");
         assert!(decoded.is_empty());
     }
 
@@ -341,8 +347,9 @@ mod tests {
     fn test_simple8b_single_value() {
         let values = vec![42i32];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("encoding should succeed for single value");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("decoding should succeed for single value");
 
         assert_eq!(values, decoded);
     }
@@ -352,8 +359,9 @@ mod tests {
         // Sequential values 0-99
         let values: Vec<i32> = (0..100).collect();
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("encoding should succeed for sequential values");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("decoding should succeed for sequential values");
 
         assert_eq!(values, decoded);
 
@@ -371,8 +379,9 @@ mod tests {
             values.push(3i32);
         }
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("encoding should succeed for compression test");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("decoding should succeed for compression test");
 
         assert_eq!(values, decoded);
 
@@ -388,8 +397,9 @@ mod tests {
         // Values 0 and 1 only (1-bit)
         let values = vec![0i32, 1, 0, 1, 1, 0, 1, 1];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("encoding should succeed for 1-bit values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("decoding should succeed for 1-bit values");
 
         assert_eq!(values, decoded);
     }

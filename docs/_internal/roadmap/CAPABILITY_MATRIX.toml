@@ -1,0 +1,86 @@
+as_of_date = "2026-03-02"
+source_of_truth = "code+tests"
+
+[[capabilities]]
+id = "hybrid_search_bm25_vector"
+status = "partial"
+notes = "Canonical production endpoint exists; experimental mock endpoint remains for strategy testing."
+evidence = [
+  "src/network/rest/v1/handlers.rs:1293",
+  "src/network/rest/v1/handlers.rs:1441",
+  "src/network/rest/v1/hybrid.rs:5",
+  "src/core/search/hybrid/mod.rs:1",
+]
+
+[[capabilities]]
+id = "framework_integrations_python"
+status = "partial"
+notes = "LangChain, CrewAI, LangGraph adapters exist; LlamaIndex/Haystack still pending."
+evidence = [
+  "clients/python/src/proximadb_sdk/integrations/langchain.py:1",
+  "clients/python/src/proximadb_sdk/integrations/crewai.py:1",
+  "clients/python/src/proximadb_sdk/integrations/langgraph.py:1",
+]
+
+[[capabilities]]
+id = "backup_pitr"
+status = "partial"
+notes = "Backup and PITR modules exist with integration tests; operator hardening still required."
+evidence = [
+  "src/operations/backup/mod.rs:22",
+  "src/storage/persistence/write_ahead_log/pitr.rs:1",
+  "tests/backup_restore_test.rs:41",
+]
+
+[[capabilities]]
+id = "timeseries_event_sourcing_surface"
+status = "partial"
+notes = "Engines exist, but public proto/embedded mappings are incomplete."
+evidence = [
+  "src/storage/engines/impls/tst/mod.rs:567",
+  "src/storage/engines/impls/eventlog/mod.rs:161",
+  "src/proto/proximadb.v1.rs:2556",
+  "src/embedded/mod.rs:1095",
+]
+
+[[capabilities]]
+id = "distributed_consensus_runtime"
+status = "partial"
+notes = "Raft module exists but core runtime path remains disabled."
+evidence = [
+  "src/cluster/consensus.rs:17",
+  "src/lib.rs:330",
+  "src/lib.rs:440",
+]
+
+[[capabilities]]
+id = "mtls_identity_chain"
+status = "partial"
+notes = "Transport-level mTLS exists; client-certificate auth mapping is placeholder."
+evidence = [
+  "src/network/rest/server.rs:636",
+  "src/network/multi_server.rs:1573",
+  "src/security/unified_auth.rs:350",
+]
+
+[[capabilities]]
+id = "graph_legacy_route_deprecation"
+status = "complete"
+notes = "Legacy graph compatibility routes now issue 308 redirects with deprecation/sunset metadata; docs include explicit migration mappings to canonical multi-graph paths."
+evidence = [
+  "src/network/rest/v1/graph.rs:1610",
+  "src/network/rest/v1/handlers.rs:1958",
+  "docs/api/graph.adoc:32",
+  "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc:78",
+]
+
+[[capabilities]]
+id = "distributed_graph_engine_messaging"
+status = "partial"
+notes = "ORION remains production-recommended while PULSAR/QUASAR are documented as experimental and not production-ready."
+evidence = [
+  "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc:16",
+  "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc:106",
+  "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc:330",
+  "docs/_internal/roadmap/STRATEGIC_ROADMAP.adoc:137",
+]

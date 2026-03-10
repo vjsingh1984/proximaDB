@@ -333,7 +333,7 @@ fn test_phase1_boundary_detection_basic() {
         })
         .collect();
 
-    centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // Primary centroids (top 3)
     let primary: Vec<usize> = centroid_distances.iter().take(3).map(|(i, _)| *i).collect();
@@ -409,7 +409,8 @@ fn test_phase2_spillover_detection() {
                     let dist = distance_compute.distance(&rowgroup_vectors[v], &centroids[c]);
                     distances.push((c, dist));
                 }
-                distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                distances
+                    .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
                 // Vector spills over if closest centroid is not centroid 0
                 if distances[0].0 != 0 {

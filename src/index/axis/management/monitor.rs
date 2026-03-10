@@ -524,7 +524,8 @@ impl MetricsCollector {
         });
 
         // Clean up old metrics
-        let cutoff = Utc::now() - chrono::Duration::from_std(self.retention_period).unwrap();
+        let cutoff =
+            Utc::now() - chrono::Duration::from_std(self.retention_period).unwrap_or_default();
         historical.retain(|m| m.timestamp > cutoff);
     }
 

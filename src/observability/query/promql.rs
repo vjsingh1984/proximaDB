@@ -713,8 +713,12 @@ impl PromQLExecutor {
                     if ordered.len() < 2 {
                         0.0
                     } else {
-                        let first = ordered.first().unwrap();
-                        let last = ordered.last().unwrap();
+                        let first = ordered.first().ok_or_else(|| {
+                            anyhow!("ordered vec should not be empty (checked by len() >= 2 above")
+                        })?;
+                        let last = ordered.last().ok_or_else(|| {
+                            anyhow!("ordered vec should not be empty (checked by len() >= 2 above")
+                        })?;
                         let time_diff_s = (last.timestamp_ns - first.timestamp_ns) as f64 / 1e9;
                         if time_diff_s <= 0.0 {
                             0.0
@@ -896,22 +900,22 @@ mod tests {
 
     #[test]
     fn test_parse_duration() {
-        let d = PromQLParser::parse_duration("5m").unwrap();
+        let d = PromQLParser::parse_duration("5m").expect("duration should parse");
         assert_eq!(d.nanoseconds, 5 * 60_000_000_000);
 
-        let d = PromQLParser::parse_duration("1h").unwrap();
+        let d = PromQLParser::parse_duration("1h").expect("duration should parse");
         assert_eq!(d.nanoseconds, 3_600_000_000_000);
 
-        let d = PromQLParser::parse_duration("30s").unwrap();
+        let d = PromQLParser::parse_duration("30s").expect("duration should parse");
         assert_eq!(d.nanoseconds, 30_000_000_000);
 
-        let d = PromQLParser::parse_duration("1d").unwrap();
+        let d = PromQLParser::parse_duration("1d").expect("duration should parse");
         assert_eq!(d.nanoseconds, 86_400_000_000_000);
     }
 
     #[test]
     fn test_parse_simple_selector() {
-        let expr = PromQLParser::parse("http_requests_total").unwrap();
+        let expr = PromQLParser::parse("http_requests_total").expect("should parse selector");
         match expr {
             PromQLExpr::VectorSelector {
                 name,
@@ -929,8 +933,8 @@ mod tests {
 
     #[test]
     fn test_parse_selector_with_labels() {
-        let expr =
-            PromQLParser::parse(r#"http_requests_total{method="GET", status="200"}"#).unwrap();
+        let expr = PromQLParser::parse(r#"http_requests_total{method="GET", status="200"}"#)
+            .expect("should parse selector with labels");
         match expr {
             PromQLExpr::VectorSelector { name, matchers, .. } => {
                 assert_eq!(name, "http_requests_total");
@@ -946,12 +950,14 @@ mod tests {
 
     #[test]
     fn test_parse_range_vector() {
-        let expr = PromQLParser::parse("http_requests_total[5m]").unwrap();
+        let expr =
+            PromQLParser::parse("http_requests_total[5m]").expect("should parse range vector");
         match expr {
             PromQLExpr::VectorSelector { name, range, .. } => {
                 assert_eq!(name, "http_requests_total");
                 assert!(range.is_some());
-                assert_eq!(range.unwrap().nanoseconds, 5 * 60_000_000_000);
+                let range = range.expect("range should be Some");
+                assert_eq!(range.nanoseconds, 5 * 60_000_000_000);
             }
             _ => panic!("Expected VectorSelector"),
         }
@@ -959,7 +965,8 @@ mod tests {
 
     #[test]
     fn test_parse_aggregation_sum() {
-        let expr = PromQLParser::parse("sum(http_requests_total)").unwrap();
+        let expr =
+            PromQLParser::parse("sum(http_requests_total)").expect("should parse sum aggregation");
         match expr {
             PromQLExpr::Aggregation { op, .. } => {
                 assert_eq!(op, AggregationOp::Sum);
@@ -970,7 +977,8 @@ mod tests {
 
     #[test]
     fn test_parse_aggregation_with_by() {
-        let expr = PromQLParser::parse("sum(http_requests_total) by (method)").unwrap();
+        let expr = PromQLParser::parse("sum(http_requests_total) by (method)")
+            .expect("should parse aggregation with by clause");
         match expr {
             PromQLExpr::Aggregation {
                 op, by, without, ..
@@ -985,7 +993,8 @@ mod tests {
 
     #[test]
     fn test_parse_rate() {
-        let expr = PromQLParser::parse("rate(http_requests_total[5m])").unwrap();
+        let expr = PromQLParser::parse("rate(http_requests_total[5m])")
+            .expect("should parse rate function");
         match expr {
             PromQLExpr::Aggregation { op, expr, .. } => {
                 assert_eq!(op, AggregationOp::Rate);
@@ -1017,8 +1026,9 @@ mod tests {
             },
         ];
 
-        let expr = PromQLParser::parse("sum(http_requests)").unwrap();
-        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000).unwrap();
+        let expr = PromQLParser::parse("sum(http_requests)").expect("should parse sum");
+        let results =
+            PromQLExecutor::execute(&expr, samples, 2000, 5000).expect("should execute sum");
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].value, 30.0);
@@ -1058,9 +1068,11 @@ mod tests {
             },
         ];
 
-        let expr = PromQLParser::parse("sum(http_requests) by (method)").unwrap();
+        let expr = PromQLParser::parse("sum(http_requests) by (method)")
+            .expect("should parse sum by method");
         // eval_time_ns must be >= sample timestamps, lookback_ns is how far back to look
-        let results = PromQLExecutor::execute(&expr, samples, 4000, 5000).unwrap();
+        let results = PromQLExecutor::execute(&expr, samples, 4000, 5000)
+            .expect("should execute sum by method");
 
         assert_eq!(results.len(), 2);
         // Results should be grouped by method
@@ -1073,8 +1085,10 @@ mod tests {
 
         assert!(get_result.is_some());
         assert!(post_result.is_some());
-        assert_eq!(get_result.unwrap().value, 15.0); // 10 + 5
-        assert_eq!(post_result.unwrap().value, 20.0);
+        let get_result = get_result.expect("GET result should exist");
+        let post_result = post_result.expect("POST result should exist");
+        assert_eq!(get_result.value, 15.0); // 10 + 5
+        assert_eq!(post_result.value, 20.0);
     }
 
     #[test]
@@ -1094,9 +1108,9 @@ mod tests {
             },
         ];
 
-        let expr = PromQLParser::parse("rate(counter[1m])").unwrap();
-        let results =
-            PromQLExecutor::execute(&expr, samples, 2_000_000_000, 60_000_000_000).unwrap();
+        let expr = PromQLParser::parse("rate(counter[1m])").expect("should parse rate");
+        let results = PromQLExecutor::execute(&expr, samples, 2_000_000_000, 60_000_000_000)
+            .expect("should execute rate");
 
         assert_eq!(results.len(), 1);
         // Rate should be (110 - 100) / 1 second = 10 per second
@@ -1105,7 +1119,8 @@ mod tests {
 
     #[test]
     fn test_parse_label_not_equal() {
-        let expr = PromQLParser::parse(r#"http_requests{status!="500"}"#).unwrap();
+        let expr = PromQLParser::parse(r#"http_requests{status!="500"}"#)
+            .expect("should parse label not equal");
         match expr {
             PromQLExpr::VectorSelector { matchers, .. } => {
                 assert_eq!(matchers.len(), 1);
@@ -1118,7 +1133,8 @@ mod tests {
 
     #[test]
     fn test_parse_label_regex() {
-        let expr = PromQLParser::parse(r#"http_requests{method=~"GET|POST"}"#).unwrap();
+        let expr = PromQLParser::parse(r#"http_requests{method=~"GET|POST"}"#)
+            .expect("should parse label regex");
         match expr {
             PromQLExpr::VectorSelector { matchers, .. } => {
                 assert_eq!(matchers.len(), 1);

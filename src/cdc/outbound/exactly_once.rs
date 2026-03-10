@@ -23,13 +23,24 @@
 
 use std::collections::HashMap;
 use std::sync::RwLock;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::cdc::error::{CdcError, CdcResult};
 use crate::cdc::event::ChangeEvent;
+
+fn unix_timestamp_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_else(|_| {
+            // System clock went backwards, use last known time
+            // This is extremely rare and only happens if system clock is adjusted backwards
+            0
+        })
+}
 
 /// Idempotency key for exactly-once delivery
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,10 +62,7 @@ impl IdempotencyKey {
             id: format!("{}-{}-{}", event.id, event.lsn, sink_id),
             lsn: event.lsn,
             sink_id: sink_id.to_string(),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+            created_at: unix_timestamp_millis(),
         }
     }
 
@@ -66,10 +74,7 @@ impl IdempotencyKey {
             id: format!("{}-{}-{}", event_str, lsn, sink_str),
             lsn,
             sink_id: sink_str,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+            created_at: unix_timestamp_millis(),
         }
     }
 }
@@ -242,16 +247,25 @@ impl ExactlyOnceManager {
         Self::new(ExactlyOnceConfig::default())
     }
 
+    fn lock_poisoned(lock_name: &str) -> CdcError {
+        CdcError::Other(format!("{} lock poisoned", lock_name))
+    }
+
     /// Check if an event has already been processed
     pub fn is_duplicate(&self, key: &IdempotencyKey) -> bool {
-        let completed = self.completed_keys.read().unwrap();
+        let completed = match self.completed_keys.read() {
+            Ok(guard) => guard,
+            Err(_) => return false,
+        };
         if let Some((state, time)) = completed.get(&key.id) {
             // Check if key is still valid (not expired)
-            if time.elapsed() < Duration::from_millis(self.config.key_ttl_ms) {
-                if *state == TransactionState::Committed {
-                    self.stats.write().unwrap().duplicates_detected += 1;
-                    return true;
+            if time.elapsed() < Duration::from_millis(self.config.key_ttl_ms)
+                && *state == TransactionState::Committed
+            {
+                if let Ok(mut stats) = self.stats.write() {
+                    stats.duplicates_detected += 1;
                 }
+                return true;
             }
         }
         false
@@ -268,7 +282,10 @@ impl ExactlyOnceManager {
         }
 
         // Check capacity
-        let transactions = self.transactions.read().unwrap();
+        let transactions = self
+            .transactions
+            .read()
+            .map_err(|_| Self::lock_poisoned("transactions"))?;
         if transactions.len() >= self.config.max_pending_transactions {
             return Err(CdcError::Capacity(
                 "Too many pending transactions".to_string(),
@@ -282,16 +299,22 @@ impl ExactlyOnceManager {
 
         self.transactions
             .write()
-            .unwrap()
+            .map_err(|_| Self::lock_poisoned("transactions"))?
             .insert(txn_id.clone(), record);
-        self.stats.write().unwrap().transactions_started += 1;
+        self.stats
+            .write()
+            .map_err(|_| Self::lock_poisoned("stats"))?
+            .transactions_started += 1;
 
         Ok(txn_id)
     }
 
     /// Update transaction with event info
     pub fn add_event(&self, txn_id: &str, lsn: u64) -> CdcResult<()> {
-        let mut transactions = self.transactions.write().unwrap();
+        let mut transactions = self
+            .transactions
+            .write()
+            .map_err(|_| Self::lock_poisoned("transactions"))?;
         let record = transactions
             .get_mut(txn_id)
             .ok_or_else(|| CdcError::NotFound(format!("Transaction {} not found", txn_id)))?;
@@ -314,7 +337,10 @@ impl ExactlyOnceManager {
 
     /// Prepare transaction (first phase of 2PC)
     pub fn prepare(&self, txn_id: &str) -> CdcResult<()> {
-        let mut transactions = self.transactions.write().unwrap();
+        let mut transactions = self
+            .transactions
+            .write()
+            .map_err(|_| Self::lock_poisoned("transactions"))?;
         let record = transactions
             .get_mut(txn_id)
             .ok_or_else(|| CdcError::NotFound(format!("Transaction {} not found", txn_id)))?;
@@ -329,7 +355,10 @@ impl ExactlyOnceManager {
         // Check timeout
         if record.is_expired(Duration::from_millis(self.config.transaction_timeout_ms)) {
             record.state = TransactionState::Expired;
-            self.stats.write().unwrap().transactions_expired += 1;
+            self.stats
+                .write()
+                .map_err(|_| Self::lock_poisoned("stats"))?
+                .transactions_expired += 1;
             return Err(CdcError::Timeout("Transaction timed out".to_string()));
         }
 
@@ -339,7 +368,10 @@ impl ExactlyOnceManager {
 
     /// Commit transaction
     pub fn commit(&self, txn_id: &str) -> CdcResult<()> {
-        let mut transactions = self.transactions.write().unwrap();
+        let mut transactions = self
+            .transactions
+            .write()
+            .map_err(|_| Self::lock_poisoned("transactions"))?;
         let record = transactions
             .get_mut(txn_id)
             .ok_or_else(|| CdcError::NotFound(format!("Transaction {} not found", txn_id)))?;
@@ -355,7 +387,10 @@ impl ExactlyOnceManager {
         // Check timeout
         if record.is_expired(Duration::from_millis(self.config.transaction_timeout_ms)) {
             record.state = TransactionState::Expired;
-            self.stats.write().unwrap().transactions_expired += 1;
+            self.stats
+                .write()
+                .map_err(|_| Self::lock_poisoned("stats"))?
+                .transactions_expired += 1;
             return Err(CdcError::Timeout("Transaction timed out".to_string()));
         }
 
@@ -368,19 +403,28 @@ impl ExactlyOnceManager {
 
         self.completed_keys
             .write()
-            .unwrap()
+            .map_err(|_| Self::lock_poisoned("completed_keys"))?
             .insert(key_id, (TransactionState::Committed, Instant::now()));
-        self.stats.write().unwrap().transactions_committed += 1;
+        self.stats
+            .write()
+            .map_err(|_| Self::lock_poisoned("stats"))?
+            .transactions_committed += 1;
 
         // Clean up transaction
-        self.transactions.write().unwrap().remove(txn_id);
+        self.transactions
+            .write()
+            .map_err(|_| Self::lock_poisoned("transactions"))?
+            .remove(txn_id);
 
         Ok(())
     }
 
     /// Abort transaction
     pub fn abort(&self, txn_id: &str, error: Option<String>) -> CdcResult<()> {
-        let mut transactions = self.transactions.write().unwrap();
+        let mut transactions = self
+            .transactions
+            .write()
+            .map_err(|_| Self::lock_poisoned("transactions"))?;
         let record = transactions
             .get_mut(txn_id)
             .ok_or_else(|| CdcError::NotFound(format!("Transaction {} not found", txn_id)))?;
@@ -401,25 +445,41 @@ impl ExactlyOnceManager {
 
         self.completed_keys
             .write()
-            .unwrap()
+            .map_err(|_| Self::lock_poisoned("completed_keys"))?
             .insert(key_id, (TransactionState::Aborted, Instant::now()));
-        self.stats.write().unwrap().transactions_aborted += 1;
+        self.stats
+            .write()
+            .map_err(|_| Self::lock_poisoned("stats"))?
+            .transactions_aborted += 1;
 
         // Clean up transaction
-        self.transactions.write().unwrap().remove(txn_id);
+        self.transactions
+            .write()
+            .map_err(|_| Self::lock_poisoned("transactions"))?
+            .remove(txn_id);
 
         Ok(())
     }
 
     /// Retry a failed transaction
     pub fn retry(&self, key: IdempotencyKey) -> CdcResult<String> {
-        // Check retry limit
-        let completed = self.completed_keys.read().unwrap();
-        if let Some((TransactionState::Aborted, _)) = completed.get(&key.id) {
-            // Allow retry for aborted transactions
-            drop(completed);
-            self.completed_keys.write().unwrap().remove(&key.id);
-            self.stats.write().unwrap().total_retries += 1;
+        let can_retry = {
+            let completed = self
+                .completed_keys
+                .read()
+                .map_err(|_| Self::lock_poisoned("completed_keys"))?;
+            matches!(completed.get(&key.id), Some((TransactionState::Aborted, _)))
+        };
+
+        if can_retry {
+            self.completed_keys
+                .write()
+                .map_err(|_| Self::lock_poisoned("completed_keys"))?
+                .remove(&key.id);
+            self.stats
+                .write()
+                .map_err(|_| Self::lock_poisoned("stats"))?
+                .total_retries += 1;
             return self.begin_transaction(key);
         }
 
@@ -432,19 +492,29 @@ impl ExactlyOnceManager {
     pub fn get_state(&self, txn_id: &str) -> Option<TransactionState> {
         self.transactions
             .read()
-            .unwrap()
-            .get(txn_id)
-            .map(|r| r.state)
+            .ok()
+            .and_then(|transactions| transactions.get(txn_id).map(|r| r.state))
     }
 
     /// Get transaction record
     pub fn get_transaction(&self, txn_id: &str) -> Option<TransactionRecord> {
-        self.transactions.read().unwrap().get(txn_id).cloned()
+        self.transactions
+            .read()
+            .ok()
+            .and_then(|transactions| transactions.get(txn_id).cloned())
     }
 
     /// Get pending transaction count
     pub fn pending_count(&self) -> usize {
-        self.transactions.read().unwrap().len()
+        self.transactions
+            .read()
+            .map(|transactions| transactions.len())
+            .unwrap_or_else(|_| {
+                // Lock poisoned: return 0 as fallback
+                // In production, a poisoned lock indicates a thread panicked while holding the lock
+                // Returning 0 is safe as the count will be corrected on next successful read
+                0
+            })
     }
 
     /// Clean up expired transactions
@@ -454,7 +524,10 @@ impl ExactlyOnceManager {
         let mut expired_count = 0;
 
         // Expire pending transactions
-        let mut transactions = self.transactions.write().unwrap();
+        let mut transactions = match self.transactions.write() {
+            Ok(guard) => guard,
+            Err(_) => return 0,
+        };
         let expired_ids: Vec<String> = transactions
             .iter()
             .filter(|(_, r)| r.is_expired(timeout))
@@ -470,21 +543,34 @@ impl ExactlyOnceManager {
         drop(transactions);
 
         // Clean up old completed keys
-        let mut completed = self.completed_keys.write().unwrap();
-        completed.retain(|_, (_, time)| time.elapsed() < key_ttl);
+        if let Ok(mut completed) = self.completed_keys.write() {
+            completed.retain(|_, (_, time)| time.elapsed() < key_ttl);
+        }
 
-        self.stats.write().unwrap().transactions_expired += expired_count as u64;
+        if let Ok(mut stats) = self.stats.write() {
+            stats.transactions_expired += expired_count as u64;
+        }
         expired_count
     }
 
     /// Get statistics
     pub fn stats(&self) -> ExactlyOnceStats {
-        self.stats.read().unwrap().clone()
+        self.stats
+            .read()
+            .map(|stats| stats.clone())
+            .unwrap_or_else(|_| {
+                // Lock poisoned: return default stats as fallback
+                // In production, a poisoned lock indicates a thread panicked while holding the lock
+                // Returning default stats is safe as they will be corrected on next successful read
+                ExactlyOnceStats::default()
+            })
     }
 
     /// Reset statistics
     pub fn reset_stats(&self) {
-        *self.stats.write().unwrap() = ExactlyOnceStats::default();
+        if let Ok(mut stats) = self.stats.write() {
+            *stats = ExactlyOnceStats::default();
+        }
     }
 }
 

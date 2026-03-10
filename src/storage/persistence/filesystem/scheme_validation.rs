@@ -89,7 +89,11 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
         }
         FilesystemScheme::S3 => {
             // S3 URLs must have bucket name
-            if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+            if parsed_url
+                .host_str()
+                .map(|host| host.is_empty())
+                .unwrap_or(true)
+            {
                 return Err(FilesystemError::InvalidPath(
                     "S3 URLs must specify bucket name".to_string(),
                 ));
@@ -98,7 +102,11 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
         }
         FilesystemScheme::GoogleCloudStorage => {
             // GCS URLs must have bucket name
-            if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+            if parsed_url
+                .host_str()
+                .map(|host| host.is_empty())
+                .unwrap_or(true)
+            {
                 return Err(FilesystemError::InvalidPath(
                     "Google Cloud Storage URLs must specify bucket name".to_string(),
                 ));
@@ -107,7 +115,11 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
         }
         FilesystemScheme::AzureDataLakeStorage => {
             // ADLS URLs must have account name
-            if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+            if parsed_url
+                .host_str()
+                .map(|host| host.is_empty())
+                .unwrap_or(true)
+            {
                 return Err(FilesystemError::InvalidPath(
                     "Azure Data Lake Storage URLs must specify account name".to_string(),
                 ));
@@ -116,7 +128,11 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
         }
         FilesystemScheme::AzureBlobStorage => {
             // ABFS URLs must have account name
-            if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+            if parsed_url
+                .host_str()
+                .map(|host| host.is_empty())
+                .unwrap_or(true)
+            {
                 return Err(FilesystemError::InvalidPath(
                     "Azure Blob Storage URLs must specify account name".to_string(),
                 ));
@@ -125,7 +141,11 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
         }
         FilesystemScheme::Hdfs => {
             // HDFS URLs must have namenode host
-            if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+            if parsed_url
+                .host_str()
+                .map(|host| host.is_empty())
+                .unwrap_or(true)
+            {
                 return Err(FilesystemError::InvalidPath(
                     "HDFS URLs must specify namenode host".to_string(),
                 ));

@@ -163,7 +163,13 @@ impl MmappedMetadata {
             return Ok(shared_metadata);
         }
 
-        Ok(Arc::clone(guard.as_ref().unwrap()))
+        if let Some(metadata) = guard.as_ref() {
+            Ok(Arc::clone(metadata))
+        } else {
+            Err(ProximaDBError::Internal(
+                "Metadata cache deserialization yielded no value".into(),
+            ))
+        }
     }
 
     /// Check if file can be skipped for given query

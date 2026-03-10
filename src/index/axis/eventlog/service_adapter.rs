@@ -275,7 +275,7 @@ impl EventLogCommand for EventLogServiceAdapter {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         self.stats.write().await.last_sync_timestamp = Some(now);

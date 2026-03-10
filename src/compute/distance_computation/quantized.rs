@@ -788,7 +788,10 @@ impl QuantizedDistanceCalculator {
 
         // Check cache for precomputed tables
         let distance_table = {
-            let tables = self.int8_distance_tables.read().unwrap();
+            let tables = self
+                .int8_distance_tables
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             tables.tables.get(&cache_key).cloned()
         };
 
@@ -801,7 +804,10 @@ impl QuantizedDistanceCalculator {
                 query.len(),
             )?);
 
-            let mut tables = self.int8_distance_tables.write().unwrap();
+            let mut tables = self
+                .int8_distance_tables
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             tables.tables.insert(cache_key, new_table.clone());
             tables.memory_usage_bytes += new_table.estimated_size();
 
@@ -823,7 +829,10 @@ impl QuantizedDistanceCalculator {
 
         // Check cache for precomputed distance table
         let distance_table = {
-            let cache = self.pq_distance_cache.read().unwrap();
+            let cache = self
+                .pq_distance_cache
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             cache.tables.get(&codebook_hash).cloned()
         };
 
@@ -843,7 +852,10 @@ impl QuantizedDistanceCalculator {
 
             // Cache the table
             {
-                let mut cache = self.pq_distance_cache.write().unwrap();
+                let mut cache = self
+                    .pq_distance_cache
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 cache.tables.insert(codebook_hash, new_table.clone());
                 cache.memory_usage_bytes += new_table.estimated_size();
                 cache.misses += 1;
@@ -860,7 +872,10 @@ impl QuantizedDistanceCalculator {
         };
 
         if cache_hit {
-            let mut cache = self.pq_distance_cache.write().unwrap();
+            let mut cache = self
+                .pq_distance_cache
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             cache.hits += 1;
         }
 
@@ -937,7 +952,7 @@ impl QuantizedDistanceCalculator {
         // Simplified binary quantization - use median threshold
         let median = {
             let mut sorted = query.to_vec();
-            // Use total_cmp for safe NaN handling instead of partial_cmp().unwrap()
+            // Use total_cmp for safe NaN handling instead of partial_cmp fallback logic
             sorted.sort_by(|a, b| a.total_cmp(b));
             sorted[sorted.len() / 2]
         };

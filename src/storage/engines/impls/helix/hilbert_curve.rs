@@ -9,6 +9,7 @@
 //! - Stack-based arrays to avoid allocations
 
 use std::sync::OnceLock;
+use tracing::warn;
 
 /// Pre-computed Hilbert 2D lookup table for 4-bit chunks
 /// Maps (x4bit, y4bit, orientation) -> (hilbert_index, new_orientation)
@@ -322,7 +323,15 @@ impl HilbertCurve {
     /// Optimized 16D Hilbert encoding (for PCA-reduced vectors)
     fn encode_16d_optimized(&self, point: &[u32]) -> u64 {
         let mut index = 0u64;
-        let mut coords: [u32; 16] = point[..16].try_into().expect("Need exactly 16 dimensions");
+        let mut coords = [0u32; 16];
+        let copy_len = point.len().min(16);
+        coords[..copy_len].copy_from_slice(&point[..copy_len]);
+        if copy_len < 16 {
+            warn!(
+                point_dims = point.len(),
+                "16D optimized Hilbert path received fewer than 16 dimensions; zero-padding remaining dimensions"
+            );
+        }
 
         // Process 4 bits at a time for efficiency
         for level in (0..self.bits_per_dim).rev() {
@@ -375,7 +384,15 @@ impl HilbertCurve {
     /// Optimized 32D Hilbert encoding (for future PCA dimensions)
     fn encode_32d_optimized(&self, point: &[u32]) -> u64 {
         let mut index = 0u64;
-        let mut coords: [u32; 32] = point[..32].try_into().expect("Need exactly 32 dimensions");
+        let mut coords = [0u32; 32];
+        let copy_len = point.len().min(32);
+        coords[..copy_len].copy_from_slice(&point[..copy_len]);
+        if copy_len < 32 {
+            warn!(
+                point_dims = point.len(),
+                "32D optimized Hilbert path received fewer than 32 dimensions; zero-padding remaining dimensions"
+            );
+        }
 
         // Process 5 bits at a time for 32D
         for level in (0..self.bits_per_dim).rev() {

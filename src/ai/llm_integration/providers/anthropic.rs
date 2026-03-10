@@ -334,7 +334,10 @@ mod tests {
     #[test]
     fn test_anthropic_request_building() {
         let client = AnthropicClient {
-            client: Client::new(),
+            client: Client::builder()
+                .no_proxy()
+                .build()
+                .expect("Failed to build test HTTP client"),
             api_key: "test_key".to_string(),
             base_url: "https://api.anthropic.com/v1".to_string(),
         };

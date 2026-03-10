@@ -275,7 +275,9 @@ mod tests {
         let config = MongoDbConfig::new("mongodb://localhost:27017").with_database("testdb");
 
         let offset_store = Arc::new(MemoryOffsetStore::new());
-        MongoDbConnector::new(config, offset_store).await.unwrap()
+        MongoDbConnector::new(config, offset_store)
+            .await
+            .expect("Failed to create test connector")
     }
 
     fn create_test_change_event(op: ChangeStreamOperation) -> MongoChangeEvent {
@@ -325,7 +327,10 @@ mod tests {
             .update_resume_token(ResumeToken::new("token123"))
             .await;
 
-        let token = connector.resume_token().await.unwrap();
+        let token = connector
+            .resume_token()
+            .await
+            .expect("Resume token should be set");
         assert_eq!(token.as_str(), "token123");
     }
 
@@ -334,7 +339,9 @@ mod tests {
         let connector = create_test_connector().await;
         let mongo_event = create_test_change_event(ChangeStreamOperation::Insert);
 
-        let change_event = connector.to_change_event(&mongo_event).unwrap();
+        let change_event = connector
+            .to_change_event(&mongo_event)
+            .expect("Should convert insert event to change event");
 
         assert!(change_event.is_insert());
         assert_eq!(change_event.collection, "testdb.users");
@@ -347,7 +354,9 @@ mod tests {
         let connector = create_test_connector().await;
         let mongo_event = create_test_change_event(ChangeStreamOperation::Update);
 
-        let change_event = connector.to_change_event(&mongo_event).unwrap();
+        let change_event = connector
+            .to_change_event(&mongo_event)
+            .expect("Should convert update event to change event");
 
         assert!(change_event.is_update());
     }
@@ -357,7 +366,9 @@ mod tests {
         let connector = create_test_connector().await;
         let mongo_event = create_test_change_event(ChangeStreamOperation::Delete);
 
-        let change_event = connector.to_change_event(&mongo_event).unwrap();
+        let change_event = connector
+            .to_change_event(&mongo_event)
+            .expect("Should convert delete event to change event");
 
         assert!(change_event.is_delete());
     }
@@ -377,11 +388,17 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
         let offset_store = Arc::new(MemoryOffsetStore::new());
 
-        let handle = connector.start(tx, offset_store).await.unwrap();
+        let handle = connector
+            .start(tx, offset_store)
+            .await
+            .expect("Connector should start successfully");
         assert_eq!(connector.status(), SourceStatus::Streaming);
 
         handle.stop();
-        connector.stop().await.unwrap();
+        connector
+            .stop()
+            .await
+            .expect("Connector should stop successfully");
         assert_eq!(connector.status(), SourceStatus::Stopped);
     }
 
@@ -391,12 +408,21 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
         let offset_store = Arc::new(MemoryOffsetStore::new());
 
-        connector.start(tx, offset_store).await.unwrap();
+        connector
+            .start(tx, offset_store)
+            .await
+            .expect("Connector should start successfully");
 
-        connector.pause().await.unwrap();
+        connector
+            .pause()
+            .await
+            .expect("Connector should pause successfully");
         assert_eq!(connector.status(), SourceStatus::Paused);
 
-        connector.resume().await.unwrap();
+        connector
+            .resume()
+            .await
+            .expect("Connector should resume successfully");
         assert_eq!(connector.status(), SourceStatus::Streaming);
     }
 
@@ -404,13 +430,23 @@ mod tests {
     async fn test_current_offset() {
         let connector = create_test_connector().await;
 
-        assert!(connector.current_offset().await.unwrap().is_none());
+        assert!(
+            connector
+                .current_offset()
+                .await
+                .expect("Should get current offset")
+                .is_none()
+        );
 
         connector
             .update_resume_token(ResumeToken::new("token_abc"))
             .await;
 
-        let offset = connector.current_offset().await.unwrap().unwrap();
+        let offset = connector
+            .current_offset()
+            .await
+            .expect("Should get current offset")
+            .expect("Offset should exist after setting resume token");
         assert_eq!(
             offset.metadata.get("resume_token"),
             Some(&"token_abc".to_string())
@@ -422,7 +458,9 @@ mod tests {
         let connector = create_test_connector().await;
 
         let arr = serde_json::json!([1.0, 2.0, 3.0]);
-        let vector = connector.parse_vector(&arr).unwrap();
+        let vector = connector
+            .parse_vector(&arr)
+            .expect("Should parse valid vector array");
         assert_eq!(vector, vec![1.0, 2.0, 3.0]);
 
         let invalid = serde_json::json!("not an array");
@@ -451,12 +489,15 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(10);
 
         let mongo_event = create_test_change_event(ChangeStreamOperation::Insert);
-        let processed = connector.process_event(mongo_event, &tx).await.unwrap();
+        let processed = connector
+            .process_event(mongo_event, &tx)
+            .await
+            .expect("Should process event successfully");
 
         assert!(processed);
         assert!(connector.resume_token().await.is_some());
 
-        let received = rx.try_recv().unwrap();
+        let received = rx.try_recv().expect("Should receive event from channel");
         assert!(received.is_insert());
     }
 }

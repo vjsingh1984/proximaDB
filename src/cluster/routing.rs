@@ -990,12 +990,23 @@ impl RoutingService {
             }
             LoadBalancingStrategy::LeastLoaded => healthy_nodes
                 .iter()
-                .min_by(|a, b| a.info.load.partial_cmp(&b.info.load).unwrap())
-                .unwrap(),
+                .min_by(|a, b| {
+                    // unwrap_or(Equal) handles NaN in load values: partial_cmp returns None for NaN
+                    a.info
+                        .load
+                        .partial_cmp(&b.info.load)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(&healthy_nodes[0]), // Fallback: healthy_nodes is non-empty here
             LoadBalancingStrategy::LeastLatency => healthy_nodes
                 .iter()
-                .min_by(|a, b| a.last_latency_ms.partial_cmp(&b.last_latency_ms).unwrap())
-                .unwrap(),
+                .min_by(|a, b| {
+                    // unwrap_or(Equal) handles NaN in latency values: partial_cmp returns None for NaN
+                    a.last_latency_ms
+                        .partial_cmp(&b.last_latency_ms)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(&healthy_nodes[0]), // Fallback: healthy_nodes is non-empty here
             LoadBalancingStrategy::Random => {
                 use rand::Rng;
                 let idx = rand::thread_rng().gen_range(0..healthy_nodes.len());
@@ -1009,13 +1020,14 @@ impl RoutingService {
                 *counter += 1;
 
                 let mut cumulative = 0u32;
+                // unwrap_or is safe: healthy_nodes is guaranteed non-empty at this point
                 healthy_nodes
                     .iter()
                     .find(|n| {
                         cumulative += n.weight;
                         cumulative > target
                     })
-                    .unwrap()
+                    .unwrap_or(&healthy_nodes[0])
             }
         };
 
@@ -1121,20 +1133,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_shard_id_computation() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         let shard1 = service
             .compute_shard_id("collection1", Some("vec1"))
             .await
-            .unwrap();
+            .expect("failed to compute shard ID");
         let shard2 = service
             .compute_shard_id("collection1", Some("vec1"))
             .await
-            .unwrap();
+            .expect("failed to compute shard ID");
         let shard3 = service
             .compute_shard_id("collection1", Some("vec2"))
             .await
-            .unwrap();
+            .expect("failed to compute shard ID");
 
         // Same input should produce same shard
         assert_eq!(shard1.id(), shard2.id());
@@ -1144,7 +1157,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_registration() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         let info = NodeInfo {
             node_id: "node-1".to_string(),
@@ -1153,11 +1167,14 @@ mod tests {
             ..Default::default()
         };
 
-        service.register_node(info, 100).await.unwrap();
+        service
+            .register_node(info, 100)
+            .await
+            .expect("failed to register node");
 
         let result = service.select_any_node(OperationType::Read).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().node_id, "node-1");
+        assert_eq!(result.expect("expected node").node_id, "node-1");
     }
 
     // =========================================================================
@@ -1241,7 +1258,7 @@ mod tests {
 
         let key = context.effective_partition_key(&strategy);
         assert!(key.is_some());
-        let key_str = key.unwrap();
+        let key_str = key.expect("key should exist");
         assert!(key_str.contains("us-west"));
         assert!(key_str.contains("electronics"));
     }
@@ -1265,7 +1282,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_partition_config_registration() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         let config = PartitionConfig {
             strategy: PartitionStrategy::Tenant,
@@ -1276,12 +1294,12 @@ mod tests {
         service
             .register_partition_config("my_collection", config, 8)
             .await
-            .unwrap();
+            .expect("failed to register partition config");
 
         let cached = service.get_partition_config("my_collection").await;
         assert!(cached.is_some());
 
-        let cached_config = cached.unwrap();
+        let cached_config = cached.expect("cached config should exist");
         assert_eq!(cached_config.shard_count, 8);
         assert!(matches!(
             cached_config.config.strategy,
@@ -1291,7 +1309,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_partition_config_invalidation() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         let config = PartitionConfig {
             strategy: PartitionStrategy::Domain,
@@ -1301,7 +1320,7 @@ mod tests {
         service
             .register_partition_config("collection1", config, 4)
             .await
-            .unwrap();
+            .expect("failed to register partition config");
 
         // Should be cached
         assert!(service.get_partition_config("collection1").await.is_some());
@@ -1310,7 +1329,7 @@ mod tests {
         service
             .invalidate_partition_config("collection1")
             .await
-            .unwrap();
+            .expect("failed to invalidate partition config");
 
         // Should be gone
         assert!(service.get_partition_config("collection1").await.is_none());
@@ -1318,22 +1337,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_partition_configs() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         let config = PartitionConfig::default();
 
         service
             .register_partition_config("collection1", config.clone(), 4)
             .await
-            .unwrap();
+            .expect("failed to register partition config");
         service
             .register_partition_config("collection2", config.clone(), 8)
             .await
-            .unwrap();
+            .expect("failed to register partition config");
         service
             .register_partition_config("collection3", config, 16)
             .await
-            .unwrap();
+            .expect("failed to register partition config");
 
         let collections = service.list_partition_configs().await;
         assert_eq!(collections.len(), 3);
@@ -1348,28 +1368,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_compute_shard_from_key() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         // Same key should always produce same shard
         let shard1 = service
             .compute_shard_from_key("collection", "tenant-123", 8)
-            .unwrap();
+            .expect("failed to compute shard from key");
         let shard2 = service
             .compute_shard_from_key("collection", "tenant-123", 8)
-            .unwrap();
+            .expect("failed to compute shard from key");
         assert_eq!(shard1.id(), shard2.id());
 
         // Different keys should produce different shards (with high probability)
         let shard3 = service
             .compute_shard_from_key("collection", "tenant-456", 8)
-            .unwrap();
+            .expect("failed to compute shard from key");
         // Note: Could theoretically be the same due to hash collision, but very unlikely
         assert_ne!(shard1.id(), shard3.id());
     }
 
     #[tokio::test]
     async fn test_compute_shard_from_range() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         let boundaries = vec![
             serde_json::json!("e"), // Shard 0: < "e"
@@ -1380,16 +1402,16 @@ mod tests {
 
         let shard_a = service
             .compute_shard_from_range("collection", "apple", &boundaries, 4)
-            .unwrap();
+            .expect("failed to compute shard from range");
         let shard_h = service
             .compute_shard_from_range("collection", "hello", &boundaries, 4)
-            .unwrap();
+            .expect("failed to compute shard from range");
         let shard_p = service
             .compute_shard_from_range("collection", "python", &boundaries, 4)
-            .unwrap();
+            .expect("failed to compute shard from range");
         let shard_z = service
             .compute_shard_from_range("collection", "zebra", &boundaries, 4)
-            .unwrap();
+            .expect("failed to compute shard from range");
 
         // "apple" < "e" -> shard 0
         assert!(shard_a.id().ends_with("_0000"));
@@ -1403,23 +1425,42 @@ mod tests {
 
     #[tokio::test]
     async fn test_tenant_hash_shard() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         // All vectors for the same tenant should go to shards in the same group
         let shard1 = service
             .compute_tenant_hash_shard("collection", "tenant-1", Some("vec-1"), 4, 16)
-            .unwrap();
+            .expect("failed to compute tenant hash shard");
         let shard2 = service
             .compute_tenant_hash_shard("collection", "tenant-1", Some("vec-2"), 4, 16)
-            .unwrap();
+            .expect("failed to compute tenant hash shard");
         let shard3 = service
             .compute_tenant_hash_shard("collection", "tenant-1", Some("vec-3"), 4, 16)
-            .unwrap();
+            .expect("failed to compute tenant hash shard");
 
         // Extract shard numbers
-        let num1: u32 = shard1.id().split('_').last().unwrap().parse().unwrap();
-        let num2: u32 = shard2.id().split('_').last().unwrap().parse().unwrap();
-        let num3: u32 = shard3.id().split('_').last().unwrap().parse().unwrap();
+        let num1: u32 = shard1
+            .id()
+            .split('_')
+            .last()
+            .expect("shard ID should have _ delimiter")
+            .parse()
+            .expect("shard number should be valid u32");
+        let num2: u32 = shard2
+            .id()
+            .split('_')
+            .last()
+            .expect("shard ID should have _ delimiter")
+            .parse()
+            .expect("shard number should be valid u32");
+        let num3: u32 = shard3
+            .id()
+            .split('_')
+            .last()
+            .expect("shard ID should have _ delimiter")
+            .parse()
+            .expect("shard number should be valid u32");
 
         // All should be in the same tenant group (within 4 shards of each other)
         let base = (num1 / 4) * 4;
@@ -1430,7 +1471,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_route_with_context_tenant() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         // Register a node
         let node = NodeInfo {
@@ -1439,7 +1481,10 @@ mod tests {
             health: NodeHealth::Healthy,
             ..Default::default()
         };
-        service.register_node(node, 100).await.unwrap();
+        service
+            .register_node(node, 100)
+            .await
+            .expect("failed to register node");
 
         // Register partition config
         let config = PartitionConfig {
@@ -1450,14 +1495,14 @@ mod tests {
         service
             .register_partition_config("my_collection", config, 8)
             .await
-            .unwrap();
+            .expect("failed to register partition config");
 
         // Route with tenant context
         let context = RouteContext::new().with_tenant_id("tenant-123");
         let decision = service
             .route_with_context("my_collection", OperationType::Read, None, &context)
             .await
-            .unwrap();
+            .expect("failed to route with context");
 
         assert!(decision.shard_id.is_some());
         assert_eq!(decision.target_node.node_id, "node-1");
@@ -1466,13 +1511,14 @@ mod tests {
         let decision2 = service
             .route_with_context("my_collection", OperationType::Read, None, &context)
             .await
-            .unwrap();
+            .expect("failed to route with context");
         assert_eq!(decision.shard_id, decision2.shard_id);
     }
 
     #[tokio::test]
     async fn test_route_request_with_and_without_context() {
-        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        let service = RoutingService::new(RoutingConfig::default())
+            .expect("failed to create routing service");
 
         // Register a node
         let node = NodeInfo {
@@ -1481,13 +1527,16 @@ mod tests {
             health: NodeHealth::Healthy,
             ..Default::default()
         };
-        service.register_node(node, 100).await.unwrap();
+        service
+            .register_node(node, 100)
+            .await
+            .expect("failed to register node");
 
         // Route without context
         let decision1 = service
             .route_request("my_collection", OperationType::Read, Some("vec-1"), None)
             .await
-            .unwrap();
+            .expect("failed to route request");
         assert!(decision1.shard_id.is_some());
 
         // Route with context
@@ -1500,7 +1549,7 @@ mod tests {
                 Some(&context),
             )
             .await
-            .unwrap();
+            .expect("failed to route request");
         assert!(decision2.shard_id.is_some());
 
         // Without partition config, both should use hash-based routing

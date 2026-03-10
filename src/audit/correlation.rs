@@ -343,14 +343,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_creation() {
-        let correlation_engine = AuditCorrelationEngine::new().await.unwrap();
+        let correlation_engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         assert!(correlation_engine.correlation_sessions.is_empty());
     }
 
     #[tokio::test]
     async fn test_audit_correlation_engine_correlate_events_empty() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
-        let result = engine.correlate_events(vec![]).await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
+        let result = engine
+            .correlate_events(vec![])
+            .await
+            .expect("Failed to correlate events");
 
         assert_eq!(result.confidence, 0.0);
         assert!(result.event_sequence.is_empty());
@@ -358,7 +365,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_correlate_events_single() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         let events = vec![create_test_event(
             "EVT001",
             "authentication",
@@ -366,7 +375,10 @@ mod tests {
             Some("user1"),
         )];
 
-        let result = engine.correlate_events(events).await.unwrap();
+        let result = engine
+            .correlate_events(events)
+            .await
+            .expect("Failed to correlate events");
 
         assert_eq!(result.confidence, 0.85);
         assert_eq!(result.event_sequence.len(), 1);
@@ -375,14 +387,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_correlate_events_multiple() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         let events = vec![
             create_test_event("EVT001", "authentication", "okta", Some("user1")),
             create_test_event("EVT002", "authorization", "aws", Some("user1")),
             create_test_event("EVT003", "data_access", "proximadb", Some("user1")),
         ];
 
-        let result = engine.correlate_events(events).await.unwrap();
+        let result = engine
+            .correlate_events(events)
+            .await
+            .expect("Failed to correlate events");
 
         assert_eq!(result.confidence, 0.85);
         assert_eq!(result.event_sequence.len(), 3);
@@ -390,13 +407,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_detect_anomalies() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         let events = vec![
             create_test_event("EVT001", "authentication", "okta", Some("user1")),
             create_test_event("EVT002", "data_access", "aws", Some("user1")),
         ];
 
-        let anomalies = engine.detect_anomalies(&events).await.unwrap();
+        let anomalies = engine
+            .detect_anomalies(&events)
+            .await
+            .expect("Failed to detect anomalies");
 
         // Should detect at least one anomaly (based on placeholder implementation)
         assert!(!anomalies.is_empty());
@@ -406,10 +428,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_detect_anomalies_empty() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         let events: Vec<AuditEvent> = vec![];
 
-        let anomalies = engine.detect_anomalies(&events).await.unwrap();
+        let anomalies = engine
+            .detect_anomalies(&events)
+            .await
+            .expect("Failed to detect anomalies");
 
         // Placeholder still returns anomaly
         assert!(!anomalies.is_empty());
@@ -417,9 +444,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_generate_compliance_report() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
 
-        let analysis = engine.generate_compliance_report("SOC2").await.unwrap();
+        let analysis = engine
+            .generate_compliance_report("SOC2")
+            .await
+            .expect("Failed to generate compliance report");
 
         assert_eq!(analysis.compliance_status, "compliant");
         assert!(analysis.violations.is_empty());
@@ -428,10 +460,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_generate_compliance_report_different_frameworks() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
 
         for framework in &["SOC2", "GDPR", "HIPAA", "PCI-DSS"] {
-            let analysis = engine.generate_compliance_report(framework).await.unwrap();
+            let analysis = engine
+                .generate_compliance_report(framework)
+                .await
+                .expect("Failed to generate compliance report");
             assert_eq!(analysis.compliance_status, "compliant");
         }
     }
@@ -459,7 +496,7 @@ mod tests {
         let result = correlator
             .correlate_cross_provider_events(&events)
             .await
-            .unwrap();
+            .expect("Failed to correlate cross-provider events");
 
         assert_eq!(result.confidence, 0.85);
         assert_eq!(result.event_sequence.len(), 3);
@@ -474,7 +511,7 @@ mod tests {
         let result = correlator
             .correlate_cross_provider_events(&events)
             .await
-            .unwrap();
+            .expect("Failed to correlate cross-provider events");
 
         assert!(result.event_sequence.is_empty());
     }
@@ -747,7 +784,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_full_correlation_workflow() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
 
         // Create a sequence of events simulating a typical authentication flow
         let now = Utc::now();
@@ -785,22 +824,33 @@ mod tests {
         ];
 
         // Correlate events
-        let correlation_result = engine.correlate_events(events.clone()).await.unwrap();
+        let correlation_result = engine
+            .correlate_events(events.clone())
+            .await
+            .expect("Failed to correlate events");
         assert_eq!(correlation_result.event_sequence.len(), 5);
         assert!(correlation_result.confidence > 0.0);
 
         // Detect anomalies
-        let anomalies = engine.detect_anomalies(&events).await.unwrap();
+        let anomalies = engine
+            .detect_anomalies(&events)
+            .await
+            .expect("Failed to detect anomalies");
         assert!(!anomalies.is_empty());
 
         // Generate compliance report
-        let compliance = engine.generate_compliance_report("SOC2").await.unwrap();
+        let compliance = engine
+            .generate_compliance_report("SOC2")
+            .await
+            .expect("Failed to generate compliance report");
         assert_eq!(compliance.compliance_status, "compliant");
     }
 
     #[tokio::test]
     async fn test_correlation_session_management() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
 
         // Verify sessions are initially empty
         assert!(engine.correlation_sessions.is_empty());

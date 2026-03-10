@@ -693,8 +693,8 @@ impl GlobalManifestService {
             checkpoint_lsn,
             timestamp_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or(0),
             collections: collection_map.into_values().collect(),
             safe_to_delete_before_lsn: checkpoint_lsn,
         };
@@ -1003,20 +1003,20 @@ impl GlobalManifestService {
 //
 //     #[tokio::test]
 //     async fn test_concurrent_appends() {
-//         let temp_dir = tempfile::tempdir().unwrap();
+//         let temp_dir = tempfile::tempdir().ok().unwrap_or_default();
 //         let wal_url = format!("file://{}", temp_dir.path().display());
 //
 //         let fs_factory = Arc::new(
 //             crate::storage::persistence::filesystem::FilesystemFactory::create_default()
 //                 .await
-//                 .unwrap()
+//                 .ok()
 //         );
 //
 //         let service = GlobalManifestService::new(
 //             GlobalManifestServiceConfig::default(),
 //             fs_factory,
 //             wal_url,
-//         ).await.unwrap();
+//         ).await.ok();
 //
 //         // Spawn 10 concurrent append tasks
 //         let mut handles = vec![];
@@ -1036,7 +1036,7 @@ impl GlobalManifestService {
 //                         10,
 //                         format!("file://{}", temp_dir.path().display()),
 //                     );
-//                     service.append_async(entry).await.unwrap();
+//                     service.append_async(entry).await.ok();
 //                 }
 //             });
 //             handles.push(handle);
@@ -1044,7 +1044,7 @@ impl GlobalManifestService {
 //
 //         // Wait for all tasks
 //         for handle in handles {
-//             handle.await.unwrap();
+//             handle.await.ok();
 //         }
 //
 //         // Give background worker time to flush

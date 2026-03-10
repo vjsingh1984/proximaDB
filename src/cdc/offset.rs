@@ -331,11 +331,14 @@ mod tests {
         let store = MemoryOffsetStore::new();
 
         let offset = Offset::new("source1", 100);
-        store.store(&offset).await.unwrap();
+        store.store(&offset).await.expect("Failed to store offset");
 
-        let retrieved = store.get(&offset.key()).await.unwrap();
+        let retrieved = store
+            .get(&offset.key())
+            .await
+            .expect("Failed to get offset");
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().lsn, 100);
+        assert_eq!(retrieved.expect("Offset should be present").lsn, 100);
     }
 
     #[tokio::test]
@@ -346,11 +349,23 @@ mod tests {
         let offset2 = Offset::new("source1", 200).with_partition("p1");
         let offset3 = Offset::new("source2", 300);
 
-        store.store(&offset1).await.unwrap();
-        store.store(&offset2).await.unwrap();
-        store.store(&offset3).await.unwrap();
+        store
+            .store(&offset1)
+            .await
+            .expect("Failed to store offset1");
+        store
+            .store(&offset2)
+            .await
+            .expect("Failed to store offset2");
+        store
+            .store(&offset3)
+            .await
+            .expect("Failed to store offset3");
 
-        let source1_offsets = store.get_all("source1").await.unwrap();
+        let source1_offsets = store
+            .get_all("source1")
+            .await
+            .expect("Failed to get all offsets");
         assert_eq!(source1_offsets.len(), 2);
     }
 
@@ -359,37 +374,59 @@ mod tests {
         let store = MemoryOffsetStore::new();
 
         let offset = Offset::new("source1", 100);
-        store.store(&offset).await.unwrap();
+        store.store(&offset).await.expect("Failed to store offset");
 
-        assert!(store.get(&offset.key()).await.unwrap().is_some());
+        assert!(
+            store
+                .get(&offset.key())
+                .await
+                .expect("Failed to get offset")
+                .is_some()
+        );
 
-        store.delete(&offset.key()).await.unwrap();
-        assert!(store.get(&offset.key()).await.unwrap().is_none());
+        store
+            .delete(&offset.key())
+            .await
+            .expect("Failed to delete offset");
+        assert!(
+            store
+                .get(&offset.key())
+                .await
+                .expect("Failed to get offset")
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn test_file_store_persistence() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
 
         // Create and populate store
         {
-            let store = FileOffsetStore::new(temp_dir.path()).await.unwrap();
+            let store = FileOffsetStore::new(temp_dir.path())
+                .await
+                .expect("Failed to create file store");
 
             let offset = Offset::new("pg://localhost/testdb", 12345)
                 .with_partition("users")
                 .with_metadata("slot", "cdc_slot");
 
-            store.store(&offset).await.unwrap();
+            store.store(&offset).await.expect("Failed to store offset");
         }
 
         // Reload and verify
         {
-            let store = FileOffsetStore::new(temp_dir.path()).await.unwrap();
+            let store = FileOffsetStore::new(temp_dir.path())
+                .await
+                .expect("Failed to create file store");
 
-            let offset = store.get("pg://localhost/testdb:users").await.unwrap();
+            let offset = store
+                .get("pg://localhost/testdb:users")
+                .await
+                .expect("Failed to get offset");
             assert!(offset.is_some());
 
-            let offset = offset.unwrap();
+            let offset = offset.expect("Offset should be present");
             assert_eq!(offset.lsn, 12345);
             assert_eq!(offset.metadata.get("slot"), Some(&"cdc_slot".to_string()));
         }
@@ -397,17 +434,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_store_atomic_write() {
-        let temp_dir = TempDir::new().unwrap();
-        let store = FileOffsetStore::new(temp_dir.path()).await.unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let store = FileOffsetStore::new(temp_dir.path())
+            .await
+            .expect("Failed to create file store");
 
         // Store multiple offsets
         for i in 0..10 {
             let offset = Offset::new("source", i * 100);
-            store.store(&offset).await.unwrap();
+            store.store(&offset).await.expect("Failed to store offset");
         }
 
         // Verify final state
-        let offset = store.get("source").await.unwrap().unwrap();
+        let offset = store
+            .get("source")
+            .await
+            .expect("Failed to get offset")
+            .expect("Offset should be present");
         assert_eq!(offset.lsn, 900);
     }
 
@@ -418,8 +461,9 @@ mod tests {
             .with_txn_id("txn_1")
             .with_metadata("key", "value");
 
-        let json = serde_json::to_string(&offset).unwrap();
-        let deserialized: Offset = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&offset).expect("Failed to serialize offset");
+        let deserialized: Offset =
+            serde_json::from_str(&json).expect("Failed to deserialize offset");
 
         assert_eq!(offset, deserialized);
     }

@@ -237,7 +237,7 @@ impl ArrowProtoCodec {
         Ok(bytes
             .chunks_exact(4)
             .map(|chunk| {
-                let arr: [u8; 4] = chunk.try_into().unwrap();
+                let arr = [chunk[0], chunk[1], chunk[2], chunk[3]];
                 f32::from_le_bytes(arr)
             })
             .collect())
@@ -389,9 +389,13 @@ impl ArrowProtoCodec {
                 values.push(None);
             } else {
                 // Take first metadata item (simplification)
-                let (key, value) = record.metadata.iter().next().unwrap();
-                keys.push(Some(key.as_str()));
-                values.push(Some(Self::sql_value_to_string(value)));
+                if let Some((key, value)) = record.metadata.iter().next() {
+                    keys.push(Some(key.as_str()));
+                    values.push(Some(Self::sql_value_to_string(value)));
+                } else {
+                    keys.push(None);
+                    values.push(None);
+                }
             }
         }
 

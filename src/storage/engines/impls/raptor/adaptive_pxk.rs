@@ -281,7 +281,7 @@ impl SparseCoverageStorage {
                         .raw_value
                 })
                 .collect();
-            distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            distances.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
             if distances.len() >= 2 {
                 let ratio = distances[0] / distances[1];
@@ -296,7 +296,11 @@ impl SparseCoverageStorage {
         }
 
         // Sort by importance and take top budget
-        boundaries.sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap());
+        boundaries.sort_by(|a, b| {
+            b.importance_score
+                .partial_cmp(&a.importance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         boundaries.truncate(budget);
         boundaries
     }
@@ -337,7 +341,7 @@ impl SparseCoverageStorage {
             })
             .collect();
 
-        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         for (idx, dist) in distances.iter().take(budget) {
             representatives.push(VectorSelection {
@@ -373,7 +377,7 @@ impl SparseCoverageStorage {
                         .calculate_distance(vector, c, &DistanceMetric::Cosine)
                         .raw_value
                 })
-                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or(f32::MAX);
 
             outliers.push(VectorSelection {
@@ -384,7 +388,11 @@ impl SparseCoverageStorage {
         }
 
         // Sort by distance (furthest first) and take top budget
-        outliers.sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap());
+        outliers.sort_by(|a, b| {
+            b.importance_score
+                .partial_cmp(&a.importance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         outliers.truncate(budget);
         outliers
     }
@@ -434,7 +442,7 @@ impl SparseCoverageStorage {
                             .calculate_distance(&vectors[idx], &vectors[s], &DistanceMetric::Cosine)
                             .raw_value
                     })
-                    .min_by(|a, b| a.partial_cmp(b).unwrap())
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                     .unwrap_or(f32::MAX);
 
                 if min_dist > best_min_dist {
@@ -461,7 +469,7 @@ impl SparseCoverageStorage {
     /// Compress distances based on strategy
     fn compress_distances(&self, distances: &[f32]) -> Vec<u8> {
         match self.compression {
-            CompressionStrategy::Uncompressed => bincode::serialize(distances).unwrap(),
+            CompressionStrategy::Uncompressed => bincode::serialize(distances).unwrap_or_default(),
             CompressionStrategy::Float16 => {
                 // Use the quantization engine for consistent quantization
                 let (quantized, min, max) = self.quantization_engine.quantize_to_u16(distances);
@@ -517,7 +525,7 @@ impl SparseCoverageStorage {
             CompressionStrategy::DeltaEncoded => {
                 // Sort and store deltas
                 let mut sorted = distances.to_vec();
-                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
                 let mut result = Vec::new();
                 result.extend_from_slice(&sorted[0].to_le_bytes());

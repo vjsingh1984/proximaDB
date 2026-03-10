@@ -3,6 +3,7 @@
 //! This module contains the actual storage engine implementations.
 //! Each engine uses the core infrastructure but implements its own specific logic.
 
+pub mod eventlog; // Event Sourcing Engine - append-only audit logs
 pub mod helix; // High-Efficiency Locality-Indexed eXecution - PCA + Hilbert clustering
 pub mod nova; // Next-gen Optimized Vector Analytics - columnar with quantization
 pub mod raptor; // Row-Aligned Predicated Tensor Optimized Repository
@@ -12,6 +13,7 @@ pub mod tst; // Time-Series Storage - Trading/IoT workloads
 pub mod viper; // Vector-optimized Intelligent Parquet with Efficient Retrieval
 
 // Re-export main engine types
+pub use eventlog::EventLogEngine;
 pub use helix::HelixEngine;
 pub use nova::NovaEngine;
 pub use raptor::RaptorEngine;

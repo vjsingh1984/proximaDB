@@ -136,11 +136,23 @@ impl super::GraphOperationsService {
                     let prop_val_opt = edge.properties.get(&filter.key);
                     let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                         Op::Equals => match prop_val_opt {
-                            Some(v) => v.value == filter.value.as_ref().unwrap().value,
+                            Some(v) => {
+                                let filter_val = match filter.value.as_ref() {
+                                    Some(val) => val,
+                                    None => return false,
+                                };
+                                v.value == filter_val.value
+                            }
                             None => false,
                         },
                         Op::NotEquals => match prop_val_opt {
-                            Some(v) => v.value != filter.value.as_ref().unwrap().value,
+                            Some(v) => {
+                                let filter_val = match filter.value.as_ref() {
+                                    Some(val) => val,
+                                    None => return true,
+                                };
+                                v.value != filter_val.value
+                            }
                             None => true,
                         },
                         _ => true,

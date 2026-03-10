@@ -240,16 +240,16 @@ mod tests {
         let scan = NodeScanOperator::new(engine, None, vec![], "n".to_string());
         let mut limit = LimitOperator::new(Box::new(scan), None, Some(10));
 
-        limit.open().unwrap();
+        limit.open().expect("Failed to open limit operator");
 
         let mut count = 0;
-        while limit.next().unwrap().is_some() {
+        while limit.next().expect("Failed to get next tuple").is_some() {
             count += 1;
         }
 
         assert_eq!(count, 10);
 
-        limit.close().unwrap();
+        limit.close().expect("Failed to close limit operator");
     }
 
     #[test]
@@ -258,16 +258,16 @@ mod tests {
         let scan = NodeScanOperator::new(engine, None, vec![], "n".to_string());
         let mut limit = LimitOperator::new(Box::new(scan), Some(90), None);
 
-        limit.open().unwrap();
+        limit.open().expect("Failed to open limit operator");
 
         let mut count = 0;
-        while limit.next().unwrap().is_some() {
+        while limit.next().expect("Failed to get next tuple").is_some() {
             count += 1;
         }
 
         assert_eq!(count, 10); // 100 - 90
 
-        limit.close().unwrap();
+        limit.close().expect("Failed to close limit operator");
     }
 
     #[test]
@@ -276,16 +276,16 @@ mod tests {
         let scan = NodeScanOperator::new(engine, None, vec![], "n".to_string());
         let mut limit = LimitOperator::new(Box::new(scan), Some(20), Some(10));
 
-        limit.open().unwrap();
+        limit.open().expect("Failed to open limit operator");
 
         let mut count = 0;
-        while limit.next().unwrap().is_some() {
+        while limit.next().expect("Failed to get next tuple").is_some() {
             count += 1;
         }
 
         assert_eq!(count, 10); // Skip 20, return 10
 
-        limit.close().unwrap();
+        limit.close().expect("Failed to close limit operator");
     }
 
     #[test]
@@ -294,15 +294,15 @@ mod tests {
         let scan = NodeScanOperator::new(engine, None, vec![], "n".to_string());
         let mut limit = LimitOperator::new(Box::new(scan), None, Some(10));
 
-        limit.open().unwrap();
+        limit.open().expect("Failed to open limit operator");
 
         let mut count = 0;
-        while limit.next().unwrap().is_some() {
+        while limit.next().expect("Failed to get next tuple").is_some() {
             count += 1;
         }
 
         assert_eq!(count, 5); // Only 5 available
 
-        limit.close().unwrap();
+        limit.close().expect("Failed to close limit operator");
     }
 }

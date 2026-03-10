@@ -78,7 +78,7 @@ fn estimate_sql_value_size(value: &SqlValue) -> u64 {
         Some(Value::StringValue(s)) => s.len() as u64 + 4,
         Some(Value::NumberValue(f)) => 8,
         Some(Value::BoolValue(_)) => 1,
-        Some(Value::Int64Value(i)) => 8,
+        Some(Value::Int64Value(_i)) => 8,
         Some(Value::BytesValue(b)) => b.len() as u64 + 4,
         Some(Value::ArrayValue(arr)) => {
             let mut size = 4; // array overhead

@@ -110,6 +110,7 @@ impl Default for OIDCClaimsMappings {
 }
 
 /// OpenID Connect integration
+#[derive(Debug)]
 pub struct OIDCIntegration {
     config: OIDCConfig,
     // Note: In a real implementation, this would include:
@@ -307,12 +308,12 @@ mod tests {
     #[tokio::test]
     async fn test_auth_url_generation() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         let auth_url = integration.generate_auth_url(Some("test-state"));
         assert!(auth_url.is_ok());
 
-        let url = auth_url.unwrap();
+        let url = auth_url.expect("Failed to generate auth URL");
         assert!(url.contains("client_id=test-client-id"));
         assert!(url.contains("scope=openid%20profile%20email%20groups"));
         assert!(url.contains("state=test-state"));
@@ -321,14 +322,14 @@ mod tests {
     #[tokio::test]
     async fn test_code_exchange() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         let token_response = integration
             .exchange_code_for_tokens("test-code", Some("test-state"))
             .await;
         assert!(token_response.is_ok());
 
-        let tokens = token_response.unwrap();
+        let tokens = token_response.expect("Failed to exchange code for tokens");
         assert!(tokens.access_token.starts_with("access_"));
         assert!(tokens.id_token.starts_with("id_"));
         assert_eq!(tokens.token_type, "Bearer");
@@ -337,13 +338,13 @@ mod tests {
     #[tokio::test]
     async fn test_id_token_validation() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         // Test with non-empty ID token
         let result = integration.validate_id_token("test-id-token").await;
         assert!(result.is_ok());
 
-        let user_context = result.unwrap();
+        let user_context = result.expect("Failed to validate ID token");
         assert!(matches!(
             user_context.provider_context,
             ProviderUserContext::Generic { .. }
@@ -366,7 +367,10 @@ mod tests {
         config.discovery_url = String::new();
         let result = OIDCIntegration::new(config);
         assert!(result.is_err());
-        let err_msg = format!("{}", result.err().unwrap());
+        let err_msg = format!(
+            "{}",
+            result.expect_err("Expected error for missing discovery URL")
+        );
         assert!(err_msg.contains("discovery URL is required"));
     }
 
@@ -376,7 +380,10 @@ mod tests {
         config.client_id = String::new();
         let result = OIDCIntegration::new(config);
         assert!(result.is_err());
-        let err_msg = format!("{}", result.err().unwrap());
+        let err_msg = format!(
+            "{}",
+            result.expect_err("Expected error for missing client ID")
+        );
         assert!(err_msg.contains("client ID is required"));
     }
 
@@ -386,7 +393,10 @@ mod tests {
         config.client_secret = String::new();
         let result = OIDCIntegration::new(config);
         assert!(result.is_err());
-        let err_msg = format!("{}", result.err().unwrap());
+        let err_msg = format!(
+            "{}",
+            result.expect_err("Expected error for missing client secret")
+        );
         assert!(err_msg.contains("client secret is required"));
     }
 
@@ -424,12 +434,12 @@ mod tests {
     #[tokio::test]
     async fn test_auth_url_generation_without_state() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         let auth_url = integration.generate_auth_url(None);
         assert!(auth_url.is_ok());
 
-        let url = auth_url.unwrap();
+        let url = auth_url.expect("Failed to generate auth URL");
         assert!(url.contains("client_id=test-client-id"));
         assert!(url.contains("response_type=code"));
         // When no state is provided, a UUID is generated
@@ -439,9 +449,11 @@ mod tests {
     #[tokio::test]
     async fn test_auth_url_contains_redirect_uri() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
-        let auth_url = integration.generate_auth_url(Some("state123")).unwrap();
+        let auth_url = integration
+            .generate_auth_url(Some("state123"))
+            .expect("Failed to generate auth URL");
         assert!(auth_url.contains("redirect_uri="));
         // URL encoded redirect URI
         assert!(auth_url.contains("proximadb.test.com"));
@@ -450,11 +462,11 @@ mod tests {
     #[tokio::test]
     async fn test_auth_url_special_characters_in_state() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         let auth_url = integration.generate_auth_url(Some("state=with&special/chars"));
         assert!(auth_url.is_ok());
-        let url = auth_url.unwrap();
+        let url = auth_url.expect("Failed to generate auth URL");
         // State should be URL encoded
         assert!(url.contains("state="));
     }
@@ -464,14 +476,14 @@ mod tests {
     #[tokio::test]
     async fn test_code_exchange_without_state() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         let token_response = integration
             .exchange_code_for_tokens("auth-code-123", None)
             .await;
         assert!(token_response.is_ok());
 
-        let tokens = token_response.unwrap();
+        let tokens = token_response.expect("Failed to exchange code for tokens");
         assert!(!tokens.access_token.is_empty());
         assert!(!tokens.id_token.is_empty());
         assert!(tokens.refresh_token.is_some());
@@ -481,7 +493,7 @@ mod tests {
     #[tokio::test]
     async fn test_code_exchange_short_code() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         // Short authorization code
         let token_response = integration
@@ -503,13 +515,15 @@ mod tests {
             scope: "openid profile email".to_string(),
         };
 
-        let json = serde_json::to_string(&token_response).unwrap();
+        let json =
+            serde_json::to_string(&token_response).expect("Failed to serialize token response");
         assert!(json.contains("access_12345"));
         assert!(json.contains("id_67890"));
         assert!(json.contains("refresh_abcde"));
         assert!(json.contains("Bearer"));
 
-        let deserialized: OIDCTokenResponse = serde_json::from_str(&json).unwrap();
+        let deserialized: OIDCTokenResponse =
+            serde_json::from_str(&json).expect("Failed to deserialize token response");
         assert_eq!(deserialized.access_token, token_response.access_token);
         assert_eq!(deserialized.id_token, token_response.id_token);
         assert_eq!(deserialized.refresh_token, token_response.refresh_token);
@@ -529,8 +543,10 @@ mod tests {
             scope: "openid".to_string(),
         };
 
-        let json = serde_json::to_string(&token_response).unwrap();
-        let deserialized: OIDCTokenResponse = serde_json::from_str(&json).unwrap();
+        let json =
+            serde_json::to_string(&token_response).expect("Failed to serialize token response");
+        let deserialized: OIDCTokenResponse =
+            serde_json::from_str(&json).expect("Failed to deserialize token response");
         assert!(deserialized.refresh_token.is_none());
     }
 
@@ -539,12 +555,12 @@ mod tests {
     #[tokio::test]
     async fn test_id_token_validation_user_context_fields() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         let result = integration
             .validate_id_token("valid-id-token")
             .await
-            .unwrap();
+            .expect("Failed to validate ID token");
 
         // Verify user context fields are properly populated
         assert!(!result.user_id.is_empty());
@@ -560,9 +576,12 @@ mod tests {
     #[tokio::test]
     async fn test_id_token_validation_provider_context() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
-        let result = integration.validate_id_token("test-token").await.unwrap();
+        let result = integration
+            .validate_id_token("test-token")
+            .await
+            .expect("Failed to validate ID token");
 
         match &result.provider_context {
             ProviderUserContext::Generic {
@@ -585,7 +604,7 @@ mod tests {
     #[tokio::test]
     async fn test_id_token_validation_with_whitespace_token() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         // Whitespace-only token is technically not empty
         let result = integration.validate_id_token("   ").await;
@@ -595,7 +614,7 @@ mod tests {
     #[tokio::test]
     async fn test_id_token_validation_long_token() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         let long_token = "a".repeat(10000);
         let result = integration.validate_id_token(&long_token).await;
@@ -607,10 +626,12 @@ mod tests {
     #[test]
     fn test_extract_id_token_claims() {
         let config = create_test_config();
-        let integration = OIDCIntegration::new(config).unwrap();
+        let integration = OIDCIntegration::new(config).expect("Failed to create OIDC integration");
 
         // Currently returns empty HashMap (placeholder)
-        let claims = integration.extract_id_token_claims("test-token").unwrap();
+        let claims = integration
+            .extract_id_token_claims("test-token")
+            .expect("Failed to extract claims");
         assert!(claims.is_empty());
     }
 
@@ -619,7 +640,7 @@ mod tests {
     #[test]
     fn test_oidc_config_serialization() {
         let config = create_test_config();
-        let json = serde_json::to_string(&config).unwrap();
+        let json = serde_json::to_string(&config).expect("Failed to serialize config");
 
         assert!(json.contains("discovery_url"));
         assert!(json.contains("client_id"));
@@ -627,7 +648,8 @@ mod tests {
         assert!(json.contains("scopes"));
         assert!(json.contains("claims_mappings"));
 
-        let deserialized: OIDCConfig = serde_json::from_str(&json).unwrap();
+        let deserialized: OIDCConfig =
+            serde_json::from_str(&json).expect("Failed to deserialize config");
         assert_eq!(deserialized.discovery_url, config.discovery_url);
         assert_eq!(deserialized.client_id, config.client_id);
         assert_eq!(deserialized.scopes, config.scopes);
@@ -644,8 +666,9 @@ mod tests {
             .custom_claims
             .insert("custom_attr".to_string(), "custom_value".to_string());
 
-        let json = serde_json::to_string(&mappings).unwrap();
-        let deserialized: OIDCClaimsMappings = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&mappings).expect("Failed to serialize mappings");
+        let deserialized: OIDCClaimsMappings =
+            serde_json::from_str(&json).expect("Failed to deserialize mappings");
 
         assert_eq!(deserialized.user_id_claim, mappings.user_id_claim);
         assert_eq!(deserialized.email_claim, mappings.email_claim);
@@ -679,9 +702,30 @@ mod tests {
         };
 
         assert_eq!(config.role_mapping.len(), 3);
-        assert_eq!(config.role_mapping.get("super_admins").unwrap().len(), 2);
-        assert_eq!(config.role_mapping.get("developers").unwrap().len(), 2);
-        assert_eq!(config.role_mapping.get("viewers").unwrap().len(), 1);
+        assert_eq!(
+            config
+                .role_mapping
+                .get("super_admins")
+                .expect("super_admins mapping missing")
+                .len(),
+            2
+        );
+        assert_eq!(
+            config
+                .role_mapping
+                .get("developers")
+                .expect("developers mapping missing")
+                .len(),
+            2
+        );
+        assert_eq!(
+            config
+                .role_mapping
+                .get("viewers")
+                .expect("viewers mapping missing")
+                .len(),
+            1
+        );
     }
 
     // --- Additional Parameters Tests ---

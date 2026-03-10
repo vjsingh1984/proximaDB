@@ -2524,7 +2524,9 @@ mod tests {
     #[test]
     fn test_lexer_basic() {
         let mut lexer = CypherLexer::new();
-        let tokens = lexer.tokenize("MATCH (n) RETURN n").unwrap();
+        let tokens = lexer
+            .tokenize("MATCH (n) RETURN n")
+            .expect("lexer should tokenize basic query");
         assert!(tokens.len() >= 5);
         assert!(matches!(tokens[0].token, Token::Match));
     }
@@ -2532,7 +2534,9 @@ mod tests {
     #[test]
     fn test_lexer_string_literals() {
         let mut lexer = CypherLexer::new();
-        let tokens = lexer.tokenize("'hello' \"world\"").unwrap();
+        let tokens = lexer
+            .tokenize("'hello' \"world\"")
+            .expect("lexer should tokenize string literals");
         assert!(matches!(&tokens[0].token, Token::String(s) if s == "hello"));
         assert!(matches!(&tokens[1].token, Token::String(s) if s == "world"));
     }
@@ -2540,7 +2544,9 @@ mod tests {
     #[test]
     fn test_lexer_numbers() {
         let mut lexer = CypherLexer::new();
-        let tokens = lexer.tokenize("42 3.14 -5").unwrap();
+        let tokens = lexer
+            .tokenize("42 3.14 -5")
+            .expect("lexer should tokenize numbers");
         assert!(matches!(tokens[0].token, Token::Integer(42)));
         assert!(matches!(tokens[1].token, Token::Float(f) if (f - 3.14).abs() < 0.001));
         assert!(matches!(tokens[2].token, Token::Integer(-5)));
@@ -2549,7 +2555,9 @@ mod tests {
     #[test]
     fn test_parse_simple_match() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) RETURN n")
+            .expect("parser should parse simple match");
         assert_eq!(query.reading_clauses.len(), 1);
         assert!(query.is_read_only());
     }
@@ -2559,7 +2567,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person {name: 'Alice', age: 30}) RETURN n")
-            .unwrap();
+            .expect("parser should parse match with properties");
         assert_eq!(query.reading_clauses.len(), 1);
     }
 
@@ -2568,7 +2576,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a, r, b")
-            .unwrap();
+            .expect("parser should parse match with edge");
         assert_eq!(query.reading_clauses.len(), 1);
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert_eq!(pattern.nodes.len(), 2);
@@ -2581,7 +2589,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) WHERE n.age > 25 RETURN n")
-            .unwrap();
+            .expect("parser should parse where clause");
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert!(pattern.where_clause.is_some());
         }
@@ -2592,7 +2600,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) WHERE n.age > 25 AND n.name = 'Alice' RETURN n")
-            .unwrap();
+            .expect("parser should parse where with AND");
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert!(pattern.where_clause.is_some());
             if let Some(WhereClause::And(_, _)) = &pattern.where_clause {
@@ -2608,7 +2616,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("CREATE (n:Person {name: 'Alice'}) RETURN n")
-            .unwrap();
+            .expect("parser should parse create");
         assert!(!query.is_read_only());
         assert!(query.has_create());
     }
@@ -2618,7 +2626,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) WHERE n.age > 100 DELETE n")
-            .unwrap();
+            .expect("parser should parse delete");
         assert!(query.has_delete());
     }
 
@@ -2627,7 +2635,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person {name: 'Alice'}) SET n.age = 31 RETURN n")
-            .unwrap();
+            .expect("parser should parse set");
         assert!(!query.is_read_only());
     }
 
@@ -2636,14 +2644,16 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MERGE (n:Person {name: 'Alice'}) RETURN n")
-            .unwrap();
+            .expect("parser should parse merge");
         assert!(query.has_merge());
     }
 
     #[test]
     fn test_parse_aggregation() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) RETURN COUNT(*)").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) RETURN COUNT(*)")
+            .expect("parser should parse aggregation");
         if let Some(ref return_spec) = query.return_spec {
             assert!(matches!(
                 return_spec.projections[0],
@@ -2657,7 +2667,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) RETURN n ORDER BY n ASC LIMIT 10")
-            .unwrap();
+            .expect("parser should parse order by and limit");
         if let Some(ref return_spec) = query.return_spec {
             assert_eq!(return_spec.order_by.len(), 1);
             assert_eq!(return_spec.limit, Some(10));
@@ -2667,15 +2677,20 @@ mod tests {
     #[test]
     fn test_validator() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) RETURN n")
+            .expect("parser should parse for validator test");
         assert!(QueryValidator::validate(&query).is_ok());
     }
 
     #[test]
     fn test_conversion_to_graph_query() {
         let parser = CypherParser::new();
-        let cypher = parser.parse("MATCH (n:Person) RETURN n").unwrap();
-        let graph_query = cypher_to_graph_query(&cypher, "test_graph").unwrap();
+        let cypher = parser
+            .parse("MATCH (n:Person) RETURN n")
+            .expect("parser should parse for conversion test");
+        let graph_query = cypher_to_graph_query(&cypher, "test_graph")
+            .expect("conversion to graph query should succeed");
         assert_eq!(graph_query.graph_id, "test_graph");
         assert!(matches!(
             graph_query.query_type,
@@ -2688,7 +2703,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) OPTIONAL MATCH (n)-[r:KNOWS]->(m) RETURN n, m")
-            .unwrap();
+            .expect("parser should parse optional match");
         assert_eq!(query.reading_clauses.len(), 2);
         if let ReadingClause::Match { optional, .. } = &query.reading_clauses[1] {
             assert!(*optional);
@@ -2698,7 +2713,9 @@ mod tests {
     #[test]
     fn test_parse_multiple_labels() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person:Employee) RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person:Employee) RETURN n")
+            .expect("parser should parse multiple labels");
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert_eq!(pattern.nodes[0].labels.len(), 2);
         }

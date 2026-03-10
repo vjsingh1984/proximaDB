@@ -138,7 +138,12 @@ impl RowGroups {
             // Check if row group is now full
             // SAFETY: row_group_id was obtained from row_group_ids() iterator above,
             // so it must exist in the map. The iteration doesn't modify the map.
-            let row_group = self.row_groups.get(&row_group_id).unwrap();
+            let row_group = self.row_groups.get(&row_group_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Row group {} not found after vector insertion",
+                    row_group_id
+                )
+            })?;
             if row_group.vector_count >= row_group.max_vectors {
                 self.complete_current_row_group().await?;
             }
@@ -219,7 +224,10 @@ impl RowGroups {
         // Now get mutable reference and update
         // SAFETY: row_group_id existence is checked by contains_key() above.
         // The function returns early with error if row group doesn't exist.
-        let row_group = self.row_groups.get_mut(&row_group_id).unwrap();
+        let row_group = self
+            .row_groups
+            .get_mut(&row_group_id)
+            .ok_or_else(|| anyhow::anyhow!("Row group {} not found", row_group_id))?;
 
         // Ensure columnar_data exists
         if row_group.columnar_data.is_none() {
@@ -237,7 +245,12 @@ impl RowGroups {
         }
 
         // SAFETY: columnar_data is guaranteed to be Some after the initialization above.
-        let columnar_data = row_group.columnar_data.as_mut().unwrap();
+        let columnar_data = row_group.columnar_data.as_mut().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Columnar data not initialized for row group {}",
+                row_group_id
+            )
+        })?;
 
         // Initialize transposed vectors if first batch
         if columnar_data.transposed_vectors.is_none() && !vectors.is_empty() {
@@ -390,7 +403,7 @@ impl RowGroups {
                             .metadata_columns
                             .string_columns
                             .get_mut(&key)
-                            .unwrap()
+                            .ok_or_else(|| anyhow::anyhow!("String column {} not found", key))?
                             .push(None);
                     } else if columnar_data
                         .metadata_columns
@@ -401,7 +414,7 @@ impl RowGroups {
                             .metadata_columns
                             .numeric_columns
                             .get_mut(&key)
-                            .unwrap()
+                            .ok_or_else(|| anyhow::anyhow!("Numeric column {} not found", key))?
                             .push(None);
                     } else if columnar_data
                         .metadata_columns
@@ -412,7 +425,7 @@ impl RowGroups {
                             .metadata_columns
                             .boolean_columns
                             .get_mut(&key)
-                            .unwrap()
+                            .ok_or_else(|| anyhow::anyhow!("Boolean column {} not found", key))?
                             .push(None);
                     }
                 }
@@ -593,9 +606,16 @@ impl RowGroups {
         // Update row group with SIMD-encoded data
         // SAFETY: row_group_id is validated at function entry via get_mut().ok_or_else().
         // We checked row_group existence earlier in this function.
-        let row_group = self.row_groups.get_mut(&row_group_id).unwrap();
+        let row_group = self.row_groups.get_mut(&row_group_id).ok_or_else(|| {
+            anyhow::anyhow!("Row group {} not found during compression", row_group_id)
+        })?;
         // SAFETY: columnar_data is guaranteed to exist - we checked via is_none() guard above.
-        let columnar_data = row_group.columnar_data.as_mut().unwrap();
+        let columnar_data = row_group.columnar_data.as_mut().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Columnar data not initialized for row group {}",
+                row_group_id
+            )
+        })?;
 
         columnar_data.proxima_data = Some(ProximaEncodedData {
             encoded_dimensions,
@@ -626,7 +646,12 @@ impl RowGroups {
                 row_group.columnar_data = Some(ColumnarBlock::default());
             }
             // SAFETY: columnar_data is guaranteed to be Some after the initialization above.
-            let columnar_data = row_group.columnar_data.as_mut().unwrap();
+            let columnar_data = row_group.columnar_data.as_mut().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Columnar data not initialized for row group {}",
+                    row_group_id
+                )
+            })?;
 
             // Reconstruct vectors for quantization (transpose back)
             let mut vectors = Vec::new();

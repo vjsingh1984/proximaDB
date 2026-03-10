@@ -1177,36 +1177,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_and_query() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
 
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.5))
+            .await
+            .expect("Failed to write cpu metric sample 1");
         storage
             .write(&make_sample("cpu", now + 1000, 0.6))
             .await
-            .unwrap();
+            .expect("Failed to write cpu metric sample 2");
         storage
             .write(&make_sample("memory", now, 0.7))
             .await
-            .unwrap();
+            .expect("Failed to write memory metric sample");
 
-        let results = storage.query("cpu", now - 1000, now + 2000).await.unwrap();
+        let results = storage
+            .query("cpu", now - 1000, now + 2000)
+            .await
+            .expect("Failed to query cpu metrics");
         assert_eq!(results.len(), 2);
     }
 
     #[tokio::test]
     async fn test_series_count() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
 
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.5))
+            .await
+            .expect("Failed to write cpu metric");
         storage
             .write(&make_sample("memory", now, 0.7))
             .await
-            .unwrap();
-        storage.write(&make_sample("disk", now, 0.3)).await.unwrap();
+            .expect("Failed to write memory metric");
+        storage
+            .write(&make_sample("disk", now, 0.3))
+            .await
+            .expect("Failed to write disk metric");
 
         assert_eq!(storage.series_count().await, 3);
     }
@@ -1282,21 +1294,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_auto_resolution_raw() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Insert some data
-        storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.5))
+            .await
+            .expect("Failed to write cpu metric sample 1");
         storage
             .write(&make_sample("cpu", now + 1000, 0.6))
             .await
-            .unwrap();
+            .expect("Failed to write cpu metric sample 2");
 
         // Query for 30 minutes (should use raw)
         let result = storage
             .query_auto_resolution("cpu", now - 1000, now + 30 * NANOS_PER_MIN)
             .await
-            .unwrap();
+            .expect("Failed to query auto resolution");
 
         assert_eq!(result.resolution, DownsampleResolution::Raw);
         assert!(result.raw_samples.is_some());
@@ -1306,21 +1321,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_auto_resolution_minute() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Insert some data
-        storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.5))
+            .await
+            .expect("Failed to write cpu metric sample 1");
         storage
             .write(&make_sample("cpu", now + NANOS_PER_MIN, 0.6))
             .await
-            .unwrap();
+            .expect("Failed to write cpu metric sample 2");
 
         // Query for 3 hours (should use minute aggregates)
         let result = storage
             .query_auto_resolution("cpu", now - 1000, now + 3 * NANOS_PER_HOUR)
             .await
-            .unwrap();
+            .expect("Failed to query auto resolution");
 
         assert_eq!(result.resolution, DownsampleResolution::Minute);
         assert!(result.raw_samples.is_none());
@@ -1329,7 +1347,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tiering_stats() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Insert data for multiple metrics
@@ -1337,7 +1355,7 @@ mod tests {
             storage
                 .write(&make_sample("cpu", now + i * 1000, 0.5 + i as f64 * 0.1))
                 .await
-                .unwrap();
+                .expect("Failed to write cpu metric sample");
         }
 
         let stats = storage.tiering_stats().await;
@@ -1357,7 +1375,8 @@ mod tests {
             hour_retention_ns: 7 * NANOS_PER_DAY,    // 1 week
             ..Default::default()
         };
-        let storage = MetricStorage::with_policy("/tmp/test", policy).unwrap();
+        let storage = MetricStorage::with_policy("/tmp/test", policy)
+            .expect("Failed to create MetricStorage with policy");
 
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let old_time = now - 2 * NANOS_PER_MIN; // 2 minutes ago (older than retention)
@@ -1366,16 +1385,22 @@ mod tests {
         storage
             .write(&make_sample("cpu", old_time, 0.5))
             .await
-            .unwrap();
+            .expect("Failed to write old cpu metric");
         // Insert recent data
-        storage.write(&make_sample("cpu", now, 0.6)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.6))
+            .await
+            .expect("Failed to write recent cpu metric");
 
         // Verify both points exist
         let before = storage.tiering_stats().await;
         assert_eq!(before.raw_points, 2);
 
         // Apply tiering policy
-        let result = storage.apply_tiering_policy(now).await.unwrap();
+        let result = storage
+            .apply_tiering_policy(now)
+            .await
+            .expect("Failed to apply tiering policy");
         assert_eq!(result.raw_removed, 1); // Old point removed
 
         // Verify only recent data remains
@@ -1385,14 +1410,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_result_helpers() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Query empty storage
         let result = storage
             .query_auto_resolution("nonexistent", now - 1000, now + 1000)
             .await
-            .unwrap();
+            .expect("Failed to query auto resolution");
 
         assert!(result.is_empty());
         assert_eq!(result.point_count(), 0);

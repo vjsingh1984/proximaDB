@@ -345,7 +345,7 @@ impl SSTBatchFilterEvaluator {
         }
 
         if index_sets.len() == 1 {
-            return index_sets.into_iter().next().unwrap();
+            return index_sets.into_iter().next().unwrap_or_default();
         }
 
         // Sort by size (smallest first for efficiency)

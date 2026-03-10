@@ -3481,7 +3481,7 @@ impl UnifiedSstableReader {
                         // Try to understand what we're actually reading
                         if bloom_data.len() >= 8 {
                             let first_u64 =
-                                u64::from_le_bytes(bloom_data[0..8].try_into().unwrap());
+                                u64::from_le_bytes(bloom_data[0..8].try_into().unwrap_or([0; 8]));
                             debug!("First u64 in bloom data: {}", first_u64);
                         }
 
@@ -3539,8 +3539,8 @@ impl UnifiedSstableReader {
                     filter_expr: format!("sstable:bloom:{}", file_path),
                     cached_at: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
+                        .map(|duration| duration.as_secs())
+                        .unwrap_or(0),
                     dependencies: vec![],
                 };
             // Zero-copy system handles bloom filter caching via metadata
@@ -4786,28 +4786,29 @@ impl UnifiedSstableReader {
         // Check if blocks have spatial codes
         let has_spatial_codes = _index_blocks.iter().any(|e| e.zorder_code.is_some());
 
-        if has_spatial_codes && query_code.is_some() {
+        if has_spatial_codes {
             // Use unified SpatialPruner with spatial codes and centroids
-            let query_code = query_code.unwrap();
+            if let Some(query_code) = query_code {
+                let blocks: Vec<BlockPruningInfo> = _index_blocks
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, entry)| {
+                        let spatial_code =
+                            entry.zorder_code.clone().unwrap_or(SpatialCode::Code64(0));
 
-            let blocks: Vec<BlockPruningInfo> = _index_blocks
-                .iter()
-                .enumerate()
-                .map(|(idx, entry)| {
-                    let spatial_code = entry.zorder_code.clone().unwrap_or(SpatialCode::Code64(0));
+                        // Get centroid (FP16 -> FP32 if available)
+                        let centroid = super::super::get_centroid_fp32(
+                            &entry.block_centroid_fp16,
+                            &entry.block_centroid,
+                        );
 
-                    // Get centroid (FP16 -> FP32 if available)
-                    let centroid = super::super::get_centroid_fp32(
-                        &entry.block_centroid_fp16,
-                        &entry.block_centroid,
-                    );
+                        BlockPruningInfo::with_centroid(idx, spatial_code, centroid)
+                    })
+                    .collect();
 
-                    BlockPruningInfo::with_centroid(idx, spatial_code, centroid)
-                })
-                .collect();
-
-            let result = pruner.select_blocks(&query_code, query, &blocks);
-            return result.selected_indices;
+                let result = pruner.select_blocks(&query_code, query, &blocks);
+                return result.selected_indices;
+            }
         }
 
         // Fallback: No spatial codes, use centroid-based pruning only
@@ -4945,8 +4946,12 @@ fn calculate_zorder_epsilon(
     }
 
     // Find min and max codes
-    let min_code = codes.iter().min().unwrap();
-    let max_code = codes.iter().max().unwrap();
+    let Some(min_code) = codes.iter().min() else {
+        return query_code.clone();
+    };
+    let Some(max_code) = codes.iter().max() else {
+        return query_code.clone();
+    };
 
     // Calculate epsilon as 10% of range (built into SpatialCode::epsilon method)
     // Min epsilon of 1000 to avoid over-pruning

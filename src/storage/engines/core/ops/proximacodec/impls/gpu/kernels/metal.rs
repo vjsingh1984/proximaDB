@@ -1254,7 +1254,9 @@ pub fn metal_double_delta_decode_f32(double_deltas: &[i64], count: usize) -> Res
     first_deltas.push(first_delta);
 
     for i in 2..double_deltas.len() {
-        let prev_delta = first_deltas.last().unwrap();
+        let prev_delta = first_deltas
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("first_deltas should not be empty at index {}", i))?;
         let dd = double_deltas[i];
         first_deltas.push(prev_delta + dd);
     }
@@ -1283,10 +1285,7 @@ mod tests {
 
     #[test]
     fn test_metal_context_creation() {
-        let ctx = MetalContext::new(10000, 128);
-        assert!(ctx.is_ok());
-
-        let ctx = ctx.unwrap();
+        let ctx = MetalContext::new(10000, 128).expect("MetalContext creation should succeed");
         assert!(ctx.config().batch_size >= 10000);
         assert_eq!(ctx.config().threads_per_block, 256);
     }
@@ -1294,10 +1293,7 @@ mod tests {
     #[test]
     #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
     fn test_metal_gpu_availability() {
-        let ctx = MetalContext::new(1000, 128);
-        assert!(ctx.is_ok());
-
-        let ctx = ctx.unwrap();
+        let ctx = MetalContext::new(1000, 128).expect("MetalContext creation should succeed");
         assert!(
             ctx.has_gpu(),
             "Metal GPU should be available on Apple Silicon"
@@ -1307,10 +1303,7 @@ mod tests {
     #[test]
     fn test_metal_delta_encode() {
         let values = vec![1.0f32, 2.0, 3.0, 4.0];
-        let result = metal_delta_encode_f32(&values, 0.0);
-        assert!(result.is_ok());
-
-        let deltas = result.unwrap();
+        let deltas = metal_delta_encode_f32(&values, 0.0).expect("Delta encoding should succeed");
         assert_eq!(deltas.len(), 4);
         assert_eq!(deltas[0], 1);
         assert_eq!(deltas[1], 2);
@@ -1323,8 +1316,8 @@ mod tests {
         let values = vec![10.0f32, 20.0, 30.0, 40.0];
         let base = 5.0;
 
-        let deltas = metal_delta_encode_f32(&values, base).unwrap();
-        let decoded = metal_delta_decode_f32(&deltas, base).unwrap();
+        let deltas = metal_delta_encode_f32(&values, base).expect("Delta encoding should succeed");
+        let decoded = metal_delta_decode_f32(&deltas, base).expect("Delta decoding should succeed");
 
         for (original, recovered) in values.iter().zip(decoded.iter()) {
             assert!((original - recovered).abs() < 0.01);
@@ -1337,8 +1330,8 @@ mod tests {
         let values: Vec<f32> = (0..1000).map(|i| i as f32 * 1.5).collect();
         let base = 100.0;
 
-        let deltas = metal_delta_encode_f32(&values, base).unwrap();
-        let decoded = metal_delta_decode_f32(&deltas, base).unwrap();
+        let deltas = metal_delta_encode_f32(&values, base).expect("Delta encoding should succeed");
+        let decoded = metal_delta_decode_f32(&deltas, base).expect("Delta decoding should succeed");
 
         assert_eq!(values.len(), decoded.len());
         for (original, recovered) in values.iter().zip(decoded.iter()) {
@@ -1352,9 +1345,10 @@ mod tests {
         let reference = 100;
         let bits = 8;
 
-        let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
-        let decoded =
-            metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
+        let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits)
+            .expect("Frame-of-reference encoding should succeed");
+        let decoded = metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len())
+            .expect("Frame-of-reference decoding should succeed");
 
         assert_eq!(values.len(), decoded.len());
         for (original, recovered) in values.iter().zip(decoded.iter()) {
@@ -1374,10 +1368,11 @@ mod tests {
 
         // Test different bit widths
         for bits in [4, 8, 16, 24, 32] {
-            let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
+            let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits)
+                .expect("Frame-of-reference encoding should succeed");
             let decoded =
                 metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len())
-                    .unwrap();
+                    .expect("Frame-of-reference decoding should succeed");
 
             assert_eq!(values.len(), decoded.len(), "Failed for {} bits", bits);
             for (i, (original, recovered)) in values.iter().zip(decoded.iter()).enumerate() {
@@ -1400,9 +1395,10 @@ mod tests {
         let reference = 1000;
         let bits = 16;
 
-        let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
-        let decoded =
-            metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
+        let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits)
+            .expect("Frame-of-reference encoding should succeed");
+        let decoded = metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len())
+            .expect("Frame-of-reference decoding should succeed");
 
         assert_eq!(values.len(), decoded.len());
         for (i, (original, recovered)) in values.iter().zip(decoded.iter()).enumerate() {
@@ -1421,8 +1417,10 @@ mod tests {
         let values = vec![1.5f32, 2.5, 3.5, 4.5];
         let bits = 16;
 
-        let encoded = metal_bitpack_encode_f32(&values, bits).unwrap();
-        let decoded = metal_bitpack_decode_f32(&encoded, bits, values.len()).unwrap();
+        let encoded =
+            metal_bitpack_encode_f32(&values, bits).expect("Bitpack encoding should succeed");
+        let decoded = metal_bitpack_decode_f32(&encoded, bits, values.len())
+            .expect("Bitpack decoding should succeed");
 
         assert_eq!(values.len(), decoded.len());
         // Note: Bit-packing loses precision, so we just check the data survived
@@ -1434,8 +1432,10 @@ mod tests {
         let values = vec![-10.0f32, -5.0, 0.0, 5.0, 10.0];
         let bits = 16;
 
-        let encoded = metal_zigzag_encode_f32(&values, bits).unwrap();
-        let decoded = metal_zigzag_decode_f32(&encoded, bits, values.len()).unwrap();
+        let encoded =
+            metal_zigzag_encode_f32(&values, bits).expect("Zigzag encoding should succeed");
+        let decoded = metal_zigzag_decode_f32(&encoded, bits, values.len())
+            .expect("Zigzag decoding should succeed");
 
         assert_eq!(values.len(), decoded.len());
         // Zigzag encoding is designed for signed integers
@@ -1447,10 +1447,7 @@ mod tests {
     fn test_metal_gpu_device_info() {
         use metal_ffi::RawMetalContext;
 
-        let ctx = RawMetalContext::new();
-        assert!(ctx.is_ok(), "Failed to create Metal context");
-
-        let ctx = ctx.unwrap();
+        let ctx = RawMetalContext::new().expect("Failed to create Metal context");
         let device_name = ctx.device.name();
         assert!(!device_name.is_empty(), "Device name should not be empty");
         assert!(

@@ -6,7 +6,7 @@
 use anyhow::{Result, anyhow};
 use regex::Regex;
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, error, warn};
 
 use super::ast::*;
 use super::fusion::FusionStrategy;
@@ -19,14 +19,41 @@ pub struct QueryDecomposer {
 
 /// Compiled regex patterns for query parsing
 struct QueryPatterns {
-    vector_similar: Regex,
-    vector_distance: Regex,
+    vector_similar: Option<Regex>,
+    vector_distance: Option<Regex>,
     #[allow(dead_code)]
-    json_path: Regex,
-    graph_traverse: Regex,
-    graph_connected: Regex,
-    log_query: Regex,
-    metric_query: Regex,
+    json_path: Option<Regex>,
+    graph_traverse: Option<Regex>,
+    graph_connected: Option<Regex>,
+    log_query: Option<Regex>,
+    metric_query: Option<Regex>,
+}
+
+fn compile_pattern(pattern_name: &str, pattern: &str) -> Option<Regex> {
+    match Regex::new(pattern) {
+        Ok(compiled) => Some(compiled),
+        Err(regex_error) => {
+            error!(
+                pattern_name,
+                error = %regex_error,
+                "Unified query regex failed to compile; related capability disabled"
+            );
+            None
+        }
+    }
+}
+
+fn current_time_nanos() -> i64 {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos() as i64,
+        Err(clock_error) => {
+            warn!(
+                error = %clock_error,
+                "System clock moved backwards; using epoch for observability time bounds"
+            );
+            0
+        }
+    }
 }
 
 impl QueryDecomposer {
@@ -34,34 +61,34 @@ impl QueryDecomposer {
     pub fn new() -> Self {
         Self {
             patterns: QueryPatterns {
-                // VECTOR_SIMILAR(field, query_vector, threshold)
-                vector_similar: Regex::new(
-                    r"(?i)VECTOR_SIMILAR\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*(?:,\s*([0-9.]+))?\s*\)"
-                ).unwrap(),
-                // VECTOR_DISTANCE(field, query_vector)
-                vector_distance: Regex::new(
-                    r"(?i)VECTOR_DISTANCE\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)"
-                ).unwrap(),
-                // $.path.to.field
-                json_path: Regex::new(
-                    r"\$\.[\w.]+\s*(?:=|!=|>|>=|<|<=|LIKE|IN|CONTAINS)\s*[^AND OR]+"
-                ).unwrap(),
-                // GRAPH_TRAVERSE(graph, edge_type, depth)
-                graph_traverse: Regex::new(
-                    r"(?i)GRAPH_TRAVERSE\s*\(\s*([^,]+)\s*,\s*'([^']+)'\s*(?:,\s*(\d+))?\s*\)"
-                ).unwrap(),
-                // GRAPH_CONNECTED(source, edge_type, target)
-                graph_connected: Regex::new(
-                    r"(?i)GRAPH_CONNECTED\s*\(\s*([^,]+)\s*,\s*'([^']+)'\s*,\s*([^)]+)\s*\)"
-                ).unwrap(),
-                // LOG_QUERY(namespace, start, end, query)
-                log_query: Regex::new(
-                    r"(?i)LOG_QUERY\s*\(\s*'([^']+)'\s*(?:,\s*([^,]+)\s*,\s*([^,]+))?\s*\)"
-                ).unwrap(),
-                // METRIC_AGG(namespace, metric, agg_type)
-                metric_query: Regex::new(
-                    r"(?i)METRIC_(?:AGG|QUERY)\s*\(\s*'([^']+)'\s*,\s*'([^']+)'\s*(?:,\s*'([^']+)')?\s*\)"
-                ).unwrap(),
+                vector_similar: compile_pattern(
+                    "VECTOR_SIMILAR",
+                    r"(?i)VECTOR_SIMILAR\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*(?:,\s*([0-9.]+))?\s*\)",
+                ),
+                vector_distance: compile_pattern(
+                    "VECTOR_DISTANCE",
+                    r"(?i)VECTOR_DISTANCE\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)",
+                ),
+                json_path: compile_pattern(
+                    "JSON_PATH",
+                    r"\$\.[\w.]+\s*(?:=|!=|>|>=|<|<=|LIKE|IN|CONTAINS)\s*[^AND OR]+",
+                ),
+                graph_traverse: compile_pattern(
+                    "GRAPH_TRAVERSE",
+                    r"(?i)GRAPH_TRAVERSE\s*\(\s*([^,]+)\s*,\s*'([^']+)'\s*(?:,\s*(\d+))?\s*\)",
+                ),
+                graph_connected: compile_pattern(
+                    "GRAPH_CONNECTED",
+                    r"(?i)GRAPH_CONNECTED\s*\(\s*([^,]+)\s*,\s*'([^']+)'\s*,\s*([^)]+)\s*\)",
+                ),
+                log_query: compile_pattern(
+                    "LOG_QUERY",
+                    r"(?i)LOG_QUERY\s*\(\s*'([^']+)'\s*(?:,\s*([^,]+)\s*,\s*([^,]+))?\s*\)",
+                ),
+                metric_query: compile_pattern(
+                    "METRIC_QUERY",
+                    r"(?i)METRIC_(?:AGG|QUERY)\s*\(\s*'([^']+)'\s*,\s*'([^']+)'\s*(?:,\s*'([^']+)')?\s*\)",
+                ),
             },
         }
     }
@@ -128,41 +155,53 @@ impl QueryDecomposer {
     /// Extract vector search component from query
     fn extract_vector_component(&self, query: &str) -> Result<Option<QueryComponent>> {
         // Check for VECTOR_SIMILAR
-        if let Some(caps) = self.patterns.vector_similar.captures(query) {
-            let _field = caps
-                .get(1)
-                .map(|m| m.as_str().trim())
-                .unwrap_or("embedding");
-            let threshold = caps.get(3).and_then(|m| m.as_str().parse::<f32>().ok());
+        if let Some(vector_similar) = self.patterns.vector_similar.as_ref() {
+            if let Some(caps) = vector_similar.captures(query) {
+                let _field = caps
+                    .get(1)
+                    .map(|m| m.as_str().trim())
+                    // TD-007: unwrap_or with safe default - "embedding" is standard field name
+                    .unwrap_or("embedding");
+                let threshold = caps.get(3).and_then(|m| m.as_str().parse::<f32>().ok());
 
-            // Extract collection from FROM clause
-            let collection = self
-                .extract_collection(query)
-                .unwrap_or("default".to_string());
+                // Extract collection from FROM clause
+                let collection = self
+                    .extract_collection(query)
+                    // TD-007: unwrap_or with safe default - "default" collection for unspecified queries
+                    .unwrap_or("default".to_string());
 
-            // Extract top_k from LIMIT
-            let top_k = self.extract_limit(query).unwrap_or(10);
+                // Extract top_k from LIMIT
+                // TD-007: unwrap_or with safe default - 10 is reasonable default for result limit
+                let top_k = self.extract_limit(query).unwrap_or(10);
 
-            return Ok(Some(QueryComponent {
-                model: DataModel::Vector,
-                operation: ModelOperation::VectorSearch(VectorSearchExpr {
-                    collection,
-                    query_vector: vec![], // Will be filled from parameters
-                    top_k,
-                    threshold,
-                    metric: self.infer_distance_metric(query),
-                    params: VectorSearchParams::default(),
-                }),
-                filters: vec![],
-                dependencies: vec![],
-            }));
+                return Ok(Some(QueryComponent {
+                    model: DataModel::Vector,
+                    operation: ModelOperation::VectorSearch(VectorSearchExpr {
+                        collection,
+                        query_vector: vec![], // Will be filled from parameters
+                        top_k,
+                        threshold,
+                        metric: self.infer_distance_metric(query),
+                        params: VectorSearchParams::default(),
+                    }),
+                    filters: vec![],
+                    dependencies: vec![],
+                }));
+            }
         }
 
         // Check for ORDER BY VECTOR_DISTANCE
-        if self.patterns.vector_distance.is_match(query) {
+        if self
+            .patterns
+            .vector_distance
+            .as_ref()
+            .is_some_and(|pattern| pattern.is_match(query))
+        {
             let collection = self
                 .extract_collection(query)
+                // TD-007: unwrap_or with safe default - "default" collection for unspecified queries
                 .unwrap_or("default".to_string());
+            // TD-007: unwrap_or with safe default - 10 is reasonable default for result limit
             let top_k = self.extract_limit(query).unwrap_or(10);
 
             return Ok(Some(QueryComponent {
@@ -194,6 +233,7 @@ impl QueryDecomposer {
 
         let collection = self
             .extract_collection(query)
+            // TD-007: unwrap_or with safe default - "documents" collection for document queries
             .unwrap_or("documents".to_string());
 
         Ok(Some(QueryComponent {
@@ -218,73 +258,81 @@ impl QueryDecomposer {
         prev_component_count: usize,
     ) -> Result<Option<QueryComponent>> {
         // Check for GRAPH_TRAVERSE
-        if let Some(caps) = self.patterns.graph_traverse.captures(query) {
-            let graph_name = caps
-                .get(1)
-                .map(|m| m.as_str().trim().to_string())
-                .unwrap_or("default".to_string());
-            let edge_type = caps
-                .get(2)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or("*".to_string());
-            let max_depth = caps
-                .get(3)
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-                .unwrap_or(2);
+        if let Some(graph_traverse) = self.patterns.graph_traverse.as_ref() {
+            if let Some(caps) = graph_traverse.captures(query) {
+                let graph_name = caps
+                    .get(1)
+                    .map(|m| m.as_str().trim().to_string())
+                    // TD-007: unwrap_or with safe default - "default" graph for unspecified queries
+                    .unwrap_or("default".to_string());
+                let edge_type = caps
+                    .get(2)
+                    .map(|m| m.as_str().to_string())
+                    // TD-007: unwrap_or with safe default - "*" matches all edge types
+                    .unwrap_or("*".to_string());
+                let max_depth = caps
+                    .get(3)
+                    .and_then(|m| m.as_str().parse::<u32>().ok())
+                    // TD-007: unwrap_or with safe default - depth 2 is reasonable for graph traversal
+                    .unwrap_or(2);
 
-            // Check if this depends on a previous component
-            let dependencies = if prev_component_count > 0 && query.contains("JOIN") {
-                vec![ComponentDependency {
-                    component_index: prev_component_count - 1,
-                    join_field: "id".to_string(),
-                    join_type: JoinType::Inner,
-                }]
-            } else {
-                vec![]
-            };
+                // Check if this depends on a previous component
+                let dependencies = if prev_component_count > 0 && query.contains("JOIN") {
+                    vec![ComponentDependency {
+                        component_index: prev_component_count - 1,
+                        join_field: "id".to_string(),
+                        join_type: JoinType::Inner,
+                    }]
+                } else {
+                    vec![]
+                };
 
-            return Ok(Some(QueryComponent {
-                model: DataModel::Graph,
-                operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
-                    graph_name,
-                    start_nodes: StartNodeSpec::Label("*".to_string()),
-                    edge_types: vec![edge_type],
-                    direction: TraversalDirection::Outgoing,
-                    max_depth,
-                    min_depth: 1,
-                    node_filters: vec![],
-                    edge_filters: vec![],
-                    return_paths: query.to_lowercase().contains("path"),
-                }),
-                filters: vec![],
-                dependencies,
-            }));
+                return Ok(Some(QueryComponent {
+                    model: DataModel::Graph,
+                    operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
+                        graph_name,
+                        start_nodes: StartNodeSpec::Label("*".to_string()),
+                        edge_types: vec![edge_type],
+                        direction: TraversalDirection::Outgoing,
+                        max_depth,
+                        min_depth: 1,
+                        node_filters: vec![],
+                        edge_filters: vec![],
+                        return_paths: query.to_lowercase().contains("path"),
+                    }),
+                    filters: vec![],
+                    dependencies,
+                }));
+            }
         }
 
         // Check for GRAPH_CONNECTED
-        if let Some(caps) = self.patterns.graph_connected.captures(query) {
-            let graph_name = "default".to_string(); // Would need to infer from context
-            let edge_type = caps
-                .get(2)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or("*".to_string());
+        if let Some(graph_connected) = self.patterns.graph_connected.as_ref() {
+            if let Some(caps) = graph_connected.captures(query) {
+                let graph_name = "default".to_string(); // Would need to infer from context
+                let edge_type = caps
+                    .get(2)
+                    .map(|m| m.as_str().to_string())
+                    // TD-007: unwrap_or with safe default - "*" matches all edge types
+                    .unwrap_or("*".to_string());
 
-            return Ok(Some(QueryComponent {
-                model: DataModel::Graph,
-                operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
-                    graph_name,
-                    start_nodes: StartNodeSpec::Label("*".to_string()),
-                    edge_types: vec![edge_type],
-                    direction: TraversalDirection::Both,
-                    max_depth: 1,
-                    min_depth: 1,
-                    node_filters: vec![],
-                    edge_filters: vec![],
-                    return_paths: false,
-                }),
-                filters: vec![],
-                dependencies: vec![],
-            }));
+                return Ok(Some(QueryComponent {
+                    model: DataModel::Graph,
+                    operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
+                        graph_name,
+                        start_nodes: StartNodeSpec::Label("*".to_string()),
+                        edge_types: vec![edge_type],
+                        direction: TraversalDirection::Both,
+                        max_depth: 1,
+                        min_depth: 1,
+                        node_filters: vec![],
+                        edge_filters: vec![],
+                        return_paths: false,
+                    }),
+                    filters: vec![],
+                    dependencies: vec![],
+                }));
+            }
         }
 
         Ok(None)
@@ -293,83 +341,86 @@ impl QueryDecomposer {
     /// Extract observability component from query
     fn extract_observability_component(&self, query: &str) -> Result<Option<QueryComponent>> {
         // Check for LOG_QUERY
-        if let Some(caps) = self.patterns.log_query.captures(query) {
-            let namespace = caps
-                .get(1)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or("default".to_string());
+        if let Some(log_query) = self.patterns.log_query.as_ref() {
+            if let Some(caps) = log_query.captures(query) {
+                let namespace = caps
+                    .get(1)
+                    .map(|m| m.as_str().to_string())
+                    // TD-007: unwrap_or with safe default - "default" namespace for observability queries
+                    .unwrap_or("default".to_string());
 
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as i64;
-            let hour_ago = now - 3_600_000_000_000; // 1 hour in nanoseconds
+                let now = current_time_nanos();
+                let hour_ago = now - 3_600_000_000_000; // 1 hour in nanoseconds
 
-            return Ok(Some(QueryComponent {
-                model: DataModel::Observability,
-                operation: ModelOperation::LogQuery(LogQueryExpr {
-                    namespace,
-                    start_time_ns: hour_ago,
-                    end_time_ns: now,
-                    query: None,
-                    severities: vec![],
-                    services: vec![],
-                    limit: self.extract_limit(query).unwrap_or(100),
-                }),
-                filters: vec![],
-                dependencies: vec![],
-            }));
+                return Ok(Some(QueryComponent {
+                    model: DataModel::Observability,
+                    operation: ModelOperation::LogQuery(LogQueryExpr {
+                        namespace,
+                        start_time_ns: hour_ago,
+                        end_time_ns: now,
+                        query: None,
+                        severities: vec![],
+                        services: vec![],
+                        // TD-007: unwrap_or with safe default - 100 is reasonable for log query limit
+                        limit: self.extract_limit(query).unwrap_or(100),
+                    }),
+                    filters: vec![],
+                    dependencies: vec![],
+                }));
+            }
         }
 
         // Check for METRIC_AGG
-        if let Some(caps) = self.patterns.metric_query.captures(query) {
-            let namespace = caps
-                .get(1)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or("default".to_string());
-            let metric_name = caps
-                .get(2)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or("*".to_string());
-            let agg_type = caps
-                .get(3)
-                .map(|m| m.as_str().to_uppercase())
-                .unwrap_or("AVG".to_string());
+        if let Some(metric_query) = self.patterns.metric_query.as_ref() {
+            if let Some(caps) = metric_query.captures(query) {
+                let namespace = caps
+                    .get(1)
+                    .map(|m| m.as_str().to_string())
+                    // TD-007: unwrap_or with safe default - "default" namespace for metric queries
+                    .unwrap_or("default".to_string());
+                let metric_name = caps
+                    .get(2)
+                    .map(|m| m.as_str().to_string())
+                    // TD-007: unwrap_or with safe default - "*" matches all metrics
+                    .unwrap_or("*".to_string());
+                let agg_type = caps
+                    .get(3)
+                    .map(|m| m.as_str().to_uppercase())
+                    // TD-007: unwrap_or with safe default - "AVG" is standard aggregation
+                    .unwrap_or("AVG".to_string());
 
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as i64;
-            let hour_ago = now - 3_600_000_000_000;
+                let now = current_time_nanos();
+                let hour_ago = now - 3_600_000_000_000;
 
-            let aggregation = match agg_type.as_str() {
-                "SUM" => MetricAggregation::Sum,
-                "AVG" => MetricAggregation::Avg,
-                "MIN" => MetricAggregation::Min,
-                "MAX" => MetricAggregation::Max,
-                "COUNT" => MetricAggregation::Count,
-                "P50" => MetricAggregation::P50,
-                "P90" => MetricAggregation::P90,
-                "P95" => MetricAggregation::P95,
-                "P99" => MetricAggregation::P99,
-                "RATE" => MetricAggregation::Rate,
-                _ => MetricAggregation::Avg,
-            };
+                let aggregation = match agg_type.as_str() {
+                    "SUM" => MetricAggregation::Sum,
+                    "AVG" => MetricAggregation::Avg,
+                    "MIN" => MetricAggregation::Min,
+                    "MAX" => MetricAggregation::Max,
+                    "COUNT" => MetricAggregation::Count,
+                    "P50" => MetricAggregation::P50,
+                    "P90" => MetricAggregation::P90,
+                    "P95" => MetricAggregation::P95,
+                    "P99" => MetricAggregation::P99,
+                    "RATE" => MetricAggregation::Rate,
+                    _ => MetricAggregation::Avg,
+                };
 
-            return Ok(Some(QueryComponent {
-                model: DataModel::Observability,
-                operation: ModelOperation::MetricQuery(MetricQueryExpr {
-                    namespace,
-                    metric_name,
-                    start_time_ns: hour_ago,
-                    end_time_ns: now,
-                    aggregation,
-                    group_by: vec![],
-                    label_filters: HashMap::new(),
-                }),
-                filters: vec![],
-                dependencies: vec![],
-            }));
+                return Ok(Some(QueryComponent {
+                    model: DataModel::Observability,
+                    operation: ModelOperation::MetricQuery(MetricQueryExpr {
+                        namespace,
+                        metric_name,
+                        start_time_ns: hour_ago,
+                        end_time_ns: now,
+                        aggregation,
+                        group_by: vec![],
+                        label_filters: HashMap::new(),
+                    }),
+                    filters: vec![],
+                    dependencies: vec![],
+                }));
+            }
         }
 
         Ok(None)
@@ -389,16 +440,27 @@ impl QueryDecomposer {
         let mut filters = Vec::new();
 
         // Match patterns like $.field = 'value' or $.field > 10
-        let path_filter_pattern = Regex::new(
-            r"\$\.(\w+(?:\.\w+)*)\s*(=|!=|>|>=|<|<=|LIKE|IN|CONTAINS)\s*('[^']*'|\d+(?:\.\d+)?|\btrue\b|\bfalse\b|\bnull\b)"
-        ).unwrap();
+        let path_filter_pattern = match Regex::new(
+            r"\$\.(\w+(?:\.\w+)*)\s*(=|!=|>|>=|<|<=|LIKE|IN|CONTAINS)\s*('[^']*'|\d+(?:\.\d+)?|\btrue\b|\bfalse\b|\bnull\b)",
+        ) {
+            Ok(pattern) => pattern,
+            Err(regex_error) => {
+                error!(
+                    error = %regex_error,
+                    "PATH_FILTER regex failed to compile; document path filters disabled"
+                );
+                return filters;
+            }
+        };
 
         for caps in path_filter_pattern.captures_iter(query) {
+            // TD-007: unwrap_or with safe default - empty path if not captured
             let path = format!("$.{}", caps.get(1).map(|m| m.as_str()).unwrap_or(""));
             let op_str = caps
                 .get(2)
                 .map(|m| m.as_str().to_uppercase())
                 .unwrap_or_default();
+            // TD-007: unwrap_or with safe default - empty value if not captured
             let value_str = caps.get(3).map(|m| m.as_str()).unwrap_or("");
 
             let operator = match op_str.as_str() {
@@ -473,9 +535,11 @@ impl QueryDecomposer {
         let order_pattern =
             Regex::new(r"(?i)ORDER\s+BY\s+\$\.(\w+(?:\.\w+)*)\s*(ASC|DESC)?").ok()?;
         order_pattern.captures(query).map(|caps| {
+            // TD-007: unwrap_or with safe default - empty path if not captured
             let path = format!("$.{}", caps.get(1).map(|m| m.as_str()).unwrap_or(""));
             let ascending = caps
                 .get(2)
+                // TD-007: unwrap_or with safe default - true means ascending order
                 .map(|m| m.as_str().to_uppercase() != "DESC")
                 .unwrap_or(true);
             DocumentSort { path, ascending }
@@ -501,6 +565,7 @@ impl QueryDecomposer {
                 .unwrap_or_default();
             let ascending = caps
                 .get(2)
+                // TD-007: unwrap_or with safe default - true means ascending order
                 .map(|m| m.as_str().to_uppercase() != "DESC")
                 .unwrap_or(true);
             OrderBy { field, ascending }

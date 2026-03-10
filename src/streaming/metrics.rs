@@ -94,159 +94,154 @@ pub struct StreamMetrics {
 impl StreamMetrics {
     /// Create a new StreamMetrics instance
     pub fn new() -> Self {
-        Self {
+        Self::try_new().unwrap_or_else(|_| {
+            Self::build_with_prefix("proximadb_stream_fallback").unwrap_or_else(|_| {
+                unreachable!("stream metric descriptors are static and should always validate")
+            })
+        })
+    }
+
+    /// Fallible constructor used by startup paths that prefer error handling.
+    pub fn try_new() -> Result<Self, prometheus::Error> {
+        Self::build_with_prefix("proximadb_stream")
+    }
+
+    fn build_with_prefix(prefix: &str) -> Result<Self, prometheus::Error> {
+        Ok(Self {
             active_streams: Gauge::new(
-                "proximadb_stream_active_count",
+                format!("{prefix}_active_count"),
                 "Number of active streaming sessions",
-            )
-            .unwrap(),
+            )?,
 
             records_received_total: Counter::new(
-                "proximadb_stream_records_received_total",
+                format!("{prefix}_records_received_total"),
                 "Total records received via streaming",
-            )
-            .unwrap(),
+            )?,
 
             records_processed_total: Counter::new(
-                "proximadb_stream_records_processed_total",
+                format!("{prefix}_records_processed_total"),
                 "Total records processed and flushed to storage",
-            )
-            .unwrap(),
+            )?,
 
             records_dropped_total: Counter::new(
-                "proximadb_stream_records_dropped_total",
+                format!("{prefix}_records_dropped_total"),
                 "Total records dropped due to backpressure",
-            )
-            .unwrap(),
+            )?,
 
             records_by_collection: CounterVec::new(
                 Opts::new(
-                    "proximadb_stream_records_by_collection_total",
+                    format!("{prefix}_records_by_collection_total"),
                     "Records received by collection",
                 ),
                 &["collection"],
-            )
-            .unwrap(),
+            )?,
 
             buffer_utilization: GaugeVec::new(
                 Opts::new(
-                    "proximadb_stream_buffer_utilization",
+                    format!("{prefix}_buffer_utilization"),
                     "Buffer utilization ratio (0.0 - 1.0)",
                 ),
                 &["stream_id"],
-            )
-            .unwrap(),
+            )?,
 
             backpressure_events: CounterVec::new(
                 Opts::new(
-                    "proximadb_stream_backpressure_events_total",
+                    format!("{prefix}_backpressure_events_total"),
                     "Backpressure events by level",
                 ),
                 &["level"],
-            )
-            .unwrap(),
+            )?,
 
             ingestion_latency: Histogram::with_opts(
                 HistogramOpts::new(
-                    "proximadb_stream_ingestion_latency_seconds",
+                    format!("{prefix}_ingestion_latency_seconds"),
                     "Time from record receipt to buffer insertion",
                 )
                 .buckets(vec![
                     0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0,
                 ]),
-            )
-            .unwrap(),
+            )?,
 
             ingestion_latency_by_collection: HistogramVec::new(
                 HistogramOpts::new(
-                    "proximadb_stream_ingestion_latency_by_collection_seconds",
+                    format!("{prefix}_ingestion_latency_by_collection_seconds"),
                     "Ingestion latency by collection",
                 )
                 .buckets(vec![
                     0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0,
                 ]),
                 &["collection"],
-            )
-            .unwrap(),
+            )?,
 
             flush_latency: Histogram::with_opts(
                 HistogramOpts::new(
-                    "proximadb_stream_flush_latency_seconds",
+                    format!("{prefix}_flush_latency_seconds"),
                     "Time to flush buffer to storage",
                 )
                 .buckets(vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0]),
-            )
-            .unwrap(),
+            )?,
 
             batch_size: Histogram::with_opts(
-                HistogramOpts::new("proximadb_stream_batch_size", "Number of records per batch")
-                    .buckets(vec![1.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0]),
-            )
-            .unwrap(),
+                HistogramOpts::new(
+                    format!("{prefix}_batch_size"),
+                    "Number of records per batch",
+                )
+                .buckets(vec![1.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0]),
+            )?,
 
             rate_limit_rejections: Counter::new(
-                "proximadb_stream_rate_limit_rejections_total",
+                format!("{prefix}_rate_limit_rejections_total"),
                 "Total rate limit rejections",
-            )
-            .unwrap(),
+            )?,
 
             sessions_created_total: Counter::new(
-                "proximadb_stream_sessions_created_total",
+                format!("{prefix}_sessions_created_total"),
                 "Total streaming sessions created",
-            )
-            .unwrap(),
+            )?,
 
             sessions_closed_total: Counter::new(
-                "proximadb_stream_sessions_closed_total",
+                format!("{prefix}_sessions_closed_total"),
                 "Total streaming sessions closed normally",
-            )
-            .unwrap(),
+            )?,
 
             sessions_timed_out_total: Counter::new(
-                "proximadb_stream_sessions_timed_out_total",
+                format!("{prefix}_sessions_timed_out_total"),
                 "Total streaming sessions timed out",
-            )
-            .unwrap(),
+            )?,
 
             flush_success_total: Counter::new(
-                "proximadb_stream_flush_success_total",
+                format!("{prefix}_flush_success_total"),
                 "Total successful flush operations",
-            )
-            .unwrap(),
+            )?,
 
             flush_failure_total: Counter::new(
-                "proximadb_stream_flush_failure_total",
+                format!("{prefix}_flush_failure_total"),
                 "Total failed flush operations",
-            )
-            .unwrap(),
+            )?,
 
             flush_retries_total: Counter::new(
-                "proximadb_stream_flush_retries_total",
+                format!("{prefix}_flush_retries_total"),
                 "Total flush retry attempts",
-            )
-            .unwrap(),
+            )?,
 
             records_flushed_total: Counter::new(
-                "proximadb_stream_records_flushed_total",
+                format!("{prefix}_records_flushed_total"),
                 "Total records flushed to storage",
-            )
-            .unwrap(),
+            )?,
 
             bytes_flushed_total: Counter::new(
-                "proximadb_stream_bytes_flushed_total",
+                format!("{prefix}_bytes_flushed_total"),
                 "Total bytes flushed to storage",
-            )
-            .unwrap(),
+            )?,
 
             flush_by_collection: CounterVec::new(
                 Opts::new(
-                    "proximadb_stream_flush_by_collection_total",
+                    format!("{prefix}_flush_by_collection_total"),
                     "Flush operations by collection",
                 ),
                 &["collection", "status"],
-            )
-            .unwrap(),
-        }
+            )?,
+        })
     }
 
     /// Register all metrics with a Prometheus registry

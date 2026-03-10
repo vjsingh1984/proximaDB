@@ -214,8 +214,8 @@ mod tests {
         let values = vec![1.0f32, 2.0, 3.0, 4.0, 5.0];
         let base = 0;
 
-        let encoded = encode_f32(&values, base).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, base).expect("Failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode f32 values");
 
         assert_eq!(values, decoded);
     }
@@ -225,8 +225,8 @@ mod tests {
         let values = vec![100i64, 200, 300, 400, 500];
         let base = 0;
 
-        let encoded = encode_i64(&values, base).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, base).expect("Failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("Failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -236,8 +236,9 @@ mod tests {
         let values: Vec<i64> = (0..1000).collect();
         let base = 0;
 
-        let encoded = encode_i64(&values, base).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, base).expect("Failed to encode sequential i64 values");
+        let decoded =
+            decode_i64(&encoded, values.len()).expect("Failed to decode sequential i64 values");
 
         assert_eq!(values, decoded);
 
@@ -258,8 +259,9 @@ mod tests {
         let values = vec![i32::MIN, i32::MAX, i32::MIN, i32::MAX];
         let base = 0;
 
-        let encoded = encode_i32(&values, base).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, base).expect("Failed to encode i32 extreme values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("Failed to decode i32 extreme values");
 
         assert_eq!(values, decoded, "Failed to roundtrip i32 extremes");
     }
@@ -275,8 +277,9 @@ mod tests {
         ];
         let base = 0;
 
-        let encoded = encode_f32(&values, base).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, base).expect("Failed to encode f32 extreme bit patterns");
+        let decoded =
+            decode_f32(&encoded, values.len()).expect("Failed to decode f32 extreme bit patterns");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -296,8 +299,10 @@ mod tests {
         let values = vec![i32::MIN, i32::MAX, i32::MIN, i32::MAX, i32::MIN, i32::MAX];
         let base = 0;
 
-        let encoded = encode_i32(&values, base).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded =
+            encode_i32(&values, base).expect("Failed to encode alternating extreme i32 values");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("Failed to decode alternating extreme i32 values");
 
         assert_eq!(values, decoded, "Failed to handle alternating extremes");
     }
@@ -308,8 +313,9 @@ mod tests {
         let values = vec![i64::MIN, i64::MIN / 2, 0i64, i64::MAX / 2, i64::MAX];
         let base = 0;
 
-        let encoded = encode_i64(&values, base).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, base).expect("Failed to encode i64 full range values");
+        let decoded =
+            decode_i64(&encoded, values.len()).expect("Failed to decode i64 full range values");
 
         assert_eq!(values, decoded, "Failed to handle i64 extremes");
     }
@@ -327,8 +333,9 @@ mod tests {
         ];
         let base = 0;
 
-        let encoded = encode_f32(&values, base).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, base).expect("Failed to encode f32 special values");
+        let decoded =
+            decode_f32(&encoded, values.len()).expect("Failed to decode f32 special values");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {

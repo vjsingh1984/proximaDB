@@ -217,7 +217,7 @@ async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
     }
 
     // Merge and return top-k
-    candidates.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+    candidates.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
     Ok(SearchResponse {
         results: candidates.into_iter().take(request.top_k).collect(),
     })

@@ -230,7 +230,12 @@ impl StreamingService for StreamingServiceImpl {
                             session_id = Some(StreamId::from_string(request.session_id.clone()));
                         }
 
-                        let sid = session_id.as_ref().unwrap();
+                        let Some(sid) = session_id.as_ref() else {
+                            let _ = tx
+                                .send(Err(Status::internal("Missing streaming session ID")))
+                                .await;
+                            continue;
+                        };
 
                         // Convert proto vectors to internal format
                         let records: Vec<VectorRecord> = request.vectors;
@@ -455,7 +460,14 @@ impl StreamingService for StreamingServiceImpl {
                         }
                     }
 
-                    let sid = session_id.as_ref().unwrap();
+                    let Some(sid) = session_id.as_ref() else {
+                        errors.push(BatchError {
+                            batch_sequence: batch.batch_sequence,
+                            message: "Missing streaming session ID".to_string(),
+                            vectors_affected: batch.vectors.len() as u32,
+                        });
+                        continue;
+                    };
                     let batch_size = batch.vectors.len() as u64;
 
                     // Push records

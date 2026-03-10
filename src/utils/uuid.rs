@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(simple.len(), 32); // Without hyphens
 
         // Parse back
-        let parsed = Uuid::parse(&hyphenated).unwrap();
+        let parsed = Uuid::parse(&hyphenated).expect("Failed to parse hyphenated UUID string");
         assert_eq!(uuid, parsed);
     }
 
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn test_uuid_parse_hyphenated() {
         let uuid_str = "12345678-9abc-def0-1122-334455667788";
-        let uuid = Uuid::parse(uuid_str).unwrap();
+        let uuid = Uuid::parse(uuid_str).expect("Failed to parse hyphenated UUID string");
         let expected_bytes = [
             0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
             0x77, 0x88,
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn test_uuid_parse_simple() {
         let uuid_str = "123456789abcdef01122334455667788";
-        let uuid = Uuid::parse(uuid_str).unwrap();
+        let uuid = Uuid::parse(uuid_str).expect("Failed to parse simple UUID string");
         let expected_bytes = [
             0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
             0x77, 0x88,
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn test_uuid_parse_mixed_case() {
         let uuid_str = "12345678-9ABC-DEF0-1122-334455667788";
-        let uuid = Uuid::parse(uuid_str).unwrap();
+        let uuid = Uuid::parse(uuid_str).expect("Failed to parse mixed-case UUID string");
         let expected_bytes = [
             0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
             0x77, 0x88,
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn test_uuid_parse_with_extra_hyphens() {
         let uuid_str = "12-34-56-78-9abc-def0-1122-334455667788";
-        let uuid = Uuid::parse(uuid_str).unwrap();
+        let uuid = Uuid::parse(uuid_str).expect("Failed to parse UUID string with extra hyphens");
         let expected_bytes = [
             0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
             0x77, 0x88,
@@ -383,12 +383,14 @@ mod tests {
 
             // Test hyphenated roundtrip
             let hyphenated = original.to_hyphenated_string();
-            let parsed_hyphenated = Uuid::parse(&hyphenated).unwrap();
+            let parsed_hyphenated = Uuid::parse(&hyphenated)
+                .expect("Failed to parse hyphenated UUID in roundtrip test");
             assert_eq!(original, parsed_hyphenated);
 
             // Test simple roundtrip
             let simple = original.to_simple_string();
-            let parsed_simple = Uuid::parse(&simple).unwrap();
+            let parsed_simple =
+                Uuid::parse(&simple).expect("Failed to parse simple UUID in roundtrip test");
             assert_eq!(original, parsed_simple);
         }
     }
@@ -420,16 +422,21 @@ mod tests {
                 for _ in 0..count / thread_count {
                     local_uuids.push(Uuid::new_v4());
                 }
-                results.lock().unwrap().extend(local_uuids);
+                results
+                    .lock()
+                    .expect("Failed to lock results mutex for extend")
+                    .extend(local_uuids);
             });
             handles.push(handle);
         }
 
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("Failed to join thread");
         }
 
-        let uuids = results.lock().unwrap();
+        let uuids = results
+            .lock()
+            .expect("Failed to lock results mutex for read");
         let mut unique_uuids = HashSet::new();
 
         for uuid in uuids.iter() {
@@ -577,12 +584,12 @@ mod tests {
     fn test_uuid_parse_boundary_conditions() {
         // Test all zeros
         let all_zeros = "00000000-0000-0000-0000-000000000000";
-        let uuid = Uuid::parse(all_zeros).unwrap();
+        let uuid = Uuid::parse(all_zeros).expect("Failed to parse all-zeros UUID");
         assert_eq!(uuid.as_bytes(), &[0; 16]);
 
         // Test all F's
         let all_fs = "ffffffff-ffff-ffff-ffff-ffffffffffff";
-        let uuid = Uuid::parse(all_fs).unwrap();
+        let uuid = Uuid::parse(all_fs).expect("Failed to parse all-fs UUID");
         assert_eq!(uuid.as_bytes(), &[0xff; 16]);
     }
 

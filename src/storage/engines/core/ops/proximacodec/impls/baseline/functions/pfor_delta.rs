@@ -472,8 +472,8 @@ mod tests {
         values.extend(vec![101.0; 5]);
         values.extend(vec![1000.0; 5]); // Outliers
 
-        let encoded = encode_f32(&values, 0).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, 0).expect("failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("failed to decode f32 values");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -488,8 +488,8 @@ mod tests {
         values.extend(vec![1001; 10]);
         values.extend(vec![999999; 5]); // Outliers
 
-        let encoded = encode_i64(&values, 1000).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, 1000).expect("failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -501,8 +501,8 @@ mod tests {
         values.extend(vec![501, 502, 503, 504, 505]);
         values.extend(vec![10000; 15]); // Outliers
 
-        let encoded = encode_i32(&values, 500).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 500).expect("failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("failed to decode i32 values");
 
         assert_eq!(values, decoded);
     }
@@ -513,8 +513,8 @@ mod tests {
         let mut values = vec![42i32; 1000];
         values[100] = 999999; // Single outlier
 
-        let encoded = encode_i32(&values, 42).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 42).expect("failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("failed to decode i32 values");
 
         assert_eq!(values, decoded);
 
@@ -540,8 +540,8 @@ mod tests {
             }
         }
 
-        let encoded = encode_i64(&values, 100).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, 100).expect("failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn test_pfor_empty() {
         let values: Vec<f32> = vec![];
-        let encoded = encode_f32(&values, 0).unwrap();
+        let encoded = encode_f32(&values, 0).expect("failed to encode empty f32 values");
         assert!(encoded.is_empty());
     }
 
@@ -558,8 +558,8 @@ mod tests {
         // All values within small range - should behave like regular FOR
         let values: Vec<i32> = (0..100).collect();
 
-        let encoded = encode_i32(&values, 0).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 0).expect("failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("failed to decode i32 values");
 
         assert_eq!(values, decoded);
 
@@ -576,8 +576,8 @@ mod tests {
         values.push(2000000); // Outlier 2
         values.push(3000000); // Outlier 3
 
-        let encoded = encode_i32(&values, 100).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 100).expect("failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("failed to decode i32 values");
 
         assert_eq!(values, decoded);
 
@@ -599,8 +599,8 @@ mod tests {
         values.push(2000000.0); // Outlier spike 2
         values.push(3000000.0); // Outlier spike 3
 
-        let encoded = encode_f32(&values, 0).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, 0).expect("failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("failed to decode f32 values");
 
         // Verify roundtrip correctness
         assert_eq!(values.len(), decoded.len());

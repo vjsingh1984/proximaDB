@@ -641,9 +641,11 @@ impl FilenameCodec {
 
     /// Parse level from filename with caching
     pub fn parse_level(&self, filename: &str) -> u32 {
-        let pattern = self
-            .level_pattern
-            .get_or_init(|| Regex::new(r"^L(\d+)_").unwrap());
+        let compile_level_regex = || match Regex::new(r"^L(\d+)_") {
+            Ok(regex) => regex,
+            Err(err) => panic!("Invalid level filename regex: {err}"),
+        };
+        let pattern = self.level_pattern.get_or_init(compile_level_regex);
 
         pattern
             .captures(filename)
@@ -654,9 +656,11 @@ impl FilenameCodec {
 
     /// Parse timestamp from filename with caching
     pub fn parse_timestamp(&self, filename: &str) -> u64 {
-        let pattern = self
-            .timestamp_pattern
-            .get_or_init(|| Regex::new(r"L\d+_(\d{8}T\d{6})_").unwrap());
+        let compile_timestamp_regex = || match Regex::new(r"L\d+_(\d{8}T\d{6})_") {
+            Ok(regex) => regex,
+            Err(err) => panic!("Invalid timestamp filename regex: {err}"),
+        };
+        let pattern = self.timestamp_pattern.get_or_init(compile_timestamp_regex);
 
         pattern
             .captures(filename)
@@ -671,9 +675,11 @@ impl FilenameCodec {
 
     /// Check if filename follows convention
     pub fn is_tiered_filename(&self, filename: &str, extension: &str) -> bool {
-        let pattern = self
-            .full_pattern
-            .get_or_init(|| Regex::new(r"^L\d+_\d{8}T\d{6}_[a-f0-9]{8}\.\w+$").unwrap());
+        let compile_full_regex = || match Regex::new(r"^L\d+_\d{8}T\d{6}_[a-f0-9]{8}\.\w+$") {
+            Ok(regex) => regex,
+            Err(err) => panic!("Invalid full filename regex: {err}"),
+        };
+        let pattern = self.full_pattern.get_or_init(compile_full_regex);
 
         pattern.is_match(filename) && filename.ends_with(&format!(".{}", extension))
     }

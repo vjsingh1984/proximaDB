@@ -432,6 +432,31 @@ service GraphService {
 
     // Hybrid operations
     rpc ExecuteHybridQuery(HybridSearchRequest) returns (HybridSearchResponse);
+
+    // ===== PULSAR Distributed Graph Operations =====
+
+    // Create graph with specific engine type
+    rpc CreateGraphWithEngine(CreateGraphWithEngineRequest) returns (CreateGraphWithEngineResponse);
+
+    // Get PULSAR distributed statistics
+    rpc GetPulsarStats(GetStatsRequest) returns (PulsarGraphStats);
+
+    // Execute cross-shard query (PULSAR only)
+    rpc CrossShardQuery(CrossShardQueryRequest) returns (CrossShardQueryResponse);
+
+    // Rebalance shards (PULSAR only)
+    rpc RebalanceShards(RebalanceShardsRequest) returns (RebalanceShardsResponse);
+
+    // ===== QUASAR Tiered Storage Operations =====
+
+    // Get QUASAR tiering statistics
+    rpc GetQuasarStats(GetStatsRequest) returns (QuasarGraphStats);
+
+    // Get detailed tier statistics (QUASAR only)
+    rpc GetTierStats(GetTierStatsRequest) returns (GetTierStatsResponse);
+
+    // Trigger manual tier migration (QUASAR only)
+    rpc TriggerMigration(TriggerMigrationRequest) returns (TriggerMigrationResponse);
 }
 
 // Shortest path request/response
@@ -663,4 +688,308 @@ message PlanStepProfile {
 
   // Number of times this step was executed
   uint32 executions = 3;
+}
+
+// ===== PULSAR Distributed Graph Engine Features =====
+
+// Graph engine type selection for graph creation
+enum GraphEngineType {
+  GRAPH_ENGINE_TYPE_UNSPECIFIED = 0;
+  GRAPH_ENGINE_TYPE_ORION = 1;   // In-memory single-node (default, production-ready)
+  GRAPH_ENGINE_TYPE_PULSAR = 2;  // Distributed sharded (experimental)
+  GRAPH_ENGINE_TYPE_QUASAR = 3;  // Hot/cold tiered storage (experimental)
+}
+
+// PULSAR-specific configuration for distributed graph
+message PulsarGraphConfig {
+  // Number of shards for data distribution (default: 16)
+  optional uint32 shard_count = 1;
+  
+  // Replication factor 1-3 (default: 1)
+  optional uint32 replication_factor = 2;
+  
+  // Consistency level for distributed operations
+  PulsarConsistencyLevel consistency_level = 3;
+  
+  // Enable cross-shard query optimization (default: true)
+  optional bool cross_shard_optimization = 4;
+  
+  // Maximum concurrent cross-shard queries (default: 100)
+  optional uint32 max_concurrent_queries = 5;
+}
+
+// Consistency levels for PULSAR distributed operations
+enum PulsarConsistencyLevel {
+  PULSAR_CONSISTENCY_LEVEL_UNSPECIFIED = 0;
+  PULSAR_CONSISTENCY_LEVEL_ANY = 1;     // Read/write from any replica
+  PULSAR_CONSISTENCY_LEVEL_QUORUM = 2;  // Read/write from majority
+  PULSAR_CONSISTENCY_LEVEL_ALL = 3;     // Read/write from all replicas
+}
+
+// PULSAR distributed graph statistics
+message PulsarGraphStats {
+  // Total nodes across all shards
+  uint64 total_nodes = 1;
+  
+  // Total edges across all shards
+  uint64 total_edges = 2;
+  
+  // Number of active shards
+  uint32 shards_active = 3;
+  
+  // Cross-shard queries executed
+  uint64 cross_shard_queries = 4;
+  
+  // Replication lag in milliseconds
+  uint64 replication_lag_ms = 5;
+  
+  // Hot shard IDs (overloaded shards)
+  repeated uint32 hot_shards = 6;
+  
+  // Load balance operations performed
+  uint64 load_balance_operations = 7;
+  
+  // Per-shard statistics
+  repeated ShardStats shard_stats = 8;
+}
+
+// Statistics for a single shard
+message ShardStats {
+  uint32 shard_id = 1;
+  uint64 node_count = 2;
+  uint64 edge_count = 3;
+  double load_factor = 4;  // 0.0 to 1.0
+  bool is_hot = 5;
+}
+
+// Request for cross-shard query (PULSAR only)
+message CrossShardQueryRequest {
+  string graph_id = 1;
+  
+  // Query to execute across shards
+  string query = 2;
+  
+  // Maximum results per shard
+  optional uint32 max_results_per_shard = 3;
+  
+  // Timeout in milliseconds
+  optional uint32 timeout_ms = 4;
+}
+
+// Response from cross-shard query
+message CrossShardQueryResponse {
+  // Combined results from all shards
+  repeated Node nodes = 1;
+  repeated Edge edges = 2;
+  
+  // Query execution statistics
+  PulsarQueryStats query_stats = 3;
+}
+
+// PULSAR query execution statistics
+message PulsarQueryStats {
+  // Number of shards queried
+  uint32 shards_queried = 1;
+  
+  // Total execution time in milliseconds
+  uint64 total_time_ms = 2;
+  
+  // Per-shard execution times
+  repeated uint64 shard_times_ms = 3;
+  
+  // Cross-shard network overhead
+  uint64 network_overhead_ms = 4;
+}
+
+// Request to rebalance shards (PULSAR only)
+message RebalanceShardsRequest {
+  string graph_id = 1;
+  
+  // Target shards to rebalance (empty = auto-detect hot shards)
+  repeated uint32 shard_ids = 2;
+  
+  // Force rebalancing even if shards are not hot
+  optional bool force = 3;
+}
+
+// Response from shard rebalancing
+message RebalanceShardsResponse {
+  bool success = 1;
+  repeated uint32 rebalanced_shards = 2;
+  string message = 3;
+}
+
+// ===== QUASAR Tiered Storage Graph Engine Features =====
+
+// QUASAR-specific configuration for tiered storage
+message QuasarGraphConfig {
+  // Maximum size of hot tier (number of nodes)
+  optional uint32 hot_tier_max_nodes = 1;
+  
+  // Maximum size of hot tier (MB)
+  optional uint32 hot_tier_max_memory_mb = 2;
+  
+  // Path for cold storage files
+  optional string cold_tier_path = 3;
+  
+  // Threshold for moving data to cold tier (access frequency)
+  optional uint64 cold_migration_threshold_seconds = 4;
+  
+  // Threshold for promoting data to hot tier (access frequency)
+  optional uint64 hot_promotion_threshold_seconds = 5;
+  
+  // Background migration interval (seconds)
+  optional uint64 migration_interval_seconds = 6;
+  
+  // Storage backend for cold tier
+  QuasarColdStorageBackend cold_storage_backend = 7;
+}
+
+// Cold storage backend options for QUASAR
+enum QuasarColdStorageBackend {
+  QUASAR_COLD_STORAGE_BACKEND_UNSPECIFIED = 0;
+  QUASAR_COLD_STORAGE_BACKEND_SST = 1;     // SST files
+  QUASAR_COLD_STORAGE_BACKEND_PARQUET = 2; // Parquet files
+  QUASAR_COLD_STORAGE_BACKEND_JSON = 3;    // JSON files (testing)
+}
+
+// QUASAR tiered storage statistics
+message QuasarGraphStats {
+  // Hot tier statistics
+  TierStats hot_tier = 1;
+  
+  // Cold tier statistics
+  TierStats cold_tier = 2;
+  
+  // Tiering statistics
+  QuasarTieringStats tiering_stats = 3;
+  
+  // Cache hit rates
+  CacheStats cache_stats = 4;
+}
+
+// Statistics for a single tier (hot or cold)
+message TierStats {
+  uint64 node_count = 1;
+  uint64 edge_count = 2;
+  uint64 size_bytes = 3;
+  double utilization = 4;  // 0.0 to 1.0
+}
+
+// QUASAR tiering operation statistics
+message QuasarTieringStats {
+  // Nodes demoted to cold tier
+  uint64 nodes_demoted = 1;
+  
+  // Nodes promoted to hot tier
+  uint64 nodes_promoted = 2;
+  
+  // Background migrations in progress
+  uint32 migrations_in_progress = 3;
+  
+  // Last migration time (milliseconds since epoch)
+  optional int64 last_migration_time_ms = 4;
+}
+
+// Cache statistics for QUASAR
+message CacheStats {
+  // Hot tier cache hit rate (0.0 to 1.0)
+  double hot_tier_hit_rate = 1;
+  
+  // Cold tier cache hit rate (0.0 to 1.0)
+  double cold_tier_hit_rate = 2;
+  
+  // Total cache hits
+  uint64 total_hits = 3;
+  
+  // Total cache misses
+  uint64 total_misses = 4;
+}
+
+// Request to manually trigger tier migration (QUASAR only)
+message TriggerMigrationRequest {
+  string graph_id = 1;
+  
+  // Node IDs to migrate (empty = auto-migrate based on access patterns)
+  repeated string node_ids = 2;
+  
+  // Target tier
+  QuasarTier target_tier = 3;
+  
+  // Force migration even if thresholds not met
+  optional bool force = 4;
+}
+
+// Tier selection for manual migration
+enum QuasarTier {
+  QUASAR_TIER_UNSPECIFIED = 0;
+  QUASAR_TIER_HOT = 1;   // In-memory ORION tier
+  QUASAR_TIER_COLD = 2;  // Disk storage tier
+}
+
+// Response from tier migration
+message TriggerMigrationResponse {
+  bool success = 1;
+  repeated string migrated_node_ids = 2;
+  string message = 3;
+}
+
+// Request for tier statistics (QUASAR only)
+message GetTierStatsRequest {
+  string graph_id = 1;
+  
+  // Include per-node access statistics
+  optional bool include_node_stats = 2;
+}
+
+// Response with tier statistics
+message GetTierStatsResponse {
+  QuasarGraphStats stats = 1;
+  
+  // Per-node access statistics (if requested)
+  repeated NodeAccessStats node_stats = 2;
+}
+
+// Per-node access statistics for QUASAR
+message NodeAccessStats {
+  string node_id = 1;
+  
+  // Number of accesses
+  uint64 access_count = 2;
+  
+  // Last access time (milliseconds since epoch)
+  optional int64 last_access_ms = 3;
+  
+  // Current tier
+  QuasarTier current_tier = 4;
+  
+  // Access frequency (accesses per hour)
+  double access_frequency_per_hour = 5;
+}
+
+// ===== Advanced Graph Creation with Engine Selection =====
+
+// Extended graph creation request with engine selection
+message CreateGraphWithEngineRequest {
+  // Graph ID
+  string graph_id = 1;
+  
+  // Engine type (ORION, PULSAR, QUASAR)
+  GraphEngineType engine_type = 2;
+  
+  // Engine-specific configuration
+  oneof engine_config {
+    PulsarGraphConfig pulsar_config = 3;
+    QuasarGraphConfig quasar_config = 4;
+  }
+  
+  // Graph metadata
+  map<string, string> metadata = 5;
+}
+
+// Response from graph creation
+message CreateGraphWithEngineResponse {
+  bool success = 1;
+  string message = 2;
+  GraphEngineType created_engine_type = 3;
 }

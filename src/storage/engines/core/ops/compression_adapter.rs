@@ -539,7 +539,8 @@ mod tests {
 
     #[test]
     fn test_universal_compression_adapter() {
-        let mut adapter = UniversalCompressionAdapter::new().unwrap();
+        let mut adapter = UniversalCompressionAdapter::new()
+            .expect("Failed to create UniversalCompressionAdapter for test");
 
         let config = UniversalCompressionConfig {
             enabled: true,
@@ -664,12 +665,14 @@ mod tests {
         // Test compression
         let compressed = adapter
             .compress_with_universal_config(&test_data, &config)
-            .unwrap();
+            .expect("Failed to compress test data");
         assert!(compressed.compressed_size < compressed.original_size);
         assert_eq!(compressed.algorithm, CompressionAlgorithm::Zstd);
 
         // Test decompression
-        let decompressed = adapter.decompress_with_metadata(&compressed).unwrap();
+        let decompressed = adapter
+            .decompress_with_metadata(&compressed)
+            .expect("Failed to decompress test data");
         assert_eq!(test_data, decompressed);
 
         // Verify performance stats
@@ -680,7 +683,8 @@ mod tests {
 
     #[test]
     fn test_adaptive_compression_selection() {
-        let mut adapter = UniversalCompressionAdapter::new().unwrap();
+        let mut adapter = UniversalCompressionAdapter::new()
+            .expect("Failed to create UniversalCompressionAdapter for adaptive test");
 
         let config = UniversalCompressionConfig {
             enabled: true,
@@ -803,20 +807,23 @@ mod tests {
         let compressible_data = vec![0u8; 1000];
         let compressed = adapter
             .compress_with_universal_config(&compressible_data, &config)
-            .unwrap();
+            .expect("Failed to compress highly compressible test data");
 
         // Should select ZSTD for highly compressible data (not the default Gzip)
         assert_eq!(compressed.algorithm, CompressionAlgorithm::Zstd);
         assert!(compressed.metadata.adaptive_selected);
 
         // Test decompression
-        let decompressed = adapter.decompress_with_metadata(&compressed).unwrap();
+        let decompressed = adapter
+            .decompress_with_metadata(&compressed)
+            .expect("Failed to decompress test data");
         assert_eq!(compressible_data, decompressed);
     }
 
     #[test]
     fn test_context_mapping() {
-        let adapter = UniversalCompressionAdapter::new().unwrap();
+        let adapter = UniversalCompressionAdapter::new()
+            .expect("Failed to create UniversalCompressionAdapter for context mapping test");
 
         // Test SST block context
         let sst_context = ContextAwareCompressionConfig {
@@ -860,7 +867,9 @@ mod tests {
                 },
             },
         };
-        let context = adapter.map_context_aware_config(&sst_context).unwrap();
+        let context = adapter
+            .map_context_aware_config(&sst_context)
+            .expect("Failed to map SST context");
         assert_eq!(context, CompressionContext::Block);
 
         // Test vector data context
@@ -905,7 +914,9 @@ mod tests {
                 },
             },
         };
-        let context = adapter.map_context_aware_config(&vector_context).unwrap();
+        let context = adapter
+            .map_context_aware_config(&vector_context)
+            .expect("Failed to map vector context");
         assert_eq!(context, CompressionContext::VectorSerialization);
 
         // Test Parquet context
@@ -950,13 +961,16 @@ mod tests {
                 },
             },
         };
-        let context = adapter.map_context_aware_config(&parquet_context).unwrap();
+        let context = adapter
+            .map_context_aware_config(&parquet_context)
+            .expect("Failed to map Parquet context");
         assert_eq!(context, CompressionContext::Block);
     }
 
     #[test]
     fn test_performance_statistics() {
-        let mut adapter = UniversalCompressionAdapter::new().unwrap();
+        let mut adapter = UniversalCompressionAdapter::new()
+            .expect("Failed to create UniversalCompressionAdapter for performance statistics test");
 
         let config = UniversalCompressionConfig {
             enabled: true,
@@ -1081,8 +1095,10 @@ mod tests {
         for _ in 0..5 {
             let compressed = adapter
                 .compress_with_universal_config(&test_data, &config)
-                .unwrap();
-            let _decompressed = adapter.decompress_with_metadata(&compressed).unwrap();
+                .expect("Failed to compress performance test data");
+            let _decompressed = adapter
+                .decompress_with_metadata(&compressed)
+                .expect("Failed to decompress performance test data");
         }
 
         let stats = adapter.get_performance_stats();

@@ -570,8 +570,11 @@ impl PrefetchQueue {
 
     fn add_entry(&mut self, entry: PrefetchEntry) {
         self.queue.push(entry);
-        self.queue
-            .sort_by(|a, b| b.priority.partial_cmp(&a.priority).unwrap());
+        self.queue.sort_by(|a, b| {
+            b.priority
+                .partial_cmp(&a.priority)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
 
     fn pop_highest_priority(&mut self) -> Option<PrefetchEntry> {

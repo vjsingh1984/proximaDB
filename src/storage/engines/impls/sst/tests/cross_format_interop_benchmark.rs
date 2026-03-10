@@ -537,7 +537,11 @@ mod tests {
         // Find best performers in each category
         let fastest_write = results
             .iter()
-            .min_by(|a, b| a.flush_time_ms.partial_cmp(&b.flush_time_ms).unwrap())
+            .min_by(|a, b| {
+                a.flush_time_ms
+                    .partial_cmp(&b.flush_time_ms)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .unwrap();
         let smallest_size = results.iter().min_by_key(|r| r.file_size_bytes).unwrap();
         let fastest_scan = results

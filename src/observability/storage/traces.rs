@@ -213,11 +213,14 @@ impl TraceStorage {
         if trace_ids.is_none() {
             return Ok(Vec::new());
         }
+        let Some(trace_ids) = trace_ids else {
+            return Ok(Vec::new());
+        };
 
         let traces = self.traces.read().await;
         let mut results = Vec::new();
 
-        for trace_id in trace_ids.unwrap() {
+        for trace_id in trace_ids {
             if let Some(trace) = traces.get(trace_id) {
                 if trace.start_time_ns >= start_ns && trace.start_time_ns <= end_ns {
                     results.push(TraceSummary {

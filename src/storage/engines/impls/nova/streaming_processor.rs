@@ -512,7 +512,7 @@ impl StreamingRowGroupProcessor {
         }
 
         // Sort by cost (ascending)
-        row_group_costs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        row_group_costs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         Ok(row_group_costs.into_iter().map(|(id, _)| id).collect())
     }
 

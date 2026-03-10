@@ -487,7 +487,10 @@ impl DeltaLakeFormat {
                     }
                     if let Some(info) = action.get("commitInfo") {
                         let commit_info: CommitInfoAction = serde_json::from_value(info.clone())?;
-                        last_timestamp = Utc.timestamp_millis_opt(commit_info.timestamp).unwrap();
+                        last_timestamp = Utc
+                            .timestamp_millis_opt(commit_info.timestamp)
+                            .single()
+                            .unwrap_or_else(Utc::now);
                     }
                 }
             }
@@ -608,7 +611,10 @@ impl DeltaLakeFormat {
                         Some(f.partition_values.clone())
                     },
                     stats: None, // Would need to parse stats JSON
-                    created_at: Utc.timestamp_millis_opt(f.modification_time).unwrap(),
+                    created_at: Utc
+                        .timestamp_millis_opt(f.modification_time)
+                        .single()
+                        .unwrap_or_else(Utc::now),
                 }
             })
             .collect();
@@ -662,7 +668,7 @@ impl DeltaLakeFormat {
 
         let content = actions
             .iter()
-            .map(|a| serde_json::to_string(a).unwrap())
+            .map(|a| serde_json::to_string(a).unwrap_or_else(|_| "{}".to_string()))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -729,7 +735,7 @@ impl DeltaLakeFormat {
 
         let content = actions
             .iter()
-            .map(|a| serde_json::to_string(a).unwrap())
+            .map(|a| serde_json::to_string(a).unwrap_or_else(|_| "{}".to_string()))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -1030,7 +1036,10 @@ impl OpenTableFormat for DeltaLakeFormat {
                 {
                     if let Some(info) = action.get("commitInfo") {
                         let commit_info: CommitInfoAction = serde_json::from_value(info.clone())?;
-                        let commit_time = Utc.timestamp_millis_opt(commit_info.timestamp).unwrap();
+                        let commit_time = Utc
+                            .timestamp_millis_opt(commit_info.timestamp)
+                            .single()
+                            .unwrap_or_else(Utc::now);
                         if commit_time <= timestamp {
                             return self.get_snapshot_at(&self.config.table_uri, *version).await;
                         }

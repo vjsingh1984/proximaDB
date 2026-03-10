@@ -273,11 +273,9 @@ impl ColumnarOptimizer {
         row_group: &RowGroupMetaData,
         filter: Option<&MetadataFilter>,
     ) -> Result<bool> {
-        if filter.is_none() {
+        let Some(filter) = filter else {
             return Ok(true);
-        }
-
-        let filter = filter.unwrap();
+        };
         // Check each filter condition against row group statistics
         for condition in &filter.conditions {
             match condition {

@@ -254,8 +254,8 @@ mod tests {
         let values = vec![100.0f32, 101.0, 102.0, 103.0, 104.0];
         let base = 100.0f32.to_bits() as i64;
 
-        let encoded = encode_f32(&values, base).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, base).expect("FOR f32 encoding should succeed");
+        let decoded = decode_f32(&encoded, values.len()).expect("FOR f32 decoding should succeed");
 
         assert_eq!(values, decoded);
     }
@@ -266,8 +266,8 @@ mod tests {
         let values = vec![1000i64, 1001, 1002, 1003, 1004];
         let base = 1000;
 
-        let encoded = encode_i64(&values, base).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, base).expect("FOR i64 encoding should succeed");
+        let decoded = decode_i64(&encoded, values.len()).expect("FOR i64 decoding should succeed");
 
         assert_eq!(values, decoded);
     }
@@ -278,8 +278,8 @@ mod tests {
         let values = vec![500i32, 501, 502, 503, 504];
         let base = 500;
 
-        let encoded = encode_i32(&values, base).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, base).expect("FOR i32 encoding should succeed");
+        let decoded = decode_i32(&encoded, values.len()).expect("FOR i32 decoding should succeed");
 
         assert_eq!(values, decoded);
     }
@@ -290,8 +290,8 @@ mod tests {
         let values: Vec<i64> = (1000..1016).collect();
         let base = 1000;
 
-        let encoded = encode_i64(&values, base).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, base).expect("FOR i64 encoding should succeed");
+        let decoded = decode_i64(&encoded, values.len()).expect("FOR i64 decoding should succeed");
 
         assert_eq!(values, decoded);
 
@@ -313,8 +313,8 @@ mod tests {
         let values = vec![42i32; 100];
         let base = 42;
 
-        let encoded = encode_i32(&values, base).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, base).expect("FOR i32 encoding should succeed");
+        let decoded = decode_i32(&encoded, values.len()).expect("FOR i32 decoding should succeed");
 
         assert_eq!(values, decoded);
 
@@ -328,10 +328,12 @@ mod tests {
         let values: Vec<i64> = vec![];
         let base = 0;
 
-        let encoded = encode_i64(&values, base).unwrap();
+        let encoded =
+            encode_i64(&values, base).expect("FOR i64 encoding should succeed for empty input");
         assert!(encoded.is_empty());
 
-        let decoded = decode_i64(&encoded, 0).unwrap();
+        let decoded =
+            decode_i64(&encoded, 0).expect("FOR i64 decoding should succeed for empty input");
         assert!(decoded.is_empty());
     }
 
@@ -340,8 +342,10 @@ mod tests {
         let values = vec![42i64];
         let base = 42;
 
-        let encoded = encode_i64(&values, base).unwrap();
-        let decoded = decode_i64(&encoded, 1).unwrap();
+        let encoded =
+            encode_i64(&values, base).expect("FOR i64 encoding should succeed for single value");
+        let decoded =
+            decode_i64(&encoded, 1).expect("FOR i64 decoding should succeed for single value");
 
         assert_eq!(values, decoded);
     }
@@ -352,8 +356,10 @@ mod tests {
         let values = vec![95i32, 96, 100, 104, 105];
         let base = 100;
 
-        let encoded = encode_i32(&values, base).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, base)
+            .expect("FOR i32 encoding should succeed with negative offsets");
+        let decoded = decode_i32(&encoded, values.len())
+            .expect("FOR i32 decoding should succeed with negative offsets");
 
         assert_eq!(values, decoded);
     }
@@ -364,8 +370,10 @@ mod tests {
         let values = vec![1000i64, 1001, 1002, 1050, 1100];
         let base = 1000; // Minimum
 
-        let encoded = encode_i64(&values, base).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded =
+            encode_i64(&values, base).expect("FOR i64 encoding should succeed with optimal base");
+        let decoded = decode_i64(&encoded, values.len())
+            .expect("FOR i64 decoding should succeed with optimal base");
 
         assert_eq!(values, decoded);
 

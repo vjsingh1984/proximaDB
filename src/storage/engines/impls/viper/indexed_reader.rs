@@ -1,17 +1,17 @@
 //! VIPER Engine Index-Based Data Reader
-//! 
+//!
 //! VIPER // strategy removed -  Use indices to selectively read parquet rows/columns
 //! This leverages columnar storage for optimal I/O with predicate pushdown
 
+use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use anyhow::Result;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::index_based_filter::{
-    IndexBasedDataReader, MetadataSource, ReadStrategy, ColumnMetadata, ColumnData
+    ColumnData, ColumnMetadata, IndexBasedDataReader, MetadataSource, ReadStrategy,
 };
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER-specific metadata source representing a parquet file
@@ -34,22 +34,22 @@ impl MetadataSource for VIPERParquetMetadataSource {
     fn get_row_count(&self) -> usize {
         self.parquet_metadata.total_rows
     }
-    
+
     fn get_column_metadata(&self, field: &str) -> Option<ColumnMetadata> {
         self.parquet_metadata.column_info.get(field).cloned()
     }
-    
+
     fn get_metadata_value(&self, row_idx: usize, field: &str) -> Option<serde_json::Value> {
         self.column_metadata_cache
             .get(field)
             .and_then(|column_values| column_values.get(row_idx))
             .cloned()
     }
-    
+
     fn get_source_id(&self) -> String {
         self.file_path.clone()
     }
-    
+
     fn supports_selective_reading(&self) -> bool {
         true // VIPER supports selective row reading from parquet
     }
@@ -75,7 +75,7 @@ impl VIPERParquetMetadataSource {
                 base_fs,
                 "viper_collection".to_string(),
                 "viper".to_string(),
-            )
+            ),
         );
         let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             vec![file_path.to_string()],
@@ -85,22 +85,24 @@ impl VIPERParquetMetadataSource {
             "viper_collection".to_string(),
             "viper".to_string(),
         )?;
-        
+
         // Read all records to build metadata cache (for now - could be optimized)
         // TODO: Implement proper batch reading for large files
         let all_records: Vec<crate::proto::proximadb_v1::VectorRecord> = Vec::new(); // Placeholder - actual implementation needed
         let total_rows = all_records.len();
-        
+
         // Build column metadata cache
         let mut column_metadata_cache = HashMap::new();
         let mut column_info = HashMap::new();
-        
+
         for (row_idx, record) in all_records.iter().enumerate() {
-            let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
-            
+            let metadata_map =
+                crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
+
             for (field, value) in metadata_map {
                 // Update column info
-                let entry = column_info.entry(field.clone())
+                let entry = column_info
+                    .entry(field.clone())
                     .or_insert_with(|| ColumnMetadata {
                         // data_type removed -  Self::infer_data_type(&value),
                         has_index: true, // VIPER has column-level indexes via parquet
@@ -109,7 +111,7 @@ impl VIPERParquetMetadataSource {
                         max_value: Some(value.clone()),
                         null_count: Some(0),
                     });
-                
+
                 // Update min/max values
                 if let (Some(min), Some(max)) = (&entry.min_value, &entry.max_value) {
                     if Self::compare_json_values(&value, min) == std::cmp::Ordering::Less {
@@ -119,18 +121,18 @@ impl VIPERParquetMetadataSource {
                         entry.max_value = Some(value.clone());
                     }
                 }
-                
+
                 // Build column cache
                 let column_values = column_metadata_cache
                     .entry(field)
                     .or_insert_with(|| vec![serde_json::Value::Null; total_rows]);
-                
+
                 if row_idx < column_values.len() {
                     column_values[row_idx] = value;
                 }
             }
         }
-        
+
         // Calculate cardinalities
         for (field, column_meta) in &mut column_info {
             if let Some(column_values) = column_metadata_cache.get(field) {
@@ -138,7 +140,7 @@ impl VIPERParquetMetadataSource {
                 column_meta.cardinality = Some(unique_values.len() as u64);
             }
         }
-        
+
         Ok(Self {
             file_path: file_path.to_string(),
             parquet_metadata: VIPERParquetMetadata {
@@ -167,7 +169,7 @@ impl VIPERParquetMetadataSource {
             _ => ColumnData::String, // Default
         }
     }
-    
+
     fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
         crate::core::search::json_comparison::compare_json_values(a, b)
     }
@@ -181,16 +183,21 @@ pub struct VIPERIndexBasedReader {
 
 impl VIPERIndexBasedReader {
     pub fn new() -> Self {
-        // For synchronous new, create minimal filesystem factory
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = tokio::runtime::Handle::current()
-            .block_on(crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config))
-            .expect("Failed to create filesystem factory");
+        Self::try_new().unwrap_or_else(|error| {
+            panic!("Failed to initialize VIPERIndexBasedReader: {error}");
+        })
+    }
 
-        Self {
-            filesystem_factory: Arc::new(filesystem_factory),
+    pub fn try_new() -> Result<Self> {
+        // For synchronous new, create minimal filesystem factory
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_factory = create_filesystem_factory_sync(filesystem_config)?;
+
+        Ok(Self {
+            filesystem_factory,
             dimension: 0, // Will be detected from actual data
-        }
+        })
     }
 
     pub fn with_dimension(mut self, dimension: usize) -> Self {
@@ -212,7 +219,7 @@ impl VIPERIndexBasedReader {
                 base_fs,
                 "viper_collection".to_string(),
                 "viper".to_string(),
-            )
+            ),
         );
         let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             vec![file_path.to_string()],
@@ -222,22 +229,26 @@ impl VIPERIndexBasedReader {
             "viper_collection".to_string(),
             "viper".to_string(),
         )?;
-        
+
         // For now, read all and filter by indices
         // TODO: Implement true selective reading at parquet level
         // TODO: Implement proper batch reading
         let all_records: Vec<crate::proto::proximadb_v1::VectorRecord> = Vec::new(); // Placeholder
-        
+
         let selective_records: Vec<VectorRecord> = indices
             .iter()
             .filter_map(|&idx| all_records.get(idx).cloned())
             .collect();
-        
-        debug!("VIPER selective read: {} out of {} rows for {}", 
-               selective_records.len(), all_records.len(), file_path);
+
+        debug!(
+            "VIPER selective read: {} out of {} rows for {}",
+            selective_records.len(),
+            all_records.len(),
+            file_path
+        );
         Ok(selective_records)
     }
-    
+
     /// Read full parquet file
     async fn read_full_file(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         // For reading records, we don't need dimension - Parquet has the schema
@@ -248,7 +259,7 @@ impl VIPERIndexBasedReader {
                 base_fs,
                 "viper_collection".to_string(),
                 "viper".to_string(),
-            )
+            ),
         );
         let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             vec![file_path.to_string()],
@@ -258,10 +269,36 @@ impl VIPERIndexBasedReader {
             "viper_collection".to_string(),
             "viper".to_string(),
         )?;
-        
+
         // TODO: Implement proper batch reading
         Ok(Vec::new()) // Placeholder
     }
+}
+
+fn create_filesystem_factory_sync(
+    filesystem_config: crate::storage::persistence::filesystem::FilesystemConfig,
+) -> Result<Arc<crate::storage::persistence::filesystem::FilesystemFactory>> {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let factory = handle
+            .block_on(
+                crate::storage::persistence::filesystem::FilesystemFactory::create(
+                    filesystem_config,
+                ),
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?;
+        return Ok(Arc::new(factory));
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create runtime for filesystem init: {}", e))?;
+    let factory = runtime
+        .block_on(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?;
+    Ok(Arc::new(factory))
 }
 
 #[async_trait::async_trait]
@@ -277,33 +314,39 @@ impl IndexBasedDataReader for VIPERIndexBasedReader {
                 debug!("VIPER: Skipping file {} - no qualifying rows", source_id);
                 Ok(Vec::new())
             }
-            
+
             ReadStrategy::ReadFullBlock => {
                 debug!("VIPER: Reading full file {} - high selectivity", source_id);
                 self.read_full_file(source_id).await
             }
-            
-            ReadStrategy::SelectiveRead { indices, estimated_benefit } => {
-                info!("VIPER: Selective read for {} - {} indices, {:.1}% I/O savings", 
-                      source_id, indices.len(), estimated_benefit * 100.0);
-                
+
+            ReadStrategy::SelectiveRead {
+                indices,
+                estimated_benefit,
+            } => {
+                info!(
+                    "VIPER: Selective read for {} - {} indices, {:.1}% I/O savings",
+                    source_id,
+                    indices.len(),
+                    estimated_benefit * 100.0
+                );
+
                 // VIPER Strategy: Use indices to selectively read parquet rows
                 let selected_records = self.read_rows_by_indices(source_id, indices).await?;
-                
-                debug!("VIPER: Selective read completed - {} records", selected_records.len());
+
+                debug!(
+                    "VIPER: Selective read completed - {} records",
+                    selected_records.len()
+                );
                 Ok(selected_records)
             }
         }
     }
-    
-    fn estimate_selective_read_benefit(
-        &self,
-        indices: &[usize],
-        total_rows: usize,
-    ) -> f32 {
+
+    fn estimate_selective_read_benefit(&self, indices: &[usize], total_rows: usize) -> f32 {
         // For VIPER, selective reading provides significant I/O benefits
         let selectivity = indices.len() as f32 / total_rows as f32;
-        
+
         // VIPER benefit is much higher since we can skip reading unnecessary data
         // The benefit scales with the amount of data we don't need to read
         (1.0 - selectivity) * 0.9 // Up to 90% benefit for highly selective queries
@@ -318,29 +361,31 @@ impl VIPERMetadataSourceFactory {
     pub async fn create_from_file_path(file_path: &str) -> Result<VIPERParquetMetadataSource> {
         VIPERParquetMetadataSource::from_parquet_file(file_path).await
     }
-    
+
     /// Create multiple metadata sources for batch processing
-    pub async fn create_batch_from_paths(file_paths: &[String]) -> Result<Vec<VIPERParquetMetadataSource>> {
+    pub async fn create_batch_from_paths(
+        file_paths: &[String],
+    ) -> Result<Vec<VIPERParquetMetadataSource>> {
         let mut sources = Vec::new();
-        
+
         for path in file_paths {
             let source = Self::create_from_file_path(path).await?;
             sources.push(source);
         }
-        
+
         Ok(sources)
     }
-    
+
     /// Create metadata sources with column optimization
     pub async fn create_with_column_filters(
         file_paths: &[String],
         filter_columns: &[String],
     ) -> Result<Vec<VIPERParquetMetadataSource>> {
         let mut sources = Vec::new();
-        
+
         for path in file_paths {
             let mut source = Self::create_from_file_path(path).await?;
-            
+
             // Optimize metadata cache to only include filter columns
             let mut optimized_cache = HashMap::new();
             for column in filter_columns {
@@ -349,10 +394,10 @@ impl VIPERMetadataSourceFactory {
                 }
             }
             source.column_metadata_cache = optimized_cache;
-            
+
             sources.push(source);
         }
-        
+
         Ok(sources)
     }
 }

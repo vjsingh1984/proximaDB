@@ -5,6 +5,22 @@
 
 use std::hash::Hasher;
 
+fn read_u64_le(bytes: &[u8]) -> u64 {
+    let mut array = [0_u8; 8];
+    if bytes.len() >= 8 {
+        array.copy_from_slice(&bytes[..8]);
+    }
+    u64::from_le_bytes(array)
+}
+
+fn read_u32_le(bytes: &[u8]) -> u32 {
+    let mut array = [0_u8; 4];
+    if bytes.len() >= 4 {
+        array.copy_from_slice(&bytes[..4]);
+    }
+    u32::from_le_bytes(array)
+}
+
 /// xxHash64 - extremely fast non-cryptographic hash
 pub struct XxHash64 {
     seed: u64,
@@ -42,19 +58,10 @@ impl XxHash64 {
         // Process 32-byte blocks
         while self.buffer.len() >= 32 {
             let chunk = &self.buffer[0..32];
-            self.v1 = self.round(self.v1, u64::from_le_bytes(chunk[0..8].try_into().unwrap()));
-            self.v2 = self.round(
-                self.v2,
-                u64::from_le_bytes(chunk[8..16].try_into().unwrap()),
-            );
-            self.v3 = self.round(
-                self.v3,
-                u64::from_le_bytes(chunk[16..24].try_into().unwrap()),
-            );
-            self.v4 = self.round(
-                self.v4,
-                u64::from_le_bytes(chunk[24..32].try_into().unwrap()),
-            );
+            self.v1 = self.round(self.v1, read_u64_le(&chunk[0..8]));
+            self.v2 = self.round(self.v2, read_u64_le(&chunk[8..16]));
+            self.v3 = self.round(self.v3, read_u64_le(&chunk[16..24]));
+            self.v4 = self.round(self.v4, read_u64_le(&chunk[24..32]));
             self.buffer.drain(0..32);
         }
     }
@@ -75,7 +82,7 @@ impl XxHash64 {
         // Process remaining bytes
         let mut remaining = self.buffer.as_slice();
         while remaining.len() >= 8 {
-            let k1 = u64::from_le_bytes(remaining[0..8].try_into().unwrap());
+            let k1 = read_u64_le(&remaining[0..8]);
             hash ^= self.round(0, k1);
             hash = hash
                 .rotate_left(27)
@@ -85,7 +92,7 @@ impl XxHash64 {
         }
 
         if remaining.len() >= 4 {
-            let k1 = u32::from_le_bytes(remaining[0..4].try_into().unwrap()) as u64;
+            let k1 = read_u32_le(&remaining[0..4]) as u64;
             hash ^= k1.wrapping_mul(Self::PRIME1);
             hash = hash
                 .rotate_left(23)

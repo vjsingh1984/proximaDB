@@ -456,7 +456,10 @@ mod tests {
         assert_eq!(child.resource_id, "my-collection");
         assert!(child.parent_resource.is_some());
 
-        let parent_ref = child.parent_resource.as_ref().unwrap();
+        let parent_ref = child
+            .parent_resource
+            .as_ref()
+            .expect("parent_resource should be Some in with_parent test");
         assert_eq!(parent_ref.resource_type, "tenant");
         assert_eq!(parent_ref.resource_id, "tenant-123");
     }
@@ -470,9 +473,15 @@ mod tests {
             .with_parent(collection);
 
         assert_eq!(vector.resource_type, "vector");
-        let parent = vector.parent_resource.as_ref().unwrap();
+        let parent = vector
+            .parent_resource
+            .as_ref()
+            .expect("parent_resource should be Some in nested hierarchy test");
         assert_eq!(parent.resource_type, "collection");
-        let grandparent = parent.parent_resource.as_ref().unwrap();
+        let grandparent = parent
+            .parent_resource
+            .as_ref()
+            .expect("grandparent resource should be Some in nested hierarchy test");
         assert_eq!(grandparent.resource_type, "tenant");
     }
 
@@ -598,62 +607,73 @@ mod tests {
 
     #[test]
     fn test_audit_event_type_from_str() {
-        assert_eq!(
-            "authentication".parse::<AuditEventType>().unwrap(),
-            AuditEventType::Authentication
-        );
-        assert_eq!(
-            "authorization".parse::<AuditEventType>().unwrap(),
-            AuditEventType::Authorization
-        );
-        assert_eq!(
-            "data_access".parse::<AuditEventType>().unwrap(),
-            AuditEventType::DataAccess
-        );
-        assert_eq!(
-            "data_modification".parse::<AuditEventType>().unwrap(),
-            AuditEventType::DataModification
-        );
-        assert_eq!(
-            "system_configuration".parse::<AuditEventType>().unwrap(),
-            AuditEventType::SystemConfiguration
-        );
-        assert_eq!(
-            "security_event".parse::<AuditEventType>().unwrap(),
-            AuditEventType::SecurityEvent
-        );
-        assert_eq!(
-            "compliance_event".parse::<AuditEventType>().unwrap(),
-            AuditEventType::ComplianceEvent
-        );
-        assert_eq!(
-            "performance_event".parse::<AuditEventType>().unwrap(),
-            AuditEventType::PerformanceEvent
-        );
-        assert_eq!(
-            "tenant_management".parse::<AuditEventType>().unwrap(),
-            AuditEventType::TenantManagement
-        );
-        assert_eq!(
-            "api_access".parse::<AuditEventType>().unwrap(),
-            AuditEventType::APIAccess
-        );
+        let parse_result = "authentication"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse authentication event type");
+        assert_eq!(parse_result, AuditEventType::Authentication);
+
+        let parse_result = "authorization"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse authorization event type");
+        assert_eq!(parse_result, AuditEventType::Authorization);
+
+        let parse_result = "data_access"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse data_access event type");
+        assert_eq!(parse_result, AuditEventType::DataAccess);
+
+        let parse_result = "data_modification"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse data_modification event type");
+        assert_eq!(parse_result, AuditEventType::DataModification);
+
+        let parse_result = "system_configuration"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse system_configuration event type");
+        assert_eq!(parse_result, AuditEventType::SystemConfiguration);
+
+        let parse_result = "security_event"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse security_event event type");
+        assert_eq!(parse_result, AuditEventType::SecurityEvent);
+
+        let parse_result = "compliance_event"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse compliance_event event type");
+        assert_eq!(parse_result, AuditEventType::ComplianceEvent);
+
+        let parse_result = "performance_event"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse performance_event event type");
+        assert_eq!(parse_result, AuditEventType::PerformanceEvent);
+
+        let parse_result = "tenant_management"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse tenant_management event type");
+        assert_eq!(parse_result, AuditEventType::TenantManagement);
+
+        let parse_result = "api_access"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse api_access event type");
+        assert_eq!(parse_result, AuditEventType::APIAccess);
     }
 
     #[test]
     fn test_audit_event_type_from_str_case_insensitive() {
-        assert_eq!(
-            "AUTHENTICATION".parse::<AuditEventType>().unwrap(),
-            AuditEventType::Authentication
-        );
-        assert_eq!(
-            "Authentication".parse::<AuditEventType>().unwrap(),
-            AuditEventType::Authentication
-        );
-        assert_eq!(
-            "DATA_ACCESS".parse::<AuditEventType>().unwrap(),
-            AuditEventType::DataAccess
-        );
+        let parse_result = "AUTHENTICATION"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse AUTHENTICATION (uppercase)");
+        assert_eq!(parse_result, AuditEventType::Authentication);
+
+        let parse_result = "Authentication"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse Authentication (mixed case)");
+        assert_eq!(parse_result, AuditEventType::Authentication);
+
+        let parse_result = "DATA_ACCESS"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse DATA_ACCESS (uppercase)");
+        assert_eq!(parse_result, AuditEventType::DataAccess);
     }
 
     #[test]

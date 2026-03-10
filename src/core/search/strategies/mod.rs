@@ -30,8 +30,9 @@
 //! registry.register("my_strategy", Arc::new(MyCustomStrategy::new()));
 //!
 //! // Execute search with strategy
-//! let strategy = registry.get("approximate").unwrap();
-//! let results = strategy.execute(&ctx, &candidates).await?;
+//! if let Some(strategy) = registry.get("approximate") {
+//!     let results = strategy.execute(&ctx, &candidates).await?;
+//! }
 //! ```
 
 mod adaptive;

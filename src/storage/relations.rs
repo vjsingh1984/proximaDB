@@ -456,7 +456,9 @@ impl RelationsStore for InMemoryRelationsStore {
                 continue;
             }
 
-            let current_entity = entities.last().unwrap();
+            let Some(current_entity) = entities.last() else {
+                continue;
+            };
             if visited.contains(current_entity) {
                 continue;
             }

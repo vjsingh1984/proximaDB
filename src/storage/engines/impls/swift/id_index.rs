@@ -4,6 +4,7 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::RwLock;
+use tracing::warn;
 
 /// B+ tree based ID index for fast lookups
 #[derive(Debug)]
@@ -81,11 +82,10 @@ impl IdIndex {
     /// Insert an ID with its location
     pub fn insert(&self, id: String, location: BlockLocation) -> Result<()> {
         // Update direct mapping
-        // SAFETY: write().unwrap() is safe here because RwLock poisoning only occurs if
-        // a thread panics while holding the lock. This is an internal data structure where
-        // we control all access paths, and the operations within the lock are simple
-        // HashMap insertions that cannot panic.
-        let mut map = self.id_to_location.write().unwrap();
+        let mut map = self
+            .id_to_location
+            .write()
+            .map_err(|e| anyhow::anyhow!("RwLock poisoned in id_to_location: {}", e))?;
         let is_new = map.insert(id.clone(), location.clone()).is_none();
 
         if is_new {
@@ -96,8 +96,10 @@ impl IdIndex {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Update B+ tree
-        // SAFETY: Same as above - RwLock poisoning cannot occur in normal operation.
-        let mut root = self.root.write().unwrap();
+        let mut root = self
+            .root
+            .write()
+            .map_err(|e| anyhow::anyhow!("RwLock poisoned in root: {}", e))?;
         match root.as_mut() {
             None => {
                 // Create first leaf node
@@ -110,7 +112,10 @@ impl IdIndex {
                 // Insert into existing tree
                 if self.insert_into_node(node, id, location)? {
                     // Node split occurred, need to create new root
-                    self.split_root(root.as_mut().unwrap())?;
+                    let root_mut = root
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("Root should be Some after split"))?;
+                    self.split_root(root_mut)?;
                 }
             }
         }
@@ -120,28 +125,46 @@ impl IdIndex {
 
     /// Lookup an ID and return its location
     pub fn lookup(&self, id: &str) -> Option<BlockLocation> {
-        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
-        // The read lock is held briefly for a HashMap lookup and clone.
-        self.id_to_location.read().unwrap().get(id).cloned()
+        match self.id_to_location.read() {
+            Ok(map) => map.get(id).cloned(),
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned during lookup");
+                None
+            }
+        }
     }
 
     /// Async lookup for compatibility with async APIs
     pub async fn lookup_async(&self, id: &str) -> Option<RecordLocation> {
-        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
-        self.id_to_location.read().unwrap().get(id).cloned()
+        match self.id_to_location.read() {
+            Ok(map) => map.get(id).cloned(),
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned during async lookup");
+                None
+            }
+        }
     }
 
     /// Batch lookup for multiple IDs
     pub fn lookup_batch(&self, ids: &[String]) -> Vec<Option<BlockLocation>> {
-        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
-        let map = self.id_to_location.read().unwrap();
-        ids.iter().map(|id| map.get(id).cloned()).collect()
+        match self.id_to_location.read() {
+            Ok(map) => ids.iter().map(|id| map.get(id).cloned()).collect(),
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned during batch lookup");
+                vec![None; ids.len()]
+            }
+        }
     }
 
     /// Range query - get all IDs in a range
     pub fn range_query(&self, start: &str, end: &str) -> Vec<(String, BlockLocation)> {
-        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
-        let map = self.id_to_location.read().unwrap();
+        let map = match self.id_to_location.read() {
+            Ok(map) => map,
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned during range query");
+                return Vec::new();
+            }
+        };
         let mut results = Vec::new();
 
         for (id, loc) in map.iter() {
@@ -174,18 +197,24 @@ impl IdIndex {
     ) -> Result<bool> {
         match node.as_mut() {
             BPlusNode::Leaf { entries, .. } => {
-                // Find insertion position
-                let pos = entries
-                    .binary_search_by_key(&&id, |(k, _)| k)
-                    .unwrap_or_else(|p| p);
+                // Find insertion position (binary_search returns Result<usize, usize> where
+                // both variants contain the valid insertion position)
+                let pos = match entries.binary_search_by_key(&&id, |(k, _)| k) {
+                    Ok(p) => p,
+                    Err(p) => p,
+                };
                 entries.insert(pos, (id, location));
 
                 // Check if split is needed
                 Ok(entries.len() > self.order)
             }
             BPlusNode::Internal { keys, children, .. } => {
-                // Find child to insert into
-                let pos = keys.binary_search(&id).unwrap_or_else(|p| p);
+                // Find child to insert into (binary_search returns Result<usize, usize> where
+                // both variants contain the valid insertion position)
+                let pos = match keys.binary_search(&id) {
+                    Ok(p) => p,
+                    Err(p) => p,
+                };
                 let child_idx = pos.min(children.len() - 1);
 
                 let needs_split =
@@ -219,7 +248,13 @@ impl IdIndex {
     }
 
     fn get_tree_height(&self) -> u32 {
-        let root = self.root.read().unwrap();
+        let root = match self.root.read() {
+            Ok(root) => root,
+            Err(error) => {
+                warn!(error = %error, "root lock poisoned while computing tree height");
+                return 0;
+            }
+        };
         match root.as_ref() {
             None => 0,
             Some(node) => self.node_height(node),
@@ -230,6 +265,8 @@ impl IdIndex {
         match node {
             BPlusNode::Leaf { .. } => 1,
             BPlusNode::Internal { children, .. } => {
+                // Internal nodes should always have children in a valid B+ tree.
+                // If empty (tree corruption or edge case), return 0 as safe fallback.
                 1 + children
                     .iter()
                     .map(|c| self.node_height(c))
@@ -240,8 +277,16 @@ impl IdIndex {
     }
 
     fn estimate_memory_usage(&self) -> usize {
-        let map_size = self.id_to_location.read().unwrap().len()
-            * (std::mem::size_of::<String>() + std::mem::size_of::<BlockLocation>() + 32); // HashMap overhead
+        let map_size = match self.id_to_location.read() {
+            Ok(map) => {
+                map.len()
+                    * (std::mem::size_of::<String>() + std::mem::size_of::<BlockLocation>() + 32)
+            }
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned while estimating memory");
+                0
+            }
+        }; // HashMap overhead
 
         let tree_size = self.estimate_tree_memory();
 

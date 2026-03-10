@@ -6,6 +6,7 @@
 use super::{
     ColumnSpec, EdgeDirection, PhysicalOperator, QueryValue, ResultTuple, evaluate_property_filter,
 };
+use crate::core::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::proto::proximadb_v1::{Edge, Node, PropertyFilter};
 use anyhow::Result;
@@ -203,7 +204,15 @@ impl PhysicalOperator for ExpandOperator {
             if let Some(ref mut iter) = self.edge_iterator {
                 if let Some((edge, target_node)) = iter.next() {
                     // Create result tuple by extending input tuple
-                    let mut result = self.current_input.as_ref().unwrap().clone();
+                    let mut result = self
+                        .current_input
+                        .as_ref()
+                        .ok_or_else(|| {
+                            ProximaDBError::Internal(
+                                "No current input tuple available in expand operator".to_string(),
+                            )
+                        })?
+                        .clone();
 
                     // Add edge binding (if requested)
                     if let Some(ref edge_var) = self.edge_variable {

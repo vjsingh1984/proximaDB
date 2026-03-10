@@ -931,7 +931,9 @@ mod tests {
         };
 
         let doc_refs: Vec<&SqlObject> = docs.iter().collect();
-        let result = executor.compute_aggregation(&doc_refs, &agg).unwrap();
+        let result = executor
+            .compute_aggregation(&doc_refs, &agg)
+            .expect("COUNT aggregation should succeed");
 
         if let Some(SqlValueVariant::Int64Value(count)) = result.value {
             assert_eq!(count, 3);
@@ -957,7 +959,9 @@ mod tests {
         };
 
         let doc_refs: Vec<&SqlObject> = docs.iter().collect();
-        let result = executor.compute_aggregation(&doc_refs, &agg).unwrap();
+        let result = executor
+            .compute_aggregation(&doc_refs, &agg)
+            .expect("SUM aggregation should succeed");
 
         if let Some(SqlValueVariant::NumberValue(sum)) = result.value {
             assert!((sum - 600.0).abs() < f64::EPSILON);
@@ -983,7 +987,9 @@ mod tests {
         };
 
         let doc_refs: Vec<&SqlObject> = docs.iter().collect();
-        let result = executor.compute_aggregation(&doc_refs, &agg).unwrap();
+        let result = executor
+            .compute_aggregation(&doc_refs, &agg)
+            .expect("AVG aggregation should succeed");
 
         if let Some(SqlValueVariant::NumberValue(avg)) = result.value {
             assert!((avg - 90.0).abs() < f64::EPSILON);
@@ -1010,7 +1016,9 @@ mod tests {
             r#type: AggregationType::Min as i32,
             input_path: "value".to_string(),
         };
-        let min_result = executor.compute_aggregation(&doc_refs, &min_agg).unwrap();
+        let min_result = executor
+            .compute_aggregation(&doc_refs, &min_agg)
+            .expect("MIN aggregation should succeed");
         if let Some(SqlValueVariant::NumberValue(min)) = min_result.value {
             assert!((min - 3.0).abs() < f64::EPSILON);
         } else {
@@ -1023,7 +1031,9 @@ mod tests {
             r#type: AggregationType::Max as i32,
             input_path: "value".to_string(),
         };
-        let max_result = executor.compute_aggregation(&doc_refs, &max_agg).unwrap();
+        let max_result = executor
+            .compute_aggregation(&doc_refs, &max_agg)
+            .expect("MAX aggregation should succeed");
         if let Some(SqlValueVariant::NumberValue(max)) = max_result.value {
             assert!((max - 8.0).abs() < f64::EPSILON);
         } else {
@@ -1066,7 +1076,9 @@ mod tests {
             ],
         };
 
-        let results = executor.process_group(&docs, &group_stage).unwrap();
+        let results = executor
+            .process_group(&docs, &group_stage)
+            .expect("GROUP stage should succeed");
 
         assert_eq!(results.len(), 2); // Two categories: A and B
 
@@ -1111,7 +1123,9 @@ mod tests {
             }],
         };
 
-        let sorted = executor.process_sort(&docs, &sort_stage).unwrap();
+        let sorted = executor
+            .process_sort(&docs, &sort_stage)
+            .expect("SORT stage should succeed");
 
         // Should be sorted: 10, 20, 30
         let values: Vec<i64> = sorted
@@ -1137,16 +1151,22 @@ mod tests {
 
         // Test SKIP
         let skip_stage = SkipStage { skip: 3 };
-        let skipped = executor.process_skip(&docs, &skip_stage).unwrap();
+        let skipped = executor
+            .process_skip(&docs, &skip_stage)
+            .expect("SKIP stage should succeed");
         assert_eq!(skipped.len(), 7);
 
         // Test LIMIT
         let limit_stage = LimitStage { limit: 5 };
-        let limited = executor.process_limit(&docs, &limit_stage).unwrap();
+        let limited = executor
+            .process_limit(&docs, &limit_stage)
+            .expect("LIMIT stage should succeed");
         assert_eq!(limited.len(), 5);
 
         // Test SKIP + LIMIT (pagination)
-        let skipped_then_limited = executor.process_limit(&skipped, &limit_stage).unwrap();
+        let skipped_then_limited = executor
+            .process_limit(&skipped, &limit_stage)
+            .expect("LIMIT stage (after SKIP) should succeed");
         assert_eq!(skipped_then_limited.len(), 5);
     }
 

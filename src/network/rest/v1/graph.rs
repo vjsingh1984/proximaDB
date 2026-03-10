@@ -30,27 +30,23 @@
 //! ## Endpoint Overview
 //!
 //! ```text
-//! POST   /api/v1/graph/nodes           - Create node
-//! GET    /api/v1/graph/nodes/{id}      - Get node by ID
-//! PUT    /api/v1/graph/nodes/{id}      - Update node  
-//! DELETE /api/v1/graph/nodes/{id}      - Delete node
-//! POST   /api/v1/graph/edges           - Create edge
-//! GET    /api/v1/graph/edges/{id}      - Get edge by ID
-//! PUT    /api/v1/graph/edges/{id}      - Update edge
-//! DELETE /api/v1/graph/edges/{id}      - Delete edge
-//! GET    /api/v1/graph/nodes/{id}/neighbors - Get node neighbors
-//! POST   /api/v1/graph/traverse        - Graph traversal
-//! POST   /api/v1/graph/shortest_path   - Dijkstra shortest path
-//! POST   /api/v1/graph/constraints/unique   - Add unique constraint
-//! DELETE /api/v1/graph/constraints/unique   - Remove unique constraint
-//! GET    /api/v1/graph/components       - Connected components (weak)
-//! GET    /api/v1/graph/cycles           - Detect directed cycles
-//! GET    /api/v1/graph/stats           - Graph statistics
-//! POST   /api/v1/graph/nodes/batch     - Batch create nodes
-//! POST   /api/v1/graph/edges/batch     - Batch create edges
-//! POST   /api/v1/graph/query/nodes     - Query nodes
-//! POST   /api/v1/graph/query/edges     - Query edges
+//! POST   /api/v1/graph/graphs                          - Create graph collection
+//! GET    /api/v1/graph/graphs                          - List graph collections
+//! POST   /api/v1/graph/graphs/{graph_id}/nodes         - Create node
+//! GET    /api/v1/graph/graphs/{graph_id}/nodes/{id}    - Get node by ID
+//! POST   /api/v1/graph/graphs/{graph_id}/edges         - Create edge
+//! GET    /api/v1/graph/graphs/{graph_id}/edges/{id}    - Get edge by ID
+//! GET    /api/v1/graph/graphs/{graph_id}/stats         - Graph statistics
+//! POST   /api/v1/graph/graphs/{graph_id}/traverse      - Graph traversal
+//! POST   /api/v1/graph/graphs/{graph_id}/shortest_path - Dijkstra shortest path
+//! POST   /api/v1/graph/graphs/{graph_id}/query         - Declarative graph query
+//! POST   /api/v1/graph/graphs/{graph_id}/nodes/batch   - Batch create nodes
+//! POST   /api/v1/graph/graphs/{graph_id}/edges/batch   - Batch create edges
 //! ```
+//!
+//! Legacy compatibility routes (`/api/v1/graph/nodes`, `/api/v1/graph/edges`, etc.)
+//! return `308 Permanent Redirect` with deprecation metadata and a canonical
+//! target route. Sunset date: `2026-06-30`.
 //!
 //! ## Request/Response Format
 //!
@@ -60,8 +56,8 @@
 use axum::{
     Router,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Json},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{IntoResponse, Json, Response},
     routing::{delete, get, post, put},
 };
 use serde::{Deserialize, Serialize};
@@ -714,7 +710,15 @@ pub fn create_graph_router() -> Router<AppState> {
             get(get_connected_components),
         )
         .route("/graphs/:graph_id/cycles", get(check_cycles))
-        // Legacy compatibility endpoints (using default graph)
+        // PULSAR/QUASAR advanced graph operations
+        .route("/graphs/:graph_id/engine", post(create_graph_with_engine))
+        .route("/graphs/:graph_id/pulsar/stats", get(get_pulsar_stats))
+        .route("/graphs/:graph_id/pulsar/query", post(cross_shard_query))
+        .route("/graphs/:graph_id/pulsar/rebalance", post(rebalance_shards))
+        .route("/graphs/:graph_id/quasar/stats", get(get_quasar_stats))
+        .route("/graphs/:graph_id/quasar/tiers", get(get_tier_stats))
+        .route("/graphs/:graph_id/quasar/migrate", post(trigger_migration))
+        // Legacy compatibility endpoints (deprecated; redirect to canonical multi-graph routes)
         .route("/nodes", post(create_node_legacy))
         .route("/nodes/:id", get(get_node_legacy))
         .route("/edges", post(create_edge_legacy))
@@ -1599,48 +1603,59 @@ pub async fn get_graph_stats(
 // ====================================================================
 
 const DEFAULT_GRAPH_ID: &str = "default";
+const LEGACY_GRAPH_SUNSET_DATE: &str = "2026-06-30";
+
+fn legacy_graph_redirect(canonical_path: String) -> Response {
+    warn!(
+        canonical_route = %canonical_path,
+        sunset_date = LEGACY_GRAPH_SUNSET_DATE,
+        "Legacy graph endpoint is deprecated; redirecting to canonical multi-graph route"
+    );
+
+    let mut response = StatusCode::PERMANENT_REDIRECT.into_response();
+
+    if let Ok(location_value) = HeaderValue::from_str(&canonical_path) {
+        response
+            .headers_mut()
+            .insert(header::LOCATION, location_value.clone());
+        response.headers_mut().insert(
+            header::HeaderName::from_static("x-proximadb-canonical-route"),
+            location_value,
+        );
+    }
+
+    response.headers_mut().insert(
+        header::HeaderName::from_static("deprecation"),
+        HeaderValue::from_static("true"),
+    );
+    response.headers_mut().insert(
+        header::HeaderName::from_static("sunset"),
+        HeaderValue::from_static(LEGACY_GRAPH_SUNSET_DATE),
+    );
+    response
+}
 
 /// Legacy create node handler (uses default graph)
-pub async fn create_node_legacy(
-    State(app_state): State<AppState>,
-    Json(request): Json<CreateNodeRequest>,
-) -> impl IntoResponse {
-    create_node(
-        State(app_state),
-        Path(DEFAULT_GRAPH_ID.to_string()),
-        Json(request),
-    )
-    .await
+pub async fn create_node_legacy() -> impl IntoResponse {
+    legacy_graph_redirect(format!("/api/v1/graph/graphs/{}/nodes", DEFAULT_GRAPH_ID))
 }
 
 /// Legacy get node handler (uses default graph)
-pub async fn get_node_legacy(
-    State(app_state): State<AppState>,
-    Path(node_id): Path<String>,
-) -> impl IntoResponse {
-    get_node(
-        State(app_state),
-        Path((DEFAULT_GRAPH_ID.to_string(), node_id)),
-    )
-    .await
+pub async fn get_node_legacy(Path(node_id): Path<String>) -> impl IntoResponse {
+    legacy_graph_redirect(format!(
+        "/api/v1/graph/graphs/{}/nodes/{}",
+        DEFAULT_GRAPH_ID, node_id
+    ))
 }
 
 /// Legacy create edge handler (uses default graph)
-pub async fn create_edge_legacy(
-    State(app_state): State<AppState>,
-    Json(request): Json<CreateEdgeRequest>,
-) -> impl IntoResponse {
-    create_edge(
-        State(app_state),
-        Path(DEFAULT_GRAPH_ID.to_string()),
-        Json(request),
-    )
-    .await
+pub async fn create_edge_legacy() -> impl IntoResponse {
+    legacy_graph_redirect(format!("/api/v1/graph/graphs/{}/edges", DEFAULT_GRAPH_ID))
 }
 
 /// Legacy get graph stats handler (uses default graph)
-pub async fn get_graph_stats_legacy(State(app_state): State<AppState>) -> impl IntoResponse {
-    get_graph_stats(State(app_state), Path(DEFAULT_GRAPH_ID.to_string())).await
+pub async fn get_graph_stats_legacy() -> impl IntoResponse {
+    legacy_graph_redirect(format!("/api/v1/graph/graphs/{}/stats", DEFAULT_GRAPH_ID))
 }
 
 // ============================================================================
@@ -1982,5 +1997,354 @@ fn convert_query_result_to_rows(result: &crate::query::QueryResult) -> Vec<serde
             graph_result.nodes.clone()
         }
         QueryResultData::Empty => vec![],
+    }
+}
+
+// ===== PULSAR/QUASAR Advanced Graph Operations =====
+
+/// Request for creating a graph with a specific engine
+#[derive(Debug, Deserialize)]
+pub struct CreateGraphWithEngineRequest {
+    pub graph_id: String,
+    #[serde(default)]
+    pub engine_type: String,
+    pub pulsar_config: Option<serde_json::Value>,
+    pub quasar_config: Option<serde_json::Value>,
+}
+
+/// Create a graph with a specific engine type (ORION, PULSAR, or QUASAR)
+pub async fn create_graph_with_engine(
+    State(app_state): State<AppState>,
+    Json(request): Json<CreateGraphWithEngineRequest>,
+) -> impl IntoResponse {
+    info!(
+        "Creating graph {} with engine type {}",
+        request.graph_id, request.engine_type
+    );
+
+    // Map engine type string to proto enum
+    let engine_type = match request.engine_type.to_lowercase().as_str() {
+        "orion" => crate::graph::service::service_advanced::GraphEngineTypeProto::Orion,
+        "pulsar" => crate::graph::service::service_advanced::GraphEngineTypeProto::Pulsar,
+        "quasar" => crate::graph::service::service_advanced::GraphEngineTypeProto::Quasar,
+        _ => {
+            let error = GraphError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "Unknown engine type: {}. Valid options: orion, pulsar, quasar",
+                    request.engine_type
+                ),
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<serde_json::Value>::error(error)),
+            )
+                .into_response();
+        }
+    };
+
+    let service_request = crate::graph::service::service_advanced::CreateGraphWithEngineRequest {
+        graph_id: request.graph_id.clone(),
+        engine_type,
+        pulsar_config: request
+            .pulsar_config
+            .map(|v| serde_json::from_value(v).unwrap_or_default()),
+        quasar_config: request
+            .quasar_config
+            .map(|v| serde_json::from_value(v).unwrap_or_default()),
+    };
+
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .create_graph_with_engine(service_request)
+        .await
+    {
+        Ok(response) => {
+            info!(
+                "Graph {} created successfully with engine {:?}",
+                request.graph_id, engine_type
+            );
+            let body = serde_json::json!({
+                "success": response.success,
+                "message": response.message,
+                "engine_type": format!("{:?}", response.created_engine_type),
+            });
+            (StatusCode::CREATED, Json(GraphResponse::success(body))).into_response()
+        }
+        Err(e) => {
+            error!("Failed to create graph {}: {}", request.graph_id, e);
+            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get PULSAR distributed graph statistics
+pub async fn get_pulsar_stats(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    debug!("Getting PULSAR stats for graph: {}", graph_id);
+
+    let request = crate::proto::v1::GetStatsRequest {
+        graph_id: graph_id.clone(),
+    };
+
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .get_pulsar_stats(request)
+        .await
+    {
+        Ok(stats) => (
+            StatusCode::OK,
+            Json(GraphResponse::success(
+                serde_json::to_value(stats).unwrap_or_default(),
+            )),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to get PULSAR stats for graph {}: {}", graph_id, e);
+            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Request for cross-shard query
+#[derive(Debug, Deserialize)]
+pub struct CrossShardQueryRequest {
+    pub graph_id: String,
+    pub query: String,
+    #[serde(default)]
+    pub shard_ids: Vec<String>,
+}
+
+/// Execute cross-shard query (PULSAR only)
+pub async fn cross_shard_query(
+    State(app_state): State<AppState>,
+    Json(request): Json<CrossShardQueryRequest>,
+) -> impl IntoResponse {
+    info!(
+        "Executing cross-shard query for graph: {}",
+        request.graph_id
+    );
+
+    let service_request = crate::graph::service::service_advanced::CrossShardQueryRequest {
+        graph_id: request.graph_id.clone(),
+        query: request.query.clone(),
+        shard_ids: request.shard_ids.clone(),
+    };
+
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .cross_shard_query(service_request)
+        .await
+    {
+        Ok(response) => (
+            StatusCode::OK,
+            Json(GraphResponse::success(
+                serde_json::to_value(response).unwrap_or_default(),
+            )),
+        )
+            .into_response(),
+        Err(e) => {
+            error!(
+                "Cross-shard query failed for graph {}: {}",
+                request.graph_id, e
+            );
+            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Request for rebalancing shards
+#[derive(Debug, Deserialize)]
+pub struct RebalanceShardsRequest {
+    pub graph_id: String,
+    #[serde(default)]
+    pub shard_ids: Vec<String>,
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Rebalance shards (PULSAR only)
+pub async fn rebalance_shards(
+    State(app_state): State<AppState>,
+    Json(request): Json<RebalanceShardsRequest>,
+) -> impl IntoResponse {
+    info!("Rebalancing shards for graph: {}", request.graph_id);
+
+    let service_request = crate::graph::service::service_advanced::RebalanceShardsRequest {
+        graph_id: request.graph_id.clone(),
+        shard_ids: request.shard_ids.clone(),
+        force: request.force,
+    };
+
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .rebalance_shards(service_request)
+        .await
+    {
+        Ok(response) => {
+            let body = serde_json::json!({
+                "success": response.success,
+                "message": response.message,
+                "rebalanced_shards": response.rebalanced_shards,
+            });
+            (StatusCode::OK, Json(GraphResponse::success(body))).into_response()
+        }
+        Err(e) => {
+            error!(
+                "Failed to rebalance shards for graph {}: {}",
+                request.graph_id, e
+            );
+            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get QUASAR tiering statistics
+pub async fn get_quasar_stats(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    debug!("Getting QUASAR stats for graph: {}", graph_id);
+
+    let request = crate::proto::v1::GetStatsRequest {
+        graph_id: graph_id.clone(),
+    };
+
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .get_quasar_stats(request)
+        .await
+    {
+        Ok(stats) => (
+            StatusCode::OK,
+            Json(GraphResponse::success(
+                serde_json::to_value(stats).unwrap_or_default(),
+            )),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to get QUASAR stats for graph {}: {}", graph_id, e);
+            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get detailed tier statistics (QUASAR only)
+pub async fn get_tier_stats(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    debug!("Getting tier stats for graph: {}", graph_id);
+
+    let request = crate::graph::service::service_advanced::GetTierStatsRequest {
+        graph_id: graph_id.clone(),
+        tier_name: None,
+    };
+
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .get_tier_stats(request)
+        .await
+    {
+        Ok(response) => (
+            StatusCode::OK,
+            Json(GraphResponse::success(
+                serde_json::to_value(response).unwrap_or_default(),
+            )),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to get tier stats for graph {}: {}", graph_id, e);
+            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Request for triggering migration
+#[derive(Debug, Deserialize)]
+pub struct TriggerMigrationRequest {
+    pub graph_id: String,
+    #[serde(default)]
+    pub node_ids: Vec<String>,
+    pub target_tier: String,
+}
+
+/// Trigger manual tier migration (QUASAR only)
+pub async fn trigger_migration(
+    State(app_state): State<AppState>,
+    Json(request): Json<TriggerMigrationRequest>,
+) -> impl IntoResponse {
+    info!("Triggering migration for graph: {}", request.graph_id);
+
+    let service_request = crate::graph::service::service_advanced::TriggerMigrationRequest {
+        graph_id: request.graph_id.clone(),
+        node_ids: request.node_ids.clone(),
+        target_tier: request.target_tier.clone(),
+    };
+
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .trigger_migration(service_request)
+        .await
+    {
+        Ok(response) => {
+            let body = serde_json::json!({
+                "success": response.success,
+                "message": response.message,
+                "migrated_node_ids": response.migrated_node_ids,
+            });
+            (StatusCode::OK, Json(GraphResponse::success(body))).into_response()
+        }
+        Err(e) => {
+            error!(
+                "Failed to trigger migration for graph {}: {}",
+                request.graph_id, e
+            );
+            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
+            )
+                .into_response()
+        }
     }
 }
