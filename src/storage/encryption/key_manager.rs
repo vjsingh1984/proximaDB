@@ -49,6 +49,32 @@ pub struct KeyManager {
 }
 
 impl KeyManager {
+    /// Create a new key manager from a raw master key
+    ///
+    /// # Security Warning
+    ///
+    /// This constructor is intended for testing purposes only.
+    /// In production, always use `from_env()` to load the master key
+    /// from a secure environment variable.
+    pub fn new(master_key: [u8; 32]) -> Self {
+        let mut key_versions = HashMap::new();
+        let version_0 = KeyVersion {
+            id: 0,
+            created_at: now(),
+            expires_at: None,
+            active: true,
+        };
+        key_versions.insert(0, version_0);
+
+        Self {
+            master_key,
+            key_versions: Arc::new(RwLock::new(key_versions)),
+            current_version: Arc::new(RwLock::new(0)),
+            next_version_id: Arc::new(RwLock::new(1)),
+            rotation_interval_secs: 30 * 24 * 3600, // 30 days default
+        }
+    }
+
     /// Create a new key manager from environment variable
     pub fn from_env(env_var: &str) -> Result<Self> {
         let master_key_str = env::var(env_var).map_err(|_| {
