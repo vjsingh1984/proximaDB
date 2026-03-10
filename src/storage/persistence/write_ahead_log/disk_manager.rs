@@ -9,11 +9,11 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+use crate::storage::encryption::WALEncryptionLayer;
+use crate::storage::encryption::wal_encryption::WalSegmentMetadata;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::BatchId;
 use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
-use crate::storage::encryption::WALEncryptionLayer;
-use crate::storage::encryption::wal_encryption::WalSegmentMetadata;
 use crate::utils::checksum::Crc32;
 
 /// Centralized manager for all WAL disk operations
@@ -65,12 +65,19 @@ impl WriteAheadLogDiskManager {
         encryption_layer: Option<Arc<WALEncryptionLayer>>,
     ) -> Self {
         let wal_base_url = wal_base_url.as_ref().to_string();
-        let encryption_enabled = encryption_layer.as_ref().map(|e| e.is_enabled()).unwrap_or(false);
+        let encryption_enabled = encryption_layer
+            .as_ref()
+            .map(|e| e.is_enabled())
+            .unwrap_or(false);
 
         info!(
             "🎯 Creating WriteAheadLogDiskManager with base URL: {}, encryption: {}",
             wal_base_url,
-            if encryption_enabled { "enabled (AES-256-GCM)" } else { "disabled" }
+            if encryption_enabled {
+                "enabled (AES-256-GCM)"
+            } else {
+                "disabled"
+            }
         );
 
         Self {
@@ -188,24 +195,29 @@ impl WriteAheadLogDiskManager {
         let _ = filesystem.create_dir_all(&dir_url).await;
 
         // TD-016: Encrypt data before writing if encryption is enabled
-        let (data_to_write, encryption_metadata) = if let Some(ref encryption_layer) = self.encryption_layer {
-            debug!("🔒 Encrypting WAL segment before write");
-            let segment_name = format!("{}_{}", collection_id, batch_id.to_base62());
-            // Use batch_id components to create a unique u64 for key derivation
-            let segment_id = batch_id.timestamp_ms() ^ (batch_id.counter() as u64);
-            match encryption_layer.encrypt_segment(&segment_name, segment_id, data) {
-                Ok((encrypted, metadata)) => {
-                    debug!("✅ WAL segment encrypted ({} -> {} bytes)", data.len(), encrypted.len());
-                    (encrypted, Some(metadata))
+        let (data_to_write, encryption_metadata) =
+            if let Some(ref encryption_layer) = self.encryption_layer {
+                debug!("🔒 Encrypting WAL segment before write");
+                let segment_name = format!("{}_{}", collection_id, batch_id.to_base62());
+                // Use batch_id components to create a unique u64 for key derivation
+                let segment_id = batch_id.timestamp_ms() ^ (batch_id.counter() as u64);
+                match encryption_layer.encrypt_segment(&segment_name, segment_id, data) {
+                    Ok((encrypted, metadata)) => {
+                        debug!(
+                            "✅ WAL segment encrypted ({} -> {} bytes)",
+                            data.len(),
+                            encrypted.len()
+                        );
+                        (encrypted, Some(metadata))
+                    }
+                    Err(e) => {
+                        warn!("⚠️  WAL encryption failed, writing unencrypted: {}", e);
+                        (data.to_vec(), None)
+                    }
                 }
-                Err(e) => {
-                    warn!("⚠️  WAL encryption failed, writing unencrypted: {}", e);
-                    (data.to_vec(), None)
-                }
-            }
-        } else {
-            (data.to_vec(), None)
-        };
+            } else {
+                (data.to_vec(), None)
+            };
 
         // Write data atomically; for object stores this will write to a temp and
         // then rename to the final path.
@@ -239,12 +251,12 @@ impl WriteAheadLogDiskManager {
                 SerializationFormat::Avro => "avro",
             };
             let entry = manifest::GlobalManifestEntry::new(
-                0,                         // LSN will be auto-allocated
-                collection_id.to_string(), // collection_id
-                batch_id,                  // batch_id (pass reference)
-                file_name,                 // file_name
+                0,                          // LSN will be auto-allocated
+                collection_id.to_string(),  // collection_id
+                batch_id,                   // batch_id (pass reference)
+                file_name,                  // file_name
                 data_to_write.len() as u64, // size_bytes (encrypted size)
-                checksum,                  // checksum_crc32
+                checksum,                   // checksum_crc32
                 SerializationFormat::from_str(format_str).unwrap_or(SerializationFormat::Bincode), // format enum
                 0,                         // vector_count (unknown at this point)
                 self.wal_base_url.clone(), // storage_url
@@ -300,7 +312,11 @@ impl WriteAheadLogDiskManager {
                     debug!("🔓 Decrypting WAL segment after read");
                     match encryption_layer.decrypt_segment(metadata, &encrypted_data) {
                         Ok(decrypted) => {
-                            debug!("✅ WAL segment decrypted ({} -> {} bytes)", encrypted_data.len(), decrypted.len());
+                            debug!(
+                                "✅ WAL segment decrypted ({} -> {} bytes)",
+                                encrypted_data.len(),
+                                decrypted.len()
+                            );
                             decrypted
                         }
                         Err(e) => {
@@ -310,7 +326,9 @@ impl WriteAheadLogDiskManager {
                     }
                 } else {
                     warn!("⚠️  WAL segment is encrypted but no encryption layer available");
-                    return Err(anyhow::anyhow!("Cannot decrypt WAL segment: no encryption layer available"));
+                    return Err(anyhow::anyhow!(
+                        "Cannot decrypt WAL segment: no encryption layer available"
+                    ));
                 }
             } else {
                 encrypted_data

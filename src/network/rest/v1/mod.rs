@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod document;
 pub mod entities;
 pub mod graph;

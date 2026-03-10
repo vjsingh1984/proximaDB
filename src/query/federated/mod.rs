@@ -833,10 +833,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_group_by_reports_unsupported_execution() {
+    async fn test_group_by_executes_for_vector_search() {
         let vector_engine = Arc::new(
             MockVectorEngine::new(vec![
                 OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
+                OptimizedSearchRecord::new("doc-1".to_string(), 0.87),
                 OptimizedSearchRecord::new("doc-2".to_string(), 0.12),
             ])
             .await,
@@ -846,18 +847,141 @@ mod tests {
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx = FederatedQueryContext::new(storage);
 
-        let error = ctx
+        let result = ctx
             .execute_uncached(
-                "SELECT id, COUNT(*) FROM VECTOR_SEARCH('products', '[0.1]', 2) GROUP BY id",
+                "SELECT id AS doc_id, COUNT(*) AS matches FROM VECTOR_SEARCH('products', '[0.1]', 3) GROUP BY id ORDER BY matches DESC LIMIT 1",
             )
             .await
-            .expect_err("group by should fail explicitly until grouped aggregation is implemented");
+            .expect("group by should execute for grouped federated aggregates");
 
-        assert!(
-            error
-                .to_string()
-                .contains("GROUP BY is not yet supported in federated SQL execution")
-        );
+        assert_eq!(result.row_count(), 1);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(field_names, vec!["doc_id", "matches"]);
+
+        let batch = result
+            .batches
+            .first()
+            .expect("result should contain a batch");
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("grouped id column should be Utf8");
+        let counts = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("grouped count column should be Int64");
+
+        assert_eq!(ids.value(0), "doc-1");
+        assert_eq!(counts.value(0), 2);
+    }
+
+    #[tokio::test]
+    async fn test_select_distinct_executes_for_vector_search() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![
+                OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
+                OptimizedSearchRecord::new("doc-1".to_string(), 0.87),
+            ])
+            .await,
+        ) as Arc<dyn UnifiedStorageEngine>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT DISTINCT id FROM VECTOR_SEARCH('products', '[0.1]', 2)")
+            .await
+            .expect("distinct should execute for simple federated projections");
+
+        assert_eq!(result.row_count(), 1);
+        let batch = result
+            .batches
+            .first()
+            .expect("result should contain a batch");
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("distinct id column should be Utf8");
+        assert_eq!(ids.value(0), "doc-1");
+    }
+
+    #[tokio::test]
+    async fn test_projection_alias_executes_for_vector_search() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        ) as Arc<dyn UnifiedStorageEngine>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT id AS doc_id, score AS similarity FROM VECTOR_SEARCH('products', '[0.1]', 1)",
+            )
+            .await
+            .expect("projection aliases should execute for simple federated projections");
+
+        assert_eq!(result.row_count(), 1);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(field_names, vec!["doc_id", "similarity"]);
+    }
+
+    #[tokio::test]
+    async fn test_order_by_projection_alias_executes() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![
+                OptimizedSearchRecord::new("doc-2".to_string(), 0.12),
+                OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
+            ])
+            .await,
+        ) as Arc<dyn UnifiedStorageEngine>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT id AS doc_id, score AS similarity FROM VECTOR_SEARCH('products', '[0.1]', 2) ORDER BY similarity DESC LIMIT 1",
+            )
+            .await
+            .expect("order by projection alias should execute");
+
+        assert_eq!(result.row_count(), 1);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(field_names, vec!["doc_id", "similarity"]);
+
+        let batch = result
+            .batches
+            .first()
+            .expect("result should contain a batch");
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("alias id column should be Utf8");
+        assert_eq!(ids.value(0), "doc-1");
     }
 
     #[tokio::test]

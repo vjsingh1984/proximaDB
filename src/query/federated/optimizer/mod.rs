@@ -76,6 +76,8 @@ pub enum PlanNodeType {
         input: Box<PlanNode>,
         columns: Vec<String>,
     },
+    /// Distinct rows across the projected output
+    Distinct { input: Box<PlanNode> },
     /// Sort/Order By
     Sort {
         input: Box<PlanNode>,
@@ -1778,6 +1780,18 @@ impl CrossModelOptimizer {
     }
 
     fn apply_sql_clauses(&self, mut plan: PlanNode, query: &FederatedQuery) -> Result<PlanNode> {
+        let has_distinct = Self::select_has_distinct(&query.sql);
+        if Self::find_top_level_keyword(&query.sql, "UNION").is_some() {
+            return Err(anyhow!(
+                "UNION queries are not yet supported in federated SQL execution"
+            ));
+        }
+        if Self::find_top_level_keyword(&query.sql, "HAVING").is_some() {
+            return Err(anyhow!(
+                "HAVING is not yet supported in federated SQL execution"
+            ));
+        }
+
         if let Some(predicate) = Self::extract_where_predicate(&query.sql) {
             let output_columns = plan.output_columns.clone();
             let estimated_cost = plan.estimated_cost * 1.05;
@@ -1800,20 +1814,39 @@ impl CrossModelOptimizer {
             .iter()
             .filter_map(Self::parse_aggregate_expr)
             .collect::<Vec<_>>();
+        let has_group_by = !group_by.is_empty();
+        let has_aggregate_projection = !aggregates.is_empty();
+        if has_group_by {
+            let invalid_group_projection = select_items
+                .iter()
+                .filter(|item| Self::parse_aggregate_expr(item).is_none())
+                .any(|item| !group_by.contains(&item.expression));
 
-        if !group_by.is_empty() {
-            return Err(anyhow!(
-                "GROUP BY is not yet supported in federated SQL execution; only global aggregates over function-backed sources are currently executable"
-            ));
+            if invalid_group_projection {
+                return Err(anyhow!(
+                    "GROUP BY select items must reference grouped columns or aggregate expressions"
+                ));
+            }
         }
 
-        let has_aggregate_projection = !aggregates.is_empty();
-        if has_aggregate_projection {
-            let aggregate_columns = aggregates
+        if has_group_by || has_aggregate_projection {
+            let aggregate_columns = group_by
                 .iter()
-                .map(|aggregate| aggregate.alias.clone())
+                .cloned()
+                .chain(aggregates.iter().map(|aggregate| aggregate.alias.clone()))
                 .collect::<Vec<_>>();
-            let estimated_cost = plan.estimated_cost * 1.1;
+            let estimated_rows = if has_group_by {
+                ((plan.estimated_rows as f64) * 0.5).ceil() as u64
+            } else {
+                1
+            };
+            let estimated_rows = estimated_rows.max(u64::from(plan.estimated_rows > 0));
+            let estimated_cost = if has_group_by {
+                plan.estimated_cost * 1.15
+            } else {
+                plan.estimated_cost * 1.1
+            };
+
             plan = PlanNode {
                 id: self.next_id(),
                 node_type: PlanNodeType::Aggregate {
@@ -1822,8 +1855,81 @@ impl CrossModelOptimizer {
                     aggregates,
                 },
                 estimated_cost,
-                estimated_rows: 1,
+                estimated_rows,
                 output_columns: aggregate_columns,
+            };
+        }
+
+        let projection_sources = select_items
+            .iter()
+            .map(|item| {
+                Self::parse_aggregate_expr(item)
+                    .map(|aggregate| aggregate.alias)
+                    .unwrap_or_else(|| item.expression.clone())
+            })
+            .collect::<Vec<_>>();
+        let projection_output_columns = select_items
+            .iter()
+            .map(|item| {
+                item.alias
+                    .clone()
+                    .unwrap_or_else(|| item.expression.clone())
+            })
+            .collect::<Vec<_>>();
+        if (!has_aggregate_projection && !has_group_by)
+            && !projection_sources.is_empty()
+            && !(projection_sources.len() == 1 && projection_sources[0] == "*")
+            && !projection_sources
+                .iter()
+                .any(|column| column.ends_with(".*"))
+        {
+            let estimated_cost = plan.estimated_cost;
+            let estimated_rows = plan.estimated_rows;
+            plan = PlanNode {
+                id: self.next_id(),
+                node_type: PlanNodeType::Project {
+                    input: Box::new(plan),
+                    columns: projection_sources,
+                },
+                estimated_cost,
+                estimated_rows,
+                output_columns: projection_output_columns,
+            };
+        }
+
+        if has_group_by
+            && !projection_sources.is_empty()
+            && !(projection_sources.len() == 1 && projection_sources[0] == "*")
+            && !projection_sources.iter().any(|column| column.ends_with(".*"))
+            && (projection_sources != plan.output_columns
+                || projection_output_columns != plan.output_columns)
+        {
+            let estimated_cost = plan.estimated_cost;
+            let estimated_rows = plan.estimated_rows;
+            plan = PlanNode {
+                id: self.next_id(),
+                node_type: PlanNodeType::Project {
+                    input: Box::new(plan),
+                    columns: projection_sources,
+                },
+                estimated_cost,
+                estimated_rows,
+                output_columns: projection_output_columns,
+            };
+        }
+
+        if has_distinct {
+            let output_columns = plan.output_columns.clone();
+            let estimated_cost = plan.estimated_cost * 1.05;
+            let estimated_rows = ((plan.estimated_rows as f64) * 0.8).ceil() as u64;
+            plan = PlanNode {
+                id: self.next_id(),
+                node_type: PlanNodeType::Distinct {
+                    input: Box::new(plan),
+                },
+                estimated_cost,
+                estimated_rows,
+                output_columns,
             };
         }
 
@@ -1859,26 +1965,6 @@ impl CrossModelOptimizer {
                 estimated_cost,
                 estimated_rows,
                 output_columns,
-            };
-        }
-
-        let projection = Self::extract_select_columns(&query.sql);
-        if !has_aggregate_projection
-            && !projection.is_empty()
-            && !(projection.len() == 1 && projection[0] == "*")
-            && !projection.iter().any(|column| column.ends_with(".*"))
-        {
-            let estimated_cost = plan.estimated_cost;
-            let estimated_rows = plan.estimated_rows;
-            plan = PlanNode {
-                id: self.next_id(),
-                node_type: PlanNodeType::Project {
-                    input: Box::new(plan),
-                    columns: projection.clone(),
-                },
-                estimated_cost,
-                estimated_rows,
-                output_columns: projection,
             };
         }
 
@@ -1995,6 +2081,20 @@ impl CrossModelOptimizer {
         }
 
         items
+    }
+
+    fn select_has_distinct(sql: &str) -> bool {
+        let Some(select_pos) = Self::find_top_level_keyword(sql, "SELECT") else {
+            return false;
+        };
+        let Some(from_pos) = Self::find_top_level_keyword_from(sql, "FROM", select_pos + 6) else {
+            return false;
+        };
+
+        sql[select_pos + 6..from_pos]
+            .trim_start()
+            .to_uppercase()
+            .starts_with("DISTINCT ")
     }
 
     fn extract_select_items(sql: &str) -> Vec<SelectItem> {
@@ -2789,6 +2889,18 @@ impl CrossModelOptimizer {
                     output_columns: plan.output_columns,
                 })
             }
+            PlanNodeType::Distinct { input } => {
+                let input = self.push_predicates(*input)?;
+                Ok(PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::Distinct {
+                        input: Box::new(input),
+                    },
+                    estimated_cost: plan.estimated_cost,
+                    estimated_rows: plan.estimated_rows,
+                    output_columns: plan.output_columns,
+                })
+            }
             PlanNodeType::Sort { input, order_by } => {
                 let input = self.push_predicates(*input)?;
                 Ok(PlanNode {
@@ -3188,6 +3300,18 @@ impl CrossModelOptimizer {
                     output_columns: plan.output_columns,
                 })
             }
+            PlanNodeType::Distinct { input } => {
+                let input = self.reorder_joins(*input)?;
+                Ok(PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::Distinct {
+                        input: Box::new(input),
+                    },
+                    estimated_cost: plan.estimated_cost,
+                    estimated_rows: plan.estimated_rows,
+                    output_columns: plan.output_columns,
+                })
+            }
             PlanNodeType::Sort { input, order_by } => {
                 let input = self.reorder_joins(*input)?;
                 Ok(PlanNode {
@@ -3359,11 +3483,28 @@ impl CrossModelOptimizer {
                 };
 
                 let input = self.push_projections_with_required(*input, &new_required)?;
+                let preserves_names = columns == plan.output_columns;
 
-                // If all columns are required, remove the projection
-                if new_required.len() == columns.len() || columns.contains(&"*".to_string()) {
+                // If all columns are required and the projection is not renaming columns,
+                // remove it entirely.
+                if (new_required.len() == columns.len() || columns.contains(&"*".to_string()))
+                    && preserves_names
+                {
                     Ok(input)
                 } else {
+                    let filtered_output_columns: Vec<String> = if required
+                        .contains(&"*".to_string())
+                    {
+                        plan.output_columns.clone()
+                    } else {
+                        columns
+                            .iter()
+                            .zip(plan.output_columns.iter())
+                            .filter(|(column, _)| new_required.contains(column) || **column == "*")
+                            .map(|(_, output)| output.clone())
+                            .collect()
+                    };
+
                     Ok(PlanNode {
                         id: self.next_id(),
                         node_type: PlanNodeType::Project {
@@ -3372,7 +3513,7 @@ impl CrossModelOptimizer {
                         },
                         estimated_cost: plan.estimated_cost * 0.9, // Slight cost reduction
                         estimated_rows: plan.estimated_rows,
-                        output_columns: columns,
+                        output_columns: filtered_output_columns,
                     })
                 }
             }
@@ -3481,6 +3622,18 @@ impl CrossModelOptimizer {
                     output_columns: required.to_vec(),
                 })
             }
+            PlanNodeType::Distinct { input } => {
+                let input = self.push_projections_with_required(*input, required)?;
+                Ok(PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::Distinct {
+                        input: Box::new(input),
+                    },
+                    estimated_cost: plan.estimated_cost,
+                    estimated_rows: plan.estimated_rows,
+                    output_columns: required.to_vec(),
+                })
+            }
             PlanNodeType::Sort { input, order_by } => {
                 // Include sort columns in required set
                 let mut extended_required = required.to_vec();
@@ -3582,6 +3735,10 @@ impl CrossModelOptimizer {
                 input,
             } => {
                 columns.extend(proj_cols.clone());
+                columns.extend(self.collect_required_columns(input));
+            }
+            PlanNodeType::Distinct { input } => {
+                columns.extend(plan.output_columns.clone());
                 columns.extend(self.collect_required_columns(input));
             }
             PlanNodeType::Filter { predicate, input } => {
@@ -3751,6 +3908,18 @@ impl CrossModelOptimizer {
                     output_columns: plan.output_columns,
                 })
             }
+            PlanNodeType::Distinct { input } => {
+                let input = self.identify_parallelism(*input)?;
+                Ok(PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::Distinct {
+                        input: Box::new(input),
+                    },
+                    estimated_cost: plan.estimated_cost,
+                    estimated_rows: plan.estimated_rows,
+                    output_columns: plan.output_columns,
+                })
+            }
             PlanNodeType::Sort { input, order_by } => {
                 let input = self.identify_parallelism(*input)?;
                 Ok(PlanNode {
@@ -3837,6 +4006,7 @@ impl CrossModelOptimizer {
             }
             PlanNodeType::Filter { input, .. }
             | PlanNodeType::Project { input, .. }
+            | PlanNodeType::Distinct { input, .. }
             | PlanNodeType::Sort { input, .. }
             | PlanNodeType::Limit { input, .. }
             | PlanNodeType::Aggregate { input, .. } => {
@@ -3886,6 +4056,9 @@ impl CrossModelOptimizer {
                 cost += self.calculate_total_cost(input);
             }
             PlanNodeType::Project { input, .. } => {
+                cost += self.calculate_total_cost(input);
+            }
+            PlanNodeType::Distinct { input, .. } => {
                 cost += self.calculate_total_cost(input);
             }
             PlanNodeType::Sort { input, .. } => {
@@ -3952,6 +4125,7 @@ impl CrossModelOptimizer {
             }
             PlanNodeType::Filter { input, .. }
             | PlanNodeType::Project { input, .. }
+            | PlanNodeType::Distinct { input, .. }
             | PlanNodeType::Sort { input, .. }
             | PlanNodeType::Limit { input, .. }
             | PlanNodeType::Aggregate { input, .. } => {

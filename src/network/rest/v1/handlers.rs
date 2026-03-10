@@ -40,6 +40,8 @@ pub struct AppState {
     pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
     /// Per-collection full-text indices for hybrid BM25+vector search
     pub fulltext_indexes: Option<FullTextIndexMap>,
+    /// Catalog manager for external catalog integration
+    pub catalog_manager: Arc<crate::catalog::CatalogManager>,
 }
 
 /// Parse search request from JSON, supporting both proto and simple formats
@@ -1430,6 +1432,16 @@ pub fn create_router(state: AppState) -> axum::Router {
             "QueryFacadeAdapter not configured in AppState. Skipping unified query endpoints."
         );
     }
+
+    // External catalog management API endpoints
+    let catalog_router = {
+        use crate::network::rest::v1::catalog::{self, CatalogApiState};
+
+        let catalog_state = CatalogApiState::new(state.catalog_manager.clone());
+        catalog::configure_routes().with_state(catalog_state)
+    };
+    router = router.nest("/api/v1/catalogs", catalog_router);
+    info!("✅ External Catalog API endpoints enabled at /api/v1/catalogs");
 
     // Experimental hybrid API (mock-backed) stays separate from production path
     let hybrid_router = {

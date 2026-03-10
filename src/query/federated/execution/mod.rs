@@ -292,8 +292,10 @@ impl FederatedExecutor {
                     self.execute_filter(input, predicate).await
                 }
                 PlanNodeType::Project { input, columns } => {
-                    self.execute_project(input, columns).await
+                    self.execute_project(input, columns, &node.output_columns)
+                        .await
                 }
+                PlanNodeType::Distinct { input } => self.execute_distinct(input).await,
                 PlanNodeType::Sort { input, order_by } => self.execute_sort(input, order_by).await,
                 PlanNodeType::Limit {
                     input,
@@ -1121,7 +1123,7 @@ impl FederatedExecutor {
         })
     }
 
-    fn scalar_distinct_key(array: &ArrayRef, row: usize) -> Result<String> {
+    fn scalar_distinct_key(array: &dyn Array, row: usize) -> Result<String> {
         let key = match array.data_type() {
             DataType::Utf8 => {
                 let values = array
@@ -1196,9 +1198,188 @@ impl FederatedExecutor {
             if array.is_null(row) {
                 continue;
             }
-            distinct.insert(Self::scalar_distinct_key(array, row)?);
+            distinct.insert(Self::scalar_distinct_key(array.as_ref(), row)?);
         }
         Ok(distinct.len() as i64)
+    }
+
+    fn row_distinct_key(batch: &RecordBatch, row: usize) -> Result<Vec<String>> {
+        batch
+            .columns()
+            .iter()
+            .map(|column| {
+                if column.is_null(row) {
+                    Ok("null".to_string())
+                } else {
+                    Self::scalar_distinct_key(column.as_ref(), row)
+                }
+            })
+            .collect()
+    }
+
+    fn row_key_for_columns(batch: &RecordBatch, column_indices: &[usize], row: usize) -> Result<Vec<String>> {
+        column_indices
+            .iter()
+            .map(|column_index| {
+                let column = batch.column(*column_index);
+                if column.is_null(row) {
+                    Ok("null".to_string())
+                } else {
+                    Self::scalar_distinct_key(column.as_ref(), row)
+                }
+            })
+            .collect()
+    }
+
+    fn take_batch_rows(batch: &RecordBatch, row_indices: &[usize]) -> Result<RecordBatch> {
+        let take_indices = Self::build_take_indices(
+            &row_indices.iter().copied().map(Some).collect::<Vec<_>>(),
+        );
+        let columns = batch
+            .columns()
+            .iter()
+            .map(|column| take(column.as_ref(), &take_indices, None))
+            .collect::<arrow::error::Result<Vec<_>>>()?;
+        Ok(RecordBatch::try_new(batch.schema(), columns)?)
+    }
+
+    fn aggregate_output_data_type(
+        batch: &RecordBatch,
+        aggregate: &super::optimizer::AggregateExpr,
+    ) -> Result<DataType> {
+        use super::optimizer::AggregateFunction;
+
+        match aggregate.function {
+            AggregateFunction::Count | AggregateFunction::CountDistinct => Ok(DataType::Int64),
+            AggregateFunction::Sum | AggregateFunction::Avg => Ok(DataType::Float64),
+            AggregateFunction::Min | AggregateFunction::Max => {
+                let column_index = Self::resolve_aggregate_column(batch, aggregate)?;
+                Ok(batch.column(column_index).data_type().clone())
+            }
+        }
+    }
+
+    fn aggregate_output_nullable(aggregate: &super::optimizer::AggregateExpr) -> bool {
+        use super::optimizer::AggregateFunction;
+
+        !matches!(
+            aggregate.function,
+            AggregateFunction::Count | AggregateFunction::CountDistinct
+        )
+    }
+
+    fn aggregate_values_to_array(values: Vec<AggregateValue>, data_type: &DataType) -> Result<ArrayRef> {
+        match data_type {
+            DataType::Int64 => {
+                let values = values
+                    .into_iter()
+                    .map(|value| match value {
+                        AggregateValue::Int64(value) => Ok(value),
+                        other => Err(anyhow!(
+                            "Expected Int64 aggregate values, got {:?}",
+                            other.data_type()
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Arc::new(Int64Array::from(values)))
+            }
+            DataType::Int32 => {
+                let values = values
+                    .into_iter()
+                    .map(|value| match value {
+                        AggregateValue::Int32(value) => Ok(value),
+                        other => Err(anyhow!(
+                            "Expected Int32 aggregate values, got {:?}",
+                            other.data_type()
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Arc::new(arrow::array::Int32Array::from(values)))
+            }
+            DataType::UInt64 => {
+                let values = values
+                    .into_iter()
+                    .map(|value| match value {
+                        AggregateValue::UInt64(value) => Ok(value),
+                        other => Err(anyhow!(
+                            "Expected UInt64 aggregate values, got {:?}",
+                            other.data_type()
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Arc::new(arrow::array::UInt64Array::from(values)))
+            }
+            DataType::UInt32 => {
+                let values = values
+                    .into_iter()
+                    .map(|value| match value {
+                        AggregateValue::UInt32(value) => Ok(value),
+                        other => Err(anyhow!(
+                            "Expected UInt32 aggregate values, got {:?}",
+                            other.data_type()
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Arc::new(arrow::array::UInt32Array::from(values)))
+            }
+            DataType::Float64 => {
+                let values = values
+                    .into_iter()
+                    .map(|value| match value {
+                        AggregateValue::Float64(value) => Ok(value),
+                        other => Err(anyhow!(
+                            "Expected Float64 aggregate values, got {:?}",
+                            other.data_type()
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Arc::new(arrow::array::Float64Array::from(values)))
+            }
+            DataType::Float32 => {
+                let values = values
+                    .into_iter()
+                    .map(|value| match value {
+                        AggregateValue::Float32(value) => Ok(value),
+                        other => Err(anyhow!(
+                            "Expected Float32 aggregate values, got {:?}",
+                            other.data_type()
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Arc::new(Float32Array::from(values)))
+            }
+            DataType::Utf8 => {
+                let values = values
+                    .into_iter()
+                    .map(|value| match value {
+                        AggregateValue::Utf8(value) => Ok(value),
+                        other => Err(anyhow!(
+                            "Expected Utf8 aggregate values, got {:?}",
+                            other.data_type()
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let value_refs = values.iter().map(|value| value.as_deref()).collect::<Vec<_>>();
+                Ok(Arc::new(StringArray::from(value_refs)))
+            }
+            DataType::Boolean => {
+                let values = values
+                    .into_iter()
+                    .map(|value| match value {
+                        AggregateValue::Boolean(value) => Ok(value),
+                        other => Err(anyhow!(
+                            "Expected Boolean aggregate values, got {:?}",
+                            other.data_type()
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Arc::new(arrow::array::BooleanArray::from(values)))
+            }
+            other => Err(anyhow!(
+                "Grouped aggregate output is not supported for data type {:?}",
+                other
+            )),
+        }
     }
 
     fn aggregate_numeric_values(array: &ArrayRef) -> Result<Vec<f64>> {
@@ -1908,6 +2089,7 @@ impl FederatedExecutor {
         &self,
         input: &PlanNode,
         columns: &[String],
+        output_columns: &[String],
     ) -> Result<ExecutionResult> {
         let result = self.execute_node(input).await?;
         if columns.iter().any(|column| column == "*") {
@@ -1926,9 +2108,15 @@ impl FederatedExecutor {
         let batch_schema = batch.schema();
         let projected_fields = projected_indices
             .iter()
-            .zip(columns.iter())
-            .map(|(index, requested_name)| {
+            .enumerate()
+            .map(|(position, index)| {
                 let field = batch_schema.field(*index);
+                let requested_name = output_columns
+                    .get(position)
+                    .or_else(|| columns.get(position))
+                    .map(String::as_str)
+                    .unwrap_or_else(|| field.name());
+
                 if field.name() == requested_name {
                     field.as_ref().clone()
                 } else {
@@ -1952,6 +2140,36 @@ impl FederatedExecutor {
             .collect::<Vec<_>>();
         let projected = RecordBatch::try_new(schema, projected_columns)?;
         Ok(ExecutionResult::from_batch(projected))
+    }
+
+    /// Execute DISTINCT on the current result schema.
+    async fn execute_distinct(&self, input: &PlanNode) -> Result<ExecutionResult> {
+        let result = self.execute_node(input).await?;
+        let batch = self.merge_batches(&result)?;
+
+        if batch.num_rows() <= 1 {
+            return Ok(ExecutionResult::from_batch(batch));
+        }
+
+        let mut seen = HashSet::new();
+        let mut distinct_rows = Vec::new();
+
+        for row in 0..batch.num_rows() {
+            let key = Self::row_distinct_key(&batch, row)?;
+            if seen.insert(key) {
+                distinct_rows.push(Some(row));
+            }
+        }
+
+        let take_indices = Self::build_take_indices(&distinct_rows);
+        let columns = batch
+            .columns()
+            .iter()
+            .map(|column| take(column.as_ref(), &take_indices, None))
+            .collect::<arrow::error::Result<Vec<_>>>()?;
+
+        let distinct = RecordBatch::try_new(batch.schema(), columns)?;
+        Ok(ExecutionResult::from_batch(distinct))
     }
 
     /// Execute sort
@@ -2066,15 +2284,91 @@ impl FederatedExecutor {
         group_by: &[String],
         aggregates: &[super::optimizer::AggregateExpr],
     ) -> Result<ExecutionResult> {
-        if !group_by.is_empty() {
-            return Err(anyhow!(
-                "GROUP BY execution is not yet implemented for federated aggregates: {:?}",
-                group_by
-            ));
-        }
-
         let result = self.execute_node(input).await?;
         let batch = self.merge_batches(&result)?;
+
+        if !group_by.is_empty() {
+            let group_indices = group_by
+                .iter()
+                .map(|column| {
+                    Self::resolve_column_index(batch.schema().as_ref(), column).ok_or_else(|| {
+                        anyhow!("GROUP BY column '{}' was not found in the federated schema", column)
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let aggregate_types = aggregates
+                .iter()
+                .map(|aggregate| Self::aggregate_output_data_type(&batch, aggregate))
+                .collect::<Result<Vec<_>>>()?;
+
+            let group_fields = group_indices
+                .iter()
+                .map(|index| batch.schema().field(*index).as_ref().clone())
+                .collect::<Vec<_>>();
+            let aggregate_fields = aggregates
+                .iter()
+                .zip(aggregate_types.iter())
+                .map(|(aggregate, data_type)| {
+                    Field::new(
+                        &aggregate.alias,
+                        data_type.clone(),
+                        Self::aggregate_output_nullable(aggregate),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let schema = Arc::new(Schema::new(
+                group_fields
+                    .into_iter()
+                    .chain(aggregate_fields)
+                    .collect::<Vec<_>>(),
+            ));
+
+            if batch.num_rows() == 0 {
+                return Ok(ExecutionResult::empty_with_schema(schema));
+            }
+
+            let mut group_lookup = HashMap::new();
+            let mut grouped_rows: Vec<Vec<usize>> = Vec::new();
+            for row in 0..batch.num_rows() {
+                let key = Self::row_key_for_columns(&batch, &group_indices, row)?;
+                if let Some(existing_group) = group_lookup.get(&key) {
+                    grouped_rows[*existing_group].push(row);
+                } else {
+                    group_lookup.insert(key, grouped_rows.len());
+                    grouped_rows.push(vec![row]);
+                }
+            }
+
+            let first_rows =
+                grouped_rows.iter().map(|rows| rows.first().copied()).collect::<Vec<_>>();
+            let first_row_take = Self::build_take_indices(&first_rows);
+            let mut columns = group_indices
+                .iter()
+                .map(|index| take(batch.column(*index).as_ref(), &first_row_take, None))
+                .collect::<arrow::error::Result<Vec<_>>>()?;
+
+            for (aggregate_index, aggregate) in aggregates.iter().enumerate() {
+                let mut values = Vec::with_capacity(grouped_rows.len());
+                for rows in &grouped_rows {
+                    let grouped_batch = Self::take_batch_rows(&batch, rows)?;
+                    values.push(Self::compute_aggregate_value(&grouped_batch, aggregate)?);
+                }
+                columns.push(Self::aggregate_values_to_array(
+                    values,
+                    &aggregate_types[aggregate_index],
+                )?);
+            }
+
+            let aggregated = RecordBatch::try_new(schema.clone(), columns)?;
+            return Ok(ExecutionResult {
+                batches: vec![aggregated],
+                schema,
+                stats: ExecutionStats {
+                    rows_produced: grouped_rows.len(),
+                    ..Default::default()
+                },
+            });
+        }
 
         let aggregate_values = aggregates
             .iter()

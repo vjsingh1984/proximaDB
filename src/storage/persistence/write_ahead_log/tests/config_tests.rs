@@ -4,8 +4,8 @@
 mod tests {
     use crate::core::service_types::CompressionAlgorithm;
     use crate::storage::persistence::write_ahead_log::config::{
-        CompressionConfig, DiskDistributionStrategy, MemTableConfig, MemTableType, MultiDiskConfig,
-        PerformanceConfig, WALConfig, WriteBufferStrategyType,
+        CompressionConfig, DiskDistributionStrategy, EncryptionConfig, MemTableConfig,
+        MemTableType, MultiDiskConfig, PerformanceConfig, WALConfig, WriteBufferStrategyType,
     };
     use tempfile::TempDir;
 
@@ -100,6 +100,7 @@ mod tests {
                 compress_disk: true,
                 min_compress_size: 2048,
             },
+            encryption: EncryptionConfig::default(),
             performance: PerformanceConfig {
                 memory_flush_size_bytes: 128 * 1024 * 1024,
                 disk_segment_size: 512 * 1024 * 1024,
@@ -174,6 +175,7 @@ mod tests {
                 enable_concurrency: true,
             },
             compression: CompressionConfig::default(),
+            encryption: EncryptionConfig::default(),
             performance: PerformanceConfig::default(),
             enable_mvcc: true,
             enable_ttl: true,
