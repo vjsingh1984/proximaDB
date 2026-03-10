@@ -892,5 +892,5 @@ fn test_explain_plan_response() {
 
     let json = serde_json::to_value(&plan).unwrap();
     assert_eq!(json["plan_id"], "plan_123");
-    assert!(json["execution_steps"].as_array().unwrap().len(), 3);
+    assert_eq!(json["execution_steps"].as_array().unwrap().len(), 3);
 }
