@@ -36,10 +36,10 @@
 pub mod acceptor;
 pub mod certificate_manager;
 
-pub use acceptor::{TlsAcceptor, TlsAcceptorLayer};
+pub use acceptor::TlsAcceptor;
 
 #[cfg(feature = "network-rest")]
-pub use acceptor::TlsAcceptorMiddleware;
+pub use acceptor::{TlsAcceptorLayer, TlsAcceptorMiddleware};
 
 pub use certificate_manager::{
     CertificateConfig, CertificateManager, CertificateStatus, CertificateSubject,

@@ -32,8 +32,8 @@
 
 use super::ClientCertificateInfo;
 use anyhow::Result;
-use rustls::server::ServerConnection;
 use rustls::ServerConfig;
+use rustls::server::ServerConnection;
 use std::sync::Arc;
 use tokio_rustls::TlsAcceptor as TokioRustlsTlsAcceptor;
 use tracing::{debug, warn};
@@ -134,9 +134,7 @@ impl TlsAcceptorLayer {
 
     /// Create a layer that expects client certificates
     pub fn mtls() -> Self {
-        Self {
-            mtls_enabled: true,
-        }
+        Self { mtls_enabled: true }
     }
 
     /// Create a layer that doesn't require client certificates
@@ -221,9 +219,7 @@ where
 /// This function attempts to extract client certificate information from
 /// various sources in the request, including TLS extensions and connection info.
 #[cfg(feature = "network-rest")]
-fn extract_client_cert_from_request(
-    req: &axum::extract::Request,
-) -> Option<ClientCertificateInfo> {
+fn extract_client_cert_from_request(req: &axum::extract::Request) -> Option<ClientCertificateInfo> {
     use http_body::Body;
 
     // Try to get certificate from HTTP extensions
@@ -253,9 +249,7 @@ fn extract_client_cert_from_request(
 ///
 /// This function attempts to extract peer certificates from the TLS connection.
 /// This is typically called during the TLS handshake by custom TLS layers.
-pub fn extract_peer_certificate(
-    peer_certs: &[&[u8]],
-) -> Option<ClientCertificateInfo> {
+pub fn extract_peer_certificate(peer_certs: &[&[u8]]) -> Option<ClientCertificateInfo> {
     if peer_certs.is_empty() {
         return None;
     }
