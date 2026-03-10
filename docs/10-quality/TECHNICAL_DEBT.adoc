@@ -79,10 +79,33 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | mTLS support
 | P3
 | Medium
-| Open
+| *Resolved*
 | Cannot meet enterprise security requirements
 | 1 month
-| JWT/API Key auth complete, mTLS pending
+| *RESOLVED Mar 2026*: **mTLS support fully implemented**. Complete enterprise-grade mutual TLS infrastructure:
+|  |  |  |  |
+|---|---|---|---
+| **Component** | **Status** | **Location** | **Features** |
+| **Certificate Manager** | ✅ Production Ready | `src/network/tls/certificate_manager.rs` | Self-signed cert generation, CA generation for mTLS, cert parsing/validation, automatic renewal |
+| **TLS Configuration** | ✅ Production Ready | `src/network/tls/mod.rs` | Rustls ServerConfig builder, mTLS support, ALPN protocols |
+| **TLS Acceptor** | ✅ Production Ready | `src/network/tls/acceptor.rs` | Client certificate extraction, Axum layer integration, peer cert parsing |
+| **Client Cert Middleware** | ✅ Production Ready | `src/network/middleware/tls.rs` | CN validation, pattern matching, expiration checking, user mapping |
+| **Unified Auth** | ✅ Supports mTLS | `src/security/unified_auth.rs` | `ClientCertificate` auth method, integration with JWT/API keys |
+
+**mTLS Pipeline Complete:**
+1. TLS handshake with client certificate verification (rustls)
+2. Certificate extraction during handshake (TlsAcceptor)
+3. Addition to request extensions (TlsAcceptorLayer)
+4. Validation by authentication middleware (tls_client_cert_middleware)
+5. User context creation (UnifiedAuthService)
+
+**Features:**
+- CN pattern matching (`*.example.com`, wildcards)
+- Certificate expiration validation
+- CN-to-user mapping
+- Default role assignment
+- Health endpoint bypass
+- TODO: Certificate revocation (CRL/OCSP) checking framework ready
 
 | TD-007
 | unwrap/expect proliferation
