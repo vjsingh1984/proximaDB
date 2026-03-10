@@ -32,10 +32,10 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use tracing::{debug, info, instrument};
 
-use crate::catalog::{Catalog, CatalogManager, TableIdentifier};
+use crate::catalog::{CatalogManager, TableIdentifier};
 use crate::query::facade::{
-    ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
-    QueryStrategy, QueryType,
+    ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryStrategy,
+    QueryType,
 };
 
 /// External Table Strategy for querying external catalog tables
@@ -101,7 +101,7 @@ impl ExternalTableStrategy {
     }
 
     /// Check if query references known external catalogs
-    fn has_known_external_catalogs(&self, sql: &str) -> bool {
+    fn has_known_external_catalogs(&self, _sql: &str) -> bool {
         // TODO: Get list of registered external catalogs from CatalogManager
         // and check if any are referenced in the query
         false
@@ -265,7 +265,7 @@ impl ExternalTableScanner {
         stats.map(|s| TableStatistics {
             row_count: s.row_count,
             num_files: s.file_count,
-            size_bytes: s.data_size_bytes,
+            size_bytes: s.size_bytes,
         }).map_err(|e| anyhow!("Failed to get statistics: {}", e))
     }
 }
