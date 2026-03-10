@@ -32,10 +32,21 @@ Technical debt items are prioritized based on their impact on the four developme
 | External catalog integration
 | P3
 | Medium
-| Open
+| *Resolved*
 | Cannot integrate with Iceberg/Delta data lakes
 | 3-4 months
-| Glue, Iceberg, Delta Lake connectors have stubs only
+| *RESOLVED Mar 2026*: **External catalogs fully implemented**. All major catalog backends are production-ready:
+|  |  |  |  |  |
+|---|---|---|---|---
+| Catalog | Status | Location | Features |
+| **Iceberg** | ✅ Production Ready | `src/catalog/iceberg.rs` | JDBC, Hadoop, Memory backends; schema evolution; time travel; snapshot isolation |
+| **Delta Lake** | ✅ Production Ready | `src/catalog/delta.rs` | Delta log protocol; ACID transactions; time travel; partitioning |
+| **AWS Glue** | ✅ Production Ready | `src/catalog/glue.rs` | AWS Glue Data Catalog; Athena/Redshift compatible; vector extensions |
+| **Unity Catalog** | ✅ Production Ready | `src/catalog/unity.rs` | Databricks Unity; 3-level namespace; REST API integration |
+| **Polaris** | ✅ Production Ready | `src/catalog/polaris.rs` | Apache Polaris; Iceberg REST Catalog; OAuth2 |
+| **Hive** | ✅ Production Ready | `src/catalog/hive.rs` | Apache Hive Metastore; Thrift protocol |
+
+All catalogs implement the `Catalog` trait with full CRUD operations, health checks, and caching. Feature-gated behind appropriate flags: `delta-lake`, `aws`, `unity-catalog`, `polaris-catalog`.
 
 | TD-003
 | Streaming infrastructure
