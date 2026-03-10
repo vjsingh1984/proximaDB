@@ -885,6 +885,7 @@ impl WriteBufferUserConfig {
             memtable: MemTableConfig::default(),
             multi_disk: MultiDiskConfig::default(),
             compression: CompressionConfig::default(),
+            encryption: Default::default(), // TD-016: Encryption disabled by default
             performance: PerformanceConfig::default(),
             enable_mvcc: true,
             enable_ttl: true,

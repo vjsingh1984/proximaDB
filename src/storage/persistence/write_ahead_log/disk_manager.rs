@@ -2,6 +2,8 @@
 //!
 //! This module centralizes all disk I/O operations, removing them from batch strategies.
 //! It handles writing WAL data to disk, reading it back, and managing WAL files.
+//!
+//! TD-016: Integrated with WALEncryptionLayer for AES-256-GCM encryption at rest.
 
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -10,6 +12,8 @@ use tracing::{debug, info, warn};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::BatchId;
 use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
+use crate::storage::encryption::WALEncryptionLayer;
+use crate::storage::encryption::wal_encryption::WalSegmentMetadata;
 use crate::utils::checksum::Crc32;
 
 /// Centralized manager for all WAL disk operations
@@ -18,6 +22,8 @@ pub struct WriteAheadLogDiskManager {
     filesystem_factory: Arc<FilesystemFactory>,
     /// Base URL for WAL files (e.g., file:///path, s3://bucket/prefix)
     wal_base_url: String,
+    /// Optional WAL encryption layer (TD-016)
+    encryption_layer: Option<Arc<WALEncryptionLayer>>,
     /// Statistics
     stats: Arc<tokio::sync::RwLock<DiskStats>>,
 }
@@ -42,20 +48,35 @@ pub struct WalFileInfo {
     pub file_url: String,
     pub size_bytes: u64,
     pub format: SerializationFormat,
+    /// Encryption metadata (TD-016)
+    pub encryption_metadata: Option<WalSegmentMetadata>,
 }
 
 impl WriteAheadLogDiskManager {
     /// Create a new disk manager
     pub fn new(filesystem_factory: Arc<FilesystemFactory>, wal_base_url: impl AsRef<str>) -> Self {
+        Self::with_encryption(filesystem_factory, wal_base_url, None)
+    }
+
+    /// Create a new disk manager with encryption support (TD-016)
+    pub fn with_encryption(
+        filesystem_factory: Arc<FilesystemFactory>,
+        wal_base_url: impl AsRef<str>,
+        encryption_layer: Option<Arc<WALEncryptionLayer>>,
+    ) -> Self {
         let wal_base_url = wal_base_url.as_ref().to_string();
+        let encryption_enabled = encryption_layer.as_ref().map(|e| e.is_enabled()).unwrap_or(false);
+
         info!(
-            "🎯 Creating WriteAheadLogDiskManager with base URL: {}",
-            wal_base_url
+            "🎯 Creating WriteAheadLogDiskManager with base URL: {}, encryption: {}",
+            wal_base_url,
+            if encryption_enabled { "enabled (AES-256-GCM)" } else { "disabled" }
         );
 
         Self {
             filesystem_factory,
             wal_base_url,
+            encryption_layer,
             stats: Arc::new(tokio::sync::RwLock::new(DiskStats::default())),
         }
     }
@@ -166,6 +187,26 @@ impl WriteAheadLogDiskManager {
         // Always attempt directory creation for uniform semantics (no-op on object stores)
         let _ = filesystem.create_dir_all(&dir_url).await;
 
+        // TD-016: Encrypt data before writing if encryption is enabled
+        let (data_to_write, encryption_metadata) = if let Some(ref encryption_layer) = self.encryption_layer {
+            debug!("🔒 Encrypting WAL segment before write");
+            let segment_name = format!("{}_{}", collection_id, batch_id.to_base62());
+            // Use batch_id components to create a unique u64 for key derivation
+            let segment_id = batch_id.timestamp_ms() ^ (batch_id.counter() as u64);
+            match encryption_layer.encrypt_segment(&segment_name, segment_id, data) {
+                Ok((encrypted, metadata)) => {
+                    debug!("✅ WAL segment encrypted ({} -> {} bytes)", data.len(), encrypted.len());
+                    (encrypted, Some(metadata))
+                }
+                Err(e) => {
+                    warn!("⚠️  WAL encryption failed, writing unencrypted: {}", e);
+                    (data.to_vec(), None)
+                }
+            }
+        } else {
+            (data.to_vec(), None)
+        };
+
         // Write data atomically; for object stores this will write to a temp and
         // then rename to the final path.
         let filesystem = self.filesystem_factory.get_filesystem(&file_url)?;
@@ -173,7 +214,7 @@ impl WriteAheadLogDiskManager {
             ::create_metadata_strategy(&*filesystem, None)?;
         let file_options = strategy.create_file_options(&*filesystem, &file_url)?;
         filesystem
-            .write(&file_url, data, Some(file_options))
+            .write(&file_url, &data_to_write, Some(file_options))
             .await
             .context("Failed to write WriteBuffer batch to disk")?;
 
@@ -187,7 +228,7 @@ impl WriteAheadLogDiskManager {
         }
 
         // Register in global manifest
-        let checksum = Crc32::checksum(data);
+        let checksum = Crc32::checksum(&data_to_write);
         let file_name = file_url.split('/').last().unwrap_or("").to_string();
 
         use crate::storage::persistence::write_ahead_log::manifest;
@@ -202,7 +243,7 @@ impl WriteAheadLogDiskManager {
                 collection_id.to_string(), // collection_id
                 batch_id,                  // batch_id (pass reference)
                 file_name,                 // file_name
-                data.len() as u64,         // size_bytes
+                data_to_write.len() as u64, // size_bytes (encrypted size)
                 checksum,                  // checksum_crc32
                 SerializationFormat::from_str(format_str).unwrap_or(SerializationFormat::Bincode), // format enum
                 0,                         // vector_count (unknown at this point)
@@ -215,7 +256,7 @@ impl WriteAheadLogDiskManager {
         // Update stats
         {
             let mut stats = self.stats.write().await;
-            stats.total_bytes_written += data.len() as u64;
+            stats.total_bytes_written += data_to_write.len() as u64;
             stats.total_files_written += 1;
         }
 
@@ -223,8 +264,9 @@ impl WriteAheadLogDiskManager {
             collection_id: collection_id.to_string(),
             batch_id: batch_id.clone(),
             file_url: file_url.clone(),
-            size_bytes: data.len() as u64,
+            size_bytes: data_to_write.len() as u64,
             format,
+            encryption_metadata,
         };
 
         debug!("✅ Successfully wrote WAL batch to disk: {:?}", file_info);
@@ -243,15 +285,44 @@ impl WriteAheadLogDiskManager {
         );
 
         let filesystem = self.filesystem_factory.get_filesystem(&file_url)?;
-        let data = filesystem
+        let encrypted_data = filesystem
             .read(&file_url)
             .await
             .context("Failed to read WAL batch from disk")?;
 
+        // Track the encrypted data length before potential moves
+        let encrypted_len = encrypted_data.len();
+
+        // TD-016: Decrypt data after reading if it was encrypted
+        let data = if let Some(ref metadata) = file_info.encryption_metadata {
+            if metadata.encrypted {
+                if let Some(ref encryption_layer) = self.encryption_layer {
+                    debug!("🔓 Decrypting WAL segment after read");
+                    match encryption_layer.decrypt_segment(metadata, &encrypted_data) {
+                        Ok(decrypted) => {
+                            debug!("✅ WAL segment decrypted ({} -> {} bytes)", encrypted_data.len(), decrypted.len());
+                            decrypted
+                        }
+                        Err(e) => {
+                            warn!("⚠️  WAL decryption failed: {}", e);
+                            return Err(e.context("Failed to decrypt WAL segment"));
+                        }
+                    }
+                } else {
+                    warn!("⚠️  WAL segment is encrypted but no encryption layer available");
+                    return Err(anyhow::anyhow!("Cannot decrypt WAL segment: no encryption layer available"));
+                }
+            } else {
+                encrypted_data
+            }
+        } else {
+            encrypted_data
+        };
+
         // Update stats
         {
             let mut stats = self.stats.write().await;
-            stats.total_bytes_read += data.len() as u64;
+            stats.total_bytes_read += encrypted_len as u64;
             stats.total_files_read += 1;
         }
 
@@ -423,6 +494,7 @@ impl WriteAheadLogDiskManager {
             file_url: path.to_string(),
             size_bytes: 0, // Will be filled by caller if needed
             format,
+            encryption_metadata: None, // Path parsing doesn't have encryption metadata
         })
     }
 }

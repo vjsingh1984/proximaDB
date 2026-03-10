@@ -508,6 +508,7 @@ impl RecoveryManager {
                 file_url: file_url.clone(),
                 size_bytes: e.size_bytes,
                 format,
+                encryption_metadata: None, // Recovery doesn't have encryption metadata
             };
 
             debug!(

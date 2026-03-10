@@ -9,6 +9,33 @@
 // Write Buffer-specific configuration uses the unified type
 pub use crate::core::CompressionAlgorithm;
 
+/// Encryption configuration for WAL (TD-016)
+#[derive(Debug, Clone)]
+pub struct EncryptionConfig {
+    /// Enable encryption for WAL segments
+    pub enabled: bool,
+
+    /// Master key environment variable name
+    pub master_key_env_var: String,
+
+    /// Key rotation interval in seconds (default: 30 days)
+    pub key_rotation_interval_secs: u64,
+
+    /// Chunk size for encryption (default: 4KB)
+    pub chunk_size: usize,
+}
+
+impl Default for EncryptionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false, // Disabled by default for backward compatibility
+            master_key_env_var: "PROXIMADB_MASTER_KEY".to_string(),
+            key_rotation_interval_secs: 30 * 24 * 3600, // 30 days
+            chunk_size: 4096,                           // 4KB
+        }
+    }
+}
+
 /// Compression configuration
 #[derive(Debug, Clone)]
 pub struct CompressionConfig {
@@ -290,6 +317,9 @@ pub struct WALConfig {
     /// Compression settings
     pub compression: CompressionConfig,
 
+    /// Encryption settings (TD-016)
+    pub encryption: EncryptionConfig,
+
     /// Performance tuning
     pub performance: PerformanceConfig,
 
@@ -328,6 +358,7 @@ impl Default for WALConfig {
             memtable: MemTableConfig::default(), // ART for metadata filtering efficiency
             multi_disk: MultiDiskConfig::default(), // LoadBalanced for bulk insert optimization
             compression: CompressionConfig::default(), // Snappy for balanced performance
+            encryption: EncryptionConfig::default(), // Encryption disabled by default (TD-016)
             performance: PerformanceConfig::default(), // Optimized for large vectors and bulk processing
             enable_mvcc: true, // Enable for consistency and document versioning
             enable_ttl: true,  // Enable for data lifecycle management
