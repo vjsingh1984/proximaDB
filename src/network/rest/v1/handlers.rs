@@ -1433,15 +1433,18 @@ pub fn create_router(state: AppState) -> axum::Router {
         );
     }
 
-    // External catalog management API endpoints
-    let catalog_router = {
-        use crate::network::rest::v1::catalog::{self, CatalogApiState};
+    // Optional enterprise catalog endpoints
+    #[cfg(feature = "enterprise-catalogs")]
+    {
+        let catalog_router = {
+            use crate::network::rest::v1::catalog::{self, CatalogApiState};
 
-        let catalog_state = CatalogApiState::new(state.catalog_manager.clone());
-        catalog::configure_routes().with_state(catalog_state)
-    };
-    router = router.nest("/api/v1/catalogs", catalog_router);
-    info!("✅ External Catalog API endpoints enabled at /api/v1/catalogs");
+            let catalog_state = CatalogApiState::new(state.catalog_manager.clone());
+            catalog::configure_routes().with_state(catalog_state)
+        };
+        router = router.nest("/api/v1/catalogs", catalog_router);
+        info!("✅ External Catalog API endpoints enabled at /api/v1/catalogs");
+    }
 
     // Experimental hybrid API (mock-backed) stays separate from production path
     let hybrid_router = {
@@ -1590,6 +1593,7 @@ mod tests {
             data_dir,
             query_adapter: None,
             fulltext_indexes: Some(Arc::new(RwLock::new(HashMap::new()))),
+            catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
         };
         (state, temp_dir)
     }

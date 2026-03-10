@@ -22,38 +22,25 @@
 //! - `DELETE /api/v1/catalogs/:catalog/tables/:table` - Drop table
 
 use axum::{
-    extract::{Extension, Path, State},
-    http::StatusCode,
-    response::{IntoResponse, Json as JsonResponse},
-    routing::get,
-    Router,
+    Json, Router,
+    extract::{Path, State},
+    routing::{get, post},
 };
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::catalog::{
     Catalog, CatalogManager, TableIdentifier,
-    types::{
-        CatalogNamespace, CatalogTableSchema, CatalogDataType, CatalogColumn,
-        CatalogConfig as ProximaCatalogConfig,
-    },
+    types::{CatalogColumn, CatalogDataType, CatalogNamespace, CatalogTableSchema},
 };
 use crate::errors::{ApiError, ApiResult};
-use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{
-    CatalogConfig, CatalogType,
-    CreateCatalogRequest, CreateCatalogResponse,
-    GetCatalogRequest, GetCatalogResponse,
-    ListCatalogsRequest, ListCatalogsResponse,
-    DropCatalogRequest, DropCatalogResponse,
-    CreateNamespaceRequest, CreateNamespaceResponse,
-    CatalogListNamespacesRequest, CatalogListNamespacesResponse,
-    DropNamespaceRequest, DropNamespaceResponse,
-    CreateTableRequest, CreateTableResponse,
-    ListTablesRequest, ListTablesResponse,
-    GetTableRequest, GetTableResponse,
-    DropTableRequest, DropTableResponse,
-    Namespace, TableSchema,
+    CatalogConfig, CatalogListNamespacesRequest, CatalogListNamespacesResponse, CatalogType,
+    CreateCatalogRequest, CreateCatalogResponse, CreateNamespaceRequest, CreateNamespaceResponse,
+    CreateTableRequest, CreateTableResponse, DropCatalogRequest, DropCatalogResponse,
+    DropNamespaceRequest, DropNamespaceResponse, DropTableRequest, DropTableResponse,
+    GetCatalogRequest, GetCatalogResponse, GetTableRequest, GetTableResponse, ListCatalogsRequest,
+    ListCatalogsResponse, ListTablesRequest, ListTablesResponse, Namespace, TableSchema,
 };
 
 // =============================================================================
@@ -85,16 +72,26 @@ pub async fn create_catalog(
     State(state): State<CatalogApiState>,
     Json(req): Json<CreateCatalogRequest>,
 ) -> ApiResult<Json<CreateCatalogResponse>> {
-    info!("Creating catalog: {}", req.config.as_ref().map(|c| &c.name).unwrap_or(""));
+    info!(
+        "Creating catalog: {}",
+        req.config
+            .as_ref()
+            .map_or("", |config| config.name.as_str())
+    );
 
-    let config = req.config.ok_or_else(|| {
-        ApiError::bad_request("Catalog config is required")
-    })?;
+    let config = req
+        .config
+        .ok_or_else(|| ApiError::InvalidArgument("Catalog config is required".to_string()))?;
 
     // Check if catalog already exists
     if !req.if_not_exists {
-        if state.catalog_manager.get_catalog(&config.name).await.is_ok() {
-            return Err(ApiError::conflict(format!(
+        if state
+            .catalog_manager
+            .get_catalog(&config.name)
+            .await
+            .is_ok()
+        {
+            return Err(ApiError::Conflict(format!(
                 "Catalog '{}' already exists",
                 config.name
             )));
@@ -102,7 +99,7 @@ pub async fn create_catalog(
     }
 
     // Convert proto config to ProximaDB catalog config
-    let _proxima_config = convert_proto_catalog_config(&config)?;
+    convert_proto_catalog_config(&config)?;
 
     // TODO: Create and register the catalog instance
     // For now, just return success
@@ -125,7 +122,7 @@ pub async fn get_catalog(
         .catalog_manager
         .get_catalog(&name)
         .await
-        .map_err(|e| ApiError::not_found(format!("Catalog '{}': {}", name, e)))?;
+        .map_err(|e| ApiError::NotFound(format!("Catalog '{}': {}", name, e)))?;
 
     // TODO: Convert catalog to proto config
     Ok(Json(GetCatalogResponse {
@@ -142,9 +139,7 @@ pub async fn list_catalogs(
     debug!("Listing catalogs");
 
     // TODO: Get actual catalog list
-    Ok(Json(ListCatalogsResponse {
-        catalogs: vec![],
-    }))
+    Ok(Json(ListCatalogsResponse { catalogs: vec![] }))
 }
 
 /// Unregister a catalog
@@ -160,7 +155,7 @@ pub async fn drop_catalog(
         .catalog_manager
         .unregister_catalog(&name)
         .await
-        .map_err(|e| ApiError::internal_error(format!("Failed to drop catalog: {}", e)))?;
+        .map_err(|e| ApiError::Internal(format!("Failed to drop catalog: {}", e)))?;
 
     Ok(Json(DropCatalogResponse { dropped }))
 }
@@ -188,13 +183,13 @@ pub async fn create_namespace(
         .catalog_manager
         .get_catalog(&catalog)
         .await
-        .map_err(|e| ApiError::not_found(format!("Catalog '{}': {}", catalog, e)))?;
+        .map_err(|e| ApiError::NotFound(format!("Catalog '{}': {}", catalog, e)))?;
 
     // Create namespace
     let namespace = catalog
         .create_namespace(&req.namespace, req.properties)
         .await
-        .map_err(|e| ApiError::internal_error(format!("Failed to create namespace: {}", e)))?;
+        .map_err(|e| ApiError::Internal(format!("Failed to create namespace: {}", e)))?;
 
     Ok(Json(CreateNamespaceResponse {
         namespace: Some(convert_namespace_to_proto(namespace)),
@@ -215,13 +210,19 @@ pub async fn list_namespaces(
         .catalog_manager
         .get_catalog(&catalog)
         .await
-        .map_err(|e| ApiError::not_found(format!("Catalog '{}': {}", catalog, e)))?;
+        .map_err(|e| ApiError::NotFound(format!("Catalog '{}': {}", catalog, e)))?;
 
     let parent = vec![]; // TODO: from query params
     let namespaces = catalog
-        .list_namespaces(if parent.is_empty() { None } else { Some(&parent) }))
+        .list_namespaces(
+            (if parent.is_empty() {
+                None
+            } else {
+                Some(&parent)
+            }),
+        )
         .await
-        .map_err(|e| ApiError::internal_error(format!("Failed to list namespaces: {}", e)))?;
+        .map_err(|e| ApiError::Internal(format!("Failed to list namespaces: {}", e)))?;
 
     Ok(Json(CatalogListNamespacesResponse {
         namespaces: namespaces
@@ -238,11 +239,7 @@ pub async fn drop_namespace(
     State(state): State<CatalogApiState>,
     Path((catalog, namespace_str)): Path<(String, String)>,
 ) -> ApiResult<Json<DropNamespaceResponse>> {
-    info!(
-        "Dropping namespace: {}.{}",
-        catalog,
-        namespace_str
-    );
+    info!("Dropping namespace: {}.{}", catalog, namespace_str);
 
     let namespace: Vec<String> = namespace_str.split('.').map(String::from).collect();
 
@@ -250,12 +247,12 @@ pub async fn drop_namespace(
         .catalog_manager
         .get_catalog(&catalog)
         .await
-        .map_err(|e| ApiError::not_found(format!("Catalog '{}': {}", catalog, e)))?;
+        .map_err(|e| ApiError::NotFound(format!("Catalog '{}': {}", catalog, e)))?;
 
     let dropped = catalog
         .drop_namespace(&namespace, true)
         .await
-        .map_err(|e| ApiError::internal_error(format!("Failed to drop namespace: {}", e)))?;
+        .map_err(|e| ApiError::Internal(format!("Failed to drop namespace: {}", e)))?;
 
     Ok(Json(DropNamespaceResponse { dropped }))
 }
@@ -283,15 +280,19 @@ pub async fn create_table(
         .catalog_manager
         .get_catalog(&catalog)
         .await
-        .map_err(|e| ApiError::not_found(format!("Catalog '{}': {}", catalog, e)))?;
+        .map_err(|e| ApiError::NotFound(format!("Catalog '{}': {}", catalog, e)))?;
 
-    let schema = convert_table_schema_from_proto(&req.schema)?;
+    let schema = req
+        .schema
+        .as_ref()
+        .ok_or_else(|| ApiError::InvalidArgument("Table schema is required".to_string()))
+        .and_then(convert_table_schema_from_proto)?;
     let identifier = TableIdentifier::new(req.namespace.clone(), req.name.clone());
 
     let created_schema = catalog
         .create_table(&identifier, schema)
         .await
-        .map_err(|e| ApiError::internal_error(format!("Failed to create table: {}", e)))?;
+        .map_err(|e| ApiError::Internal(format!("Failed to create table: {}", e)))?;
 
     Ok(Json(CreateTableResponse {
         table: Some(convert_table_schema_to_proto(created_schema)),
@@ -312,19 +313,17 @@ pub async fn list_tables(
         .catalog_manager
         .get_catalog(&catalog)
         .await
-        .map_err(|e| ApiError::not_found(format!("Catalog '{}': {}", catalog, e)))?;
+        .map_err(|e| ApiError::NotFound(format!("Catalog '{}': {}", catalog, e)))?;
 
     // TODO: Get namespace from query params
     let namespace = vec![];
     let tables = catalog
         .list_tables(&namespace)
         .await
-        .map_err(|e| ApiError::internal_error(format!("Failed to list tables: {}", e)))?;
+        .map_err(|e| ApiError::Internal(format!("Failed to list tables: {}", e)))?;
 
     // TODO: Convert TableIdentifiers to TableSchema
-    Ok(Json(ListTablesResponse {
-        tables: vec![],
-    }))
+    Ok(Json(ListTablesResponse { tables: vec![] }))
 }
 
 /// Get table schema
@@ -337,9 +336,12 @@ pub async fn get_table(
     debug!("Getting table: {}.{}", catalog, table_str);
 
     // Parse namespace.table format
-    let parts: Vec<String> = table_str.split('.').collect();
+    let parts: Vec<String> = table_str.split('.').map(str::to_string).collect();
     let (namespace, table_name) = if parts.len() > 1 {
-        (parts[..parts.len() - 1].to_vec(), parts[parts.len() - 1].clone())
+        (
+            parts[..parts.len() - 1].to_vec(),
+            parts[parts.len() - 1].clone(),
+        )
     } else {
         (vec![], table_str.clone())
     };
@@ -348,13 +350,13 @@ pub async fn get_table(
         .catalog_manager
         .get_catalog(&catalog)
         .await
-        .map_err(|e| ApiError::not_found(format!("Catalog '{}': {}", catalog, e)))?;
+        .map_err(|e| ApiError::NotFound(format!("Catalog '{}': {}", catalog, e)))?;
 
     let identifier = TableIdentifier::new(namespace, table_name);
     let schema = catalog
         .get_table(&identifier)
         .await
-        .map_err(|e| ApiError::not_found(format!("Table '{}': {}", table_str, e)))?;
+        .map_err(|e| ApiError::NotFound(format!("Table '{}': {}", table_str, e)))?;
 
     Ok(Json(GetTableResponse {
         table: Some(convert_table_schema_to_proto(schema)),
@@ -372,9 +374,12 @@ pub async fn drop_table(
     info!("Dropping table: {}.{}", catalog, table_str);
 
     // Parse namespace.table format
-    let parts: Vec<String> = table_str.split('.').collect();
+    let parts: Vec<String> = table_str.split('.').map(str::to_string).collect();
     let (namespace, table_name) = if parts.len() > 1 {
-        (parts[..parts.len() - 1].to_vec(), parts[parts.len() - 1].clone())
+        (
+            parts[..parts.len() - 1].to_vec(),
+            parts[parts.len() - 1].clone(),
+        )
     } else {
         (vec![], table_str.clone())
     };
@@ -383,13 +388,13 @@ pub async fn drop_table(
         .catalog_manager
         .get_catalog(&catalog)
         .await
-        .map_err(|e| ApiError::not_found(format!("Catalog '{}': {}", catalog, e)))?;
+        .map_err(|e| ApiError::NotFound(format!("Catalog '{}': {}", catalog, e)))?;
 
     let identifier = TableIdentifier::new(namespace, table_name);
     let dropped = catalog
         .drop_table(&identifier, false)
         .await
-        .map_err(|e| ApiError::internal_error(format!("Failed to drop table: {}", e)))?;
+        .map_err(|e| ApiError::Internal(format!("Failed to drop table: {}", e)))?;
 
     Ok(Json(DropTableResponse { dropped }))
 }
@@ -432,11 +437,11 @@ pub fn configure_routes() -> Router<CatalogApiState> {
 // =============================================================================
 
 /// Convert proto catalog config to ProximaDB catalog config
-fn convert_proto_catalog_config(
-    proto_config: &CatalogConfig,
-) -> ApiResult<ProximaCatalogConfig> {
+fn convert_proto_catalog_config(_proto_config: &CatalogConfig) -> ApiResult<()> {
     // TODO: Implement conversion based on catalog type
-    Err(ApiError::not_implemented("Catalog config conversion not yet implemented"))
+    Err(ApiError::NotImplemented(
+        "Catalog config conversion not yet implemented",
+    ))
 }
 
 /// Convert ProximaDB namespace to proto namespace
@@ -457,13 +462,10 @@ fn convert_table_schema_from_proto(proto: &TableSchema) -> ApiResult<CatalogTabl
     let mut schema = CatalogTableSchema::new(&proto.name);
 
     for col in &proto.columns {
-        let catalog_col = CatalogColumn::new(
-            col.id,
-            col.name.clone(),
-            convert_data_type(col.data_type()),
-        )
-        .nullable(col.nullable)
-        .comment(col.comment.clone());
+        let catalog_col =
+            CatalogColumn::new(col.id, col.name.clone(), convert_data_type(col.data_type()))
+                .nullable(col.nullable)
+                .with_comment(col.comment.clone());
 
         schema = schema.with_column(catalog_col);
     }
@@ -496,7 +498,7 @@ fn convert_table_schema_to_proto(schema: CatalogTableSchema) -> TableSchema {
         sort_orders: vec![],
         primary_key: None, // TODO
         indexes: vec![],
-        format: 0, // TODO: Map from schema.format
+        format: 0,     // TODO: Map from schema.format
         table_type: 0, // TODO: Map from schema
         location: schema.location.unwrap_or_default(),
         properties: schema.properties,
@@ -514,23 +516,23 @@ fn convert_table_schema_to_proto(schema: CatalogTableSchema) -> TableSchema {
 fn convert_data_type(proto_type: crate::proto::proximadb_v1::DataType) -> CatalogDataType {
     use crate::proto::proximadb_v1::DataType;
     match proto_type {
-        DataType::DATA_TYPE_BOOLEAN => CatalogDataType::Boolean,
-        DataType::DATA_TYPE_INT8 => CatalogDataType::Int8,
-        DataType::DATA_TYPE_INT16 => CatalogDataType::Int16,
-        DataType::DATA_TYPE_INT32 => CatalogDataType::Int32,
-        DataType::DATA_TYPE_INT64 => CatalogDataType::Int64,
-        DataType::DATA_TYPE_FLOAT32 => CatalogDataType::Float32,
-        DataType::DATA_TYPE_FLOAT64 => CatalogDataType::Float64,
-        DataType::DATA_TYPE_DECIMAL => CatalogDataType::Decimal,
-        DataType::DATA_TYPE_STRING => CatalogDataType::String,
-        DataType::DATA_TYPE_BINARY => CatalogDataType::Binary,
-        DataType::DATA_TYPE_DATE => CatalogDataType::Date,
-        DataType::DATA_TYPE_TIME => CatalogDataType::Time,
-        DataType::DATA_TYPE_TIMESTAMP => CatalogDataType::Timestamp,
-        DataType::DATA_TYPE_TIMESTAMPTZ => CatalogDataType::TimestampTz,
-        DataType::DATA_TYPE_UUID => CatalogDataType::Uuid,
-        DataType::DATA_TYPE_JSON => CatalogDataType::Json,
-        DataType::DATA_TYPE_VECTOR => CatalogDataType::Vector,
+        DataType::Boolean => CatalogDataType::Boolean,
+        DataType::Int8 => CatalogDataType::Int8,
+        DataType::Int16 => CatalogDataType::Int16,
+        DataType::Int32 => CatalogDataType::Int32,
+        DataType::Int64 => CatalogDataType::Int64,
+        DataType::Float32 => CatalogDataType::Float32,
+        DataType::Float64 => CatalogDataType::Float64,
+        DataType::Decimal => CatalogDataType::Decimal,
+        DataType::String => CatalogDataType::String,
+        DataType::Binary => CatalogDataType::Binary,
+        DataType::Date => CatalogDataType::Date,
+        DataType::Time => CatalogDataType::Time,
+        DataType::Timestamp => CatalogDataType::Timestamp,
+        DataType::Timestamptz => CatalogDataType::TimestampTz,
+        DataType::Uuid => CatalogDataType::Uuid,
+        DataType::Json => CatalogDataType::Json,
+        DataType::Vector => CatalogDataType::Vector,
         _ => CatalogDataType::String, // Default fallback
     }
 }
@@ -539,24 +541,24 @@ fn convert_data_type(proto_type: crate::proto::proximadb_v1::DataType) -> Catalo
 fn convert_data_type_to_proto(data_type: CatalogDataType) -> crate::proto::proximadb_v1::DataType {
     use crate::proto::proximadb_v1::DataType;
     match data_type {
-        CatalogDataType::Boolean => DataType::DATA_TYPE_BOOLEAN,
-        CatalogDataType::Int8 => DataType::DATA_TYPE_INT8,
-        CatalogDataType::Int16 => DataType::DATA_TYPE_INT16,
-        CatalogDataType::Int32 => DataType::DATA_TYPE_INT32,
-        CatalogDataType::Int64 => DataType::DATA_TYPE_INT64,
-        CatalogDataType::Float32 => DataType::DATA_TYPE_FLOAT32,
-        CatalogDataType::Float64 => DataType::DATA_TYPE_FLOAT64,
-        CatalogDataType::Decimal => DataType::DATA_TYPE_DECIMAL,
-        CatalogDataType::String => DataType::DATA_TYPE_STRING,
-        CatalogDataType::Binary => DataType::DATA_TYPE_BINARY,
-        CatalogDataType::Date => DataType::DATA_TYPE_DATE,
-        CatalogDataType::Time => DataType::DATA_TYPE_TIME,
-        CatalogDataType::Timestamp => DataType::DATA_TYPE_TIMESTAMP,
-        CatalogDataType::TimestampTz => DataType::DATA_TYPE_TIMESTAMPTZ,
-        CatalogDataType::Uuid => DataType::DATA_TYPE_UUID,
-        CatalogDataType::Json => DataType::DATA_TYPE_JSON,
-        CatalogDataType::Vector => DataType::DATA_TYPE_VECTOR,
-        _ => DataType::DATA_TYPE_STRING, // Default fallback
+        CatalogDataType::Boolean => DataType::Boolean,
+        CatalogDataType::Int8 => DataType::Int8,
+        CatalogDataType::Int16 => DataType::Int16,
+        CatalogDataType::Int32 => DataType::Int32,
+        CatalogDataType::Int64 => DataType::Int64,
+        CatalogDataType::Float32 => DataType::Float32,
+        CatalogDataType::Float64 => DataType::Float64,
+        CatalogDataType::Decimal => DataType::Decimal,
+        CatalogDataType::String => DataType::String,
+        CatalogDataType::Binary => DataType::Binary,
+        CatalogDataType::Date => DataType::Date,
+        CatalogDataType::Time => DataType::Time,
+        CatalogDataType::Timestamp => DataType::Timestamp,
+        CatalogDataType::TimestampTz => DataType::Timestamptz,
+        CatalogDataType::Uuid => DataType::Uuid,
+        CatalogDataType::Json => DataType::Json,
+        CatalogDataType::Vector => DataType::Vector,
+        _ => DataType::String, // Default fallback
     }
 }
 

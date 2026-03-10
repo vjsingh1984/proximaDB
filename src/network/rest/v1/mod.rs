@@ -1,3 +1,4 @@
+#[cfg(feature = "enterprise-catalogs")]
 pub mod catalog;
 pub mod document;
 pub mod entities;

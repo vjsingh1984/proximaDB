@@ -319,6 +319,9 @@ impl RestServer {
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
     ) -> Self {
+        // Create catalog manager for external catalog integration
+        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+
         let state = AppState {
             unified_handlers,
             security_coordinator: security_coordinator.clone(),
@@ -327,6 +330,7 @@ impl RestServer {
             fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
                 std::collections::HashMap::new(),
             ))),
+            catalog_manager,
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
@@ -524,6 +528,9 @@ impl RestServer {
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
     ) -> Router {
+        // Create catalog manager for external catalog integration
+        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+
         let state = AppState {
             unified_handlers,
             security_coordinator: security_coordinator.clone(),
@@ -532,6 +539,7 @@ impl RestServer {
             fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
                 std::collections::HashMap::new(),
             ))),
+            catalog_manager,
         };
 
         // Create metrics router if metrics collector is available
