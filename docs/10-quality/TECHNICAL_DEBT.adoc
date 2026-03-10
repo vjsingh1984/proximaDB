@@ -23,10 +23,10 @@ Technical debt items are prioritized based on their impact on the four developme
 | PULSAR/QUASAR wiring
 | P3
 | Medium
-| Open
+| *Resolved*
 | Users see advertised features that don't work
 | 2-3 months
-| Distributed graph engines implemented but not wired to service layer. Consider gating behind experimental feature flag.
+| *RESOLVED Mar 2026*: **PULSAR/QUASAR fully wired to service layer**. `src/graph/service_engine_factory.rs:82-130` implements complete engine creation with feature gates and warnings. Both engines properly integrated into GraphOperationsService via `get_or_create_graph_engine()`. Experimental warnings logged when PULSAR/QUASAR selected. ORION remains default and recommended for production.
 
 | TD-002
 | External catalog integration
@@ -263,8 +263,8 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | No
 
 | Honesty/Trust
-| TD-001, ~TD-017~
-| No (but erodes credibility). TD-017 resolved.
+| ~TD-001~, ~TD-017~
+| No (but erodes credibility). Both resolved. |
 |===
 
 == Priority Legend
@@ -301,8 +301,8 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | 1-2 months
 
 | Phase 3 (Ecosystem)
-| TD-001, TD-002, TD-003, TD-004, TD-005, TD-006, TD-016, TD-017
-| 12-18 months
+| TD-003, TD-004, TD-005, TD-016
+| 8-12 months (TD-001, TD-002, TD-006, TD-017 resolved)
 
 | Phase 4 (Context DB)
 | TD-008, TD-009, TD-010, TD-011, TD-015
@@ -403,6 +403,11 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | TD-R18
 | PULSAR/QUASAR feature gating (TD-017)
 | Gated behind `distributed-graph` / `tiered-graph` feature flags with experimental warnings
+| P3
+
+| TD-R19
+| PULSAR/QUASAR service layer wiring (TD-001)
+| Fully wired in `src/graph/service_engine_factory.rs` with feature gates, warnings, and engine creation
 | P3
 |===
 
