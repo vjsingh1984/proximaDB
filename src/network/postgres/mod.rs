@@ -22,9 +22,12 @@ use tracing::{debug, error, info, warn};
 
 use self::protocol::PostgresProtocol;
 use self::session::SessionManager;
+use crate::graph::GraphService;
+use crate::observability::ObservabilityService;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
 use crate::storage::StorageEngine;
+use crate::storage::document::DocumentService;
 
 /// PostgreSQL-compatible server
 pub struct PostgresServer {
@@ -38,6 +41,12 @@ pub struct PostgresServer {
     collection_service: Arc<CollectionService>,
     /// Vector operations service for search
     vector_ops: Arc<VectorOperationsService>,
+    /// Document service for JSON document collections
+    document_service: Option<Arc<DocumentService>>,
+    /// Graph service for graph collections
+    graph_service: Option<Arc<GraphService>>,
+    /// Observability service for logs/metrics/traces
+    observability_service: Option<Arc<ObservabilityService>>,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -49,6 +58,9 @@ impl PostgresServer {
         storage: Arc<RwLock<StorageEngine>>,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
+        document_service: Option<Arc<DocumentService>>,
+        graph_service: Option<Arc<GraphService>>,
+        observability_service: Option<Arc<ObservabilityService>>,
     ) -> Self {
         Self {
             bind_address,
@@ -56,6 +68,9 @@ impl PostgresServer {
             storage,
             collection_service,
             vector_ops,
+            document_service,
+            graph_service,
+            observability_service,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -76,6 +91,9 @@ impl PostgresServer {
                     let storage = self.storage.clone();
                     let collection_service = self.collection_service.clone();
                     let vector_ops = self.vector_ops.clone();
+                    let document_service = self.document_service.clone();
+                    let graph_service = self.graph_service.clone();
+                    let observability_service = self.observability_service.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -85,6 +103,9 @@ impl PostgresServer {
                             storage,
                             collection_service,
                             vector_ops,
+                            document_service,
+                            graph_service,
+                            observability_service,
                         )
                         .await
                         {
@@ -116,14 +137,25 @@ impl PostgresServer {
         storage: Arc<RwLock<StorageEngine>>,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
+        document_service: Option<Arc<DocumentService>>,
+        graph_service: Option<Arc<GraphService>>,
+        observability_service: Option<Arc<ObservabilityService>>,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
         let session_id = session.id.clone();
 
         // Create protocol handler
-        let mut protocol =
-            PostgresProtocol::new(stream, session, storage, collection_service, vector_ops);
+        let mut protocol = PostgresProtocol::new(
+            stream,
+            session,
+            storage,
+            collection_service,
+            vector_ops,
+            document_service,
+            graph_service,
+            observability_service,
+        );
 
         // Run protocol loop
         match protocol.run().await {

@@ -1889,18 +1889,20 @@ impl CrossModelOptimizer {
                 id: self.next_id(),
                 node_type: PlanNodeType::Project {
                     input: Box::new(plan),
-                    columns: projection_sources,
+                    columns: projection_sources.clone(),
                 },
                 estimated_cost,
                 estimated_rows,
-                output_columns: projection_output_columns,
+                output_columns: projection_output_columns.clone(),
             };
         }
 
         if has_group_by
             && !projection_sources.is_empty()
             && !(projection_sources.len() == 1 && projection_sources[0] == "*")
-            && !projection_sources.iter().any(|column| column.ends_with(".*"))
+            && !projection_sources
+                .iter()
+                .any(|column| column.ends_with(".*"))
             && (projection_sources != plan.output_columns
                 || projection_output_columns != plan.output_columns)
         {
@@ -3477,8 +3479,13 @@ impl CrossModelOptimizer {
                 } else {
                     columns
                         .iter()
-                        .filter(|c| required.contains(c) || **c == "*")
-                        .cloned()
+                        .zip(plan.output_columns.iter())
+                        .filter(|(column, output)| {
+                            required.contains(*column)
+                                || required.contains(*output)
+                                || **column == "*"
+                        })
+                        .map(|(column, _)| column.clone())
                         .collect()
                 };
 
@@ -3492,18 +3499,21 @@ impl CrossModelOptimizer {
                 {
                     Ok(input)
                 } else {
-                    let filtered_output_columns: Vec<String> = if required
-                        .contains(&"*".to_string())
-                    {
-                        plan.output_columns.clone()
-                    } else {
-                        columns
-                            .iter()
-                            .zip(plan.output_columns.iter())
-                            .filter(|(column, _)| new_required.contains(column) || **column == "*")
-                            .map(|(_, output)| output.clone())
-                            .collect()
-                    };
+                    let filtered_output_columns: Vec<String> =
+                        if required.contains(&"*".to_string()) {
+                            plan.output_columns.clone()
+                        } else {
+                            columns
+                                .iter()
+                                .zip(plan.output_columns.iter())
+                                .filter(|(column, output)| {
+                                    new_required.contains(column)
+                                        || required.contains(*output)
+                                        || **column == "*"
+                                })
+                                .map(|(_, output)| output.clone())
+                                .collect()
+                        };
 
                     Ok(PlanNode {
                         id: self.next_id(),
@@ -3523,11 +3533,7 @@ impl CrossModelOptimizer {
                 predicates,
             } => {
                 // Apply column pruning to scan
-                let pruned_columns = if required.contains(&"*".to_string()) {
-                    plan.output_columns.clone()
-                } else {
-                    required.to_vec()
-                };
+                let pruned_columns = Self::filter_output_columns(&plan.output_columns, required);
 
                 // Estimate cost reduction from reading fewer columns
                 let column_ratio = if plan.output_columns.len() > 0 {
@@ -3555,18 +3561,31 @@ impl CrossModelOptimizer {
                 join_type,
             } => {
                 // Collect columns needed from each side
-                let left_required: Vec<String> = required
-                    .iter()
-                    .filter(|c| self.column_from_left(c, &left))
-                    .cloned()
-                    .chain(join_keys.iter().map(|(l, _)| l.clone()))
-                    .collect();
-                let right_required: Vec<String> = required
-                    .iter()
-                    .filter(|c| self.column_from_right(c, &right))
-                    .cloned()
-                    .chain(join_keys.iter().map(|(_, r)| r.clone()))
-                    .collect();
+                let mut left_required: Vec<String> = if required.contains(&"*".to_string()) {
+                    left.output_columns.clone()
+                } else {
+                    required
+                        .iter()
+                        .filter_map(|column| self.join_output_to_left_column(column, &left))
+                        .collect()
+                };
+                left_required.extend(join_keys.iter().map(|(left_key, _)| left_key.clone()));
+                left_required.sort();
+                left_required.dedup();
+
+                let mut right_required: Vec<String> = if required.contains(&"*".to_string()) {
+                    right.output_columns.clone()
+                } else {
+                    required
+                        .iter()
+                        .filter_map(|column| {
+                            self.join_output_to_right_column(column, &left, &right)
+                        })
+                        .collect()
+                };
+                right_required.extend(join_keys.iter().map(|(_, right_key)| right_key.clone()));
+                right_required.sort();
+                right_required.dedup();
 
                 let left = self.push_projections_with_required(*left, &left_required)?;
                 let right = self.push_projections_with_required(*right, &right_required)?;
@@ -3581,7 +3600,7 @@ impl CrossModelOptimizer {
                     },
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
-                    output_columns: required.to_vec(),
+                    output_columns: Self::filter_output_columns(&plan.output_columns, required),
                 })
             }
             PlanNodeType::NestedLoopJoin {
@@ -3600,7 +3619,7 @@ impl CrossModelOptimizer {
                     },
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
-                    output_columns: required.to_vec(),
+                    output_columns: Self::filter_output_columns(&plan.output_columns, required),
                 })
             }
             PlanNodeType::Filter { input, predicate } => {
@@ -3619,7 +3638,7 @@ impl CrossModelOptimizer {
                     },
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
-                    output_columns: required.to_vec(),
+                    output_columns: Self::filter_output_columns(&plan.output_columns, required),
                 })
             }
             PlanNodeType::Distinct { input } => {
@@ -3631,7 +3650,7 @@ impl CrossModelOptimizer {
                     },
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
-                    output_columns: required.to_vec(),
+                    output_columns: Self::filter_output_columns(&plan.output_columns, required),
                 })
             }
             PlanNodeType::Sort { input, order_by } => {
@@ -3652,7 +3671,7 @@ impl CrossModelOptimizer {
                     },
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
-                    output_columns: required.to_vec(),
+                    output_columns: Self::filter_output_columns(&plan.output_columns, required),
                 })
             }
             PlanNodeType::Limit {
@@ -3670,7 +3689,7 @@ impl CrossModelOptimizer {
                     },
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
-                    output_columns: required.to_vec(),
+                    output_columns: Self::filter_output_columns(&plan.output_columns, required),
                 })
             }
             PlanNodeType::Aggregate {
@@ -3698,7 +3717,7 @@ impl CrossModelOptimizer {
                     },
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
-                    output_columns: required.to_vec(),
+                    output_columns: Self::filter_output_columns(&plan.output_columns, required),
                 })
             }
             PlanNodeType::Union { inputs, all } => {
@@ -3714,12 +3733,12 @@ impl CrossModelOptimizer {
                     },
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
-                    output_columns: required.to_vec(),
+                    output_columns: Self::filter_output_columns(&plan.output_columns, required),
                 })
             }
             // For other node types, pass through required columns
             _ => Ok(PlanNode {
-                output_columns: required.to_vec(),
+                output_columns: Self::filter_output_columns(&plan.output_columns, required),
                 ..plan
             }),
         }
@@ -3737,46 +3756,24 @@ impl CrossModelOptimizer {
                 columns.extend(proj_cols.clone());
                 columns.extend(self.collect_required_columns(input));
             }
-            PlanNodeType::Distinct { input } => {
+            PlanNodeType::Distinct { .. } => {
+                // DISTINCT operates on the visible row shape at this point in the plan.
+                // Pulling through child columns here can incorrectly widen the distinct key
+                // and strip away a preceding projection during pushdown.
                 columns.extend(plan.output_columns.clone());
-                columns.extend(self.collect_required_columns(input));
             }
             PlanNodeType::Filter { predicate, input } => {
                 columns.push(predicate.column.clone());
                 columns.extend(self.collect_required_columns(input));
             }
-            PlanNodeType::HashJoin {
-                left,
-                right,
-                join_keys,
-                ..
-            } => {
-                for (l, r) in join_keys {
-                    columns.push(l.clone());
-                    columns.push(r.clone());
-                }
-                columns.extend(self.collect_required_columns(left));
-                columns.extend(self.collect_required_columns(right));
-            }
+            PlanNodeType::HashJoin { .. } => columns.extend(plan.output_columns.clone()),
             PlanNodeType::Sort { order_by, input } => {
                 for clause in order_by {
                     columns.push(clause.column.clone());
                 }
                 columns.extend(self.collect_required_columns(input));
             }
-            PlanNodeType::Aggregate {
-                group_by,
-                aggregates,
-                input,
-            } => {
-                columns.extend(group_by.clone());
-                for agg in aggregates {
-                    if let Some(col) = &agg.column {
-                        columns.push(col.clone());
-                    }
-                }
-                columns.extend(self.collect_required_columns(input));
-            }
+            PlanNodeType::Aggregate { .. } => columns.extend(plan.output_columns.clone()),
             _ => {
                 columns.extend(plan.output_columns.clone());
             }
@@ -3798,6 +3795,62 @@ impl CrossModelOptimizer {
     fn column_from_right(&self, column: &str, right: &PlanNode) -> bool {
         right.output_columns.contains(&column.to_string())
             || right.output_columns.contains(&"*".to_string())
+    }
+
+    fn filter_output_columns(output_columns: &[String], required: &[String]) -> Vec<String> {
+        if required.contains(&"*".to_string()) {
+            return output_columns.to_vec();
+        }
+
+        let filtered = output_columns
+            .iter()
+            .filter(|column| required.contains(*column))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if filtered.is_empty() && output_columns.is_empty() {
+            required.to_vec()
+        } else if filtered.is_empty() {
+            output_columns.to_vec()
+        } else {
+            filtered
+        }
+    }
+
+    fn normalize_column_name(column: &str) -> &str {
+        column.rsplit('.').next().unwrap_or(column).trim()
+    }
+
+    fn resolve_output_column_name(&self, column: &str, plan: &PlanNode) -> Option<String> {
+        let normalized = Self::normalize_column_name(column);
+        plan.output_columns
+            .iter()
+            .find(|candidate| {
+                candidate.eq_ignore_ascii_case(column) || candidate.eq_ignore_ascii_case(normalized)
+            })
+            .cloned()
+    }
+
+    fn join_output_to_left_column(&self, column: &str, left: &PlanNode) -> Option<String> {
+        self.resolve_output_column_name(column, left)
+    }
+
+    fn join_output_to_right_column(
+        &self,
+        column: &str,
+        left: &PlanNode,
+        right: &PlanNode,
+    ) -> Option<String> {
+        if let Some(stripped) = column.strip_prefix("right_") {
+            return self.resolve_output_column_name(stripped, right);
+        }
+
+        let right_column = self.resolve_output_column_name(column, right)?;
+        if self.resolve_output_column_name(column, left).is_some() {
+            None
+        } else {
+            Some(right_column)
+        }
     }
 
     // ========================================================================

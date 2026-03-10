@@ -15,6 +15,7 @@
 pub mod columnar;
 pub mod distributed;
 pub mod document;
+pub mod external_table;
 pub mod graph;
 pub mod observability;
 pub mod sql;
@@ -23,6 +24,7 @@ pub mod vector;
 pub use columnar::{ColumnarStrategy, ColumnarStrategyConfig};
 pub use distributed::{DistributedQueryStats, DistributedQueryStrategy, DistributedStrategyConfig};
 pub use document::DocumentStrategy;
+pub use external_table::{ExternalPredicatePushdown, ExternalTableScanner, ExternalTableStrategy};
 pub use graph::GraphStrategy;
 pub use observability::ObservabilityStrategy;
 pub use sql::SqlStrategy;

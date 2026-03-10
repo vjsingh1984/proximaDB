@@ -124,6 +124,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 use super::cache::{CacheInvalidator, QueryKey, QueryResultCache};
+use crate::catalog::CatalogManager;
 use crate::storage::multimodel::MultiModelStorageFacade;
 
 /// Federated query context containing all necessary components
@@ -140,6 +141,8 @@ pub struct FederatedQueryContext {
     pub cache: Option<Arc<QueryResultCache>>,
     /// Cache invalidator for real-time invalidation
     pub invalidator: Option<Arc<CacheInvalidator>>,
+    /// Catalog manager for external table resolution
+    pub catalog_manager: Option<Arc<CatalogManager>>,
 }
 
 impl FederatedQueryContext {
@@ -152,6 +155,7 @@ impl FederatedQueryContext {
             executor: FederatedExecutor::new(storage),
             cache: None,
             invalidator: None,
+            catalog_manager: None,
         }
     }
 
@@ -165,6 +169,23 @@ impl FederatedQueryContext {
             executor: FederatedExecutor::new(storage),
             cache: Some(cache),
             invalidator: Some(invalidator),
+            catalog_manager: None,
+        }
+    }
+
+    /// Create with external catalog manager
+    pub fn with_catalog_manager(
+        storage: Arc<MultiModelStorageFacade>,
+        catalog_manager: Arc<CatalogManager>,
+    ) -> Self {
+        Self {
+            storage: storage.clone(),
+            parser: FederatedParser::new(),
+            optimizer: CrossModelOptimizer::new(),
+            executor: FederatedExecutor::new(storage),
+            cache: None,
+            invalidator: None,
+            catalog_manager: Some(catalog_manager),
         }
     }
 
@@ -183,6 +204,11 @@ impl FederatedQueryContext {
     /// Get the invalidator if caching is enabled
     pub fn get_invalidator(&self) -> Option<&Arc<CacheInvalidator>> {
         self.invalidator.as_ref()
+    }
+
+    /// Get the catalog manager if external catalogs are configured
+    pub fn get_catalog_manager(&self) -> Option<&Arc<CatalogManager>> {
+        self.catalog_manager.as_ref()
     }
 
     /// Execute a federated query with optional caching

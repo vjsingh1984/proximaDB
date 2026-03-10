@@ -14,6 +14,7 @@
 //! - Automatic certificate generation for development
 //! - Certificate parsing and validation
 //! - Rustls configuration builders
+//! - TLS acceptor for client certificate extraction (TD-006)
 //!
 //! ## Quick Start
 //!
@@ -27,9 +28,18 @@
 //!
 //! // Build rustls server config (async)
 //! let rustls_config = config.build_server_config().await?;
+//!
+//! // Create TLS acceptor with certificate extraction
+//! let acceptor = TlsAcceptor::new(rustls_config)?;
 //! ```
 
+pub mod acceptor;
 pub mod certificate_manager;
+
+pub use acceptor::{TlsAcceptor, TlsAcceptorLayer};
+
+#[cfg(feature = "network-rest")]
+pub use acceptor::TlsAcceptorMiddleware;
 
 pub use certificate_manager::{
     CertificateConfig, CertificateManager, CertificateStatus, CertificateSubject,

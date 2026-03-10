@@ -22,12 +22,15 @@ use super::session::Session;
 use super::translator::QueryTranslator;
 use super::types::{FieldDescription, PgType};
 use crate::catalog::CatalogManager;
+use crate::graph::GraphService;
 use crate::network::arrow_ipc::ArrowProtoCodec;
+use crate::observability::ObservabilityService;
 use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
 use crate::services::{DdlService, DmlService};
 use crate::storage::StorageEngine;
+use crate::storage::document::DocumentService;
 
 /// PostgreSQL protocol handler
 pub struct PostgresProtocol {
@@ -58,6 +61,12 @@ pub struct PostgresProtocol {
     ddl_service: Option<Arc<DdlService>>,
     /// DML service for INSERT/UPDATE/DELETE operations (optional, for catalog integration)
     dml_service: Option<Arc<DmlService>>,
+    /// Document service for native document collections
+    document_service: Option<Arc<DocumentService>>,
+    /// Graph service for native graph collections
+    graph_service: Option<Arc<GraphService>>,
+    /// Observability service for logs/metrics/traces
+    observability_service: Option<Arc<ObservabilityService>>,
 }
 
 /// Prepared statement
@@ -158,6 +167,9 @@ impl PostgresProtocol {
         storage: Arc<RwLock<StorageEngine>>,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
+        document_service: Option<Arc<DocumentService>>,
+        graph_service: Option<Arc<GraphService>>,
+        observability_service: Option<Arc<ObservabilityService>>,
     ) -> Self {
         Self {
             stream,
@@ -172,6 +184,9 @@ impl PostgresProtocol {
             portals: HashMap::new(),
             ddl_service: None,
             dml_service: None,
+            document_service,
+            graph_service,
+            observability_service,
         }
     }
 
@@ -200,6 +215,9 @@ impl PostgresProtocol {
             portals: HashMap::new(),
             ddl_service: Some(ddl_service),
             dml_service: Some(dml_service),
+            document_service: None,
+            graph_service: None,
+            observability_service: None,
         }
     }
 
@@ -655,13 +673,7 @@ impl PostgresProtocol {
     /// Execute a document store query
     /// Supports: SELECT * FROM doc_users WHERE $.age > 25
     async fn execute_document_query(&mut self, table_name: &str, query: &str) -> Result<()> {
-        use crate::storage::document::DocumentService;
-
         debug!("Executing document query on table: {}", table_name);
-
-        // Get document service from vector ops (shares engine)
-        let engine = self.vector_ops.unified_engine();
-        let doc_service = DocumentService::new(engine);
 
         // Extract collection name (remove doc_ prefix if present)
         let collection_name = table_name
@@ -681,6 +693,12 @@ impl PostgresProtocol {
             offset: 0,
             include_count: false,
         };
+
+        let doc_service = self.document_service.clone().unwrap_or_else(|| {
+            Arc::new(crate::storage::document::DocumentService::new(
+                self.vector_ops.unified_engine(),
+            ))
+        });
 
         match doc_service
             .query_documents(collection_name, query_params)
@@ -866,6 +884,68 @@ impl PostgresProtocol {
         serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_else(|_| "{}".to_string())
     }
 
+    fn json_value_to_sql_object(
+        &self,
+        value: &serde_json::Value,
+    ) -> Option<crate::proto::proximadb_v1::SqlObject> {
+        let serde_json::Value::Object(map) = value else {
+            return None;
+        };
+
+        let fields = map
+            .iter()
+            .filter_map(|(key, value)| {
+                self.json_value_to_sql_value(value)
+                    .map(|sql_value| (key.clone(), sql_value))
+            })
+            .collect();
+
+        Some(crate::proto::proximadb_v1::SqlObject { fields })
+    }
+
+    fn json_value_to_sql_value(
+        &self,
+        value: &serde_json::Value,
+    ) -> Option<crate::proto::proximadb_v1::SqlValue> {
+        use crate::proto::proximadb_v1::{SqlArray, SqlValue, sql_value::Value as SqlVal};
+
+        match value {
+            serde_json::Value::Null => Some(SqlValue {
+                value: Some(SqlVal::NullValue(0)),
+            }),
+            serde_json::Value::Bool(b) => Some(SqlValue {
+                value: Some(SqlVal::BoolValue(*b)),
+            }),
+            serde_json::Value::Number(n) => n
+                .as_i64()
+                .map(|i| SqlValue {
+                    value: Some(SqlVal::Int64Value(i)),
+                })
+                .or_else(|| {
+                    n.as_f64().map(|f| SqlValue {
+                        value: Some(SqlVal::NumberValue(f)),
+                    })
+                }),
+            serde_json::Value::String(s) => Some(SqlValue {
+                value: Some(SqlVal::StringValue(s.clone())),
+            }),
+            serde_json::Value::Array(values) => {
+                let values = values
+                    .iter()
+                    .filter_map(|item| self.json_value_to_sql_value(item))
+                    .collect();
+                Some(SqlValue {
+                    value: Some(SqlVal::ArrayValue(SqlArray { values })),
+                })
+            }
+            serde_json::Value::Object(_) => {
+                self.json_value_to_sql_object(value).map(|object| SqlValue {
+                    value: Some(SqlVal::ObjectValue(object)),
+                })
+            }
+        }
+    }
+
     /// Execute an observability store query (logs, metrics)
     async fn execute_observability_query(&mut self, table_name: &str, query: &str) -> Result<()> {
         use crate::observability::{LogQueryParams, ObservabilityService, ObservabilityStorage};
@@ -880,15 +960,19 @@ impl PostgresProtocol {
         }
 
         // Log query
-        let data_dir = std::env::var("PROXIMADB_DATA_DIR")
-            .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
-        let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
+        let obs_service = if let Some(service) = self.observability_service.clone() {
+            service
+        } else {
+            let data_dir = std::env::var("PROXIMADB_DATA_DIR")
+                .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
+            let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
 
-        let obs_service = match ObservabilityService::new(storage).await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Failed to create observability service: {}", e);
-                return self.send_empty_result().await;
+            match ObservabilityService::new(storage).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    warn!("Failed to create observability service: {}", e);
+                    return self.send_empty_result().await;
+                }
             }
         };
 
@@ -969,15 +1053,19 @@ impl PostgresProtocol {
 
         debug!("Executing metric query on table: {}", table_name);
 
-        let data_dir = std::env::var("PROXIMADB_DATA_DIR")
-            .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
-        let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
+        let obs_service = if let Some(service) = self.observability_service.clone() {
+            service
+        } else {
+            let data_dir = std::env::var("PROXIMADB_DATA_DIR")
+                .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
+            let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
 
-        let obs_service = match ObservabilityService::new(storage).await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Failed to create observability service: {}", e);
-                return self.send_empty_result().await;
+            match ObservabilityService::new(storage).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    warn!("Failed to create observability service: {}", e);
+                    return self.send_empty_result().await;
+                }
             }
         };
 
@@ -1317,14 +1405,38 @@ impl PostgresProtocol {
 
         use crate::proto::proximadb_v1::DocumentCollectionConfig;
 
-        let _config = DocumentCollectionConfig {
+        let config = DocumentCollectionConfig {
             name: table_name.to_string(),
             enable_fulltext: true,
             ..Default::default()
         };
 
-        // Store document collection config (use existing infrastructure)
-        // For now, create as a special vector collection with dimension 0
+        if let Some(document_service) = self.document_service.clone() {
+            match document_service.create_collection(table_name, config).await {
+                Ok(_) => {
+                    info!(
+                        "Created document collection '{}' via PostgreSQL",
+                        table_name
+                    );
+                    return self.send_command_complete("CREATE TABLE").await;
+                }
+                Err(e) if e.to_string().contains("already exists") => {
+                    return self.send_command_complete("CREATE TABLE").await;
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to create document collection '{}' via DocumentService: {}",
+                        table_name, e
+                    );
+                    return self
+                        .send_error("ERROR", "42P07", &format!("Failed to create table: {}", e))
+                        .await;
+                }
+            }
+        }
+
+        // Fall back to the historical vector-backed document shim when the real document service
+        // is not available on this protocol path.
         use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine};
 
         let vector_config = CollectionConfig {
@@ -1366,13 +1478,37 @@ impl PostgresProtocol {
     async fn create_graph_collection(&mut self, table_name: &str, _query: &str) -> Result<()> {
         debug!("Creating graph '{}'", table_name);
 
-        // Use graph service to create graph
-        // For now, acknowledge creation (graph service integration pending)
-        info!(
-            "Created graph '{}' via PostgreSQL (graph engine: ORION)",
-            table_name
-        );
-        self.send_command_complete("CREATE TABLE").await
+        if let Some(graph_service) = self.graph_service.clone() {
+            let request = crate::proto::proximadb_v1::CreateGraphRequest {
+                graph_id: table_name.to_string(),
+                name: Some(table_name.to_string()),
+                ..Default::default()
+            };
+
+            match graph_service.create_graph_collection(request).await {
+                Ok(()) => {
+                    info!(
+                        "Created graph '{}' via PostgreSQL (graph engine: ORION)",
+                        table_name
+                    );
+                    self.send_command_complete("CREATE TABLE").await
+                }
+                Err(e) if e.to_string().contains("already exists") => {
+                    self.send_command_complete("CREATE TABLE").await
+                }
+                Err(e) => {
+                    warn!("Failed to create graph '{}': {}", table_name, e);
+                    self.send_error("ERROR", "42P07", &format!("Failed to create table: {}", e))
+                        .await
+                }
+            }
+        } else {
+            info!(
+                "Graph CREATE acknowledged for '{}' without graph service wiring",
+                table_name
+            );
+            self.send_command_complete("CREATE TABLE").await
+        }
     }
 
     /// Create an observability namespace (logs/metrics/traces)
@@ -1383,13 +1519,45 @@ impl PostgresProtocol {
     ) -> Result<()> {
         debug!("Creating observability namespace '{}'", table_name);
 
-        // Use observability service to create namespace
-        // For now, acknowledge creation (observability service integration pending)
-        info!(
-            "Created observability namespace '{}' via PostgreSQL",
-            table_name
-        );
-        self.send_command_complete("CREATE TABLE").await
+        if let Some(observability_service) = self.observability_service.clone() {
+            let config = crate::proto::proximadb_v1::ObservabilityNamespaceConfig {
+                name: table_name.to_string(),
+                retention: Some(crate::proto::proximadb_v1::RetentionConfig {
+                    hot_retention_hours: 24,
+                    warm_retention_days: 7,
+                    cold_retention_days: 30,
+                    archive_retention_days: 90,
+                }),
+                ..Default::default()
+            };
+
+            match observability_service.create_namespace(config).await {
+                Ok(_) => {
+                    info!(
+                        "Created observability namespace '{}' via PostgreSQL",
+                        table_name
+                    );
+                    self.send_command_complete("CREATE TABLE").await
+                }
+                Err(e) if e.to_string().contains("already exists") => {
+                    self.send_command_complete("CREATE TABLE").await
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to create observability namespace '{}': {}",
+                        table_name, e
+                    );
+                    self.send_error("ERROR", "42P07", &format!("Failed to create table: {}", e))
+                        .await
+                }
+            }
+        } else {
+            info!(
+                "Observability namespace CREATE acknowledged for '{}' without service wiring",
+                table_name
+            );
+            self.send_command_complete("CREATE TABLE").await
+        }
     }
 
     /// Extract vector dimension from type: vector(128) -> 128
@@ -1599,6 +1767,34 @@ impl PostgresProtocol {
             id, table_name
         );
 
+        if let Some(document_service) = self.document_service.clone() {
+            let parsed = serde_json::from_str::<serde_json::Value>(&json_data)
+                .context("Failed to parse JSON document")?;
+            let Some(document) = self.json_value_to_sql_object(&parsed) else {
+                return self
+                    .send_error("ERROR", "22P02", "JSON document must be an object")
+                    .await;
+            };
+
+            return match document_service
+                .insert_document(table_name, Some(&id), document)
+                .await
+            {
+                Ok(_) => {
+                    info!(
+                        "Inserted document '{}' into '{}' via PostgreSQL DocumentService",
+                        id, table_name
+                    );
+                    self.send_command_complete("INSERT 0 1").await
+                }
+                Err(e) => {
+                    warn!("Failed to insert document via DocumentService: {}", e);
+                    self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
+                        .await
+                }
+            };
+        }
+
         // For now, store documents as vectors with empty vector and JSON metadata
         use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 
@@ -1673,7 +1869,36 @@ impl PostgresProtocol {
 
         debug!("Inserting log into namespace '{}'", table_name);
 
-        // TODO: Integrate with observability service
+        if let Some(observability_service) = self.observability_service.clone() {
+            let Some(message) = message else {
+                return self.send_command_complete("INSERT 0 0").await;
+            };
+
+            let log = crate::proto::proximadb_v1::LogEntry {
+                timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                severity: crate::proto::proximadb_v1::Severity::Info as i32,
+                message,
+                fields: HashMap::new(),
+                source: Some("postgres".to_string()),
+                service: Some("proximadb".to_string()),
+            };
+
+            return match observability_service
+                .ingest_logs(table_name, vec![log], None)
+                .await
+            {
+                Ok(_) => {
+                    info!("Inserted log into '{}' via PostgreSQL", table_name);
+                    self.send_command_complete("INSERT 0 1").await
+                }
+                Err(e) => {
+                    warn!("Failed to insert log into '{}': {}", table_name, e);
+                    self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
+                        .await
+                }
+            };
+        }
+
         info!(
             "Log INSERT acknowledged for '{}': {:?}",
             table_name, message

@@ -201,6 +201,10 @@ impl TransactionParticipant for VectorEngineParticipant {
     async fn is_healthy(&self) -> bool {
         *self.healthy.read().await
     }
+
+    fn supports_durable_commit(&self) -> bool {
+        false
+    }
 }
 
 /// Document storage engine transaction participant
@@ -282,6 +286,10 @@ impl TransactionParticipant for DocumentEngineParticipant {
 
     async fn is_healthy(&self) -> bool {
         *self.healthy.read().await
+    }
+
+    fn supports_durable_commit(&self) -> bool {
+        false
     }
 }
 
@@ -365,6 +373,10 @@ impl TransactionParticipant for GraphEngineParticipant {
     async fn is_healthy(&self) -> bool {
         *self.healthy.read().await
     }
+
+    fn supports_durable_commit(&self) -> bool {
+        false
+    }
 }
 
 /// Time-series storage engine transaction participant
@@ -446,6 +458,10 @@ impl TransactionParticipant for TimeSeriesEngineParticipant {
 
     async fn is_healthy(&self) -> bool {
         *self.healthy.read().await
+    }
+
+    fn supports_durable_commit(&self) -> bool {
+        false
     }
 }
 
@@ -532,5 +548,13 @@ mod tests {
         // Prepare should vote NO
         let vote = participant.prepare(tx_id).await.unwrap();
         assert_eq!(vote, Vote::No);
+    }
+
+    #[tokio::test]
+    async fn test_participants_are_explicitly_buffer_only() {
+        assert!(!VectorEngineParticipant::new("test").supports_durable_commit());
+        assert!(!DocumentEngineParticipant::new("test").supports_durable_commit());
+        assert!(!GraphEngineParticipant::new("test").supports_durable_commit());
+        assert!(!TimeSeriesEngineParticipant::new("test").supports_durable_commit());
     }
 }

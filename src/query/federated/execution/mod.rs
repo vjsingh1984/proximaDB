@@ -233,7 +233,7 @@ impl FederatedExecutor {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecutionResult>> + Send + 'a>>
     {
         Box::pin(async move {
-            match &node.node_type {
+            let result = match &node.node_type {
                 PlanNodeType::Scan {
                     target,
                     model_type,
@@ -308,7 +308,9 @@ impl FederatedExecutor {
                     aggregates,
                 } => self.execute_aggregate(input, group_by, aggregates).await,
                 PlanNodeType::Union { inputs, all } => self.execute_union(inputs, *all).await,
-            }
+            }?;
+
+            self.project_result_to_output_columns(result, &node.output_columns)
         })
     }
 
@@ -1217,7 +1219,11 @@ impl FederatedExecutor {
             .collect()
     }
 
-    fn row_key_for_columns(batch: &RecordBatch, column_indices: &[usize], row: usize) -> Result<Vec<String>> {
+    fn row_key_for_columns(
+        batch: &RecordBatch,
+        column_indices: &[usize],
+        row: usize,
+    ) -> Result<Vec<String>> {
         column_indices
             .iter()
             .map(|column_index| {
@@ -1232,9 +1238,8 @@ impl FederatedExecutor {
     }
 
     fn take_batch_rows(batch: &RecordBatch, row_indices: &[usize]) -> Result<RecordBatch> {
-        let take_indices = Self::build_take_indices(
-            &row_indices.iter().copied().map(Some).collect::<Vec<_>>(),
-        );
+        let take_indices =
+            Self::build_take_indices(&row_indices.iter().copied().map(Some).collect::<Vec<_>>());
         let columns = batch
             .columns()
             .iter()
@@ -1268,7 +1273,10 @@ impl FederatedExecutor {
         )
     }
 
-    fn aggregate_values_to_array(values: Vec<AggregateValue>, data_type: &DataType) -> Result<ArrayRef> {
+    fn aggregate_values_to_array(
+        values: Vec<AggregateValue>,
+        data_type: &DataType,
+    ) -> Result<ArrayRef> {
         match data_type {
             DataType::Int64 => {
                 let values = values
@@ -1359,7 +1367,10 @@ impl FederatedExecutor {
                         )),
                     })
                     .collect::<Result<Vec<_>>>()?;
-                let value_refs = values.iter().map(|value| value.as_deref()).collect::<Vec<_>>();
+                let value_refs = values
+                    .iter()
+                    .map(|value| value.as_deref())
+                    .collect::<Vec<_>>();
                 Ok(Arc::new(StringArray::from(value_refs)))
             }
             DataType::Boolean => {
@@ -2142,6 +2153,79 @@ impl FederatedExecutor {
         Ok(ExecutionResult::from_batch(projected))
     }
 
+    fn project_result_to_output_columns(
+        &self,
+        result: ExecutionResult,
+        output_columns: &[String],
+    ) -> Result<ExecutionResult> {
+        if output_columns.is_empty() || output_columns.iter().any(|column| column == "*") {
+            return Ok(result);
+        }
+
+        let schema_matches = result.schema.fields().len() == output_columns.len()
+            && result
+                .schema
+                .fields()
+                .iter()
+                .zip(output_columns.iter())
+                .all(|(field, requested)| field.name() == requested);
+        if schema_matches {
+            return Ok(result);
+        }
+
+        let batch = self.merge_batches(&result)?;
+        let projected_indices = output_columns
+            .iter()
+            .map(|column| {
+                Self::resolve_column_index(batch.schema().as_ref(), column)
+                    .ok_or_else(|| anyhow!("Projection column '{}' was not found", column))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let batch_schema = batch.schema();
+        let projected_fields = projected_indices
+            .iter()
+            .enumerate()
+            .map(|(position, index)| {
+                let field = batch_schema.field(*index);
+                let requested_name = output_columns
+                    .get(position)
+                    .map(String::as_str)
+                    .unwrap_or_else(|| field.name());
+
+                if field.name() == requested_name {
+                    field.as_ref().clone()
+                } else {
+                    Field::new(
+                        requested_name,
+                        field.data_type().clone(),
+                        field.is_nullable(),
+                    )
+                }
+            })
+            .collect::<Vec<_>>();
+        let schema = Arc::new(Schema::new(projected_fields));
+
+        if batch.num_rows() == 0 {
+            return Ok(ExecutionResult {
+                batches: vec![],
+                schema,
+                stats: result.stats,
+            });
+        }
+
+        let projected_columns = projected_indices
+            .iter()
+            .map(|index| batch.column(*index).clone())
+            .collect::<Vec<_>>();
+        let projected = RecordBatch::try_new(schema.clone(), projected_columns)?;
+        Ok(ExecutionResult {
+            batches: vec![projected],
+            schema,
+            stats: result.stats,
+        })
+    }
+
     /// Execute DISTINCT on the current result schema.
     async fn execute_distinct(&self, input: &PlanNode) -> Result<ExecutionResult> {
         let result = self.execute_node(input).await?;
@@ -2292,7 +2376,10 @@ impl FederatedExecutor {
                 .iter()
                 .map(|column| {
                     Self::resolve_column_index(batch.schema().as_ref(), column).ok_or_else(|| {
-                        anyhow!("GROUP BY column '{}' was not found in the federated schema", column)
+                        anyhow!(
+                            "GROUP BY column '{}' was not found in the federated schema",
+                            column
+                        )
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -2327,7 +2414,7 @@ impl FederatedExecutor {
                 return Ok(ExecutionResult::empty_with_schema(schema));
             }
 
-            let mut group_lookup = HashMap::new();
+            let mut group_lookup: HashMap<Vec<String>, usize> = HashMap::new();
             let mut grouped_rows: Vec<Vec<usize>> = Vec::new();
             for row in 0..batch.num_rows() {
                 let key = Self::row_key_for_columns(&batch, &group_indices, row)?;
@@ -2339,8 +2426,10 @@ impl FederatedExecutor {
                 }
             }
 
-            let first_rows =
-                grouped_rows.iter().map(|rows| rows.first().copied()).collect::<Vec<_>>();
+            let first_rows = grouped_rows
+                .iter()
+                .map(|rows| rows.first().copied())
+                .collect::<Vec<_>>();
             let first_row_take = Self::build_take_indices(&first_rows);
             let mut columns = group_indices
                 .iter()

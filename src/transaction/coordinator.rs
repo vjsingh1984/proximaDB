@@ -216,8 +216,46 @@ impl CrossModelTransactionCoordinator {
             participant_ids.len()
         );
 
-        // Execute two-phase commit
-        let result = self.two_phase_commit.commit(tx_id, participant_ids).await;
+        self.ensure_durable_participants(participant_ids).await?;
+
+        let prepare_result = self.two_phase_commit.prepare(tx_id, participant_ids).await;
+        let result = match prepare_result {
+            Ok(()) => {
+                let wal_prepare_result: Result<()> = async {
+                    for (index, participant_id) in participant_ids.iter().enumerate() {
+                        self.wal_coordinator
+                            .write_tx_prepare(
+                                tx_id,
+                                participant_id,
+                                index + 1,
+                                participant_ids.len(),
+                            )
+                            .await?;
+                    }
+
+                    Ok(())
+                }
+                .await;
+
+                if let Err(e) = wal_prepare_result {
+                    Err(e)
+                } else {
+                    self.two_phase_commit
+                        .commit_prepared(tx_id, participant_ids)
+                        .await
+                }
+            }
+            Err(e) => {
+                self.two_phase_commit
+                    .abort(tx_id, participant_ids)
+                    .await
+                    .ok();
+                Err(ProximaDBError::TransactionAborted(format!(
+                    "Prepare phase failed: {}",
+                    e
+                )))
+            }
+        };
 
         match &result {
             Ok(()) => {
@@ -234,6 +272,11 @@ impl CrossModelTransactionCoordinator {
                 info!("Transaction {} committed", tx_id);
             }
             Err(e) => {
+                self.two_phase_commit
+                    .abort(tx_id, participant_ids)
+                    .await
+                    .ok();
+
                 // Write abort to WAL
                 self.wal_coordinator.write_tx_abort(tx_id).await?;
 
@@ -286,6 +329,25 @@ impl CrossModelTransactionCoordinator {
         self.stats.read().await.clone()
     }
 
+    async fn ensure_durable_participants(&self, participant_ids: &[String]) -> Result<()> {
+        let participants = self.participants.read().await;
+
+        for participant_id in participant_ids {
+            let participant = participants.get(participant_id).ok_or_else(|| {
+                ProximaDBError::Internal(format!("Participant not found: {}", participant_id))
+            })?;
+
+            if !participant.supports_durable_commit() {
+                return Err(ProximaDBError::NotImplemented(format!(
+                    "Transaction participant '{}' is buffer-only; live engine-backed transaction commits are not wired yet",
+                    participant_id
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Recover incomplete transactions from WAL
     async fn recover_transactions(&self) -> Result<()> {
         info!("Recovering incomplete transactions");
@@ -309,15 +371,34 @@ impl CrossModelTransactionCoordinator {
             // Get WAL state
             if let Some(wal_state) = self.wal_coordinator.get_tx_state(tx_id).await {
                 match wal_state {
-                    super::wal_coordinator::WALTransactionState::Prepared { .. } => {
+                    super::wal_coordinator::WALTransactionState::Prepared {
+                        participant_ids,
+                        ..
+                    } => {
                         // All participants prepared, can commit
                         info!("Transaction {} is prepared, committing", tx_id);
 
-                        // Get all participant IDs
-                        let participants = self.participants.read().await;
-                        let participant_ids: Vec<String> = participants.keys().cloned().collect();
+                        if let Err(e) = self.ensure_durable_participants(&participant_ids).await {
+                            warn!(
+                                "Prepared transaction {} cannot be replayed durably: {}. Aborting instead.",
+                                tx_id, e
+                            );
+                            self.two_phase_commit
+                                .abort(tx_id, &participant_ids)
+                                .await
+                                .ok();
+                            self.wal_coordinator.write_tx_abort(tx_id).await.ok();
+                            continue;
+                        }
 
-                        if let Err(e) = self.two_phase_commit.commit(tx_id, &participant_ids).await
+                        self.two_phase_commit
+                            .mark_prepared_for_recovery(tx_id)
+                            .await;
+
+                        if let Err(e) = self
+                            .two_phase_commit
+                            .commit_prepared(tx_id, &participant_ids)
+                            .await
                         {
                             warn!("Failed to commit prepared tx {}: {}", tx_id, e);
                             self.two_phase_commit
@@ -329,17 +410,21 @@ impl CrossModelTransactionCoordinator {
                             recovered += 1;
                         }
                     }
-                    _ => {
-                        // Not prepared, must abort
-                        warn!("Transaction {} not prepared, aborting", tx_id);
-
-                        let participants = self.participants.read().await;
-                        let participant_ids: Vec<String> = participants.keys().cloned().collect();
+                    super::wal_coordinator::WALTransactionState::Preparing {
+                        participant_ids,
+                        ..
+                    } => {
+                        warn!("Transaction {} only partially prepared, aborting", tx_id);
 
                         self.two_phase_commit
                             .abort(tx_id, &participant_ids)
                             .await
                             .ok();
+                        self.wal_coordinator.write_tx_abort(tx_id).await.ok();
+                    }
+                    _ => {
+                        // Not prepared, must abort
+                        warn!("Transaction {} not prepared, aborting", tx_id);
                         self.wal_coordinator.write_tx_abort(tx_id).await.ok();
                     }
                 }
@@ -386,6 +471,40 @@ impl CrossModelTransactionCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transaction::{Vote, WALTransactionState, participants::VectorEngineParticipant};
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    struct DurableMockParticipant {
+        id: String,
+    }
+
+    #[async_trait]
+    impl TransactionParticipant for DurableMockParticipant {
+        async fn prepare(&self, _tx_id: TransactionId) -> Result<Vote> {
+            Ok(Vote::Yes)
+        }
+
+        async fn commit(&self, _tx_id: TransactionId) -> Result<()> {
+            Ok(())
+        }
+
+        async fn rollback(&self, _tx_id: TransactionId) -> Result<()> {
+            Ok(())
+        }
+
+        fn participant_id(&self) -> &str {
+            &self.id
+        }
+
+        async fn is_healthy(&self) -> bool {
+            true
+        }
+
+        fn supports_durable_commit(&self) -> bool {
+            true
+        }
+    }
 
     #[tokio::test]
     async fn test_coordinator_creation() {
@@ -429,6 +548,103 @@ mod tests {
         let stats = coordinator.get_stats().await;
         assert_eq!(stats.total_transactions, 1);
         assert_eq!(stats.active_transactions, 1);
+
+        // Cleanup
+        let _ = tokio::fs::remove_dir_all(config.wal_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_commit_rejects_buffer_only_participants() {
+        let config = TransactionConfig {
+            wal_dir: PathBuf::from("/tmp/test_tx_buffer_only"),
+            ..Default::default()
+        };
+        let coordinator = CrossModelTransactionCoordinator::new(config.clone());
+
+        coordinator.initialize().await.unwrap();
+
+        let participant =
+            Arc::new(VectorEngineParticipant::new("products")) as Arc<dyn TransactionParticipant>;
+        coordinator.register_participant(participant).await.unwrap();
+
+        let tx_id = coordinator.begin_transaction().await.unwrap();
+        let err = coordinator
+            .commit_transaction(tx_id, &["vector:products".to_string()])
+            .await
+            .expect_err("buffer-only participants should be rejected");
+
+        assert!(matches!(err, ProximaDBError::NotImplemented(_)));
+
+        // Cleanup
+        let _ = tokio::fs::remove_dir_all(config.wal_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_commit_writes_prepare_and_commit_wal_for_durable_participant() {
+        let config = TransactionConfig {
+            wal_dir: PathBuf::from("/tmp/test_tx_durable_commit"),
+            ..Default::default()
+        };
+        let coordinator = CrossModelTransactionCoordinator::new(config.clone());
+
+        coordinator.initialize().await.unwrap();
+
+        let participant = Arc::new(DurableMockParticipant {
+            id: "vector:products".to_string(),
+        }) as Arc<dyn TransactionParticipant>;
+        coordinator.register_participant(participant).await.unwrap();
+
+        let tx_id = coordinator.begin_transaction().await.unwrap();
+        coordinator
+            .commit_transaction(tx_id, &["vector:products".to_string()])
+            .await
+            .unwrap();
+
+        let wal_state = coordinator.wal_coordinator.get_tx_state(tx_id).await;
+        assert_eq!(wal_state, Some(WALTransactionState::Committed));
+
+        let stats = coordinator.get_stats().await;
+        assert_eq!(stats.committed_transactions, 1);
+        assert_eq!(stats.active_transactions, 0);
+
+        // Cleanup
+        let _ = tokio::fs::remove_dir_all(config.wal_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_recovery_aborts_prepared_tx_for_buffer_only_participants() {
+        let config = TransactionConfig {
+            wal_dir: PathBuf::from("/tmp/test_tx_recovery_abort"),
+            enable_recovery: false,
+            ..Default::default()
+        };
+        let coordinator = CrossModelTransactionCoordinator::new(config.clone());
+
+        coordinator.initialize().await.unwrap();
+
+        let participant =
+            Arc::new(VectorEngineParticipant::new("products")) as Arc<dyn TransactionParticipant>;
+        coordinator.register_participant(participant).await.unwrap();
+
+        let tx_id = 424242;
+        coordinator
+            .wal_coordinator
+            .write_tx_begin(tx_id)
+            .await
+            .unwrap();
+        coordinator
+            .wal_coordinator
+            .write_tx_prepare(tx_id, "vector:products", 1, 1)
+            .await
+            .unwrap();
+
+        coordinator.recover_transactions().await.unwrap();
+
+        let wal_state = coordinator.wal_coordinator.get_tx_state(tx_id).await;
+        assert_eq!(wal_state, Some(WALTransactionState::Aborted));
+
+        let tx_state = coordinator.get_transaction_state(tx_id).await;
+        assert_eq!(tx_state, Some(TransactionState::Aborted));
 
         // Cleanup
         let _ = tokio::fs::remove_dir_all(config.wal_dir).await;

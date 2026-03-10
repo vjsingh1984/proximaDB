@@ -707,6 +707,8 @@ pub struct SharedServices {
     pub collection_service: Arc<CollectionService>,
     pub vector_operations_service: Arc<VectorOperationsService>,
     pub graph_service: Arc<crate::graph::GraphService>,
+    pub document_service: Arc<DocumentService>,
+    pub observability_service: Arc<crate::observability::ObservabilityService>,
     pub unified_handlers: Arc<UnifiedHandlers>,
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     pub metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>,
@@ -1387,6 +1389,8 @@ impl SharedServices {
                 collection_service: collection_service.clone(),
                 vector_operations_service,
                 graph_service,
+                document_service,
+                observability_service,
                 unified_handlers,
                 metrics_collector,
                 metrics_updater: Some(metrics_updater.clone()),
@@ -2002,6 +2006,9 @@ impl MultiServer {
             let pg_bind_addr = self.config.postgres_config.active_bind_address();
             let collection_service = services.collection_service.clone();
             let vector_ops = services.vector_operations_service.clone();
+            let document_service = Some(services.document_service.clone());
+            let graph_service = Some(services.graph_service.clone());
+            let observability_service = Some(services.observability_service.clone());
 
             if let Some(ref storage) = self.storage {
                 let storage_clone = storage.clone();
@@ -2013,6 +2020,9 @@ impl MultiServer {
                         storage_clone,
                         collection_service,
                         vector_ops,
+                        document_service,
+                        graph_service,
+                        observability_service,
                     );
                     if let Err(e) = server.start().await {
                         tracing::error!("❌ PostgreSQL Server error: {}", e);

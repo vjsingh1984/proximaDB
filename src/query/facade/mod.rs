@@ -357,6 +357,18 @@ impl UnifiedQueryFacade {
         let ctx = QueryContext::new(timeout_ms);
         let include_metrics = request.params.include_metrics;
         let start = Instant::now();
+        let telemetry_kind = match request.query_type {
+            QueryType::VectorSearch => Some("vector"),
+            QueryType::Sql => Some("sql"),
+            QueryType::Federated => None,
+            QueryType::Graph => Some("graph"),
+            QueryType::Document => Some("document"),
+            QueryType::Observability => Some("observability"),
+        };
+
+        if let Some(kind) = telemetry_kind {
+            crate::query::utils::metrics::record_query_start(kind);
+        }
 
         // Find the best strategy for this query
         let strategy = self.select_strategy(&request)?;
@@ -367,7 +379,17 @@ impl UnifiedQueryFacade {
         );
 
         // Execute through the selected strategy
-        let mut result = strategy.execute(request, &ctx).await?;
+        let result = strategy.execute(request, &ctx).await;
+
+        if let Some(kind) = telemetry_kind {
+            crate::query::utils::metrics::record_query_end(
+                kind,
+                result.is_ok(),
+                start.elapsed().as_millis() as u64,
+            );
+        }
+
+        let mut result = result?;
 
         // Add metrics if requested
         if include_metrics {

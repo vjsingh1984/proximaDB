@@ -73,6 +73,7 @@ pub enum TransactionWALRecord {
     TxPrepare {
         tx_id: TransactionId,
         participant_id: String,
+        total_count: usize,
     },
 
     /// Transaction committed
@@ -91,9 +92,13 @@ pub enum WALTransactionState {
     Preparing {
         prepared_count: usize,
         total_count: usize,
+        participant_ids: Vec<String>,
     },
     /// All participants prepared (ready to commit)
-    Prepared { total_count: usize },
+    Prepared {
+        total_count: usize,
+        participant_ids: Vec<String>,
+    },
     /// Transaction committed
     Committed,
     /// Transaction aborted
@@ -176,28 +181,27 @@ impl WALCoordinator {
         let record = TransactionWALRecord::TxPrepare {
             tx_id,
             participant_id: participant_id.to_string(),
+            total_count,
         };
 
         // Write to this participant's WAL
         let wal_writers = self.wal_writers.read().await;
         if let Some(wal_writer) = wal_writers.get(participant_id) {
             self.write_record_to_wal(wal_writer, &record).await?;
+        } else {
+            self.write_record_to_global_wal(&record).await?;
         }
 
         // Update state
         {
             let mut tx_states = self.tx_states.write().await;
-            let state = WALTransactionState::Preparing {
+            Self::apply_prepare_state(
+                &mut tx_states,
+                tx_id,
+                participant_id.to_string(),
                 prepared_count,
                 total_count,
-            };
-
-            // If all prepared, move to Prepared state
-            if prepared_count >= total_count {
-                tx_states.insert(tx_id, WALTransactionState::Prepared { total_count });
-            } else {
-                tx_states.insert(tx_id, state);
-            }
+            );
         }
 
         debug!("WAL: Transaction {} prepared by {}", tx_id, participant_id);
@@ -333,11 +337,33 @@ impl WALCoordinator {
             .map_err(|e| ProximaDBError::Internal(format!("Failed to read WAL: {}", e)))?;
 
         // Deserialize records
-        let tx_states: HashMap<TransactionId, WALTransactionState> = HashMap::new();
+        let mut tx_states: HashMap<TransactionId, WALTransactionState> = HashMap::new();
+        let mut cursor = std::io::Cursor::new(&contents);
 
-        // Note: In production, we'd parse records properly
-        // For now, just log that we found the WAL
-        debug!("Read {} bytes from transaction WAL", contents.len());
+        while (cursor.position() as usize) < contents.len() {
+            match bincode::deserialize_from::<_, TransactionWALRecord>(&mut cursor) {
+                Ok(record) => Self::apply_record(&mut tx_states, record),
+                Err(err) => match err.as_ref() {
+                    bincode::ErrorKind::Io(io_err)
+                        if io_err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    {
+                        break;
+                    }
+                    _ => {
+                        return Err(ProximaDBError::Internal(format!(
+                            "Failed to recover transaction WAL: {}",
+                            err
+                        )));
+                    }
+                },
+            }
+        }
+
+        debug!(
+            "Recovered {} transactions from {} bytes of WAL",
+            tx_states.len(),
+            contents.len()
+        );
 
         // Store recovered states
         let mut states = self.tx_states.write().await;
@@ -345,6 +371,93 @@ impl WALCoordinator {
 
         info!("Transaction recovery completed");
         Ok(())
+    }
+
+    fn apply_record(
+        tx_states: &mut HashMap<TransactionId, WALTransactionState>,
+        record: TransactionWALRecord,
+    ) {
+        match record {
+            TransactionWALRecord::TxBegin { tx_id } => {
+                tx_states.insert(tx_id, WALTransactionState::Begun);
+            }
+            TransactionWALRecord::TxPrepare {
+                tx_id,
+                participant_id,
+                total_count,
+            } => {
+                let prepared_count = match tx_states.get(&tx_id) {
+                    Some(WALTransactionState::Preparing {
+                        participant_ids, ..
+                    })
+                    | Some(WALTransactionState::Prepared {
+                        participant_ids, ..
+                    }) => {
+                        if participant_ids.contains(&participant_id) {
+                            participant_ids.len()
+                        } else {
+                            participant_ids.len() + 1
+                        }
+                    }
+                    _ => 1,
+                };
+
+                Self::apply_prepare_state(
+                    tx_states,
+                    tx_id,
+                    participant_id,
+                    prepared_count,
+                    total_count,
+                );
+            }
+            TransactionWALRecord::TxCommit { tx_id } => {
+                tx_states.insert(tx_id, WALTransactionState::Committed);
+            }
+            TransactionWALRecord::TxAbort { tx_id } => {
+                tx_states.insert(tx_id, WALTransactionState::Aborted);
+            }
+        }
+    }
+
+    fn apply_prepare_state(
+        tx_states: &mut HashMap<TransactionId, WALTransactionState>,
+        tx_id: TransactionId,
+        participant_id: String,
+        prepared_count: usize,
+        total_count: usize,
+    ) {
+        let mut participant_ids = match tx_states.get(&tx_id) {
+            Some(WALTransactionState::Preparing {
+                participant_ids, ..
+            })
+            | Some(WALTransactionState::Prepared {
+                participant_ids, ..
+            }) => participant_ids.clone(),
+            _ => Vec::new(),
+        };
+
+        if !participant_ids.contains(&participant_id) {
+            participant_ids.push(participant_id);
+        }
+
+        if prepared_count >= total_count {
+            tx_states.insert(
+                tx_id,
+                WALTransactionState::Prepared {
+                    total_count,
+                    participant_ids,
+                },
+            );
+        } else {
+            tx_states.insert(
+                tx_id,
+                WALTransactionState::Preparing {
+                    prepared_count,
+                    total_count,
+                    participant_ids,
+                },
+            );
+        }
     }
 
     /// Get incomplete transactions that need recovery
@@ -460,6 +573,86 @@ mod tests {
 
         let state = coordinator.get_tx_state(tx_id).await;
         assert_eq!(state, Some(WALTransactionState::Committed));
+
+        // Cleanup
+        let _ = tokio::fs::remove_dir_all(wal_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_write_tx_prepare_tracks_participants() {
+        let wal_dir = PathBuf::from("/tmp/test_wal_prepare");
+        let coordinator = WALCoordinator::new(wal_dir.clone());
+        coordinator.initialize().await.unwrap();
+
+        let tx_id = 67890;
+        coordinator.write_tx_begin(tx_id).await.unwrap();
+        coordinator
+            .write_tx_prepare(tx_id, "vector:products", 1, 2)
+            .await
+            .unwrap();
+
+        let state = coordinator.get_tx_state(tx_id).await;
+        assert_eq!(
+            state,
+            Some(WALTransactionState::Preparing {
+                prepared_count: 1,
+                total_count: 2,
+                participant_ids: vec!["vector:products".to_string()],
+            })
+        );
+
+        coordinator
+            .write_tx_prepare(tx_id, "document:products", 2, 2)
+            .await
+            .unwrap();
+
+        let state = coordinator.get_tx_state(tx_id).await;
+        assert_eq!(
+            state,
+            Some(WALTransactionState::Prepared {
+                total_count: 2,
+                participant_ids: vec![
+                    "vector:products".to_string(),
+                    "document:products".to_string()
+                ],
+            })
+        );
+
+        // Cleanup
+        let _ = tokio::fs::remove_dir_all(wal_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_recover_transactions_from_wal() {
+        let wal_dir = PathBuf::from("/tmp/test_wal_recovery");
+        let coordinator = WALCoordinator::new(wal_dir.clone());
+        coordinator.initialize().await.unwrap();
+
+        let tx_id = 77777;
+        coordinator.write_tx_begin(tx_id).await.unwrap();
+        coordinator
+            .write_tx_prepare(tx_id, "vector:products", 1, 2)
+            .await
+            .unwrap();
+        coordinator
+            .write_tx_prepare(tx_id, "document:products", 2, 2)
+            .await
+            .unwrap();
+
+        let recovered = WALCoordinator::new(wal_dir.clone());
+        recovered.initialize().await.unwrap();
+
+        let state = recovered.get_tx_state(tx_id).await;
+        assert_eq!(
+            state,
+            Some(WALTransactionState::Prepared {
+                total_count: 2,
+                participant_ids: vec![
+                    "vector:products".to_string(),
+                    "document:products".to_string()
+                ],
+            })
+        );
 
         // Cleanup
         let _ = tokio::fs::remove_dir_all(wal_dir).await;

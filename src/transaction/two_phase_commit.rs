@@ -98,6 +98,14 @@ pub trait TransactionParticipant: Send + Sync {
 
     /// Check if participant is healthy
     async fn is_healthy(&self) -> bool;
+
+    /// Whether this participant can durably apply a committed transaction to a live engine.
+    ///
+    /// Buffer-only participants should return `false` so higher-level coordinators can reject
+    /// transaction flows that would otherwise look durable without actually reaching storage.
+    fn supports_durable_commit(&self) -> bool {
+        false
+    }
 }
 
 /// Two-phase commit coordinator
@@ -173,7 +181,7 @@ impl TwoPhaseCommit {
         );
 
         // Phase 1: Prepare
-        let prepare_result = self.prepare_phase(tx_id, participant_ids).await;
+        let prepare_result = self.prepare(tx_id, participant_ids).await;
 
         if let Err(ref e) = prepare_result {
             warn!("Prepare phase failed for tx {}: {}", tx_id, e);
@@ -185,6 +193,38 @@ impl TwoPhaseCommit {
         }
 
         // Phase 2: Commit
+        self.commit_prepared(tx_id, participant_ids).await
+    }
+
+    /// Run only the prepare phase of 2PC.
+    ///
+    /// This is used by the higher-level coordinator so it can durably record
+    /// prepared participants before issuing the final commit decision.
+    pub async fn prepare(
+        &self,
+        tx_id: TransactionId,
+        participant_ids: &[ParticipantId],
+    ) -> Result<()> {
+        self.prepare_phase(tx_id, participant_ids).await
+    }
+
+    /// Commit a transaction that has already completed the prepare phase.
+    pub async fn commit_prepared(
+        &self,
+        tx_id: TransactionId,
+        participant_ids: &[ParticipantId],
+    ) -> Result<()> {
+        let state = self.get_state(tx_id).await;
+        if !matches!(
+            state,
+            Some(TransactionState::Prepared) | Some(TransactionState::Committing)
+        ) {
+            return Err(ProximaDBError::InvalidInput(format!(
+                "Transaction {} is not prepared for commit",
+                tx_id
+            )));
+        }
+
         self.commit_phase(tx_id, participant_ids).await?;
 
         // Update transaction state
@@ -195,6 +235,12 @@ impl TwoPhaseCommit {
 
         info!("Transaction {} committed successfully", tx_id);
         Ok(())
+    }
+
+    /// Rehydrate a prepared transaction during WAL recovery.
+    pub async fn mark_prepared_for_recovery(&self, tx_id: TransactionId) {
+        let mut transactions = self.transactions.write().await;
+        transactions.insert(tx_id, TransactionState::Prepared);
     }
 
     /// Prepare phase: ask all participants to vote
@@ -515,5 +561,39 @@ mod tests {
 
         let state = tpc.get_state(tx_id).await;
         assert_eq!(state, Some(TransactionState::Aborted));
+    }
+
+    #[tokio::test]
+    async fn test_2pc_prepare_then_commit_prepared() {
+        let tpc = TwoPhaseCommit::new(30);
+
+        let p1 = Arc::new(MockParticipant {
+            id: "p1".to_string(),
+            vote: Vote::Yes,
+            healthy: true,
+        });
+        let p2 = Arc::new(MockParticipant {
+            id: "p2".to_string(),
+            vote: Vote::Yes,
+            healthy: true,
+        });
+
+        tpc.register_participant(p1).await.unwrap();
+        tpc.register_participant(p2).await.unwrap();
+
+        let tx_id = tpc.begin().await.unwrap();
+        tpc.prepare(tx_id, &["p1".to_string(), "p2".to_string()])
+            .await
+            .unwrap();
+
+        let state = tpc.get_state(tx_id).await;
+        assert_eq!(state, Some(TransactionState::Prepared));
+
+        tpc.commit_prepared(tx_id, &["p1".to_string(), "p2".to_string()])
+            .await
+            .unwrap();
+
+        let state = tpc.get_state(tx_id).await;
+        assert_eq!(state, Some(TransactionState::Committed));
     }
 }
