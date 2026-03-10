@@ -19,7 +19,7 @@
 //! This connector uses PostgreSQL's logical replication with the pgoutput
 //! protocol to capture changes from a PostgreSQL database.
 
-use futures_util::StreamExt;
+use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, watch};
@@ -160,9 +160,6 @@ async fn run_replication_stream(
     mut shutdown_rx: watch::Receiver<bool>,
     connector_name: String,
 ) -> CdcResult<()> {
-    use bytes::Bytes;
-    use tokio_postgres::types::{Type, Oid};
-
     info!("Starting replication stream for {}", connector_name);
 
     // Connect for replication
@@ -196,141 +193,32 @@ async fn run_replication_stream(
         )
     };
 
-    let copy_stream = client
-        .copy_both(&query, &[])
-        .await
-        .map_err(|e| CdcError::Connection(format!("Failed to start replication: {}", e)))?;
+    // The copy_both call returns types that aren't publicly exposed by tokio-postgres
+    // For this experimental implementation, we set up the replication connection
+    // but don't actually read from the stream (which would require more complex handling)
+    //
+    // TODO: Implement proper WAL data reading from the replication stream.
+    // This requires either:
+    // 1. Using a different PostgreSQL client library with better replication support
+    // 2. Working with tokio-postgres internals (which are private)
+    // 3. Implementing the PostgreSQL replication protocol from scratch
 
-    info!("Replication stream started successfully");
+    info!(
+        "Replication connection established for {} (WAL reading not yet implemented)",
+        connector_name
+    );
 
-    // Stream processing loop
-    let mut last_commit_lsn = start_lsn;
-    let mut events_since_last_commit = 0;
-    const COMMIT_INTERVAL: u64 = 100;
-    let mut stream = copy_stream;
-
+    // Wait for shutdown signal
     loop {
-        // Check for shutdown
         if *shutdown_rx.borrow() {
             info!("Shutdown requested, stopping replication");
             break;
         }
-
-        // Receive WAL data with timeout
-        match timeout(Duration::from_secs(5), read_wal_message(&mut stream)).await {
-            Ok(Ok(Some(wal_data))) => {
-                // Decode pgoutput message
-                let mut decoder_guard = decoder.write().await;
-                if let Some(event) = decoder_guard.decode(&wal_data) {
-                    *current_lsn.write().await = decoder_guard.current_lsn();
-                    let current_lsn_val = decoder_guard.current_lsn();
-
-                    // Drop decoder guard before async call
-                    drop(decoder_guard);
-
-                    // Convert to ChangeEvent
-                    if let Some(change_event) =
-                        convert_pgoutput_to_change_event(event, current_lsn_val, &current_tx)
-                            .await
-                    {
-                        // Send event
-                        if event_tx.try_send(change_event.clone()).is_err() {
-                            warn!("Event channel full, dropping event");
-                        } else {
-                            events_since_last_commit += 1;
-                        }
-
-                        // Update last commit LSN
-                        if let Some(lsn) = change_event.offset.value.parse::<u64>().ok() {
-                            last_commit_lsn = lsn;
-                        }
-                    }
-                }
-            }
-            Ok(Ok(None)) => {
-                // No data, continue
-                continue;
-            }
-            Ok(Err(e)) => {
-                error!("Error receiving WAL data: {}", e);
-                break;
-            }
-            Err(_) => {
-                // Timeout - check if we should commit offset
-                if events_since_last_commit >= COMMIT_INTERVAL {
-                    if let Err(e) = commit_offset(&offset_store, &slot_name, last_commit_lsn).await
-                    {
-                        warn!("Failed to commit offset: {}", e);
-                    }
-                    events_since_last_commit = 0;
-                }
-                continue;
-            }
-        }
-    }
-
-    // Final commit
-    if let Err(e) = commit_offset(&offset_store, &slot_name, last_commit_lsn).await {
-        warn!("Failed to commit final offset: {}", e);
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
     info!("Replication stream stopped");
     Ok(())
-}
-
-/// Read WAL message from PostgreSQL replication stream
-async fn read_wal_message(
-    stream: &mut tokio_postgres::CopyBothStream<tokio_postgres::tls::NoTls>,
-) -> CdcResult<Option<Vec<u8>>> {
-    use bytes::Bytes;
-
-    // PostgreSQL replication protocol sends messages in the format:
-    // Byte1('w'): XLogData - actual WAL data
-    // Byte1('k'): Primary keepalive message
-    //
-    // The message format is:
-    // Byte1: Message type
-    // Int64: Start LSN
-    // Int64: End LSN
-    // Int64: Send time
-    // Int8: (optional for keepalive) Reply requested
-
-    while let Some(data) = stream
-        .try_next()
-        .await
-        .map_err(|e| CdcError::Connection(format!("Failed to read from stream: {}", e)))?
-    {
-        // Process the raw bytes
-        if data.len() < 1 {
-            continue;
-        }
-
-        let msg_type = data[0] as char;
-
-        match msg_type {
-            'w' => {
-                // XLogData message - contains actual WAL data
-                // Format: type(1) + startLSN(8) + endLSN(8) + sendTime(8) + data(n)
-                // Skip the header (25 bytes: 1 + 8 + 8 + 8)
-                if data.len() > 25 {
-                    let wal_data = data.slice(25..);
-                    return Ok(Some(wal_data.to_vec()));
-                }
-            }
-            'k' => {
-                // Keepalive message - no WAL data
-                // Format: type(1) + endLSN(8) + sendTime(8) + replyRequested(1)
-                // We continue to wait for actual data
-                continue;
-            }
-            _ => {
-                // Unknown message type, skip
-                continue;
-            }
-        }
-    }
-
-    Ok(None)
 }
 
 /// Convert pgoutput event to ChangeEvent
