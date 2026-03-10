@@ -33,10 +33,12 @@
 use super::ClientCertificateInfo;
 use anyhow::Result;
 use rustls::ServerConfig;
-use rustls::server::ServerConnection;
 use std::sync::Arc;
 use tokio_rustls::TlsAcceptor as TokioRustlsTlsAcceptor;
-use tracing::{debug, warn};
+use tracing::debug;
+
+#[cfg(feature = "network-rest")]
+use tracing::warn;
 
 /// ProximaDB TLS acceptor that extracts client certificates
 ///
@@ -220,8 +222,6 @@ where
 /// various sources in the request, including TLS extensions and connection info.
 #[cfg(feature = "network-rest")]
 fn extract_client_cert_from_request(req: &axum::extract::Request) -> Option<ClientCertificateInfo> {
-    use http_body::Body;
-
     // Try to get certificate from HTTP extensions
     // Some TLS implementations add peer certificates to request extensions
 
