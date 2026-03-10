@@ -188,6 +188,7 @@ pub struct PushedPredicate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::facade::QueryRequest;
 
     #[test]
     fn test_has_external_tables() {
@@ -203,5 +204,81 @@ mod tests {
     fn test_priority() {
         let strategy = ExternalTableStrategy::new(Arc::new(CatalogManager::new()));
         assert_eq!(strategy.priority(), 70);
+    }
+
+    #[test]
+    fn test_can_handle_external_sql_and_federated_queries() {
+        let strategy = ExternalTableStrategy::new(Arc::new(CatalogManager::new()));
+
+        assert!(strategy.can_handle(&QueryRequest::sql("SELECT * FROM iceberg.analytics.events")));
+        assert!(strategy.can_handle(&QueryRequest::federated(
+            "SELECT * FROM parquet.lakehouse.docs"
+        )));
+        assert!(!strategy.can_handle(&QueryRequest::sql("SELECT * FROM local_table")));
+        assert!(!strategy.can_handle(&QueryRequest::vector_search(vec![0.1, 0.2], 5)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_returns_explicit_not_wired_error() {
+        let strategy = ExternalTableStrategy::new(Arc::new(CatalogManager::new()));
+        let request = QueryRequest::sql("SELECT * FROM iceberg.analytics.events");
+        let ctx = QueryContext::new(1000);
+
+        let err = strategy.execute(request, &ctx).await.unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("not wired into live execution yet"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scanner_returns_explicit_not_wired_errors() {
+        let scanner = ExternalTableScanner::new(Arc::new(CatalogManager::new()));
+
+        let scan_err = scanner
+            .scan_table(
+                "iceberg",
+                &["analytics".to_string()],
+                "events",
+                vec!["id".to_string()],
+                vec!["id > 10".to_string()],
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            scan_err
+                .to_string()
+                .contains("not wired into live execution yet"),
+            "unexpected scan error: {scan_err}"
+        );
+
+        let stats_err = scanner
+            .get_table_stats("iceberg", &["analytics".to_string()], "events")
+            .await
+            .unwrap_err();
+        assert!(
+            stats_err
+                .to_string()
+                .contains("not wired into live execution yet"),
+            "unexpected stats error: {stats_err}"
+        );
+    }
+
+    #[test]
+    fn test_predicate_pushdown_is_explicit_noop() {
+        let pushdown = ExternalPredicatePushdown::new(Arc::new(CatalogManager::new()));
+
+        let pushed = pushdown
+            .pushdown_predicates(
+                "iceberg",
+                &["analytics".to_string()],
+                "events",
+                &["event_type = 'click'".to_string()],
+            )
+            .unwrap();
+
+        assert!(pushed.is_empty());
     }
 }
