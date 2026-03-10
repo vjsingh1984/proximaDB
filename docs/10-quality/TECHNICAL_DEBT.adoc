@@ -174,10 +174,23 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | No backup/restore
 | P2
 | HIGH
-| Open
+| *Resolved*
 | Enterprise requirement. No mechanism for incremental backup or point-in-time recovery.
 | 1-2 months
-| Incremental snapshots, S3/GCS backup targets, recovery testing.
+| *RESOLVED Mar 2026*: **Backup/restore infrastructure fully implemented**. Complete enterprise-grade backup and restore system:
+|  |  |  |  |
+|---|---|---|---|---
+| **Component** | **Status** | **Location** | **Features** |
+| **Backup Manager** | ✅ Production Ready | `src/operations/backup/mod.rs` | Incremental snapshots, S3/GCS/Azure targets, WAL checkpointing, compression, checksums |
+| **Restore Manager** | ✅ Production Ready | `src/operations/restore/mod.rs` | Manifest restore, checksum verification, WAL replay, dry-run mode, continue-on-error |
+| **CLI Scripts** | ✅ Production Ready | `scripts/backup.sh`, `scripts/restore.sh` | User-friendly CLI with incremental/full support, retention policy, verification |
+
+**Features:**
+- RPO <1 minute (WAL checkpoint frequency)
+- RTO <10 minutes (restore time target)
+- Multi-cloud support (local, S3, GCS, Azure)
+- Automatic cleanup with retention policy
+- Checksum verification for data integrity
 
 | TD-015
 | No published benchmarks
@@ -255,8 +268,8 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | Yes (for enterprise customers)
 
 | Operations
-| TD-014, TD-015
-| No (but expected for enterprise)
+| ~TD-014~, TD-015
+| No (but expected for enterprise). TD-014 resolved. |
 
 | Ecosystem
 | TD-002, TD-003, TD-004, TD-005
@@ -297,8 +310,8 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *COMPLETED* (All resolved)
 
 | Phase 2 (Cross-Model)
-| TD-014
-| 1-2 months
+| ~TD-014~
+| *COMPLETED* (Backup/restore infrastructure complete)
 
 | Phase 3 (Ecosystem)
 | TD-003, TD-004, TD-005, TD-016
@@ -409,6 +422,11 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | PULSAR/QUASAR service layer wiring (TD-001)
 | Fully wired in `src/graph/service_engine_factory.rs` with feature gates, warnings, and engine creation
 | P3
+
+| TD-R20
+| Backup/restore infrastructure (TD-014)
+| Complete backup/restore system in `src/operations/backup/` and `src/operations/restore/` with CLI scripts
+| P2
 |===
 
 == Notes
