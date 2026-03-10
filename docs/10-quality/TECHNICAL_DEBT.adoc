@@ -52,10 +52,10 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | Streaming infrastructure
 | P3
 | Medium
-| Open
+| *Resolved*
 | No real-time subscriptions for collection changes
 | 2-3 months
-| Spec complete, implementation pending
+| *RESOLVED Mar 2026*: **Streaming infrastructure fully implemented**. Complete real-time streaming system with gRPC bidirectional streaming, lock-free ring buffers, backpressure handling, live query subscriptions, and Kafka integration.
 
 | TD-004
 | CDC connectors (inbound)
@@ -272,8 +272,8 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | No (but expected for enterprise). TD-014 resolved. |
 
 | Ecosystem
-| TD-002, TD-003, TD-004, TD-005
-| No
+| TD-004, TD-005
+| No (TD-002, TD-003 resolved)
 
 | Honesty/Trust
 | ~TD-001~, ~TD-017~
@@ -314,8 +314,8 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *COMPLETED* (Backup/restore infrastructure complete)
 
 | Phase 3 (Ecosystem)
-| TD-003, TD-004, TD-005, TD-016
-| 8-12 months (TD-001, TD-002, TD-006, TD-017 resolved)
+| TD-004, TD-005, TD-016
+| 6-10 months (TD-001, TD-002, TD-003, TD-006, TD-014, TD-017 resolved)
 
 | Phase 4 (Context DB)
 | TD-008, TD-009, TD-010, TD-011, TD-015
@@ -427,6 +427,11 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | Backup/restore infrastructure (TD-014)
 | Complete backup/restore system in `src/operations/backup/` and `src/operations/restore/` with CLI scripts
 | P2
+
+| TD-R21
+| Streaming infrastructure (TD-003)
+| Complete real-time streaming system in `src/streaming/` with gRPC bidirectional streaming, subscriptions, Kafka integration
+| P3
 |===
 
 == Notes
