@@ -158,10 +158,10 @@ Technical debt items are prioritized based on their impact on the four developme
 | Encryption at rest not implemented
 | P3
 | HIGH
-| Open
+| *In Progress*
 | Data stored unencrypted on disk. Fails SOC 2 requirements.
 | 1-2 months
-| AES-256 TDE for WAL and data files. Key rotation support.
+| *PARTIALLY RESOLVED Mar 2026*: **WAL encryption complete**. Integrated WALEncryptionLayer into WriteAheadLogDiskManager with AES-256-GCM encryption. Storage engine (SST/VIPER/etc) file encryption integration pending. Key rotation support implemented.
 
 | TD-017
 | PULSAR/QUASAR advertised but incomplete
