@@ -149,7 +149,11 @@ impl QueryFacadeAdapter {
     #[instrument(skip(self), fields(sql_len = sql.len()))]
     pub async fn sql_query(&self, sql: &str) -> Result<QueryResult> {
         debug!("Executing SQL query via adapter");
-        let query_request = QueryRequest::sql(sql);
+        let query_request = if Self::should_use_federated_request(sql) {
+            QueryRequest::federated(sql)
+        } else {
+            QueryRequest::sql(sql)
+        };
         self.facade.execute(query_request).await
     }
 
@@ -299,6 +303,17 @@ impl QueryFacadeAdapter {
         })
     }
 
+    fn should_use_federated_request(sql: &str) -> bool {
+        let sql_upper = sql.to_uppercase();
+        sql_upper.contains("VECTOR_SEARCH")
+            || sql_upper.contains("GRAPH_QUERY")
+            || sql_upper.contains("DOCUMENT_QUERY")
+            || sql_upper.contains("LOGS(")
+            || sql_upper.contains("METRICS(")
+            || sql.contains("<->")
+            || sql.contains("::vector")
+    }
+
     /// Convert QueryResult to VectorOperationResponse proto
     fn query_result_to_vector_response(
         &self,
@@ -387,11 +402,13 @@ impl QueryFacadeAdapter {
 mod tests {
     use super::*;
     use crate::proto::proximadb_v1::SearchQuery;
-    use crate::query::facade::{FacadeConfig, QueryContext, QueryStrategy, VectorMatch};
+    use crate::query::facade::{FacadeConfig, QueryContext, QueryStrategy, QueryType, VectorMatch};
     use async_trait::async_trait;
 
     /// Mock strategy for testing
     struct MockVectorStrategy;
+
+    struct MockSqlRoutingStrategy;
 
     #[async_trait]
     impl QueryStrategy for MockVectorStrategy {
@@ -431,8 +448,38 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl QueryStrategy for MockSqlRoutingStrategy {
+        fn name(&self) -> &str {
+            "mock_sql_routing"
+        }
+
+        fn can_handle(&self, request: &QueryRequest) -> bool {
+            matches!(request.query_type, QueryType::Sql | QueryType::Federated)
+        }
+
+        fn priority(&self) -> i32 {
+            50
+        }
+
+        async fn execute(&self, request: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
+            Ok(QueryResult {
+                data: QueryResultData::Rows(vec![serde_json::json!({
+                    "query_type": format!("{:?}", request.query_type)
+                })]),
+                metrics: None,
+            })
+        }
+    }
+
     fn create_test_adapter() -> QueryFacadeAdapter {
         let strategies: Vec<Arc<dyn QueryStrategy>> = vec![Arc::new(MockVectorStrategy)];
+        let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
+        QueryFacadeAdapter::new(facade)
+    }
+
+    fn create_sql_routing_adapter() -> QueryFacadeAdapter {
+        let strategies: Vec<Arc<dyn QueryStrategy>> = vec![Arc::new(MockSqlRoutingStrategy)];
         let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
         QueryFacadeAdapter::new(facade)
     }
@@ -495,5 +542,36 @@ mod tests {
         let adapter = create_test_adapter();
         let cloned = adapter.clone();
         assert!(Arc::ptr_eq(adapter.facade(), cloned.facade()));
+    }
+
+    #[tokio::test]
+    async fn test_sql_query_keeps_plain_sql_request_type() {
+        let adapter = create_sql_routing_adapter();
+
+        let result = adapter.sql_query("SELECT * FROM products").await.unwrap();
+
+        match result.data {
+            QueryResultData::Rows(rows) => {
+                assert_eq!(rows[0]["query_type"], serde_json::json!("Sql"));
+            }
+            other => panic!("expected rows, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sql_query_promotes_federated_extensions() {
+        let adapter = create_sql_routing_adapter();
+
+        let result = adapter
+            .sql_query("SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 1)")
+            .await
+            .unwrap();
+
+        match result.data {
+            QueryResultData::Rows(rows) => {
+                assert_eq!(rows[0]["query_type"], serde_json::json!("Federated"));
+            }
+            other => panic!("expected rows, got {:?}", other),
+        }
     }
 }

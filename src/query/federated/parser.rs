@@ -33,11 +33,24 @@ pub enum QueryType {
     Federated,
 }
 
+/// Parsed vector argument for VECTOR_SEARCH and distance operators
+#[derive(Debug, Clone, PartialEq)]
+pub enum VectorQuery {
+    /// Literal vector value from SQL, e.g. `[0.1, 0.2]`
+    Literal(Vec<f32>),
+    /// Raw SQL expression or column reference, e.g. `u.embedding`
+    Expression(String),
+}
+
 /// SQL extension type detected in query
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SqlExtension {
     /// VECTOR_SEARCH(collection, vector, top_k)
-    VectorSearch { collection: String, top_k: usize },
+    VectorSearch {
+        collection: String,
+        query_vector: VectorQuery,
+        top_k: usize,
+    },
     /// GRAPH_QUERY('cypher')
     GraphQuery { cypher: String },
     /// DOCUMENT_QUERY(collection, filter)
@@ -215,131 +228,69 @@ impl FederatedParser {
 
     /// Parse VECTOR_SEARCH(collection, vector, top_k)
     fn parse_vector_search(&self, sql: &str) -> Option<SqlExtension> {
-        let upper = sql.to_uppercase();
-        if !upper.contains("VECTOR_SEARCH") {
+        let args = self.extract_function_args(sql, "VECTOR_SEARCH")?;
+        let parts = self.split_function_args(args);
+        if parts.len() < 2 {
             return None;
         }
 
-        // Simple regex-like parsing
-        if let Some(start) = sql.find("VECTOR_SEARCH") {
-            if let Some(paren_start) = sql[start..].find('(') {
-                if let Some(paren_end) = sql[start..].find(')') {
-                    let args = &sql[start + paren_start + 1..start + paren_end];
-                    let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
-                    if parts.len() >= 2 {
-                        let collection = parts[0].trim_matches('\'').trim_matches('"').to_string();
-                        let top_k = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
-                        return Some(SqlExtension::VectorSearch { collection, top_k });
-                    }
-                }
-            }
-        }
-        None
+        let collection = parts[0].trim_matches('\'').trim_matches('"').to_string();
+        let query_vector = self.parse_vector_argument(&parts[1])?;
+        let top_k = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
+
+        Some(SqlExtension::VectorSearch {
+            collection,
+            query_vector,
+            top_k,
+        })
     }
 
     /// Parse GRAPH_QUERY('cypher')
     fn parse_graph_query(&self, sql: &str) -> Option<SqlExtension> {
-        let upper = sql.to_uppercase();
-        if !upper.contains("GRAPH_QUERY") {
-            return None;
-        }
-
-        if let Some(start) = sql.find("GRAPH_QUERY") {
-            if let Some(paren_start) = sql[start..].find('(') {
-                // Find the matching closing parenthesis by counting depth
-                let content = &sql[start + paren_start + 1..];
-                let mut depth = 1;
-                let mut paren_end = None;
-                for (i, c) in content.char_indices() {
-                    match c {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                paren_end = Some(i);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                if let Some(end) = paren_end {
-                    let cypher = content[..end]
-                        .trim()
-                        .trim_matches('\'')
-                        .trim_matches('"')
-                        .to_string();
-                    return Some(SqlExtension::GraphQuery { cypher });
-                }
-            }
-        }
-        None
+        let cypher = self
+            .extract_function_args(sql, "GRAPH_QUERY")?
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_string();
+        Some(SqlExtension::GraphQuery { cypher })
     }
 
     /// Parse DOCUMENT_QUERY(collection, filter)
     fn parse_document_query(&self, sql: &str) -> Option<SqlExtension> {
-        let upper = sql.to_uppercase();
-        if !upper.contains("DOCUMENT_QUERY") {
-            return None;
-        }
-
-        if let Some(start) = sql.find("DOCUMENT_QUERY") {
-            if let Some(paren_start) = sql[start..].find('(') {
-                if let Some(paren_end) = sql[start..].find(')') {
-                    let args = &sql[start + paren_start + 1..start + paren_end];
-                    let parts: Vec<&str> = args.splitn(2, ',').map(|s| s.trim()).collect();
-                    let collection = parts[0].trim_matches('\'').trim_matches('"').to_string();
-                    let filter = parts
-                        .get(1)
-                        .map(|s| s.trim_matches('\'').trim_matches('"').to_string());
-                    return Some(SqlExtension::DocumentQuery { collection, filter });
-                }
-            }
-        }
-        None
+        let args = self.extract_function_args(sql, "DOCUMENT_QUERY")?;
+        let parts = self.split_function_args(args);
+        let collection = parts
+            .first()?
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_string();
+        let filter = parts
+            .get(1)
+            .map(|s| s.trim_matches('\'').trim_matches('"').to_string());
+        Some(SqlExtension::DocumentQuery { collection, filter })
     }
 
     /// Parse LOGS(namespace)
     fn parse_logs_query(&self, sql: &str) -> Option<SqlExtension> {
-        let upper = sql.to_uppercase();
-        if !upper.contains("LOGS(") {
-            return None;
-        }
-
-        if let Some(start) = upper.find("LOGS(") {
-            let actual_start = sql.len() - sql[start..].len();
-            if let Some(paren_end) = sql[actual_start + 5..].find(')') {
-                let namespace = sql[actual_start + 5..actual_start + 5 + paren_end]
-                    .trim()
-                    .trim_matches('\'')
-                    .trim_matches('"')
-                    .to_string();
-                return Some(SqlExtension::Logs { namespace });
-            }
-        }
-        None
+        let namespace = self
+            .extract_function_args(sql, "LOGS")?
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_string();
+        Some(SqlExtension::Logs { namespace })
     }
 
     /// Parse METRICS(namespace)
     fn parse_metrics_query(&self, sql: &str) -> Option<SqlExtension> {
-        let upper = sql.to_uppercase();
-        if !upper.contains("METRICS(") {
-            return None;
-        }
-
-        if let Some(start) = upper.find("METRICS(") {
-            let actual_start = sql.len() - sql[start..].len();
-            if let Some(paren_end) = sql[actual_start + 8..].find(')') {
-                let namespace = sql[actual_start + 8..actual_start + 8 + paren_end]
-                    .trim()
-                    .trim_matches('\'')
-                    .trim_matches('"')
-                    .to_string();
-                return Some(SqlExtension::Metrics { namespace });
-            }
-        }
-        None
+        let namespace = self
+            .extract_function_args(sql, "METRICS")?
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_string();
+        Some(SqlExtension::Metrics { namespace })
     }
 
     /// Parse vector distance operator <->
@@ -468,6 +419,138 @@ impl FederatedParser {
         result
     }
 
+    /// Split function arguments while respecting quotes, brackets, and parentheses.
+    fn split_function_args(&self, s: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut current = String::new();
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
+        let mut in_quote = None;
+        let mut escaped = false;
+
+        for c in s.chars() {
+            if let Some(quote) = in_quote {
+                current.push(c);
+                if c == quote && !escaped {
+                    in_quote = None;
+                }
+                escaped = c == '\\' && !escaped;
+                continue;
+            }
+
+            match c {
+                '\'' | '"' => {
+                    in_quote = Some(c);
+                    current.push(c);
+                }
+                '(' => {
+                    paren_depth += 1;
+                    current.push(c);
+                }
+                ')' => {
+                    paren_depth -= 1;
+                    current.push(c);
+                }
+                '[' => {
+                    bracket_depth += 1;
+                    current.push(c);
+                }
+                ']' => {
+                    bracket_depth -= 1;
+                    current.push(c);
+                }
+                ',' if paren_depth == 0 && bracket_depth == 0 => {
+                    if !current.trim().is_empty() {
+                        result.push(current.trim().to_string());
+                    }
+                    current.clear();
+                }
+                _ => current.push(c),
+            }
+
+            escaped = false;
+        }
+
+        if !current.trim().is_empty() {
+            result.push(current.trim().to_string());
+        }
+
+        result
+    }
+
+    fn extract_function_args<'a>(&self, sql: &'a str, function_name: &str) -> Option<&'a str> {
+        let upper = sql.to_uppercase();
+        let function_call = format!("{}(", function_name);
+        let start = upper.find(&function_call)?;
+        let content = &sql[start + function_name.len() + 1..];
+        let mut depth = 1;
+        let mut in_quote = None;
+        let mut escaped = false;
+
+        for (i, c) in content.char_indices() {
+            if let Some(quote) = in_quote {
+                if c == quote && !escaped {
+                    in_quote = None;
+                }
+                escaped = c == '\\' && !escaped;
+                continue;
+            }
+
+            match c {
+                '\'' | '"' => in_quote = Some(c),
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&content[..i]);
+                    }
+                }
+                _ => {}
+            }
+
+            escaped = false;
+        }
+
+        None
+    }
+
+    fn parse_vector_argument(&self, arg: &str) -> Option<VectorQuery> {
+        let trimmed = arg.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if let Some(literal) = Self::parse_vector_literal(trimmed) {
+            return Some(VectorQuery::Literal(literal));
+        }
+
+        Some(VectorQuery::Expression(trimmed.to_string()))
+    }
+
+    fn parse_vector_literal(raw: &str) -> Option<Vec<f32>> {
+        let trimmed = raw.trim();
+        let without_cast = trimmed
+            .strip_suffix("::vector")
+            .or_else(|| trimmed.strip_suffix("::VECTOR"))
+            .unwrap_or(trimmed)
+            .trim();
+        let unquoted = without_cast.trim_matches('\'').trim_matches('"').trim();
+
+        if !(unquoted.starts_with('[') && unquoted.ends_with(']')) {
+            return None;
+        }
+
+        let inner = &unquoted[1..unquoted.len() - 1];
+        if inner.trim().is_empty() {
+            return Some(Vec::new());
+        }
+
+        inner
+            .split(',')
+            .map(|value| value.trim().parse::<f32>().ok())
+            .collect()
+    }
+
     /// Resolve model types for targets using catalog
     pub fn resolve_model_types(&self, query: &mut FederatedQuery, catalog: &impl ModelTypeCatalog) {
         for target in &mut query.targets {
@@ -510,9 +593,32 @@ mod tests {
         assert_eq!(query.query_type, QueryType::VectorSearch);
         assert_eq!(query.extensions.len(), 1);
         match &query.extensions[0] {
-            SqlExtension::VectorSearch { collection, top_k } => {
+            SqlExtension::VectorSearch {
+                collection,
+                query_vector,
+                top_k,
+            } => {
                 assert_eq!(collection, "embeddings");
+                assert_eq!(*query_vector, VectorQuery::Literal(vec![0.1, 0.2]));
                 assert_eq!(*top_k, 10);
+            }
+            _ => panic!("Expected VectorSearch extension"),
+        }
+    }
+
+    #[test]
+    fn test_parse_vector_search_with_expression() {
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse("SELECT * FROM VECTOR_SEARCH('embeddings', u.preference_vector, 5)")
+            .unwrap();
+
+        match &query.extensions[0] {
+            SqlExtension::VectorSearch { query_vector, .. } => {
+                assert_eq!(
+                    *query_vector,
+                    VectorQuery::Expression("u.preference_vector".to_string())
+                );
             }
             _ => panic!("Expected VectorSearch extension"),
         }

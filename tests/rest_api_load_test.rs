@@ -225,10 +225,7 @@ fn test_metadata_serialization_size() {
 
     // Metadata should be reasonably compact
     assert!(size_bytes < 200); // Less than 200 bytes
-    println!(
-        "Metadata serialization: {} bytes",
-        size_bytes
-    );
+    println!("Metadata serialization: {} bytes", size_bytes);
 }
 
 // ============================================================================
@@ -413,7 +410,8 @@ fn test_rapid_json_parsing_stress() {
         "collection": "products",
         "vector": vector_128d,
         "top_k": 100
-    }).to_string();
+    })
+    .to_string();
 
     let iterations = 10000;
     let start = Instant::now();

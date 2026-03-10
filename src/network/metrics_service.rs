@@ -98,7 +98,9 @@ impl MetricsService {
 
         // Prometheus-specific metrics endpoint
         if self.config.enable_prometheus {
-            router = router.route("/prometheus", get(prometheus_metrics_endpoint));
+            router = router
+                .route("/prometheus", get(prometheus_metrics_endpoint))
+                .route("/metrics/prometheus", get(prometheus_metrics_endpoint));
         }
 
         // Health check for metrics system

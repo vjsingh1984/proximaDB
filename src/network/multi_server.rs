@@ -948,7 +948,7 @@ impl SharedServices {
             VectorOperationsService::new(
                 sst_engine,
                 wal_manager,
-                axis_manager,
+                axis_manager.clone(),
                 collection_service.clone(),
             )
             .with_orchestrator(Some(orchestrator.clone())),
@@ -1215,13 +1215,130 @@ impl SharedServices {
         let graph_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
             Arc::new(GraphStrategy::new(graph_service.clone()));
 
-        // Create MultiModelStorageFacade for federated queries
-        // This provides unified access to vector/graph/document stores for SQL execution
+        // Create DocumentStrategy wrapping DocumentService for JSON document queries
+        // DocumentService provides MongoDB-like document operations (CRUD, indexing, queries)
+        debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
+        let document_base_path = storage_config.metadata_url.replace("file://", "");
+        let document_service = match DocumentService::new_with_wal(
+            sst_engine_for_documents,
+            &document_base_path,
+        )
+        .await
+        {
+            Ok(service) => Arc::new(service),
+            Err(e) => {
+                warn!(
+                    "Failed to create WAL-backed DocumentService: {}. Falling back to in-memory WAL-less service.",
+                    e
+                );
+                Arc::new(DocumentService::new(
+                    vector_operations_service.unified_engine(),
+                ))
+            }
+        };
+        let document_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
+            Arc::new(DocumentStrategy::new(document_service.clone()));
+        debug!("✅ SharedServices::new - DocumentStrategy created for document queries");
+
+        // Create ObservabilityStrategy wrapping ObservabilityQueryEngine for logs/metrics/traces
+        // This enables unified query interface for observability data
+        debug!(
+            "🔧 SharedServices::new - Creating ObservabilityQueryEngine for observability queries..."
+        );
+        let observability_base_path = storage_config.metadata_url.replace("file://", "");
+        let observability_storage = match ObservabilityStorage::new_with_wal(
+            &observability_base_path,
+        )
+        .await
+        {
+            Ok(storage) => Arc::new(storage),
+            Err(e) => {
+                warn!(
+                    "Failed to create WAL-backed ObservabilityStorage: {}. Falling back to non-WAL storage.",
+                    e
+                );
+                Arc::new(ObservabilityStorage::new(&observability_base_path))
+            }
+        };
+        let observability_service = Arc::new(
+            crate::observability::ObservabilityService::new(observability_storage.clone()).await?,
+        );
+        const QUERY_TELEMETRY_NAMESPACE: &str = "_proximadb_query";
+        let telemetry_namespace_exists = observability_service
+            .list_namespaces()
+            .await
+            .into_iter()
+            .any(|namespace| namespace.name == QUERY_TELEMETRY_NAMESPACE);
+        if !telemetry_namespace_exists {
+            let telemetry_config = crate::proto::proximadb_v1::ObservabilityNamespaceConfig {
+                name: QUERY_TELEMETRY_NAMESPACE.to_string(),
+                retention: Some(crate::proto::proximadb_v1::RetentionConfig {
+                    hot_retention_hours: 24,
+                    warm_retention_days: 7,
+                    cold_retention_days: 30,
+                    archive_retention_days: 90,
+                }),
+                ingestion: None,
+                alert_rules: Vec::new(),
+                access: None,
+            };
+            if let Err(error) = observability_service
+                .create_namespace(telemetry_config)
+                .await
+            {
+                warn!(
+                    "Failed to create internal query telemetry namespace '{}': {}",
+                    QUERY_TELEMETRY_NAMESPACE, error
+                );
+            }
+        }
+        crate::query::utils::metrics::configure_query_telemetry(
+            observability_service.clone(),
+            QUERY_TELEMETRY_NAMESPACE,
+        );
+        let observability_query_engine =
+            Arc::new(ObservabilityQueryEngine::new(observability_storage.clone()));
+        let observability_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
+            Arc::new(ObservabilityStrategy::new(observability_query_engine));
+        debug!(
+            "✅ SharedServices::new - ObservabilityStrategy created for logs/metrics/traces queries"
+        );
+
+        // Create MultiModelStorageFacade for federated queries and wire the live stores
         debug!(
             "🔧 SharedServices::new - Creating MultiModelStorageFacade for federated queries..."
         );
-        let multimodel_storage = Arc::new(MultiModelStorageFacade::new());
-        debug!("✅ SharedServices::new - MultiModelStorageFacade created");
+        let vector_store = Arc::new(
+            crate::storage::multimodel::VectorStore::with_engine(
+                vector_operations_service.unified_engine(),
+            )
+            .with_index_manager(axis_manager.clone()),
+        );
+        let graph_store = Arc::new(
+            crate::storage::multimodel::GraphStore::new(Default::default())
+                .with_service(graph_service.clone()),
+        );
+        let document_store = Arc::new(
+            crate::storage::multimodel::DocumentStore::new(Default::default())
+                .with_service(document_service.clone()),
+        );
+        let observability_store = Arc::new(
+            crate::storage::multimodel::ObservabilityStore::new(
+                crate::storage::multimodel::stores::observability_store::ObservabilityStoreConfig {
+                    base_path: observability_base_path.clone(),
+                    ..Default::default()
+                },
+            )
+            .with_service(observability_service),
+        );
+        let multimodel_storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store)
+                .with_document_store(document_store)
+                .with_observability_store(observability_store),
+        );
+        debug!("✅ SharedServices::new - MultiModelStorageFacade created and wired");
 
         // Create FederatedQueryContext for SQL with multi-model extensions
         debug!("🔧 SharedServices::new - Creating FederatedQueryContext...");
@@ -1238,29 +1355,6 @@ impl SharedServices {
         let columnar_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
             Arc::new(ColumnarStrategy::new());
         debug!("✅ SharedServices::new - ColumnarStrategy created for analytical queries");
-
-        // Create DocumentStrategy wrapping DocumentService for JSON document queries
-        // DocumentService provides MongoDB-like document operations (CRUD, indexing, queries)
-        debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
-        let document_service = Arc::new(DocumentService::new(sst_engine_for_documents));
-        let document_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
-            Arc::new(DocumentStrategy::new(document_service));
-        debug!("✅ SharedServices::new - DocumentStrategy created for document queries");
-
-        // Create ObservabilityStrategy wrapping ObservabilityQueryEngine for logs/metrics/traces
-        // This enables unified query interface for observability data
-        debug!(
-            "🔧 SharedServices::new - Creating ObservabilityQueryEngine for observability queries..."
-        );
-        let observability_base_path = storage_config.metadata_url.replace("file://", "");
-        let observability_storage = Arc::new(ObservabilityStorage::new(&observability_base_path));
-        let observability_query_engine =
-            Arc::new(ObservabilityQueryEngine::new(observability_storage));
-        let observability_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
-            Arc::new(ObservabilityStrategy::new(observability_query_engine));
-        debug!(
-            "✅ SharedServices::new - ObservabilityStrategy created for logs/metrics/traces queries"
-        );
 
         // Build the unified facade with all strategies
         // Priority order: vector (100) > graph (75) > document (70) > observability (60) > columnar (50) > sql (25)

@@ -1848,6 +1848,7 @@ mod tests {
             edges: vec![edge],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![], // TD-019: WITH clause support
             return_spec: ReturnSpec {
                 variables: vec!["a".to_string(), "b".to_string()],
                 projections: vec![],

@@ -30,7 +30,8 @@
 //! ### 2. Federated SQL Queries (`/federated`)
 //!
 //! Uses `FederatedQueryContext` to parse and execute SQL with multi-model extensions.
-//! Supports LATERAL joins for cross-model correlation.
+//! Independent function-backed sources are executable; correlated/LATERAL joins are
+//! still reported as unsupported on the live path.
 //!
 //! ```json
 //! {
@@ -1247,7 +1248,10 @@ async fn execute_distributed_query(
 ) -> ApiResult<JsonResponse<DistributedQueryResponse>> {
     use std::time::Instant;
 
-    info!("Executing distributed query with strategy: {:?}", request.strategy);
+    info!(
+        "Executing distributed query with strategy: {:?}",
+        request.strategy
+    );
     let start = Instant::now();
 
     // All queries route through QueryFacadeAdapter

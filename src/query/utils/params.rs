@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub struct Params(pub HashMap<String, serde_json::Value>);
 
 impl Params {
-    pub fn get(&self, key: &str) -> Option<&serde_json::Value> { self.0.get(key) }
+    pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
+        self.0.get(key)
+    }
 }
-

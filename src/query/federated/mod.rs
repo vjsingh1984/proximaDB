@@ -1,8 +1,12 @@
 //! # Federated Query Engine
 //!
-//! Provides unified query execution across all data models (Vector, Document, Graph, RDBMS, Observability).
-//! This enables true cross-model queries where vector similarity search results can be joined with
-//! graph traversals, document lookups, and observability data in a single SQL query.
+//! Provides federated execution for ProximaDB SQL extensions across vector, document, graph,
+//! and observability sources.
+//!
+//! The live server path is currently strongest for function-backed sources such as
+//! `VECTOR_SEARCH(...)`, `GRAPH_QUERY(...)`, `DOCUMENT_QUERY(...)`, `LOGS(...)`, and
+//! `METRICS(...)`. Generic relational scans and correlated multi-model joins still require
+//! additional execution work and are reported explicitly when not supported.
 //!
 //! ## Architecture
 //!
@@ -77,25 +81,17 @@
 //!
 //! ## Cross-Model Queries
 //!
-//! The real power comes from combining multiple data models in a single query:
+//! The engine is designed to combine multiple data models in a single query:
 //!
 //! ```sql
 //! -- Find similar products for a user, then get related reviews
-//! SELECT u.name, v.product_id, v.score, d.review_text
-//! FROM users u
-//! JOIN LATERAL VECTOR_SEARCH('products', u.preference_vector, 10) v ON true
-//! JOIN LATERAL DOCUMENT_QUERY('reviews', concat('product_id = "', v.product_id, '"')) d ON true;
+//! -- Function-backed sources are executable today:
+//! SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2, 0.3]', 10);
 //!
-//! -- Correlate graph relationships with vector similarity
-//! SELECT g.person_name, v.similar_items
-//! FROM GRAPH_QUERY('MATCH (p:Person)-[:PURCHASED]->(item) RETURN p.name as person_name, item.id') g
-//! JOIN LATERAL VECTOR_SEARCH('items', g.item_embedding, 5) v ON true;
-//!
-//! -- Monitor system health with observability + graph context
-//! SELECT l.timestamp, l.message, g.service_dependencies
-//! FROM LOGS('errors') l
-//! JOIN LATERAL GRAPH_QUERY('MATCH (s:Service {name: "' || l.service || '"})-[:DEPENDS_ON]->(d) RETURN d.name') g ON true
-//! WHERE l.timestamp > now() - interval '5m';
+//! -- Correlated LATERAL joins are planned but not fully executable yet:
+//! -- SELECT u.name, v.score
+//! -- FROM users u
+//! -- JOIN LATERAL VECTOR_SEARCH('products', u.preference_vector, 10) v ON true;
 //! ```
 //!
 //! ## API Access
@@ -191,6 +187,9 @@ impl FederatedQueryContext {
 
     /// Execute a federated query with optional caching
     pub async fn execute(&self, sql: &str) -> Result<ExecutionResult> {
+        crate::query::utils::metrics::record_query_start("federated");
+        let start = std::time::Instant::now();
+
         // Check cache first if enabled
         if let Some(ref cache) = self.cache {
             let key = QueryKey::from_sql(sql);
@@ -210,50 +209,82 @@ impl FederatedQueryContext {
             }
         }
 
-        // 1. Parse the query
-        let federated_query = self.parser.parse(sql)?;
+        let result = async {
+            // 1. Parse the query
+            let federated_query = self.parser.parse(sql)?;
 
-        // 2. Optimize the query plan
-        let plan = self.optimizer.optimize(&federated_query)?;
-
-        // Extract dependencies for cache invalidation
-        let dependencies: Vec<String> = plan
-            .metadata
-            .involved_models
-            .iter()
-            .map(|m| format!("{:?}", m).to_lowercase())
-            .collect();
-
-        // 3. Execute the plan
-        let result = self.executor.execute(plan).await?;
-
-        // Cache the result if caching is enabled
-        if let Some(ref cache) = self.cache {
-            let key = QueryKey::from_sql(sql);
-            // Clone the result for caching
-            let cached_result = ExecutionResult {
-                batches: result.batches.clone(),
-                schema: result.schema.clone(),
-                stats: result.stats.clone(),
-            };
-            if let Err(e) = cache.insert(key, cached_result, dependencies) {
-                debug!("Failed to cache query result: {:?}", e);
+            if federated_query.query_type == QueryType::Sql {
+                return Err(anyhow::anyhow!(
+                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, or METRICS"
+                ));
             }
-        }
 
-        Ok(result)
+            // 2. Optimize the query plan
+            let plan = self.optimizer.optimize(&federated_query)?;
+
+            // Extract dependencies for cache invalidation
+            let dependencies: Vec<String> = plan
+                .metadata
+                .involved_models
+                .iter()
+                .map(|m| format!("{:?}", m).to_lowercase())
+                .collect();
+
+            // 3. Execute the plan
+            let result = self.executor.execute(plan).await?;
+
+            // Cache the result if caching is enabled
+            if let Some(ref cache) = self.cache {
+                let key = QueryKey::from_sql(sql);
+                // Clone the result for caching
+                let cached_result = ExecutionResult {
+                    batches: result.batches.clone(),
+                    schema: result.schema.clone(),
+                    stats: result.stats.clone(),
+                };
+                if let Err(e) = cache.insert(key, cached_result, dependencies) {
+                    debug!("Failed to cache query result: {:?}", e);
+                }
+            }
+
+            Ok(result)
+        }
+        .await;
+
+        crate::query::utils::metrics::record_query_end(
+            "federated",
+            result.is_ok(),
+            start.elapsed().as_millis() as u64,
+        );
+
+        result
     }
 
     /// Execute a query without caching (bypass cache)
     pub async fn execute_uncached(&self, sql: &str) -> Result<ExecutionResult> {
+        crate::query::utils::metrics::record_query_start("federated_uncached");
+        let start = std::time::Instant::now();
+
         // 1. Parse the query
-        let federated_query = self.parser.parse(sql)?;
+        let result = async {
+            let federated_query = self.parser.parse(sql)?;
+            if federated_query.query_type == QueryType::Sql {
+                return Err(anyhow::anyhow!(
+                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, or METRICS"
+                ));
+            }
+            let plan = self.optimizer.optimize(&federated_query)?;
+            self.executor.execute(plan).await
+        }
+        .await;
 
-        // 2. Optimize the query plan
-        let plan = self.optimizer.optimize(&federated_query)?;
+        crate::query::utils::metrics::record_query_end(
+            "federated_uncached",
+            result.is_ok(),
+            start.elapsed().as_millis() as u64,
+        );
 
-        // 3. Execute the plan
-        self.executor.execute(plan).await
+        result
     }
 
     /// Invalidate cache entries for a collection
@@ -275,9 +306,221 @@ impl FederatedQueryContext {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::search::results::OptimizedSearchRecord;
+    use crate::proto::proximadb_v1::{
+        DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject, SqlValue, sql_value,
+    };
     use crate::query::federated::{FederatedQueryContext, QueryResultCache};
     use crate::storage::MultiModelStorageFacade;
+    use crate::storage::multimodel::stores::{
+        DocumentStore, DocumentStoreConfig, VectorStore, VectorStoreConfig,
+    };
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::storage::traits::{
+        CompactionParameters, DocumentCollectionInfo, DocumentRecord, DocumentStorageOperations,
+        FlushParameters, UnifiedStorageEngine,
+    };
+    use anyhow::Result;
+    use arrow::array::{Float32Array, StringArray};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
     use std::sync::Arc;
+
+    struct MockVectorEngine {
+        filesystem_factory: FilesystemFactory,
+        results: Vec<OptimizedSearchRecord>,
+    }
+
+    impl MockVectorEngine {
+        async fn new(results: Vec<OptimizedSearchRecord>) -> Self {
+            let filesystem_factory = FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .expect("mock vector engine should create filesystem factory");
+            Self {
+                filesystem_factory,
+                results,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl UnifiedStorageEngine for MockVectorEngine {
+        fn engine_name(&self) -> &'static str {
+            "mock-vector"
+        }
+
+        fn engine_version(&self) -> &'static str {
+            "0"
+        }
+
+        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
+            crate::storage::traits::StorageEngineStrategy::Sst
+        }
+
+        async fn do_flush(
+            &self,
+            _params: &FlushParameters,
+        ) -> Result<crate::storage::traits::FlushResult> {
+            Ok(Default::default())
+        }
+
+        async fn do_compact(
+            &self,
+            _params: &CompactionParameters,
+        ) -> Result<crate::storage::traits::CompactionResult> {
+            Ok(Default::default())
+        }
+
+        async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+            Ok(HashMap::new())
+        }
+
+        async fn vector_by_id(
+            &self,
+            _collection_id: &str,
+            _base_path: &str,
+            _vector_id: &str,
+        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+            Ok(None)
+        }
+
+        async fn search_vectors_unified(
+            &self,
+            _ctx: &crate::storage::traits::StorageQueryContext,
+        ) -> Result<Vec<OptimizedSearchRecord>> {
+            Ok(self.results.clone())
+        }
+
+        fn get_filesystem_factory(&self) -> &FilesystemFactory {
+            &self.filesystem_factory
+        }
+    }
+
+    struct MockDocumentService {
+        collections: HashMap<String, Vec<DocumentRecord>>,
+    }
+
+    impl MockDocumentService {
+        fn new(collections: HashMap<String, Vec<DocumentRecord>>) -> Self {
+            Self { collections }
+        }
+
+        fn matches_filter(document: &DocumentRecord, filter: &DocumentFilter) -> bool {
+            filter.conditions.iter().all(|condition| {
+                if condition.operator != crate::proto::proximadb_v1::DocFilterOperator::Eq as i32 {
+                    return false;
+                }
+
+                let expected = condition
+                    .value
+                    .as_ref()
+                    .and_then(|value| match &value.value {
+                        Some(sql_value::Value::StringValue(s)) => Some(s.as_str()),
+                        _ => None,
+                    });
+
+                let actual = document
+                    .document
+                    .fields
+                    .get(&condition.path)
+                    .and_then(|value| match &value.value {
+                        Some(sql_value::Value::StringValue(s)) => Some(s.as_str()),
+                        _ => None,
+                    });
+
+                expected.zip(actual).map(|(l, r)| l == r).unwrap_or(false)
+            })
+        }
+    }
+
+    #[async_trait]
+    impl DocumentStorageOperations for MockDocumentService {
+        async fn insert_document(
+            &self,
+            _collection: &str,
+            _id: &str,
+            _document: SqlObject,
+            _indexed_paths: Vec<String>,
+        ) -> Result<DocumentRecord> {
+            Err(anyhow::anyhow!("mock insert not implemented"))
+        }
+
+        async fn get_document(&self, collection: &str, id: &str) -> Result<Option<DocumentRecord>> {
+            Ok(self
+                .collections
+                .get(collection)
+                .and_then(|documents| documents.iter().find(|document| document.id == id))
+                .cloned())
+        }
+
+        async fn query_documents(
+            &self,
+            collection: &str,
+            filter: Option<DocumentFilter>,
+            limit: usize,
+            offset: usize,
+        ) -> Result<Vec<DocumentRecord>> {
+            let mut documents = self
+                .collections
+                .get(collection)
+                .cloned()
+                .unwrap_or_default();
+
+            if let Some(filter) = filter.as_ref() {
+                documents.retain(|document| Self::matches_filter(document, filter));
+            }
+
+            Ok(documents.into_iter().skip(offset).take(limit).collect())
+        }
+
+        async fn update_document(
+            &self,
+            _collection: &str,
+            _id: &str,
+            _updates: Vec<DocumentUpdate>,
+        ) -> Result<DocumentRecord> {
+            Err(anyhow::anyhow!("mock update not implemented"))
+        }
+
+        async fn delete_document(&self, _collection: &str, _id: &str) -> Result<bool> {
+            Err(anyhow::anyhow!("mock delete not implemented"))
+        }
+
+        async fn create_document_collection(
+            &self,
+            config: DocumentCollectionConfig,
+        ) -> Result<String> {
+            Ok(config.name)
+        }
+
+        async fn list_document_collections(&self) -> Result<Vec<DocumentCollectionInfo>> {
+            Ok(self
+                .collections
+                .iter()
+                .map(|(name, documents)| DocumentCollectionInfo {
+                    name: name.clone(),
+                    document_count: documents.len() as u64,
+                    storage_size_bytes: 0,
+                    indexes: vec![],
+                })
+                .collect())
+        }
+    }
+
+    fn string_value(value: &str) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::StringValue(value.to_string())),
+        }
+    }
+
+    fn sql_object(fields: &[(&str, &str)]) -> SqlObject {
+        SqlObject {
+            fields: fields
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), string_value(value)))
+                .collect(),
+        }
+    }
 
     #[test]
     fn test_federated_context_creation() {
@@ -354,5 +597,201 @@ mod tests {
         // Without cache, invalidation is a no-op
         let invalidated = ctx.invalidate_collection("products");
         assert_eq!(invalidated, 0);
+    }
+
+    #[tokio::test]
+    async fn test_plain_sql_requires_non_federated_backend() {
+        let storage = Arc::new(MultiModelStorageFacade::new());
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached("SELECT * FROM users")
+            .await
+            .expect_err("plain SQL should not execute through federated context");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Standard relational SQL execution is not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_requires_configured_store() {
+        let storage = Arc::new(MultiModelStorageFacade::new());
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached("SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2]', 2)")
+            .await
+            .expect_err("vector search should fail without a configured vector store");
+
+        assert!(error.to_string().contains("Vector store is not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_multi_source_join_executes_on_function_backed_sources() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![
+                OptimizedSearchRecord::new("doc-1".to_string(), 0.99),
+                OptimizedSearchRecord::new("doc-2".to_string(), 0.87),
+            ])
+            .await,
+        ) as Arc<dyn UnifiedStorageEngine>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "docs".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "doc-1".to_string(),
+                    document: sql_object(&[("status", "active"), ("title", "Alpha")]),
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "doc-2".to_string(),
+                    document: sql_object(&[("status", "active"), ("title", "Beta")]),
+                    version: 1,
+                    created_at_ns: 2,
+                    updated_at_ns: 2,
+                },
+                DocumentRecord {
+                    id: "doc-3".to_string(),
+                    document: sql_object(&[("status", "inactive"), ("title", "Gamma")]),
+                    version: 1,
+                    created_at_ns: 3,
+                    updated_at_ns: 3,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 1), DOCUMENT_QUERY('docs', 'status = \"active\"')",
+            )
+            .await
+            .expect("cross-source join should execute for function-backed sources");
+
+        assert_eq!(result.row_count(), 2);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(field_names, vec!["id", "score", "right_id", "document"]);
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_supports_projection_filter_and_limit() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![
+                OptimizedSearchRecord::new("doc-1".to_string(), 0.99),
+                OptimizedSearchRecord::new("doc-2".to_string(), 0.87),
+            ])
+            .await,
+        ) as Arc<dyn UnifiedStorageEngine>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT id FROM VECTOR_SEARCH('products', '[0.1]', 2) WHERE id = 'doc-2' LIMIT 1",
+            )
+            .await
+            .expect("projection/filter/limit should execute for vector search");
+
+        assert_eq!(result.row_count(), 1);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(field_names, vec!["id"]);
+        let batch = result
+            .batches
+            .first()
+            .expect("result should contain a batch");
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("projected id column should be Utf8");
+        assert_eq!(ids.value(0), "doc-2");
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_supports_order_by_and_limit() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![
+                OptimizedSearchRecord::new("doc-2".to_string(), 0.12),
+                OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
+            ])
+            .await,
+        ) as Arc<dyn UnifiedStorageEngine>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT id, score FROM VECTOR_SEARCH('products', '[0.1]', 2) ORDER BY score DESC LIMIT 1",
+            )
+            .await
+            .expect("order by should execute for vector search");
+
+        assert_eq!(result.row_count(), 1);
+        let batch = result
+            .batches
+            .first()
+            .expect("result should contain a batch");
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("id column should be Utf8");
+        let scores = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("score column should be Float32");
+        assert_eq!(ids.value(0), "doc-1");
+        assert!((scores.value(0) - 0.91).abs() < f32::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_reports_unsupported_execution() {
+        let storage = Arc::new(MultiModelStorageFacade::new());
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM users u JOIN LATERAL VECTOR_SEARCH('products', u.embedding, 1) v ON true",
+            )
+            .await
+            .expect_err("lateral join should fail explicitly until correlated execution is implemented");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Nested-loop/lateral join execution is not implemented")
+        );
     }
 }

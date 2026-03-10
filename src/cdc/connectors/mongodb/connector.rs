@@ -216,10 +216,7 @@ impl CdcSource for MongoDbConnector {
 
         info!(
             "Starting MongoDB CDC connector for database: {}",
-            self.mongo_config
-                .database
-                .as_deref()
-                .unwrap_or("default")
+            self.mongo_config.database.as_deref().unwrap_or("default")
         );
 
         // TODO: Implement MongoDB connection and change stream

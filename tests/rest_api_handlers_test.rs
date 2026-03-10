@@ -251,7 +251,12 @@ fn test_error_response_construction() {
     });
 
     assert_eq!(error_response["code"], 400);
-    assert!(error_response["message"].as_str().unwrap().contains("Invalid request"));
+    assert!(
+        error_response["message"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid request")
+    );
     assert_eq!(error_response["details"]["field"], "collection_id");
 }
 
@@ -266,7 +271,12 @@ fn test_not_found_response() {
     });
 
     assert_eq!(error_response["code"], 404);
-    assert!(error_response["message"].as_str().unwrap().contains("not found"));
+    assert!(
+        error_response["message"]
+            .as_str()
+            .unwrap()
+            .contains("not found")
+    );
 }
 
 #[test]
@@ -281,7 +291,12 @@ fn test_internal_error_response() {
     });
 
     assert_eq!(error_response["code"], 500);
-    assert!(error_response["message"].as_str().unwrap().contains("Internal error"));
+    assert!(
+        error_response["message"]
+            .as_str()
+            .unwrap()
+            .contains("Internal error")
+    );
 }
 
 #[test]
@@ -561,7 +576,10 @@ fn test_pagination_last_page() {
     });
 
     // No next_page_token indicates last page
-    assert!(response.get("next_page_token").is_none() || response.get("next_page_token").unwrap().is_null());
+    assert!(
+        response.get("next_page_token").is_none()
+            || response.get("next_page_token").unwrap().is_null()
+    );
     assert_eq!(response["total_count"], 50);
 }
 
@@ -741,6 +759,11 @@ fn test_operation_response_with_error() {
     });
 
     assert_eq!(response["success"], false);
-    assert!(response["error_message"].as_str().unwrap().contains("not found"));
+    assert!(
+        response["error_message"]
+            .as_str()
+            .unwrap()
+            .contains("not found")
+    );
     assert_eq!(response["error_code"], "NOT_FOUND");
 }

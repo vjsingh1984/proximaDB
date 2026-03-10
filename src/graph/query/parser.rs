@@ -1105,6 +1105,7 @@ fn parse_cypher_query(input: &str) -> IResult<&str, CypherQuery> {
             reading_clauses,
             updating_clauses,
             with_clauses,
+            union_clauses: Vec::new(), // TD-019: UNION clause support
             return_spec,
         },
     )(input)
@@ -1126,6 +1127,7 @@ fn parse_query(input: &str) -> IResult<&str, CompiledPattern> {
             edges,
             paths: Vec::new(),
             where_clauses: where_clause_opt.map(|wc| vec![wc]).unwrap_or_default(),
+            with_clauses: Vec::new(), // TD-019: WITH clause support
             return_spec,
             variables: HashMap::new(), // Populated during planning/execution
         },

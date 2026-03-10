@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crate::core::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
-use crate::graph::{Edge, EdgeId, Node, NodeId};
+use crate::graph::{Edge, EdgeId, GraphService, Node, NodeId};
 
 use super::super::traits::{ModelType, StoreCapabilities};
 
@@ -66,6 +66,10 @@ impl Default for GraphStoreConfig {
 pub struct GraphStore {
     /// The underlying graph engine (ORION, PULSAR, or QUASAR)
     engine: Option<Arc<dyn GraphEngine>>,
+    /// Shared graph service used by the server/runtime path
+    service: Option<Arc<GraphService>>,
+    /// Optional default graph identifier for service-backed queries
+    default_graph: Option<String>,
     /// Configuration
     config: GraphStoreConfig,
 }
@@ -75,6 +79,8 @@ impl GraphStore {
     pub fn new(config: GraphStoreConfig) -> Self {
         Self {
             engine: None,
+            service: None,
+            default_graph: None,
             config,
         }
     }
@@ -82,6 +88,18 @@ impl GraphStore {
     /// Set the underlying graph engine
     pub fn with_engine(mut self, engine: Arc<dyn GraphEngine>) -> Self {
         self.engine = Some(engine);
+        self
+    }
+
+    /// Set the shared graph service for multi-graph query execution
+    pub fn with_service(mut self, service: Arc<GraphService>) -> Self {
+        self.service = Some(service);
+        self
+    }
+
+    /// Set the default graph id used when queries do not specify a graph
+    pub fn with_default_graph(mut self, graph_id: impl Into<String>) -> Self {
+        self.default_graph = Some(graph_id.into());
         self
     }
 
@@ -104,14 +122,104 @@ impl GraphStore {
         self.engine.as_ref()
     }
 
+    /// Get the shared graph service if configured
+    pub fn service(&self) -> Option<&Arc<GraphService>> {
+        self.service.as_ref()
+    }
+
     /// Get the configuration
     pub fn config(&self) -> &GraphStoreConfig {
         &self.config
     }
 
+    async fn resolve_graph_id(&self) -> Result<String> {
+        if let Some(graph_id) = &self.default_graph {
+            return Ok(graph_id.clone());
+        }
+
+        if let Some(service) = &self.service {
+            let graphs = service.list_graphs().await?;
+            if let Some(graph_id) = graphs.into_iter().next() {
+                return Ok(graph_id);
+            }
+        }
+
+        Err(ProximaDBError::Config(
+            "Graph store has no default graph configured".to_string(),
+        ))
+    }
+
+    /// Resolve a node through either the shared graph service or a directly attached engine.
+    pub async fn fetch_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
+        if let Some(service) = &self.service {
+            let graph_id = self.resolve_graph_id().await?;
+            return service.get_node(&graph_id, id).await;
+        }
+
+        let engine = self
+            .engine
+            .as_ref()
+            .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
+        engine.get_node(id)
+    }
+
+    /// Resolve neighbors through either the shared graph service or a directly attached engine.
+    pub async fn fetch_neighbors(&self, node_id: &NodeId) -> Result<Vec<Arc<Node>>> {
+        if let Some(service) = &self.service {
+            let graph_id = self.resolve_graph_id().await?;
+            return service.get_neighbors(&graph_id, node_id).await;
+        }
+
+        let engine = self
+            .engine
+            .as_ref()
+            .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
+        engine.get_neighbors(node_id, None)
+    }
+
+    /// Fetch nodes by label from the configured graph backend.
+    pub async fn fetch_nodes_by_label(&self, label: &str) -> Result<Vec<Arc<Node>>> {
+        if let Some(service) = &self.service {
+            let graph_id = self.resolve_graph_id().await?;
+            return service.query_nodes_by_label(&graph_id, label).await;
+        }
+
+        let engine = self
+            .engine
+            .as_ref()
+            .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
+        engine.get_nodes_by_label(label)
+    }
+
+    /// Fetch all nodes from the configured graph backend.
+    pub async fn fetch_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
+        if let Some(service) = &self.service {
+            let graph_id = self.resolve_graph_id().await?;
+            return service
+                .query_nodes(
+                    &graph_id,
+                    crate::proto::proximadb_v1::NodeQuery {
+                        graph_id: graph_id.clone(),
+                        labels: vec![],
+                        filters: vec![],
+                        offset: None,
+                        limit: None,
+                        continuation_token: None,
+                    },
+                )
+                .await;
+        }
+
+        let engine = self
+            .engine
+            .as_ref()
+            .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
+        engine.get_all_nodes()
+    }
+
     /// Check if store is operational
     pub fn is_operational(&self) -> bool {
-        self.engine.is_some()
+        self.engine.is_some() || self.service.is_some()
     }
 
     /// Get node count (convenience method)

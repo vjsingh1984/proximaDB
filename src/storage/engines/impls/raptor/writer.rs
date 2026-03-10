@@ -4683,12 +4683,17 @@ impl RaptorWriter {
     }
 
     /// Update column projections for filtering
-    fn update_column_projections(&mut self, vector: &VectorRecord, _location: RowLocation) -> Result<()> {
+    fn update_column_projections(
+        &mut self,
+        vector: &VectorRecord,
+        _location: RowLocation,
+    ) -> Result<()> {
         // Extract metadata columns for projection
         if !vector.metadata.is_empty() {
             for (key, value) in &vector.metadata {
-                let serialized = bincode::serialize(&value)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize metadata key '{}': {}", key, e))?;
+                let serialized = bincode::serialize(&value).map_err(|e| {
+                    anyhow::anyhow!("Failed to serialize metadata key '{}': {}", key, e)
+                })?;
                 self.column_projections
                     .metadata_columns
                     .entry(key.clone())

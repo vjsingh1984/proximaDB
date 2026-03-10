@@ -7,4 +7,3 @@ pub struct RequestLimits {
     pub max_frontier: Option<usize>, // for traversals
     pub max_results: Option<usize>,
 }
-

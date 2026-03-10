@@ -5,4 +5,3 @@ pub fn normalize_field(field: &str) -> String {
     // placeholder normalization (e.g., metadata.price -> price if already mapped)
     field.to_string()
 }
-

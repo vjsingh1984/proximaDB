@@ -16,8 +16,12 @@
 
 //! # Cross-Model ACID Transactions
 //!
-//! This module provides ACID transaction support across multiple data models
-//! (vector, document, graph, time-series) using two-phase commit protocol.
+//! This module provides the cross-model transaction coordinator and participant
+//! scaffolding for vector, document, graph, and time-series engines.
+//!
+//! The coordinator, WAL records, and in-memory participants are implemented, but
+//! live engine-backed participants are still incomplete. Treat this module as
+//! infrastructure under construction rather than a fully wired production path.
 //!
 //! ## Architecture
 //!
@@ -59,12 +63,12 @@
 //! # }
 //! ```
 //!
-//! ## Features
+//! ## Current Status
 //!
-//! - **Atomicity**: All-or-nothing updates across models
-//! - **Consistency**: Data integrity across models
-//! - **Isolation**: Transactions don't interfere
-//! - **Durability**: WAL-based crash recovery
+//! - **Coordinator + WAL flow**: Implemented
+//! - **2PC participant protocol**: Implemented
+//! - **Live engine-backed participants**: Partial / experimental
+//! - **Production-ready atomic multi-model writes**: Not yet fully wired
 
 pub mod coordinator;
 pub mod participants;

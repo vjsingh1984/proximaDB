@@ -2015,7 +2015,9 @@ impl ProximaDataBlock {
             // unreachable! is acceptable here: Auto variant is resolved to FullVector at lines 1929-1946
             // before this match statement. This arm should never be reached; it exists only for
             // exhaustiveness checking. If reached, it indicates a serious code logic error.
-            VectorEncodingLayout::Auto => unreachable!("Auto should be resolved to FullVector at lines 1929-1946"),
+            VectorEncodingLayout::Auto => {
+                unreachable!("Auto should be resolved to FullVector at lines 1929-1946")
+            }
         };
 
         // Write encoded vectors

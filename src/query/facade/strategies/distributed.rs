@@ -29,7 +29,9 @@ use tracing::debug;
 use crate::cluster::ClusterManager;
 use crate::query::distributed::DistributedQueryConfig;
 use crate::query::distributed::DistributedQueryCoordinator;
-use crate::query::facade::{QueryContext, QueryRequest, QueryResult, QueryResultData, QueryStrategy};
+use crate::query::facade::{
+    QueryContext, QueryRequest, QueryResult, QueryResultData, QueryStrategy,
+};
 use crate::query::unified::fusion::SubQueryResult;
 
 /// Configuration for distributed query strategy
@@ -91,7 +93,10 @@ impl DistributedQueryStrategy {
             shuffle_batch_size: 1000,
         };
 
-        let coordinator = Arc::new(DistributedQueryCoordinator::new(dist_config, local_node_id.clone()));
+        let coordinator = Arc::new(DistributedQueryCoordinator::new(
+            dist_config,
+            local_node_id.clone(),
+        ));
 
         Self {
             coordinator,
@@ -102,21 +107,26 @@ impl DistributedQueryStrategy {
 
     /// Set cluster manager for distributed execution
     pub fn with_cluster(mut self, cluster_manager: Arc<ClusterManager>) -> Self {
-        let coordinator = Arc::new(DistributedQueryCoordinator::new(
-            DistributedQueryConfig {
-                max_concurrent_remote_queries: self.config.max_concurrent_remote_queries,
-                remote_query_timeout: Duration::from_secs(self.config.remote_query_timeout_secs),
-                enable_result_cache: self.config.enable_result_cache,
-                cache_ttl_seconds: self.config.cache_ttl_secs,
-                prefer_local_execution: self.config.prefer_local_execution,
-                retry_failed_queries: true,
-                max_retries: 3,
-                parallel_remote_execution: true,
-                enable_shuffle: self.config.enable_shuffle,
-                shuffle_batch_size: 1000,
-            },
-            self.local_node_id.clone(),
-        ).with_cluster(cluster_manager));
+        let coordinator = Arc::new(
+            DistributedQueryCoordinator::new(
+                DistributedQueryConfig {
+                    max_concurrent_remote_queries: self.config.max_concurrent_remote_queries,
+                    remote_query_timeout: Duration::from_secs(
+                        self.config.remote_query_timeout_secs,
+                    ),
+                    enable_result_cache: self.config.enable_result_cache,
+                    cache_ttl_seconds: self.config.cache_ttl_secs,
+                    prefer_local_execution: self.config.prefer_local_execution,
+                    retry_failed_queries: true,
+                    max_retries: 3,
+                    parallel_remote_execution: true,
+                    enable_shuffle: self.config.enable_shuffle,
+                    shuffle_batch_size: 1000,
+                },
+                self.local_node_id.clone(),
+            )
+            .with_cluster(cluster_manager),
+        );
 
         self.coordinator = coordinator;
         self
@@ -175,7 +185,10 @@ impl QueryStrategy for DistributedQueryStrategy {
         let query = crate::query::unified::ast::MultiModelQuery::new();
 
         // Execute via distributed coordinator
-        let results = self.coordinator.execute(&query).await
+        let results = self
+            .coordinator
+            .execute(&query)
+            .await
             .map_err(|e| anyhow!("Distributed query failed: {}", e))?;
 
         // Convert results

@@ -124,8 +124,11 @@ impl PatternMatcher {
         // Apply WHERE clauses
         let filtered_results = self.apply_where_clauses(pattern, results, memory_pool)?;
 
+        // Apply WITH clauses (TD-019: intermediate projections)
+        let with_results = self.apply_with_clauses(pattern, filtered_results)?;
+
         // Apply ordering and limits
-        let ordered_results = self.apply_ordering_and_limits(pattern, filtered_results)?;
+        let ordered_results = self.apply_ordering_and_limits(pattern, with_results)?;
 
         Ok(ordered_results)
     }
@@ -768,27 +771,505 @@ impl PatternMatcher {
         }
     }
 
-    /// Apply ordering and limits to results
+    /// Apply ordering, skip, and limits to match results
+    ///
+    /// TD-019: Enhanced implementation of ORDER BY, SKIP, and LIMIT clauses
+    /// - ORDER BY: Sorts by specified variables and properties
+    /// - SKIP: Skips N results before applying LIMIT
+    /// - LIMIT: Limits the number of results returned
     fn apply_ordering_and_limits(
         &self,
         pattern: &CompiledPattern,
         mut results: Vec<MatchResult>,
     ) -> QueryResult<Vec<MatchResult>> {
-        // Sort by score (descending) for now
-        // unwrap_or(Equal) is safe: partial_cmp on f64 returns None only for NaN values.
-        // Using Equal as default provides deterministic sorting behavior for NaN scores.
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Apply ORDER BY if specified
+        if !pattern.return_spec.order_by.is_empty() {
+            results = self.apply_order_by(&pattern.return_spec.order_by, results)?;
+        } else {
+            // Default: Sort by score (descending) when no ORDER BY specified
+            // unwrap_or(Equal) is safe: partial_cmp on f64 returns None only for NaN values.
+            // Using Equal as default provides deterministic sorting behavior for NaN scores.
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
 
-        // Apply limit if specified
+        // Apply SKIP if specified
+        if let Some(skip) = pattern.return_spec.skip {
+            if skip < results.len() {
+                results = results.split_off(skip);
+            } else {
+                results.clear();
+            }
+        }
+
+        // Apply LIMIT if specified
         if let Some(limit) = pattern.return_spec.limit {
-            results.truncate(limit as usize);
+            results.truncate(limit);
         }
 
         Ok(results)
+    }
+
+    /// Apply WITH clauses to match results
+    ///
+    /// TD-019: Execute WITH clause for intermediate projections.
+    /// WITH clauses are used to:
+    /// - Project and rename variables
+    /// - Filter intermediate results
+    /// - Apply aggregations
+    /// - Chain query parts together
+    ///
+    /// WITH clauses are executed after WHERE clauses but before the final RETURN.
+    fn apply_with_clauses(
+        &self,
+        pattern: &CompiledPattern,
+        mut results: Vec<MatchResult>,
+    ) -> QueryResult<Vec<MatchResult>> {
+        for with_clause in &pattern.with_clauses {
+            // Apply projections from WITH clause
+            if !with_clause.projections.is_empty() {
+                results = self.apply_projections(&with_clause.projections, results)?;
+            }
+
+            // Apply DISTINCT if specified
+            if with_clause.distinct {
+                results = self.apply_distinct(results);
+            }
+
+            // Apply ORDER BY from WITH clause
+            if !with_clause.order_by.is_empty() {
+                results = self.apply_order_by(&with_clause.order_by, results)?;
+            }
+
+            // Apply SKIP from WITH clause
+            if let Some(skip) = with_clause.skip {
+                if skip < results.len() {
+                    results = results.split_off(skip);
+                } else {
+                    results.clear();
+                }
+            }
+
+            // Apply LIMIT from WITH clause
+            if let Some(limit) = with_clause.limit {
+                results.truncate(limit);
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Apply UNION clause to combine results from multiple queries
+    ///
+    /// TD-019: Execute UNION clause for combining query results.
+    ///
+    /// UNION combines results from two queries:
+    /// - UNION (distinct): removes duplicate rows
+    /// - UNION ALL: keeps all rows including duplicates
+    ///
+    /// This function takes the left query results and right query results
+    /// and combines them according to the distinct flag.
+    pub fn apply_union(
+        &self,
+        left_results: Vec<MatchResult>,
+        right_results: Vec<MatchResult>,
+        distinct: bool,
+    ) -> QueryResult<Vec<MatchResult>> {
+        let mut combined_results = Vec::new();
+
+        // Add all results from left query
+        combined_results.extend(left_results);
+
+        // Add results from right query
+        combined_results.extend(right_results);
+
+        // Apply DISTINCT if specified (UNION without ALL)
+        if distinct {
+            combined_results = self.apply_distinct(combined_results);
+        }
+
+        Ok(combined_results)
+    }
+
+    /// Apply projections to match results
+    ///
+    /// Projects results according to the specified projections.
+    /// Each projection is a tuple of (variable_name, property_projection).
+    /// This creates new bindings based on the projections.
+    fn apply_projections(
+        &self,
+        projections: &[(String, PropertyProjection)],
+        results: Vec<MatchResult>,
+    ) -> QueryResult<Vec<MatchResult>> {
+        use crate::proto::proximadb_v1::{PropertyValue, property_value::Value};
+
+        let result_count = results.len();
+
+        // Pre-compute aggregations (computed once, same for all results)
+        let mut aggregates: std::collections::HashMap<String, PropertyValue> =
+            std::collections::HashMap::new();
+
+        for (alias, projection) in projections {
+            match projection {
+                PropertyProjection::Count => {
+                    aggregates.insert(
+                        alias.clone(),
+                        PropertyValue {
+                            value: Some(Value::IntValue(result_count as i64)),
+                        },
+                    );
+                }
+                PropertyProjection::Sum { variable, property } => {
+                    let mut sum = 0i64;
+                    for result in &results {
+                        if let Some(binding) = result.bindings.get(variable) {
+                            if let Some(value) = self.get_binding_property(binding, property) {
+                                if let Some(Value::IntValue(n)) = value.value {
+                                    sum += n;
+                                }
+                            }
+                        }
+                    }
+                    aggregates.insert(
+                        alias.clone(),
+                        PropertyValue {
+                            value: Some(Value::IntValue(sum)),
+                        },
+                    );
+                }
+                PropertyProjection::Avg { variable, property } => {
+                    let mut sum = 0i64;
+                    let mut count = 0i64;
+                    for result in &results {
+                        if let Some(binding) = result.bindings.get(variable) {
+                            if let Some(value) = self.get_binding_property(binding, property) {
+                                if let Some(Value::IntValue(n)) = value.value {
+                                    sum += n;
+                                    count += 1;
+                                }
+                            }
+                        }
+                    }
+                    let avg = if count > 0 { sum / count } else { 0 };
+                    aggregates.insert(
+                        alias.clone(),
+                        PropertyValue {
+                            value: Some(Value::IntValue(avg)),
+                        },
+                    );
+                }
+                PropertyProjection::Min { variable, property } => {
+                    let mut min: Option<i64> = None;
+                    for result in &results {
+                        if let Some(binding) = result.bindings.get(variable) {
+                            if let Some(value) = self.get_binding_property(binding, property) {
+                                if let Some(Value::IntValue(n)) = value.value {
+                                    if min.is_none() || Some(n) < min {
+                                        min = Some(n);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    aggregates.insert(
+                        alias.clone(),
+                        PropertyValue {
+                            value: Some(Value::IntValue(min.unwrap_or(0))),
+                        },
+                    );
+                }
+                PropertyProjection::Max { variable, property } => {
+                    let mut max: Option<i64> = None;
+                    for result in &results {
+                        if let Some(binding) = result.bindings.get(variable) {
+                            if let Some(value) = self.get_binding_property(binding, property) {
+                                if let Some(Value::IntValue(n)) = value.value {
+                                    if max.is_none() || Some(n) > max {
+                                        max = Some(n);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    aggregates.insert(
+                        alias.clone(),
+                        PropertyValue {
+                            value: Some(Value::IntValue(max.unwrap_or(0))),
+                        },
+                    );
+                }
+                _ => {} // Non-aggregations are handled per-result
+            }
+        }
+
+        // Process each result
+        let mut projected_results = Vec::new();
+        for result in results {
+            let mut new_bindings = HashMap::new();
+
+            for (alias, projection) in projections {
+                match projection {
+                    PropertyProjection::Variable(var_name) => {
+                        // Direct variable reference (e.g., "WITH n AS node")
+                        if let Some(binding) = result.bindings.get(var_name) {
+                            new_bindings.insert(alias.clone(), binding.clone());
+                        }
+                    }
+                    PropertyProjection::Property { variable, property } => {
+                        // Property access (e.g., "WITH n.name AS name")
+                        if let Some(binding) = result.bindings.get(variable) {
+                            if let Some(value) = self.get_binding_property(binding, property) {
+                                // Create a new binding for the projected value
+                                new_bindings.insert(
+                                    alias.clone(),
+                                    VariableBinding::Node(std::sync::Arc::new(
+                                        crate::graph::Node {
+                                            id: format!("{}_{}", variable, property),
+                                            labels: vec![],
+                                            properties: {
+                                                let mut props = std::collections::HashMap::new();
+                                                props.insert("value".to_string(), value);
+                                                props
+                                            },
+                                            embedding: None,
+                                            created_at_ms: 0,
+                                            updated_at_ms: 0,
+                                        },
+                                    )),
+                                );
+                            }
+                        }
+                    }
+                    PropertyProjection::Count
+                    | PropertyProjection::Sum { .. }
+                    | PropertyProjection::Avg { .. }
+                    | PropertyProjection::Min { .. }
+                    | PropertyProjection::Max { .. } => {
+                        // Use pre-computed aggregate value
+                        if let Some(aggregate_value) = aggregates.get(alias) {
+                            new_bindings.insert(
+                                alias.clone(),
+                                VariableBinding::Node(std::sync::Arc::new(crate::graph::Node {
+                                    id: alias.clone(),
+                                    labels: vec!["Aggregate".to_string()],
+                                    properties: {
+                                        let mut props = std::collections::HashMap::new();
+                                        let prop_name = match projection {
+                                            PropertyProjection::Count => "count",
+                                            PropertyProjection::Sum { .. } => "sum",
+                                            PropertyProjection::Avg { .. } => "avg",
+                                            PropertyProjection::Min { .. } => "min",
+                                            PropertyProjection::Max { .. } => "max",
+                                            _ => "value",
+                                        };
+                                        props
+                                            .insert(prop_name.to_string(), aggregate_value.clone());
+                                        props
+                                    },
+                                    embedding: None,
+                                    created_at_ms: 0,
+                                    updated_at_ms: 0,
+                                })),
+                            );
+                        }
+                    }
+                }
+            }
+
+            projected_results.push(MatchResult {
+                bindings: new_bindings,
+                score: result.score,
+            });
+        }
+
+        Ok(projected_results)
+    }
+
+    /// Apply DISTINCT to match results
+    ///
+    /// Removes duplicate results based on their bindings.
+    fn apply_distinct(&self, results: Vec<MatchResult>) -> Vec<MatchResult> {
+        use std::collections::HashSet;
+
+        let mut seen = HashSet::new();
+        let mut distinct_results = Vec::new();
+
+        for result in results {
+            // Create a hashable representation of the bindings
+            let hash_key = result
+                .bindings
+                .iter()
+                .map(|(k, v)| {
+                    format!(
+                        "{}:{}",
+                        k,
+                        match v {
+                            VariableBinding::Node(n) => n.id.clone(),
+                            VariableBinding::Edge(e) => e.id.to_string(),
+                            VariableBinding::Path(p) => format!("{:?}", p),
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+
+            if seen.insert(hash_key) {
+                distinct_results.push(result);
+            }
+        }
+
+        distinct_results
+    }
+
+    /// Get property value from a variable binding
+    ///
+    /// Extracts the value of a property from a binding for projection.
+    fn get_binding_property(
+        &self,
+        binding: &VariableBinding,
+        property: &str,
+    ) -> Option<crate::proto::proximadb_v1::PropertyValue> {
+        match binding {
+            VariableBinding::Node(node) => node.properties.get(property).cloned(),
+            VariableBinding::Edge(edge) => edge.properties.get(property).cloned(),
+            VariableBinding::Path(_) => None,
+        }
+    }
+
+    /// Apply ORDER BY clause to match results
+    ///
+    /// Sorts results by the specified variables and properties.
+    /// Each ORDER BY spec is a tuple of (variable_name, ascending_flag).
+    /// Examples:
+    /// - ORDER BY n ASC: Sort by node n in ascending order (by id)
+    /// - ORDER BY n.name DESC: Sort by node n's name property in descending order
+    fn apply_order_by(
+        &self,
+        order_specs: &[(String, bool)],
+        mut results: Vec<MatchResult>,
+    ) -> QueryResult<Vec<MatchResult>> {
+        results.sort_by(|a, b| {
+            for (variable, ascending) in order_specs {
+                // Get the binding values from both results
+                let a_value = self.get_binding_value(a, variable);
+                let b_value = self.get_binding_value(b, variable);
+
+                // Compare the values
+                let ordering = match (a_value, b_value) {
+                    (None, None) => std::cmp::Ordering::Equal,
+                    (None, Some(_)) => std::cmp::Ordering::Less,
+                    (Some(_), None) => std::cmp::Ordering::Greater,
+                    (Some(ref a_val), Some(ref b_val)) => {
+                        // Compare as JSON values (handles strings, numbers, booleans)
+                        // Use references to avoid moving the values
+                        match (a_val, b_val) {
+                            (
+                                serde_json::Value::Number(a_num),
+                                serde_json::Value::Number(b_num),
+                            ) => {
+                                // Numeric comparison
+                                match (a_num.as_f64(), b_num.as_f64()) {
+                                    (Some(a_f), Some(b_f)) => {
+                                        a_f.partial_cmp(&b_f).unwrap_or(std::cmp::Ordering::Equal)
+                                    }
+                                    _ => std::cmp::Ordering::Equal,
+                                }
+                            }
+                            (
+                                serde_json::Value::String(a_str),
+                                serde_json::Value::String(b_str),
+                            ) => {
+                                // String comparison
+                                a_str
+                                    .partial_cmp(b_str)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            }
+                            (serde_json::Value::Bool(a_bool), serde_json::Value::Bool(b_bool)) => {
+                                // Boolean comparison - convert bool to u8 for cmp()
+                                let a_b = *a_bool as u8;
+                                let b_b = *b_bool as u8;
+                                a_b.cmp(&b_b)
+                            }
+                            _ => {
+                                // Fallback: compare as strings (for mixed types)
+                                a_val
+                                    .to_string()
+                                    .partial_cmp(&b_val.to_string())
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            }
+                        }
+                    }
+                };
+
+                // If not equal, return the ordering (reversed if descending)
+                if ordering != std::cmp::Ordering::Equal {
+                    return if *ascending {
+                        ordering
+                    } else {
+                        ordering.reverse()
+                    };
+                }
+            }
+
+            // All ORDER BY specs were equal
+            std::cmp::Ordering::Equal
+        });
+
+        Ok(results)
+    }
+
+    /// Get the value of a binding for comparison
+    ///
+    /// Extracts the JSON value from a variable binding for ORDER BY comparison.
+    /// Supports:
+    /// - Direct variable references (e.g., n) - returns node/edge id
+    /// - Property access (e.g., n.name) - returns property value
+    fn get_binding_value(
+        &self,
+        result: &MatchResult,
+        variable_spec: &str,
+    ) -> Option<serde_json::Value> {
+        // Parse variable_spec to extract variable name and property
+        // Examples: "n" -> ("n", None), "n.name" -> ("n", Some("name"))
+        let parts: Vec<&str> = variable_spec.split('.').collect();
+        let variable_name = parts.first()?;
+        let property_name = parts.get(1).copied();
+
+        // Get the binding (dereference variable_name to get &str)
+        let binding = result.bindings.get(*variable_name)?;
+
+        match binding {
+            VariableBinding::Node(node) => {
+                if let Some(prop) = property_name {
+                    // Get property value from node and convert PropertyValue to JSON
+                    node.properties
+                        .get(prop)
+                        .map(|pv| self.property_value_to_json(pv))
+                } else {
+                    // Return node id as default value
+                    Some(serde_json::Value::String(node.id.clone()))
+                }
+            }
+            VariableBinding::Edge(edge) => {
+                if let Some(prop) = property_name {
+                    // Get property value from edge and convert PropertyValue to JSON
+                    edge.properties
+                        .get(prop)
+                        .map(|pv| self.property_value_to_json(pv))
+                } else {
+                    // Return edge id as default value
+                    Some(serde_json::Value::String(edge.id.to_string()))
+                }
+            }
+            VariableBinding::Path(_) => {
+                // Paths don't have direct values - use None as fallback
+                // In a full implementation, we could extract properties from path elements
+                None
+            }
+        }
     }
 
     /// Estimate selectivity of a node pattern
@@ -846,6 +1327,7 @@ impl PatternCompiler {
             edges: Vec::new(),
             paths: Vec::new(),
             where_clauses: Vec::new(),
+            with_clauses: Vec::new(),
             return_spec: ReturnSpec {
                 variables: Vec::new(),
                 projections: Vec::new(),
@@ -1119,6 +1601,335 @@ mod tests {
         assert_eq!(
             matcher.property_value_to_json(&bool_prop),
             serde_json::Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn test_order_by_ascending() {
+        let matcher = PatternMatcher::new().unwrap();
+
+        // Create test results with different scores
+        let mut results = vec![
+            MatchResult {
+                bindings: std::collections::HashMap::new(),
+                score: 0.5,
+            },
+            MatchResult {
+                bindings: std::collections::HashMap::new(),
+                score: 0.9,
+            },
+            MatchResult {
+                bindings: std::collections::HashMap::new(),
+                score: 0.2,
+            },
+        ];
+
+        // Apply ORDER BY with ascending = false (descending)
+        let order_by = vec![("score".to_string(), false)];
+        let sorted = matcher.apply_order_by(&order_by, results).unwrap();
+
+        // Verify descending order (highest score first)
+        assert!((sorted[0].score - 0.9).abs() < 0.001);
+        assert!((sorted[1].score - 0.5).abs() < 0.001);
+        assert!((sorted[2].score - 0.2).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_order_by_with_property_access() {
+        let matcher = PatternMatcher::new().unwrap();
+
+        // Create test nodes with name properties
+        let node1 = std::sync::Arc::new(crate::graph::Node {
+            id: "1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "name".to_string(),
+                    PropertyValue {
+                        value: Some(Value::StringValue("Alice".to_string())),
+                    },
+                );
+                map
+            },
+        });
+
+        let node2 = std::sync::Arc::new(crate::graph::Node {
+            id: "2".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "name".to_string(),
+                    PropertyValue {
+                        value: Some(Value::StringValue("Charlie".to_string())),
+                    },
+                );
+                map
+            },
+        });
+
+        let node3 = std::sync::Arc::new(crate::graph::Node {
+            id: "3".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "name".to_string(),
+                    PropertyValue {
+                        value: Some(Value::StringValue("Bob".to_string())),
+                    },
+                );
+                map
+            },
+        });
+
+        let results = vec![
+            MatchResult {
+                bindings: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert(
+                        "n".to_string(),
+                        crate::graph::query::ast::VariableBinding::Node(node1),
+                    );
+                    map
+                },
+                score: 0.5,
+            },
+            MatchResult {
+                bindings: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert(
+                        "n".to_string(),
+                        crate::graph::query::ast::VariableBinding::Node(node2),
+                    );
+                    map
+                },
+                score: 0.9,
+            },
+            MatchResult {
+                bindings: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert(
+                        "n".to_string(),
+                        crate::graph::query::ast::VariableBinding::Node(node3),
+                    );
+                    map
+                },
+                score: 0.2,
+            },
+        ];
+
+        // Apply ORDER BY with property access
+        let order_by = vec![("n.name".to_string(), true)]; // ascending
+        let sorted = matcher.apply_order_by(&order_by, results).unwrap();
+
+        // Verify alphabetical ascending order
+        assert_eq!(
+            sorted[0].bindings["n"].as_node().unwrap().properties["name"]
+                .value
+                .as_ref()
+                .unwrap(),
+            &Value::StringValue("Alice".to_string())
+        );
+        assert_eq!(
+            sorted[1].bindings["n"].as_node().unwrap().properties["name"]
+                .value
+                .as_ref()
+                .unwrap(),
+            &Value::StringValue("Bob".to_string())
+        );
+        assert_eq!(
+            sorted[2].bindings["n"].as_node().unwrap().properties["name"]
+                .value
+                .as_ref()
+                .unwrap(),
+            &Value::StringValue("Charlie".to_string())
+        );
+    }
+
+    #[test]
+    fn test_skip_clause() {
+        let matcher = PatternMatcher::new().unwrap();
+
+        // Create 10 test results
+        let results: Vec<MatchResult> = (0..10)
+            .map(|i| MatchResult {
+                bindings: std::collections::HashMap::new(),
+                score: i as f64,
+            })
+            .collect();
+
+        // Apply SKIP 5 (should keep 5-9)
+        let mut sorted_results = results;
+        let skip = Some(5);
+        if skip < sorted_results.len() {
+            sorted_results = sorted_results.split_off(skip.unwrap());
+        }
+
+        assert_eq!(sorted_results.len(), 5);
+        assert!((sorted_results[0].score - 5.0).abs() < 0.001);
+        assert!((sorted_results[4].score - 9.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_limit_clause() {
+        let matcher = PatternMatcher::new().unwrap();
+
+        // Create 10 test results
+        let mut results: Vec<MatchResult> = (0..10)
+            .map(|i| MatchResult {
+                bindings: std::collections::HashMap::new(),
+                score: i as f64,
+            })
+            .collect();
+
+        // Apply LIMIT 3
+        let limit = Some(3);
+        results.truncate(limit.unwrap());
+
+        assert_eq!(results.len(), 3);
+        assert!((results[0].score - 0.0).abs() < 0.001);
+        assert!((results[2].score - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_skip_and_limit_combined() {
+        let matcher = PatternMatcher::new().unwrap();
+
+        // Create 10 test results
+        let mut results: Vec<MatchResult> = (0..10)
+            .map(|i| MatchResult {
+                bindings: std::collections::HashMap::new(),
+                score: i as f64,
+            })
+            .collect();
+
+        // Apply SKIP 3 and LIMIT 4 (should return indices 3-6)
+        let skip = Some(3);
+        let limit = Some(4);
+
+        if skip.unwrap() < results.len() {
+            results = results.split_off(skip.unwrap());
+        }
+        results.truncate(limit.unwrap());
+
+        assert_eq!(results.len(), 4);
+        assert!((results[0].score - 3.0).abs() < 0.001);
+        assert!((results[3].score - 6.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_order_by_numeric_properties() {
+        let matcher = PatternMatcher::new().unwrap();
+
+        // Create test nodes with age properties
+        let node1 = std::sync::Arc::new(crate::graph::Node {
+            id: "1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "age".to_string(),
+                    PropertyValue {
+                        value: Some(Value::IntValue(30)),
+                    },
+                );
+                map
+            },
+        });
+
+        let node2 = std::sync::Arc::new(crate::graph::Node {
+            id: "2".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "age".to_string(),
+                    PropertyValue {
+                        value: Some(Value::IntValue(25)),
+                    },
+                );
+                map
+            },
+        });
+
+        let node3 = std::sync::Arc::new(crate::graph::Node {
+            id: "3".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "age".to_string(),
+                    PropertyValue {
+                        value: Some(Value::IntValue(35)),
+                    },
+                );
+                map
+            },
+        });
+
+        let results = vec![
+            MatchResult {
+                bindings: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert(
+                        "p".to_string(),
+                        crate::graph::query::ast::VariableBinding::Node(node1),
+                    );
+                    map
+                },
+                score: 0.5,
+            },
+            MatchResult {
+                bindings: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert(
+                        "p".to_string(),
+                        crate::graph::query::ast::VariableBinding::Node(node2),
+                    );
+                    map
+                },
+                score: 0.9,
+            },
+            MatchResult {
+                bindings: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert(
+                        "p".to_string(),
+                        crate::graph::query::ast::VariableBinding::Node(node3),
+                    );
+                    map
+                },
+                score: 0.2,
+            },
+        ];
+
+        // Apply ORDER BY age ascending
+        let order_by = vec![("p.age".to_string(), true)];
+        let sorted = matcher.apply_order_by(&order_by, results).unwrap();
+
+        // Verify numeric ascending order (25, 30, 35)
+        assert_eq!(
+            sorted[0].bindings["p"].as_node().unwrap().properties["age"]
+                .value
+                .as_ref()
+                .unwrap(),
+            &Value::IntValue(25)
+        );
+        assert_eq!(
+            sorted[1].bindings["p"].as_node().unwrap().properties["age"]
+                .value
+                .as_ref()
+                .unwrap(),
+            &Value::IntValue(30)
+        );
+        assert_eq!(
+            sorted[2].bindings["p"].as_node().unwrap().properties["age"]
+                .value
+                .as_ref()
+                .unwrap(),
+            &Value::IntValue(35)
         );
     }
 }

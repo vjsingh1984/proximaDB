@@ -19,17 +19,17 @@
 //! Tests the event sourcing engine for append-only audit trails,
 //! temporal replay, and MiFID II compliance.
 
+use chrono::Utc;
 use proximadb::storage::engines::impls::eventlog::{
-    index::EventIndex, snapshot::SnapshotManager, temporal::TemporalQueryEngine, Event,
-    EventLogConfig, EventLogEngine,
+    Event, EventLogConfig, EventLogEngine, index::EventIndex, snapshot::SnapshotManager,
+    temporal::TemporalQueryEngine,
 };
 use proximadb::storage::persistence::filesystem::{
-    local::LocalFileSystem, UnifiedCachingFilesystem,
+    UnifiedCachingFilesystem, local::LocalFileSystem,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use chrono::Utc;
 
 /// Test basic event append and read
 #[tokio::test]
@@ -76,8 +76,14 @@ async fn test_eventlog_append_and_read() {
         metadata: HashMap::new(),
     };
 
-    let appended1 = engine.append_event(event1).await.expect("Failed to append event1");
-    let appended2 = engine.append_event(event2).await.expect("Failed to append event2");
+    let appended1 = engine
+        .append_event(event1)
+        .await
+        .expect("Failed to append event1");
+    let appended2 = engine
+        .append_event(event2)
+        .await
+        .expect("Failed to append event2");
 
     assert_eq!(appended1.sequence, 1);
     assert_eq!(appended2.sequence, 2);
@@ -136,13 +142,19 @@ async fn test_eventlog_immutable_audit_trail() {
             metadata: {
                 let mut meta = HashMap::new();
                 meta.insert("user_id".to_string(), serde_json::json!("trader_1"));
-                meta.insert("request_id".to_string(), serde_json::json!(format!("req_{}", i)));
+                meta.insert(
+                    "request_id".to_string(),
+                    serde_json::json!(format!("req_{}", i)),
+                );
                 meta.insert("origin".to_string(), serde_json::json!("api"));
                 meta
             },
         };
 
-        let appended = engine.append_event(event).await.expect("Failed to append trade event");
+        let appended = engine
+            .append_event(event)
+            .await
+            .expect("Failed to append trade event");
         assert_eq!(appended.sequence, i as u64);
     }
 
@@ -211,7 +223,10 @@ async fn test_eventlog_mifid2_compliance() {
 
     // Should succeed
     let result = engine.append_event(valid_event).await;
-    assert!(result.is_ok(), "Valid event with required metadata should succeed");
+    assert!(
+        result.is_ok(),
+        "Valid event with required metadata should succeed"
+    );
 
     // Invalid event missing required metadata
     let invalid_event = Event {
@@ -226,7 +241,10 @@ async fn test_eventlog_mifid2_compliance() {
 
     // Should fail
     let result = engine.append_event(invalid_event).await;
-    assert!(result.is_err(), "Event without required metadata should fail in regulatory mode");
+    assert!(
+        result.is_err(),
+        "Event without required metadata should fail in regulatory mode"
+    );
 
     // Cleanup
     let _ = std::fs::remove_dir_all(base_dir);
@@ -295,9 +313,18 @@ async fn test_eventlog_temporal_queries() {
         metadata: HashMap::new(),
     };
 
-    let appended1 = engine.append_event(event1).await.expect("Failed to append event1");
-    let appended2 = engine.append_event(event2).await.expect("Failed to append event2");
-    let appended3 = engine.append_event(event3).await.expect("Failed to append event3");
+    let appended1 = engine
+        .append_event(event1)
+        .await
+        .expect("Failed to append event1");
+    let appended2 = engine
+        .append_event(event2)
+        .await
+        .expect("Failed to append event2");
+    let appended3 = engine
+        .append_event(event3)
+        .await
+        .expect("Failed to append event3");
 
     // Get current state
     let current_state = engine
@@ -365,7 +392,10 @@ async fn test_eventlog_snapshots() {
             metadata: HashMap::new(),
         };
 
-        engine.append_event(event).await.expect("Failed to append event");
+        engine
+            .append_event(event)
+            .await
+            .expect("Failed to append event");
     }
 
     // Check stats
@@ -405,7 +435,10 @@ async fn test_eventlog_replay() {
     let events = vec![
         ("OrderCreated", serde_json::json!({"status": "pending"})),
         ("OrderValidated", serde_json::json!({"status": "validated"})),
-        ("OrderFilled", serde_json::json!({"status": "filled", "quantity": 100})),
+        (
+            "OrderFilled",
+            serde_json::json!({"status": "filled", "quantity": 100}),
+        ),
         ("OrderSettled", serde_json::json!({"status": "settled"})),
     ];
 
@@ -420,7 +453,10 @@ async fn test_eventlog_replay() {
             metadata: HashMap::new(),
         };
 
-        engine.append_event(event).await.expect("Failed to append event");
+        engine
+            .append_event(event)
+            .await
+            .expect("Failed to append event");
     }
 
     // Replay all events
@@ -470,7 +506,8 @@ async fn test_eventlog_high_volume_ingestion() {
         "eventlog".to_string(),
     ));
 
-    let engine = Arc::new(EventLogEngine::new(config, fs).expect("Failed to create eventlog engine"));
+    let engine =
+        Arc::new(EventLogEngine::new(config, fs).expect("Failed to create eventlog engine"));
 
     // Simulate high-volume trade events (smaller scale for test)
     let num_events = 100;
@@ -493,14 +530,23 @@ async fn test_eventlog_high_volume_ingestion() {
                     causation_id: Some(format!("order:{}", batch * 10 + i)),
                     metadata: {
                         let mut meta = HashMap::new();
-                        meta.insert("user_id".to_string(), serde_json::json!(format!("trader_{}", batch)));
-                        meta.insert("request_id".to_string(), serde_json::json!(format!("req_{}", i)));
+                        meta.insert(
+                            "user_id".to_string(),
+                            serde_json::json!(format!("trader_{}", batch)),
+                        );
+                        meta.insert(
+                            "request_id".to_string(),
+                            serde_json::json!(format!("req_{}", i)),
+                        );
                         meta.insert("origin".to_string(), serde_json::json!("api"));
                         meta
                     },
                 };
 
-                engine_clone.append_event(event).await.expect("Failed to append event");
+                engine_clone
+                    .append_event(event)
+                    .await
+                    .expect("Failed to append event");
             }
         });
         handles.push(handle);

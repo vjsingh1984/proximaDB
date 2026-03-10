@@ -30,12 +30,14 @@ use std::sync::Arc;
 pub struct CompiledPattern {
     /// Pattern nodes
     pub nodes: Vec<NodePattern>,
-    /// Pattern edges  
+    /// Pattern edges
     pub edges: Vec<EdgePattern>,
     /// Path patterns (variable length)
     pub paths: Vec<PathPattern>,
     /// Where clauses
     pub where_clauses: Vec<WhereClause>,
+    /// WITH clauses for intermediate projections
+    pub with_clauses: Vec<WithClause>,
     /// Return specification
     pub return_spec: ReturnSpec,
     /// Pattern variables (for binding)
@@ -257,6 +259,8 @@ pub struct CypherQuery {
     pub updating_clauses: Vec<UpdatingClause>,
     /// WITH clauses for intermediate projections
     pub with_clauses: Vec<WithClause>,
+    /// UNION clauses for combining queries (TD-019)
+    pub union_clauses: Vec<UnionClause>,
     /// Final RETURN specification (optional for update-only queries)
     pub return_spec: Option<ReturnSpec>,
 }
@@ -441,6 +445,16 @@ pub struct WithClause {
     pub where_clause: Option<WhereClause>,
 }
 
+/// UNION clause for combining multiple queries
+/// TD-019: UNION clause implementation
+#[derive(Debug, Clone)]
+pub struct UnionClause {
+    /// Whether to use DISTINCT (UNION) or ALL (UNION ALL)
+    pub distinct: bool,
+    /// The query to union with (right side of UNION)
+    pub query: Box<CypherQuery>,
+}
+
 // ==================== Query Builder Helpers ====================
 
 impl CypherQuery {
@@ -450,6 +464,7 @@ impl CypherQuery {
             reading_clauses: Vec::new(),
             updating_clauses: Vec::new(),
             with_clauses: Vec::new(),
+            union_clauses: Vec::new(), // TD-019: UNION clause support
             return_spec: None,
         }
     }

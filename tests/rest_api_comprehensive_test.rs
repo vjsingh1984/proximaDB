@@ -20,10 +20,10 @@
 //! Tests vector operations, collection operations, graph operations,
 //! and health checks to increase coverage from 5% to 80%+.
 
-use serde_json::json;
 use proximadb::network::rest::v1::handlers::{
     HybridIndexRequest, HybridSearchHit, HybridSearchRequest, HybridSearchResponse,
 };
+use serde_json::json;
 
 // ============================================================================
 // Vector Search Handler Tests
@@ -559,7 +559,12 @@ fn test_error_response_serialization() {
 
     let json = serde_json::to_value(&error).unwrap();
     assert_eq!(json["code"], 400);
-    assert!(json["message"].as_str().unwrap().contains("Invalid request"));
+    assert!(
+        json["message"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid request")
+    );
     assert_eq!(json["details"]["field"], "collection_id");
 }
 
@@ -570,8 +575,14 @@ fn test_validation_error_response() {
         message: "Validation error".to_string(),
         details: {
             let mut details = std::collections::HashMap::new();
-            details.insert("vector".to_string(), "must have at least 1 dimension".to_string());
-            details.insert("top_k".to_string(), "must be between 1 and 10000".to_string());
+            details.insert(
+                "vector".to_string(),
+                "must have at least 1 dimension".to_string(),
+            );
+            details.insert(
+                "top_k".to_string(),
+                "must be between 1 and 10000".to_string(),
+            );
             details
         },
     };

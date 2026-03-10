@@ -130,6 +130,7 @@ pub mod semantic_analysis;
 pub mod sql_frontend;
 pub mod unified; // Multi-model query engine (vector, document, graph, observability)
 pub mod unified_query_optimizer;
+pub mod utils;
 pub mod vector_search;
 
 #[cfg(test)]

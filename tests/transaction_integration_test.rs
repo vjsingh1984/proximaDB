@@ -19,8 +19,8 @@
 //! Tests the ACID transaction support across multiple data models.
 
 use proximadb::transaction::{
-    coordinator::CrossModelTransactionCoordinator, participants::*,
-    two_phase_commit::TransactionId, TransactionConfig,
+    TransactionConfig, coordinator::CrossModelTransactionCoordinator, participants::*,
+    two_phase_commit::TransactionId,
 };
 use std::path::PathBuf;
 
@@ -56,7 +56,10 @@ async fn test_cross_model_transaction_begin_commit() {
 
     // Check transaction state
     let state = coordinator.get_transaction_state(tx_id).await;
-    assert_eq!(state, Some(proximadb::transaction::TransactionState::Initialized));
+    assert_eq!(
+        state,
+        Some(proximadb::transaction::TransactionState::Initialized)
+    );
 
     // Commit transaction
     coordinator
@@ -69,7 +72,10 @@ async fn test_cross_model_transaction_begin_commit() {
 
     // Check committed state
     let state = coordinator.get_transaction_state(tx_id).await;
-    assert_eq!(state, Some(proximadb::transaction::TransactionState::Committed));
+    assert_eq!(
+        state,
+        Some(proximadb::transaction::TransactionState::Committed)
+    );
 
     // Check stats
     let stats = coordinator.get_stats().await;
@@ -112,7 +118,10 @@ async fn test_cross_model_transaction_rollback() {
 
     // Check aborted state
     let state = coordinator.get_transaction_state(tx_id).await;
-    assert_eq!(state, Some(proximadb::transaction::TransactionState::Aborted));
+    assert_eq!(
+        state,
+        Some(proximadb::transaction::TransactionState::Aborted)
+    );
 
     // Check stats
     let stats = coordinator.get_stats().await;
@@ -166,7 +175,10 @@ async fn test_cross_model_transaction_unhealthy_abort() {
 
     // Check aborted state
     let state = coordinator.get_transaction_state(tx_id).await;
-    assert_eq!(state, Some(proximadb::transaction::TransactionState::Aborted));
+    assert_eq!(
+        state,
+        Some(proximadb::transaction::TransactionState::Aborted)
+    );
 
     // Check stats
     let stats = coordinator.get_stats().await;
@@ -231,7 +243,10 @@ async fn test_cross_model_transaction_all_engines() {
 
     // Verify committed
     let state = coordinator.get_transaction_state(tx_id).await;
-    assert_eq!(state, Some(proximadb::transaction::TransactionState::Committed));
+    assert_eq!(
+        state,
+        Some(proximadb::transaction::TransactionState::Committed)
+    );
 
     // Cleanup
     let _ = tokio::fs::remove_dir_all(config.wal_dir).await;
@@ -252,10 +267,7 @@ async fn test_transaction_statistics() {
 
     // Register participant
     let participant = std::sync::Arc::new(VectorEngineParticipant::new("test"));
-    coordinator
-        .register_participant(participant)
-        .await
-        .unwrap();
+    coordinator.register_participant(participant).await.unwrap();
 
     // Begin multiple transactions
     let tx1 = coordinator.begin_transaction().await.unwrap();
@@ -322,10 +334,7 @@ async fn test_concurrent_transactions() {
         let handle = tokio::spawn(async move {
             let tx_id = coord_clone.begin_transaction().await.unwrap();
             coord_clone
-                .commit_transaction(
-                    tx_id,
-                    &["vector:concurrent".to_string()],
-                )
+                .commit_transaction(tx_id, &["vector:concurrent".to_string()])
                 .await
                 .unwrap();
             tx_id
@@ -344,7 +353,10 @@ async fn test_concurrent_transactions() {
     assert_eq!(tx_ids.len(), 10);
     for tx_id in tx_ids {
         let state = coordinator.get_transaction_state(tx_id).await;
-        assert_eq!(state, Some(proximadb::transaction::TransactionState::Committed));
+        assert_eq!(
+            state,
+            Some(proximadb::transaction::TransactionState::Committed)
+        );
     }
 
     // Check stats
