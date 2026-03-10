@@ -54,10 +54,10 @@ pub struct TlsAcceptor {
 impl TlsAcceptor {
     /// Create a new TLS acceptor from rustls ServerConfig
     pub fn new(config: Arc<ServerConfig>) -> Result<Self> {
-        let mtls_enabled = Self::is_mtls_enabled(&config);
-
-        let inner = TokioRustlsTlsAcceptor::new(config)
-            .map_err(|e| anyhow::anyhow!("Failed to create TLS acceptor: {}", e))?;
+        // rustls 0.21 does not expose client-auth policy on ServerConfig.
+        // Callers that know whether mTLS is required should use `with_mtls`.
+        let mtls_enabled = false;
+        let inner = TokioRustlsTlsAcceptor::from(config);
 
         Ok(Self {
             inner,
@@ -67,20 +67,12 @@ impl TlsAcceptor {
 
     /// Create a new TLS acceptor with explicit mTLS setting
     pub fn with_mtls(config: Arc<ServerConfig>, mtls_enabled: bool) -> Result<Self> {
-        let inner = TokioRustlsTlsAcceptor::new(config)
-            .map_err(|e| anyhow::anyhow!("Failed to create TLS acceptor: {}", e))?;
+        let inner = TokioRustlsTlsAcceptor::from(config);
 
         Ok(Self {
             inner,
             mtls_enabled,
         })
-    }
-
-    /// Check if the server config is configured for mTLS
-    fn is_mtls_enabled(config: &ServerConfig) -> bool {
-        // Check if client authentication is required
-        // In rustls, this is indicated by the presence of a client cert verifier
-        config.client_auth_mandatory()
     }
 
     /// Get the inner tokio-rustls acceptor
