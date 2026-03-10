@@ -193,17 +193,29 @@ impl CdcSource for MySqlConnector {
 
     async fn start(
         &mut self,
-        _event_tx: mpsc::Sender<ChangeEvent>,
-        _offset_store: Arc<dyn OffsetStore>,
+        event_tx: mpsc::Sender<ChangeEvent>,
+        offset_store: Arc<dyn OffsetStore>,
     ) -> CdcResult<SourceHandle> {
-        let _shutdown_rx = self.base.init_shutdown();
+        let shutdown_rx = self.base.init_shutdown();
         self.base.set_status(SourceStatus::Connecting);
 
-        // In a real implementation:
-        // 1. Connect to MySQL
-        // 2. Register as a slave
-        // 3. Request binlog dump
-        // 4. Process incoming binlog events
+        info!(
+            "Starting MySQL CDC connector for server: {}",
+            self.mysql_config.server_id
+        );
+
+        // TODO: Implement MySQL connection and binlog streaming
+        // This requires the mysql_async crate or similar
+        // For now, we set up the framework but don't connect
+        //
+        // Required implementation:
+        // 1. Connect to MySQL using mysql_async::Conn
+        // 2. Execute COM_REGISTER_SLAVE with server_id
+        // 3. Execute COM_BINLOG_DUMP with binlog filename/position or GTID
+        // 4. Read binlog events from the network stream
+        // 5. Decode events using BinlogDecoder
+        // 6. Send ChangeEvents through event_tx channel
+        // 7. Track position/GTID in offset_store
 
         self.base.set_status(SourceStatus::Streaming);
 

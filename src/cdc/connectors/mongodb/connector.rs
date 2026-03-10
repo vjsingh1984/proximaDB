@@ -208,16 +208,32 @@ impl CdcSource for MongoDbConnector {
 
     async fn start(
         &mut self,
-        _event_tx: mpsc::Sender<ChangeEvent>,
-        _offset_store: Arc<dyn OffsetStore>,
+        event_tx: mpsc::Sender<ChangeEvent>,
+        offset_store: Arc<dyn OffsetStore>,
     ) -> CdcResult<SourceHandle> {
-        let _shutdown_rx = self.base.init_shutdown();
+        let shutdown_rx = self.base.init_shutdown();
         self.base.set_status(SourceStatus::Connecting);
 
-        // In a real implementation:
-        // 1. Connect to MongoDB
-        // 2. Open change stream with resume token
-        // 3. Process incoming change events
+        info!(
+            "Starting MongoDB CDC connector for database: {}",
+            self.mongo_config
+                .database
+                .as_deref()
+                .unwrap_or("default")
+        );
+
+        // TODO: Implement MongoDB connection and change stream
+        // This requires the mongodb crate with async support
+        // For now, we set up the framework but don't connect
+        //
+        // Required implementation:
+        // 1. Connect to MongoDB using mongodb::Client
+        // 2. Get database and collection
+        // 3. Open change stream with resume token if available
+        // 4. Stream change events using event cursor
+        // 5. Convert MongoChangeEvent to ChangeEvent
+        // 6. Send ChangeEvents through event_tx channel
+        // 7. Track resume token in offset_store
 
         self.base.set_status(SourceStatus::Streaming);
 

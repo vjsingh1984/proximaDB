@@ -160,6 +160,9 @@ async fn run_replication_stream(
     mut shutdown_rx: watch::Receiver<bool>,
     connector_name: String,
 ) -> CdcResult<()> {
+    use bytes::Bytes;
+    use tokio_postgres::types::{Type, Oid};
+
     info!("Starting replication stream for {}", connector_name);
 
     // Connect for replication
@@ -168,12 +171,12 @@ async fn run_replication_stream(
         .map_err(|e| CdcError::Configuration(format!("Invalid connection string: {}", e)))?;
 
     // Use replication connection
-    let (client, connection) = config
+    let (client, mut connection) = config
         .connect(tokio_postgres::NoTls)
         .await
         .map_err(|e| CdcError::Connection(format!("Failed to connect: {}", e)))?;
 
-    // Spawn connection handler
+    // Spawn connection handler in background
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             error!("PostgreSQL replication connection error: {}", e);
@@ -193,7 +196,7 @@ async fn run_replication_stream(
         )
     };
 
-    client
+    let copy_stream = client
         .copy_both(&query, &[])
         .await
         .map_err(|e| CdcError::Connection(format!("Failed to start replication: {}", e)))?;
@@ -204,6 +207,7 @@ async fn run_replication_stream(
     let mut last_commit_lsn = start_lsn;
     let mut events_since_last_commit = 0;
     const COMMIT_INTERVAL: u64 = 100;
+    let mut stream = copy_stream;
 
     loop {
         // Check for shutdown
@@ -213,16 +217,20 @@ async fn run_replication_stream(
         }
 
         // Receive WAL data with timeout
-        match timeout(Duration::from_secs(5), receive_wal_data(&client)).await {
+        match timeout(Duration::from_secs(5), read_wal_message(&mut stream)).await {
             Ok(Ok(Some(wal_data))) => {
                 // Decode pgoutput message
-                let mut decoder = decoder.write().await;
-                if let Some(event) = decoder.decode(&wal_data) {
-                    *current_lsn.write().await = decoder.current_lsn();
+                let mut decoder_guard = decoder.write().await;
+                if let Some(event) = decoder_guard.decode(&wal_data) {
+                    *current_lsn.write().await = decoder_guard.current_lsn();
+                    let current_lsn_val = decoder_guard.current_lsn();
+
+                    // Drop decoder guard before async call
+                    drop(decoder_guard);
 
                     // Convert to ChangeEvent
                     if let Some(change_event) =
-                        convert_pgoutput_to_change_event(event, decoder.current_lsn(), &current_tx)
+                        convert_pgoutput_to_change_event(event, current_lsn_val, &current_tx)
                             .await
                     {
                         // Send event
@@ -270,29 +278,58 @@ async fn run_replication_stream(
     Ok(())
 }
 
-/// Receive WAL data from replication stream
-async fn receive_wal_data(client: &tokio_postgres::Client) -> CdcResult<Option<Vec<u8>>> {
-    use bytes::{BufMut, Bytes};
+/// Read WAL message from PostgreSQL replication stream
+async fn read_wal_message(
+    stream: &mut tokio_postgres::CopyBothStream<tokio_postgres::tls::NoTls>,
+) -> CdcResult<Option<Vec<u8>>> {
+    use bytes::Bytes;
 
-    // Try to receive WAL data
-    match try_receive_wal(client).await {
-        Ok(Some(data)) => Ok(Some(data)),
-        Ok(None) => Ok(None),
-        Err(e) => {
-            if e.to_string().contains("timeout") || e.to_string().contains("no data") {
-                Ok(None)
-            } else {
-                Err(e)
+    // PostgreSQL replication protocol sends messages in the format:
+    // Byte1('w'): XLogData - actual WAL data
+    // Byte1('k'): Primary keepalive message
+    //
+    // The message format is:
+    // Byte1: Message type
+    // Int64: Start LSN
+    // Int64: End LSN
+    // Int64: Send time
+    // Int8: (optional for keepalive) Reply requested
+
+    while let Some(data) = stream
+        .try_next()
+        .await
+        .map_err(|e| CdcError::Connection(format!("Failed to read from stream: {}", e)))?
+    {
+        // Process the raw bytes
+        if data.len() < 1 {
+            continue;
+        }
+
+        let msg_type = data[0] as char;
+
+        match msg_type {
+            'w' => {
+                // XLogData message - contains actual WAL data
+                // Format: type(1) + startLSN(8) + endLSN(8) + sendTime(8) + data(n)
+                // Skip the header (25 bytes: 1 + 8 + 8 + 8)
+                if data.len() > 25 {
+                    let wal_data = data.slice(25..);
+                    return Ok(Some(wal_data.to_vec()));
+                }
+            }
+            'k' => {
+                // Keepalive message - no WAL data
+                // Format: type(1) + endLSN(8) + sendTime(8) + replyRequested(1)
+                // We continue to wait for actual data
+                continue;
+            }
+            _ => {
+                // Unknown message type, skip
+                continue;
             }
         }
     }
-}
 
-/// Try to receive WAL data
-async fn try_receive_wal(client: &tokio_postgres::Client) -> CdcResult<Option<Vec<u8>>> {
-    // This is a simplified implementation
-    // In production, you'd use the actual replication stream API
-    // For now, we return None to indicate no data available
     Ok(None)
 }
 

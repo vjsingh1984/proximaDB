@@ -50,10 +50,10 @@ Technical debt items are prioritized based on their impact on the four developme
 | CDC connectors (inbound)
 | P3
 | Medium
-| Open
+| *In Progress*
 | Cannot capture changes from PostgreSQL/MySQL/MongoDB natively
-| 2-3 months
-| Outbound CDC ready, inbound connectors are stubs. Debezium recommended as workaround.
+| 1-2 months
+| *IN PROGRESS Mar 2026*: PostgreSQL connector 90% complete (replication stream, slot management, offset tracking complete; only missing actual WAL data reception from CopyBothStream). MySQL/MongoDB 70% complete (decoders and event conversion done; missing connection layer). Feature-gated behind `experimental-cdc-connectors`. Debezium still recommended for production.
 
 | TD-005
 | Multi-language SDKs
