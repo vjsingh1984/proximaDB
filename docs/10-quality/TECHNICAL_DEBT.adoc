@@ -64,7 +64,13 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *In Progress*
 | Cannot capture changes from PostgreSQL/MySQL/MongoDB natively
 | 1-2 months
-| *IN PROGRESS Mar 2026*: PostgreSQL connector 90% complete (replication stream, slot management, offset tracking complete; only missing actual WAL data reception from CopyBothStream). MySQL/MongoDB 70% complete (decoders and event conversion done; missing connection layer). Feature-gated behind `experimental-cdc-connectors`. Debezium still recommended for production.
+| *IN PROGRESS Mar 2026*: **PostgreSQL connector 100% complete** - Full logical replication with pgoutput protocol, WAL data reception via CopyBothStream, slot management, offset tracking, LSN tracking. MySQL/MongoDB 70% complete (decoders and event conversion done; missing network connection layer). Feature-gated behind `experimental-cdc-connectors`. Debezium still recommended for production MySQL/MongoDB.
+|  |  |  |  |
+|---|---|---|---
+| **Connector** | **Status** | **Location** | **Features** |
+| **PostgreSQL** | ✅ Complete | `src/cdc/connectors/postgres/connector.rs` | Logical replication, pgoutput protocol, WAL streaming, slot management, LSN tracking, offset storage |
+| **MySQL** | 🔄 70% | `src/cdc/connectors/mysql/connector.rs` | Binlog decoder complete, connection layer pending (requires mysql_async crate) |
+| **MongoDB** | 🔄 70% | `src/cdc/connectors/mongodb/connector.rs` | Change stream decoder complete, connection layer pending (requires mongodb crate) |
 
 | TD-005
 | Multi-language SDKs
