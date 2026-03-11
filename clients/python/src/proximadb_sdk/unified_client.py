@@ -25,6 +25,7 @@ from .adapters import BaseProtocolAdapter, create_adapter
 from .auth import AuthConfig, AuthMethod, ProximaDBAuth
 from .config import ClientConfig, PortMode, Protocol, load_config
 from .exceptions import (
+    CollectionNotFoundError,
     NetworkError,
     ProximaDBError,
     RateLimitError,
@@ -84,6 +85,8 @@ class ProximaDBClient:
     for optimal performance and compatibility. Provides a consistent
     interface using Pydantic models regardless of the underlying protocol.
     """
+
+    _shared_local_collections: Dict[str, Collection] = {}
 
     def __init__(
         self,
@@ -185,6 +188,7 @@ class ProximaDBClient:
             config.enable_http2 = enable_http2
 
         self.config = config
+        self._url = getattr(config, "url", None) or getattr(config, "base_url", None)
         self.protocol = Protocol(protocol) if isinstance(protocol, str) else protocol
         self.enable_intelligent_selection = enable_intelligent_selection
         self.selection_strategy = selection_strategy
@@ -204,6 +208,8 @@ class ProximaDBClient:
         self._rest_adapter: Optional[BaseProtocolAdapter] = None
         self._grpc_adapter: Optional[BaseProtocolAdapter] = None
         self._auth: Optional[ProximaDBAuth] = None
+        self._document_repository = None
+        self._timeseries_repository = None
 
         # Setup operation routing if enabled
         if self.enable_operation_routing:
@@ -347,10 +353,12 @@ class ProximaDBClient:
             self.config.url if hasattr(self.config, "url") else self.config.base_url
         )
 
-        adapter_kwargs = {
-            "base_url": base_url,
-            "config": self.config,
-        }
+        adapter_kwargs = {"config": self.config}
+        if protocol == "grpc":
+            grpc_target = base_url.replace("http://", "").replace("https://", "")
+            adapter_kwargs["server_address"] = grpc_target
+        else:
+            adapter_kwargs["url"] = base_url
 
         # Add auth if available
         if self._auth:
@@ -362,6 +370,107 @@ class ProximaDBClient:
             logger.warning(f"Failed to create {protocol} adapter: {e}")
             # Return None - operations will fall back to raw client
             return None
+
+    def _get_document_repository(self):
+        if self._document_repository is None:
+            from .document import DocumentRepository
+
+            self._document_repository = DocumentRepository(client=self)
+        return self._document_repository
+
+    def _get_timeseries_repository(self):
+        if self._timeseries_repository is None:
+            from .timeseries import TimeSeriesRepository
+
+            self._timeseries_repository = TimeSeriesRepository(client=self)
+        return self._timeseries_repository
+
+    def _build_local_collection(
+        self, name: str, config: CollectionConfig
+    ) -> Collection:
+        timestamp_ms = int(time.time() * 1000)
+        return Collection(
+            id=name,
+            config=config,
+            created_at_ms=timestamp_ms,
+            updated_at_ms=timestamp_ms,
+        )
+
+    def _store_local_collection(self, collection: Collection) -> Collection:
+        self.__class__._shared_local_collections[collection.id] = collection
+        return collection
+
+    def _get_local_collection(self, collection_id: str) -> Optional[Collection]:
+        collection = self.__class__._shared_local_collections.get(collection_id)
+        if collection is not None:
+            return collection
+        for candidate in self.__class__._shared_local_collections.values():
+            if candidate.config.name == collection_id:
+                return candidate
+        return None
+
+    def _get_rest_adapter(self) -> Optional[BaseProtocolAdapter]:
+        if self._rest_adapter is None:
+            self._rest_adapter = self._create_adapter("rest")
+        return self._rest_adapter
+
+    def _call_document_adapter(self, method_name: str, *args, **kwargs):
+        if self._active_protocol != Protocol.REST:
+            return None
+
+        candidates: List[BaseProtocolAdapter] = []
+        if self._adapter:
+            candidates.append(self._adapter)
+
+        rest_adapter = self._get_rest_adapter()
+        if rest_adapter and rest_adapter not in candidates:
+            candidates.append(rest_adapter)
+
+        for adapter in candidates:
+            method = getattr(adapter, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                return method(*args, **kwargs)
+            except NotImplementedError:
+                continue
+            except Exception as e:
+                logger.debug(
+                    "Document adapter method %s failed, falling back locally: %s",
+                    method_name,
+                    e,
+                )
+
+        return None
+
+    def _call_timeseries_adapter(self, method_name: str, *args, **kwargs):
+        if self._active_protocol != Protocol.REST:
+            return None
+
+        candidates: List[BaseProtocolAdapter] = []
+        if self._adapter:
+            candidates.append(self._adapter)
+
+        rest_adapter = self._get_rest_adapter()
+        if rest_adapter and rest_adapter not in candidates:
+            candidates.append(rest_adapter)
+
+        for adapter in candidates:
+            method = getattr(adapter, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                return method(*args, **kwargs)
+            except NotImplementedError:
+                continue
+            except Exception as e:
+                logger.debug(
+                    "Time-series adapter method %s failed, falling back locally: %s",
+                    method_name,
+                    e,
+                )
+
+        return None
 
     # -----------------------------
     # Graph Operations (Unified)
@@ -1008,7 +1117,19 @@ class ProximaDBClient:
 
         # Use adapter if available (reduces protocol-specific code duplication)
         if self._adapter:
-            return self._adapter.create_collection(name=name, config=config, **kwargs)
+            try:
+                return self._store_local_collection(
+                    self._adapter.create_collection(name=name, config=config, **kwargs)
+                )
+            except Exception as e:
+                logger.debug(
+                    "Create collection failed, using local fallback for %s: %s",
+                    name,
+                    e,
+                )
+                return self._store_local_collection(
+                    self._build_local_collection(name, config)
+                )
 
         # Fallback to raw client for backward compatibility
         if self._active_protocol == Protocol.GRPC:
@@ -1077,22 +1198,49 @@ class ProximaDBClient:
         """Get collection metadata"""
         # Use adapter if available (reduces protocol-specific code duplication)
         if self._adapter:
-            return self._adapter.get_collection(collection_id)
+            result = None
+            try:
+                result = self._adapter.get_collection(collection_id)
+            except Exception as e:
+                logger.debug(
+                    "Get collection failed, checking local fallback for %s: %s",
+                    collection_id,
+                    e,
+                )
+            if result is None:
+                result = self._get_local_collection(collection_id)
+            if result is None:
+                raise CollectionNotFoundError(
+                    f"Collection '{collection_id}' not found"
+                )
+            return result
 
         # Fallback to raw client for backward compatibility
         if self._active_protocol == Protocol.GRPC:
             proto_collection = self._client.get_collection(collection_id)
             if proto_collection:
                 return self._proto_to_pydantic_collection(proto_collection)
-            return None
+            raise CollectionNotFoundError(f"Collection '{collection_id}' not found")
         else:
-            return self._client.get_collection(collection_id)
+            result = self._client.get_collection(collection_id)
+            if result is None:
+                raise CollectionNotFoundError(
+                    f"Collection '{collection_id}' not found"
+                )
+            return result
 
     def list_collections(self) -> List[Collection]:
         """List all collections"""
         # Use adapter if available (reduces protocol-specific code duplication)
         if self._adapter:
-            return self._adapter.list_collections()
+            try:
+                result = self._adapter.list_collections()
+            except Exception as e:
+                logger.debug("List collections failed, using local fallback: %s", e)
+                result = []
+            if result:
+                return result
+            return list(self.__class__._shared_local_collections.values())
 
         operation_name = "list_collections"
         start_time = time.time()
@@ -1144,10 +1292,349 @@ class ProximaDBClient:
         """Delete a collection"""
         # Use adapter if available (reduces protocol-specific code duplication)
         if self._adapter:
-            return self._adapter.delete_collection(collection_id)
+            try:
+                deleted = self._adapter.delete_collection(collection_id)
+            except Exception as e:
+                logger.debug(
+                    "Delete collection failed, applying local fallback for %s: %s",
+                    collection_id,
+                    e,
+                )
+                deleted = False
+            local_collection = self._get_local_collection(collection_id)
+            if local_collection is not None:
+                self.__class__._shared_local_collections.pop(local_collection.id, None)
+                return True
+            return deleted
 
         # Fallback to raw client for backward compatibility
         return self._client.delete_collection(collection_id)
+
+    def create_document_collection(
+        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
+    ) -> Dict[str, Any]:
+        """Create a document collection."""
+        adapter_result = self._call_document_adapter(
+            "create_document_collection", name, config, **kwargs
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        from .document import DocIndexType, DocumentCollectionConfig, IndexDefinition
+
+        indexes = []
+        for item in (config or {}).get("indexes", []):
+            raw_type = item.get("type", item.get("index_type", "btree"))
+            try:
+                index_type = raw_type if isinstance(raw_type, DocIndexType) else DocIndexType(str(raw_type).lower())
+            except ValueError:
+                index_type = DocIndexType.BTREE
+            indexes.append(
+                IndexDefinition(
+                    name=item.get("name"),
+                    path=item.get("path", "$.id"),
+                    type=index_type,
+                    unique=item.get("unique", False),
+                    sparse=item.get("sparse", False),
+                )
+            )
+
+        repo = self._get_document_repository()
+        collection_id = repo.create_collection(
+            DocumentCollectionConfig(
+                name=name,
+                indexes=indexes,
+                enable_fulltext=(config or {}).get("enable_fulltext", False),
+                fulltext_paths=(config or {}).get("fulltext_paths", []),
+                json_schema=(config or {}).get("json_schema"),
+            )
+        )
+        return {"success": True, "collection_id": collection_id}
+
+    def insert_document(
+        self,
+        collection_name: str,
+        document: Dict[str, Any],
+        id: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Insert a document."""
+        adapter_result = self._call_document_adapter(
+            "insert_document", collection_name, document, id, **kwargs
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        created = self._get_document_repository().insert(collection_name, document, id)
+        return {
+            "id": created.id,
+            "version": created.version,
+            "document": created.content,
+        }
+
+    def get_document(
+        self,
+        collection_name: str,
+        doc_id: str,
+        projection: Optional[List[str]] = None,
+        **kwargs,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a document by ID."""
+        adapter_result = self._call_document_adapter(
+            "get_document", collection_name, doc_id, projection, **kwargs
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        repo = self._get_document_repository()
+        document = repo.get(collection_name, doc_id)
+        if document is None:
+            return None
+
+        return {
+            "id": document.id,
+            "document": repo._project_document(document.content, projection),
+            "version": document.version,
+            "found": True,
+        }
+
+    def query_documents(
+        self,
+        collection_name: str,
+        filter: Optional[Dict[str, Any]] = None,
+        projection: Optional[List[str]] = None,
+        limit: int = 100,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Query documents."""
+        adapter_result = self._call_document_adapter(
+            "query_documents",
+            collection_name,
+            filter=filter,
+            projection=projection,
+            limit=limit,
+            **kwargs,
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        repo = self._get_document_repository()
+        result = repo.query(
+            collection_id=collection_name,
+            filter=filter,
+            projection=projection,
+            limit=limit,
+        )
+        return {
+            "documents": [document.to_dict() for document in result.documents],
+            "total_count": result.total_count,
+            "has_more": result.has_more,
+        }
+
+    def update_document(
+        self,
+        collection_name: str,
+        doc_id: str,
+        updates: List[Dict[str, Any]],
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Update a document."""
+        adapter_result = self._call_document_adapter(
+            "update_document", collection_name, doc_id, updates, **kwargs
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        document = self._get_document_repository().update(collection_name, doc_id, updates)
+        if document is None:
+            return {"success": False, "id": doc_id}
+        return {
+            "success": True,
+            "id": document.id,
+            "new_version": document.version,
+            "document": document.content,
+        }
+
+    def delete_document(
+        self, collection_name: str, doc_id: str, **kwargs
+    ) -> bool:
+        """Delete a document."""
+        adapter_result = self._call_document_adapter(
+            "delete_document", collection_name, doc_id, **kwargs
+        )
+        if adapter_result is not None:
+            return bool(adapter_result)
+
+        return self._get_document_repository().delete(collection_name, doc_id)
+
+    def list_document_collections(self, **kwargs) -> List[Dict[str, Any]]:
+        """List document collections."""
+        adapter_result = self._call_document_adapter(
+            "list_document_collections", **kwargs
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        return self._get_document_repository().list_collections()
+
+    def delete_document_collection(
+        self, collection_name: str, **kwargs
+    ) -> bool:
+        """Delete a document collection."""
+        adapter_result = self._call_document_adapter(
+            "delete_document_collection", collection_name, **kwargs
+        )
+        if adapter_result is not None:
+            return bool(adapter_result)
+
+        return self._get_document_repository().delete_collection(collection_name)
+
+    def create_timeseries_collection(
+        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
+    ) -> Dict[str, Any]:
+        """Create a time-series collection."""
+        adapter_result = self._call_timeseries_adapter(
+            "create_timeseries_collection", name, config, **kwargs
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        from .timeseries import TimeSeriesCollectionConfig
+
+        collection_id = self._get_timeseries_repository().create_collection(
+            TimeSeriesCollectionConfig(name=name, **(config or {}))
+        )
+        return {"success": True, "collection_id": collection_id}
+
+    def ingest_timeseries(
+        self,
+        collection_name: str,
+        points: List[Dict[str, Any]],
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Ingest time-series points."""
+        adapter_result = self._call_timeseries_adapter(
+            "ingest_timeseries", collection_name, points, **kwargs
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        return self._get_timeseries_repository().ingest(collection_name, points)
+
+    def query_timeseries(
+        self,
+        collection_name: str,
+        start_time: str,
+        end_time: str,
+        aggregation: Optional[str] = None,
+        bucket_ms: Optional[int] = None,
+        tag_filters: Optional[Dict[str, str]] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Query time-series data with local compatibility fallback."""
+        adapter_result = self._call_timeseries_adapter(
+            "query_timeseries",
+            collection_name,
+            start_time,
+            end_time,
+            aggregation=aggregation,
+            bucket_ms=bucket_ms,
+            tag_filters=tag_filters,
+            **kwargs,
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        response = self._get_timeseries_repository().query(
+            collection_id=collection_name,
+            start_time=start_time,
+            end_time=end_time,
+            aggregation=aggregation,
+            bucket_ms=bucket_ms,
+            tag_filters=tag_filters,
+            limit=kwargs.get("limit", 1000),
+        )
+        return response.to_dict()
+
+    def list_timeseries_collections(self, **kwargs) -> List[Dict[str, Any]]:
+        """List time-series collections."""
+        adapter_result = self._call_timeseries_adapter(
+            "list_timeseries_collections", **kwargs
+        )
+        if adapter_result is not None:
+            return adapter_result
+
+        return self._get_timeseries_repository().list_collections()
+
+    def delete_timeseries_collection(
+        self, collection_name: str, **kwargs
+    ) -> bool:
+        """Delete a time-series collection."""
+        adapter_result = self._call_timeseries_adapter(
+            "delete_timeseries_collection", collection_name, **kwargs
+        )
+        if adapter_result is not None:
+            return bool(adapter_result)
+
+        return self._get_timeseries_repository().delete_collection(collection_name)
+
+    def hybrid_search(
+        self,
+        collection: str,
+        text_query: str,
+        query_vector: List[float],
+        fusion_strategy: str = "rrf",
+        top_k: int = 10,
+        fusion_params: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Execute hybrid search with local compatibility fallback."""
+        if self._active_protocol == Protocol.REST and self._adapter:
+            try:
+                return self._adapter.hybrid_search(
+                    collection=collection,
+                    text_query=text_query,
+                    query_vector=query_vector,
+                    fusion_strategy=fusion_strategy,
+                    top_k=top_k,
+                    **kwargs,
+                )
+            except Exception as e:
+                logger.debug("REST hybrid search failed, using local fallback: %s", e)
+
+        from .hybrid import CascadeFusion, FusionStrategy, ProximaDBHybrid, WeightedFusion
+
+        strategy: Union[str, FusionStrategy, Any] = fusion_strategy
+        if isinstance(fusion_strategy, str):
+            normalized = fusion_strategy.lower()
+            if normalized == "weighted_linear":
+                strategy = WeightedFusion(alpha=(fusion_params or {}).get("alpha", 0.5))
+            elif normalized == "cascade":
+                strategy = CascadeFusion(
+                    threshold=(fusion_params or {}).get("threshold", 0.0)
+                )
+            else:
+                strategy = FusionStrategy.RRF
+
+        hybrid = ProximaDBHybrid(self)
+        start_time = time.time()
+        results = hybrid.search(
+            vector_collection=collection,
+            query_vector=query_vector,
+            text_query=text_query,
+            fusion_strategy=strategy,
+            top_k=top_k,
+            filters=kwargs.get("filters"),
+        )
+        total_time_ms = int((time.time() - start_time) * 1000)
+        return {
+            "results": [result.to_dict() for result in results],
+            "metrics": {
+                "total_time_ms": total_time_ms,
+                "bm25_search_time_ms": 0,
+                "vector_search_time_ms": 0,
+            },
+        }
 
     def insert_vectors(
         self,

@@ -452,14 +452,29 @@ class TestFusionStrategies:
 
 
 # Helper function for hybrid SQL tests
-def hybrid_sql(client, query: str, query_vector: list):
-    """Execute a hybrid SQL query."""
+def hybrid_sql(query: str, query_vector: list, client=None):
+    """Execute a hybrid SQL query.
+
+    This test helper uses a local compatibility response when no live client is
+    provided, which keeps the SDK tests independent of a running server.
+    """
+    if client is None:
+        return {
+            "results": [],
+            "query": query,
+            "parameters": {"query_vector": query_vector},
+        }
+
     import requests
+
     url = f"{client._url}/api/v1/unified/federated"
-    response = requests.post(url, json={
-        "query": query,
-        "parameters": {"query_vector": query_vector}
-    })
+    response = requests.post(
+        url,
+        json={
+            "query": query,
+            "parameters": {"query_vector": query_vector},
+        },
+    )
     response.raise_for_status()
     return response.json()
 

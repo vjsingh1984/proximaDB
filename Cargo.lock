@@ -6144,6 +6144,7 @@ dependencies = [
  "flate2",
  "flume",
  "futures",
+ "futures-util",
  "google-cloud-storage",
  "half",
  "hex",

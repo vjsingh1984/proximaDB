@@ -31,6 +31,7 @@
 use std::collections::HashMap;
 use std::io::{self, Cursor, Read};
 
+use serde_json;
 use crate::cdc::error::{CdcError, CdcResult};
 
 /// Helper trait for reading values
@@ -443,6 +444,125 @@ pub enum BinlogEvent {
     Rotate { filename: String, position: u64 },
 }
 
+impl BinlogEvent {
+    /// Get the event type for CDC conversion
+    pub fn event_type(&self) -> Option<BinlogEventType> {
+        match self {
+            BinlogEvent::WriteRows(_) => Some(BinlogEventType::WRITE_ROWS_EVENT),
+            BinlogEvent::UpdateRows(_) => Some(BinlogEventType::UPDATE_ROWS_EVENT),
+            BinlogEvent::DeleteRows(_) => Some(BinlogEventType::DELETE_ROWS_EVENT),
+            _ => None,
+        }
+    }
+
+    /// Get the database name
+    pub fn database(&self) -> String {
+        match self {
+            BinlogEvent::WriteRows(e) => e.table_map.as_ref()
+                .map(|t| t.schema.clone())
+                .unwrap_or_default(),
+            BinlogEvent::UpdateRows(e) => e.table_map.as_ref()
+                .map(|t| t.schema.clone())
+                .unwrap_or_default(),
+            BinlogEvent::DeleteRows(e) => e.table_map.as_ref()
+                .map(|t| t.schema.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
+    /// Get the table name
+    pub fn table_name(&self) -> Option<String> {
+        match self {
+            BinlogEvent::WriteRows(e) => e.table_map.as_ref()
+                .map(|t| t.table.clone()),
+            BinlogEvent::UpdateRows(e) => e.table_map.as_ref()
+                .map(|t| t.table.clone()),
+            BinlogEvent::DeleteRows(e) => e.table_map.as_ref()
+                .map(|t| t.table.clone()),
+            _ => None,
+        }
+    }
+
+    /// Get the row ID (primary key or first column)
+    pub fn row_id(&self) -> Option<String> {
+        match self {
+            BinlogEvent::WriteRows(e) => e.rows.first().and_then(|r| {
+                r.after.as_ref().and_then(|cols| cols.first().and_then(|c| c.as_string()))
+            }),
+            BinlogEvent::UpdateRows(e) => e.rows.first().and_then(|r| {
+                r.before.as_ref().and_then(|cols| cols.first().and_then(|c| c.as_string()))
+                    .or_else(|| r.after.as_ref().and_then(|cols| cols.first().and_then(|c| c.as_string())))
+            }),
+            BinlogEvent::DeleteRows(e) => e.rows.first().and_then(|r| {
+                r.before.as_ref().and_then(|cols| cols.first().and_then(|c| c.as_string()))
+            }),
+            _ => None,
+        }
+    }
+
+    /// Get the position in the binlog
+    pub fn position(&self) -> Option<u64> {
+        match self {
+            BinlogEvent::Rotate { position, .. } => Some(*position),
+            _ => None,
+        }
+    }
+
+    /// Get the row data as JSON
+    pub fn row_data(&self) -> Option<serde_json::Value> {
+        match self {
+            BinlogEvent::WriteRows(e) => rows_to_json(&e.rows, &e.table_map),
+            BinlogEvent::UpdateRows(e) => rows_to_json(&e.rows, &e.table_map),
+            BinlogEvent::DeleteRows(e) => rows_to_json(&e.rows, &e.table_map),
+            _ => None,
+        }
+    }
+}
+
+/// Helper to convert rows to JSON
+fn rows_to_json(rows: &[RowData], table_map: &Option<TableMapEvent>) -> Option<serde_json::Value> {
+    if rows.is_empty() {
+        return None;
+    }
+
+    // Get the first row
+    let row = &rows[0];
+
+    // Use "after" for INSERT/UPDATE, "before" for DELETE
+    let columns = row.after.as_ref().or(row.before.as_ref())?;
+
+    let columns_def = table_map.as_ref().map(|t| &t.columns).unwrap_or(&vec![]);
+
+    let mut obj = serde_json::map::Map::new();
+    for (i, col) in columns.iter().enumerate() {
+        let col_name = columns_def
+            .get(i)
+            .and_then(|c| c.name.as_ref())
+            .unwrap_or(&format!("col_{}", i));
+
+        let value = match col {
+            ColumnValue::Null => serde_json::Value::Null,
+            ColumnValue::String(s) => serde_json::json!(s),
+            ColumnValue::Int(i) | ColumnValue::UInt(i) => serde_json::json!(i),
+            ColumnValue::Float(f) => serde_json::json!(f),
+            ColumnValue::Bytes(b) => serde_json::json!(b),
+            ColumnValue::Json(j) => j.clone(),
+        };
+        obj.insert(col_name.clone(), value);
+    }
+
+    Some(serde_json::Value::Object(obj))
+}
+
+/// Simplified binlog event type for CDC conversion
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinlogEventType {
+    WRITE_ROWS_EVENT,
+    UPDATE_ROWS_EVENT,
+    DELETE_ROWS_EVENT,
+}
+
 /// Table map event
 #[derive(Debug, Clone)]
 pub struct TableMapEvent {
@@ -577,6 +697,24 @@ pub enum ColumnValue {
     String(String),
     Bytes(Vec<u8>),
     Json(serde_json::Value),
+}
+
+impl ColumnValue {
+    /// Try to convert column value to string
+    pub fn as_string(&self) -> Option<String> {
+        match self {
+            ColumnValue::Null => None,
+            ColumnValue::Int(i) => Some(i.to_string()),
+            ColumnValue::UInt(u) => Some(u.to_string()),
+            ColumnValue::Float(f) => Some(f.to_string()),
+            ColumnValue::String(s) => Some(s.clone()),
+            ColumnValue::Bytes(b) => {
+                // Try to convert bytes to UTF-8 string
+                String::from_utf8(b.clone()).ok()
+            }
+            ColumnValue::Json(j) => Some(j.to_string()),
+        }
+    }
 }
 
 /// Query event

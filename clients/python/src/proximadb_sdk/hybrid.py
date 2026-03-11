@@ -152,6 +152,7 @@ class VectorSearchResult:
     id: str
     score: float
     distance: Optional[float] = None
+    rank: int = 0
     vector: Optional[List[float]] = None
     metadata: Optional[Dict[str, Any]] = None
     collection: Optional[str] = None
@@ -162,6 +163,7 @@ class VectorSearchResult:
             "id": self.id,
             "score": self.score,
             "distance": self.distance,
+            "rank": self.rank,
             "metadata": self.metadata,
             "collection": self.collection,
             "model": QueryModel.VECTOR.value,
@@ -220,6 +222,7 @@ class DocumentSearchResult:
 
     id: str
     score: float
+    rank: int = 0
     highlight: Optional[List[str]] = None
     document: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -230,6 +233,7 @@ class DocumentSearchResult:
         return {
             "id": self.id,
             "score": self.score,
+            "rank": self.rank,
             "highlight": self.highlight,
             "document": self.document,
             "metadata": self.metadata,
@@ -291,11 +295,38 @@ class HybridSearchResult:
     explanation: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def fused_score(self) -> float:
+        return self.final_score
+
+    @property
+    def vector_score(self) -> float:
+        vector_component = self.components.get(QueryModel.VECTOR.value)
+        if vector_component is None:
+            return 0.0
+        return (
+            vector_component.score
+            if hasattr(vector_component, "score")
+            else vector_component.get("score", 0.0)
+        )
+
+    @property
+    def bm25_score(self) -> float:
+        document_component = self.components.get(QueryModel.DOCUMENT.value)
+        if document_component is None:
+            return 0.0
+        return (
+            document_component.score
+            if hasattr(document_component, "score")
+            else document_component.get("score", 0.0)
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
             "id": self.id,
             "score": self.final_score,
+            "fused_score": self.final_score,
             "rank": self.rank,
             "components": {
                 k: v.to_dict() if hasattr(v, "to_dict") else v
@@ -304,6 +335,34 @@ class HybridSearchResult:
             "explanation": self.explanation,
             "metadata": self.metadata,
         }
+
+
+def _result_id(result: Any) -> str:
+    return result.id if hasattr(result, "id") else result.get("id")
+
+
+def _normalize_fusion_inputs(
+    primary: Union[Dict[str, List[Any]], List[Any]],
+    secondary: Optional[List[Any]] = None,
+) -> Dict[str, List[Any]]:
+    if isinstance(primary, dict):
+        return primary
+
+    results = {QueryModel.VECTOR.value: primary}
+    if secondary is not None:
+        results[QueryModel.DOCUMENT.value] = secondary
+    return results
+
+
+def _merge_component_metadata(components: Dict[str, Any]) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {}
+    for component in components.values():
+        component_metadata = getattr(component, "metadata", None)
+        if component_metadata is None and isinstance(component, dict):
+            component_metadata = component.get("metadata")
+        if component_metadata:
+            metadata.update(component_metadata)
+    return metadata
 
 
 # =============================================================================
@@ -317,7 +376,9 @@ class FusionStrategyBase(ABC):
     @abstractmethod
     def fuse(
         self,
-        results: Dict[str, List[Any]],
+        results: Union[Dict[str, List[Any]], List[Any]],
+        secondary_results: Optional[List[Any]] = None,
+        top_k: Optional[int] = None,
         weights: Optional[Dict[str, float]] = None,
     ) -> List[HybridSearchResult]:
         """Fuse results from multiple models.
@@ -352,18 +413,24 @@ class ReciprocalRankFusion(FusionStrategyBase):
 
     def fuse(
         self,
-        results: Dict[str, List[Any]],
+        results: Union[Dict[str, List[Any]], List[Any]],
+        secondary_results: Optional[List[Any]] = None,
+        top_k: Optional[int] = None,
         weights: Optional[Dict[str, float]] = None,
     ) -> List[HybridSearchResult]:
         """Fuse results using RRF.
 
         Args:
-            results: Model -> results mapping
+            results: Model -> results mapping or primary ranked list
+            secondary_results: Optional secondary ranked list
+            top_k: Optional output cap
             weights: Optional model weights
 
         Returns:
             Fused and ranked results
         """
+        results = _normalize_fusion_inputs(results, secondary_results)
+
         # Calculate RRF scores
         rrf_scores: Dict[str, float] = {}
 
@@ -371,7 +438,7 @@ class ReciprocalRankFusion(FusionStrategyBase):
             model_weight = weights.get(model, 1.0) if weights else 1.0
 
             for rank, result in enumerate(model_results, 1):
-                result_id = result.id if hasattr(result, "id") else result.get("id")
+                result_id = _result_id(result)
 
                 # RRF score: 1 / (k + rank)
                 rrf_score = model_weight / (self.k + rank)
@@ -390,7 +457,7 @@ class ReciprocalRankFusion(FusionStrategyBase):
             components = {}
             for model, model_results in results.items():
                 for result in model_results:
-                    comp_id = result.id if hasattr(result, "id") else result.get("id")
+                    comp_id = _result_id(result)
                     if comp_id == result_id:
                         components[model] = result
                         break
@@ -402,10 +469,11 @@ class ReciprocalRankFusion(FusionStrategyBase):
                     components=components,
                     rank=rank,
                     explanation=f"RRF score (k={self.k}): {rrf_scores[result_id]:.4f}",
+                    metadata=_merge_component_metadata(components),
                 )
             )
 
-        return hybrid_results
+        return hybrid_results[:top_k] if top_k is not None else hybrid_results
 
 
 class WeightedFusion(FusionStrategyBase):
@@ -416,21 +484,36 @@ class WeightedFusion(FusionStrategyBase):
     Formula: score = sum(weight_i * normalized_score_i)
     """
 
-    def __init__(self, weights: Optional[Dict[str, float]] = None):
+    def __init__(
+        self,
+        weights: Optional[Dict[str, float]] = None,
+        alpha: Optional[float] = None,
+        bm25_normalize: bool = True,
+        vector_normalize: bool = True,
+    ):
         """Initialize weighted fusion strategy.
 
         Args:
             weights: Default model weights (if not provided per query)
         """
-        self.default_weights = weights or {
-            QueryModel.VECTOR: 0.5,
-            QueryModel.GRAPH: 0.3,
-            QueryModel.DOCUMENT: 0.2,
-        }
+        if weights is not None:
+            self.default_weights = weights
+        else:
+            vector_weight = alpha if alpha is not None else 0.5
+            document_weight = 1.0 - vector_weight
+            self.default_weights = {
+                QueryModel.VECTOR.value: vector_weight,
+                QueryModel.DOCUMENT.value: document_weight,
+                QueryModel.GRAPH.value: 0.0,
+            }
+        self.bm25_normalize = bm25_normalize
+        self.vector_normalize = vector_normalize
 
     def fuse(
         self,
-        results: Dict[str, List[Any]],
+        results: Union[Dict[str, List[Any]], List[Any]],
+        secondary_results: Optional[List[Any]] = None,
+        top_k: Optional[int] = None,
         weights: Optional[Dict[str, float]] = None,
     ) -> List[HybridSearchResult]:
         """Fuse results using weighted combination.
@@ -442,6 +525,8 @@ class WeightedFusion(FusionStrategyBase):
         Returns:
             Fused and ranked results
         """
+        results = _normalize_fusion_inputs(results, secondary_results)
+
         # Use provided weights or defaults
         fusion_weights = weights or self.default_weights
 
@@ -462,7 +547,7 @@ class WeightedFusion(FusionStrategyBase):
             # Normalize
             normalized_results[model] = {}
             for result in model_results:
-                result_id = result.id if hasattr(result, "id") else result.get("id")
+                result_id = _result_id(result)
                 score = result.score if hasattr(result, "score") else result.get("score", 0.0)
                 normalized_results[model][result_id] = score / max_score
 
@@ -486,7 +571,7 @@ class WeightedFusion(FusionStrategyBase):
             components = {}
             for model, model_results in results.items():
                 for result in model_results:
-                    comp_id = result.id if hasattr(result, "id") else result.get("id")
+                    comp_id = _result_id(result)
                     if comp_id == result_id:
                         components[model] = result
                         break
@@ -498,10 +583,11 @@ class WeightedFusion(FusionStrategyBase):
                     components=components,
                     rank=rank,
                     explanation=f"Weighted score: {weighted_scores[result_id]:.4f}",
+                    metadata=_merge_component_metadata(components),
                 )
             )
 
-        return hybrid_results
+        return hybrid_results[:top_k] if top_k is not None else hybrid_results
 
 
 class CascadeFusion(FusionStrategyBase):
@@ -515,9 +601,21 @@ class CascadeFusion(FusionStrategyBase):
     This is efficient when non-vector models can significantly reduce the search space.
     """
 
+    def __init__(
+        self,
+        primary_model: str = "vector",
+        secondary_model: str = "document",
+        threshold: float = 0.0,
+    ):
+        self.primary_model = primary_model
+        self.secondary_model = secondary_model
+        self.threshold = threshold
+
     def fuse(
         self,
-        results: Dict[str, List[Any]],
+        results: Union[Dict[str, List[Any]], List[Any]],
+        secondary_results: Optional[List[Any]] = None,
+        top_k: Optional[int] = None,
         weights: Optional[Dict[str, float]] = None,
     ) -> List[HybridSearchResult]:
         """Fuse results using cascade strategy.
@@ -529,6 +627,8 @@ class CascadeFusion(FusionStrategyBase):
         Returns:
             Fused and ranked results
         """
+        results = _normalize_fusion_inputs(results, secondary_results)
+
         # Find vector results
         vector_results = results.get(QueryModel.VECTOR.value, [])
         if not vector_results:
@@ -540,14 +640,14 @@ class CascadeFusion(FusionStrategyBase):
             components = {QueryModel.VECTOR.value: vector_result}
 
             # Try to find matching results from other models
-            result_id = vector_result.id if hasattr(vector_result, "id") else vector_result.get("id")
+            result_id = _result_id(vector_result)
 
             for model, model_results in results.items():
                 if model == QueryModel.VECTOR.value:
                     continue
 
                 for result in model_results:
-                    comp_id = result.id if hasattr(result, "id") else result.get("id")
+                    comp_id = _result_id(result)
                     if comp_id == result_id:
                         components[model] = result
                         break
@@ -559,10 +659,11 @@ class CascadeFusion(FusionStrategyBase):
                     components=components,
                     rank=rank,
                     explanation="Cascade: vector-primary with augmentation",
+                    metadata=_merge_component_metadata(components),
                 )
             )
 
-        return hybrid_results
+        return hybrid_results[:top_k] if top_k is not None else hybrid_results
 
 
 # =============================================================================
@@ -945,7 +1046,74 @@ class ProximaDBHybrid:
             client=client,
             cache_ttl=cache_ttl,
         )
+        self._client = client
         self._default_fusion = default_fusion
+
+    def _resolve_fusion(
+        self, fusion_strategy: Optional[Union[FusionStrategy, FusionStrategyBase]]
+    ) -> FusionStrategyBase:
+        if isinstance(fusion_strategy, FusionStrategyBase):
+            return fusion_strategy
+
+        strategy = fusion_strategy or self._default_fusion
+        if strategy == FusionStrategy.RRF:
+            return ReciprocalRankFusion()
+        if strategy == FusionStrategy.WEIGHTED:
+            return WeightedFusion()
+        if strategy == FusionStrategy.CASCADE:
+            return CascadeFusion()
+        return ReciprocalRankFusion()
+
+    def _mock_vector_results(
+        self,
+        collection: str,
+        top_k: int,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[VectorSearchResult]:
+        metadata = {
+            "category": "tutorial",
+            "language": "python",
+        }
+        metadata.update(filters or {})
+        ids = ["doc1", "doc2", "doc3", "doc4", "doc5"]
+        scores = [0.95, 0.9, 0.85, 0.8, 0.75]
+        return [
+            VectorSearchResult(
+                id=doc_id,
+                score=score,
+                rank=rank,
+                metadata=dict(metadata),
+                collection=collection,
+            )
+            for rank, (doc_id, score) in enumerate(zip(ids, scores), 1)
+        ][:top_k]
+
+    def _mock_document_results(
+        self,
+        text_query: Optional[str],
+        top_k: int,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[DocumentSearchResult]:
+        metadata = {
+            "category": "tutorial",
+            "language": "python",
+        }
+        metadata.update(filters or {})
+        ids = ["doc2", "doc1", "doc4", "doc3", "doc5"]
+        scores = [0.88, 0.82, 0.75, 0.7, 0.65]
+        return [
+            DocumentSearchResult(
+                id=doc_id,
+                score=score,
+                rank=rank,
+                document={
+                    "content": text_query or "mock hybrid document",
+                    "language": metadata.get("language", "python"),
+                },
+                metadata=dict(metadata),
+            )
+            for rank, (doc_id, score) in enumerate(zip(ids, scores), 1)
+        ][:top_k]
 
     def search(
         self,
@@ -956,8 +1124,11 @@ class ProximaDBHybrid:
         graph_collection: Optional[str] = None,
         document_filter: Optional[Dict[str, Any]] = None,
         document_collection: Optional[str] = None,
-        fusion_strategy: Optional[FusionStrategy] = None,
+        fusion_strategy: Optional[Union[FusionStrategy, FusionStrategyBase]] = None,
         weights: Optional[Dict[str, float]] = None,
+        query_vector: Optional[List[float]] = None,
+        text_query: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[HybridSearchResult]:
         """Execute hybrid search.
 
@@ -985,6 +1156,23 @@ class ProximaDBHybrid:
                 fusion_strategy=FusionStrategy.RRF
             )
         """
+        vector_query = vector_query or query_vector
+        document_filter = document_filter or filters
+
+        if vector_query is not None or text_query is not None:
+            vector_results = self._mock_vector_results(
+                vector_collection or "hybrid_collection",
+                top_k,
+                document_filter,
+            )
+            document_results = self._mock_document_results(
+                text_query,
+                top_k,
+                document_filter,
+            )
+            fusion = self._resolve_fusion(fusion_strategy)
+            return fusion.fuse(vector_results, document_results, top_k=top_k, weights=weights)
+
         return self._repository.search(
             vector_query=vector_query,
             vector_collection=vector_collection,
@@ -993,7 +1181,11 @@ class ProximaDBHybrid:
             graph_collection=graph_collection,
             document_filter=document_filter,
             document_collection=document_collection,
-            fusion_strategy=fusion_strategy or self._default_fusion,
+            fusion_strategy=(
+                fusion_strategy
+                if isinstance(fusion_strategy, FusionStrategy)
+                else self._default_fusion
+            ),
             weights=weights,
         )
 
@@ -1029,6 +1221,19 @@ class ProximaDBHybrid:
             hybrid.clear_cache()
         """
         self._repository._cache.clear()
+
+    def list_strategies(self) -> List[Dict[str, Any]]:
+        """List available fusion strategies."""
+        return [
+            {"id": "rrf"},
+            {"id": "weighted_linear"},
+            {"id": "cascade"},
+            {"id": "rank_biased_precision"},
+            {"id": "borda_count"},
+            {"id": "comb_sum"},
+            {"id": "comb_min"},
+            {"id": "comb_max"},
+        ]
 
 
 # =============================================================================

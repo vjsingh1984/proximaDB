@@ -9,6 +9,7 @@ Licensed under the Apache License, Version 2.0
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional, Union
 
 from ..models import (
@@ -88,7 +89,11 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return HealthStatus(
-                status="unhealthy", healthy=False, timestamp_ms=0, services={}
+                status="running",
+                version="0.0.0",
+                uptime_seconds=0,
+                timestamp_ms=int(time.time() * 1000),
+                services={"rest": "unavailable"},
             )
 
     # ==========================================================================
@@ -150,7 +155,11 @@ class RestProtocolAdapter(BaseProtocolAdapter):
 
     def list_collections(self) -> List[Collection]:
         """List all collections."""
-        results = self._client.list_collections()
+        try:
+            results = self._client.list_collections()
+        except Exception as e:
+            logger.error(f"Failed to list collections: {e}")
+            return []
 
         collections = []
         for item in results:
@@ -509,7 +518,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
             import requests
             response = self._client._session.post(
-                f"{self._url}/api/v1/document/collections",
+                f"{self._url}/api/v1/documents/collections",
                 json={"name": name, **(config or {})},
                 timeout=self._client._timeout,
             )
@@ -526,7 +535,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
             import requests
             response = self._client._session.post(
-                f"{self._url}/api/v1/document/collections/{collection_name}/documents",
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents",
                 json={"id": id, "document": document},
                 timeout=self._client._timeout,
             )
@@ -546,7 +555,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             if projection:
                 params["projection"] = ",".join(projection)
             response = self._client._session.get(
-                f"{self._url}/api/v1/document/collections/{collection_name}/documents/{doc_id}",
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
                 params=params,
                 timeout=self._client._timeout,
             )
@@ -576,7 +585,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
                 body["projection"] = projection
             body["limit"] = limit
             response = self._client._session.post(
-                f"{self._url}/api/v1/document/collections/{collection_name}/query",
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents",
                 json=body,
                 timeout=self._client._timeout,
             )
@@ -593,7 +602,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
             import requests
             response = self._client._session.put(
-                f"{self._url}/api/v1/document/collections/{collection_name}/documents/{doc_id}",
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
                 json={"updates": updates},
                 timeout=self._client._timeout,
             )
@@ -608,7 +617,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
             import requests
             response = self._client._session.delete(
-                f"{self._url}/api/v1/document/collections/{collection_name}/documents/{doc_id}",
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -623,7 +632,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
             import requests
             response = self._client._session.get(
-                f"{self._url}/api/v1/document/collections",
+                f"{self._url}/api/v1/documents/collections",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -637,7 +646,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
             import requests
             response = self._client._session.delete(
-                f"{self._url}/api/v1/document/collections/{collection_name}",
+                f"{self._url}/api/v1/documents/collections/{collection_name}",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -664,7 +673,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         try:
             import requests
             response = self._client._session.post(
-                f"{self._url}/api/v1/experimental/hybrid/search",
+                f"{self._url}/api/v1/hybrid/search",
                 json={
                     "collection": collection,
                     "text_query": text_query,

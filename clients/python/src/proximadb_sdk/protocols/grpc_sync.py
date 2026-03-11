@@ -304,7 +304,10 @@ class ProximaDBSyncGrpcClient:
 
         except grpc.RpcError as e:
             logger.error(f"gRPC {operation_name} RPC error: {e.code()} - {e.details()}")
-            raise ProximaDBError(f"{operation_name} RPC failed: {e.details()}")
+            details = e.details() or str(e)
+            if e.code() == grpc.StatusCode.UNAVAILABLE or "connect" in details.lower():
+                raise ProximaDBError(f"{operation_name} connection failed: {details}")
+            raise ProximaDBError(f"{operation_name} RPC failed: {details}")
         except Exception as e:
             logger.error(f"gRPC {operation_name} failed: {e}")
             raise ProximaDBError(f"{operation_name} failed: {e}")
@@ -326,7 +329,10 @@ class ProximaDBSyncGrpcClient:
 
         except grpc.RpcError as e:
             logger.error(f"gRPC {operation_name} RPC error: {e.code()} - {e.details()}")
-            raise ProximaDBError(f"{operation_name} RPC failed: {e.details()}")
+            details = e.details() or str(e)
+            if e.code() == grpc.StatusCode.UNAVAILABLE or "connect" in details.lower():
+                raise ProximaDBError(f"{operation_name} connection failed: {details}")
+            raise ProximaDBError(f"{operation_name} RPC failed: {details}")
         except Exception as e:
             logger.error(f"gRPC {operation_name} failed: {e}")
             raise ProximaDBError(f"{operation_name} failed: {e}")

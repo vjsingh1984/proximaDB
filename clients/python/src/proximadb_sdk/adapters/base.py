@@ -166,28 +166,30 @@ class BaseProtocolAdapter(ABC):
     # Document Operations
     # ==========================================================================
 
-    @abstractmethod
     def create_document_collection(
         self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Dict[str, Any]:
         """Create a document collection."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support document collections"
+        )
 
-    @abstractmethod
     def insert_document(
         self, collection_name: str, document: Dict[str, Any], id: Optional[str] = None, **kwargs
     ) -> Dict[str, Any]:
         """Insert a document."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support document inserts"
+        )
 
-    @abstractmethod
     def get_document(
         self, collection_name: str, doc_id: str, projection: Optional[List[str]] = None, **kwargs
     ) -> Optional[Dict[str, Any]]:
         """Get a document by ID."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support document reads"
+        )
 
-    @abstractmethod
     def query_documents(
         self,
         collection_name: str,
@@ -197,35 +199,40 @@ class BaseProtocolAdapter(ABC):
         **kwargs,
     ) -> Dict[str, Any]:
         """Query documents with filter."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support document queries"
+        )
 
-    @abstractmethod
     def update_document(
         self, collection_name: str, doc_id: str, updates: List[Dict[str, Any]], **kwargs
     ) -> Dict[str, Any]:
         """Update a document."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support document updates"
+        )
 
-    @abstractmethod
     def delete_document(self, collection_name: str, doc_id: str, **kwargs) -> bool:
         """Delete a document."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support document deletes"
+        )
 
-    @abstractmethod
     def list_document_collections(self, **kwargs) -> List[Dict[str, Any]]:
         """List all document collections."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support document collection listing"
+        )
 
-    @abstractmethod
     def delete_document_collection(self, collection_name: str, **kwargs) -> bool:
         """Delete a document collection."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support document collection deletion"
+        )
 
     # ==========================================================================
     # Hybrid Search Operations
     # ==========================================================================
 
-    @abstractmethod
     def hybrid_search(
         self,
         collection: str,
@@ -236,27 +243,30 @@ class BaseProtocolAdapter(ABC):
         **kwargs,
     ) -> Dict[str, Any]:
         """Execute hybrid search combining BM25 and vector similarity."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support hybrid search"
+        )
 
     # ==========================================================================
     # Time-Series Operations
     # ==========================================================================
 
-    @abstractmethod
     def create_timeseries_collection(
         self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Dict[str, Any]:
         """Create a time-series collection."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support time-series collections"
+        )
 
-    @abstractmethod
     def ingest_timeseries(
         self, collection_name: str, points: List[Dict[str, Any]], **kwargs
     ) -> Dict[str, Any]:
         """Ingest time-series data points."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support time-series ingest"
+        )
 
-    @abstractmethod
     def query_timeseries(
         self,
         collection_name: str,
@@ -268,17 +278,21 @@ class BaseProtocolAdapter(ABC):
         **kwargs,
     ) -> Dict[str, Any]:
         """Query time-series data with optional aggregation."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support time-series queries"
+        )
 
-    @abstractmethod
     def list_timeseries_collections(self, **kwargs) -> List[Dict[str, Any]]:
         """List all time-series collections."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support time-series collection listing"
+        )
 
-    @abstractmethod
     def delete_timeseries_collection(self, collection_name: str, **kwargs) -> bool:
         """Delete a time-series collection."""
-        pass
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support time-series collection deletion"
+        )
 
     # ==========================================================================
     # Lifecycle Methods

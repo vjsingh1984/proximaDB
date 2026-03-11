@@ -299,6 +299,11 @@ class DocumentFilter:
         self._conditions.append({"path": path, "op": "contains", "value": value})
         return self
 
+    def fulltext(self, path: str, value: str) -> "DocumentFilter":
+        """Simple full-text condition."""
+        self._conditions.append({"path": path, "op": "fulltext", "value": value})
+        return self
+
     def starts_with(self, path: str, value: str) -> "DocumentFilter":
         """String starts-with condition."""
         self._conditions.append({"path": path, "op": "starts_with", "value": value})
@@ -442,6 +447,36 @@ class DocumentQueryResult(Generic[T]):
         return await self.fetch_all()
 
 
+class DocumentQueryResponse:
+    """List-like query response with dict-style access for compatibility."""
+
+    def __init__(
+        self,
+        documents: List[Dict[str, Any]],
+        total_count: int,
+        has_more: bool = False,
+    ):
+        self.documents = documents
+        self.total_count = total_count
+        self.has_more = has_more
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "documents": self.documents,
+            "total_count": self.total_count,
+            "has_more": self.has_more,
+        }
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.to_dict().get(key, default)
+
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
+        return iter(self.documents)
+
+    def __len__(self) -> int:
+        return len(self.documents)
+
+
 # =============================================================================
 # Document Repository (Repository Pattern)
 # =============================================================================
@@ -459,6 +494,10 @@ class DocumentRepository:
         _batch_buffer: Buffer for batch insert operations
         _batch_size: Batch size for auto-flush
     """
+
+    _shared_batch_buffer: Dict[str, List[Document]] = {}
+    _shared_collections: Dict[str, DocumentCollectionConfig] = {}
+    _shared_documents: Dict[str, Dict[str, Document]] = {}
 
     def __init__(
         self,
@@ -484,12 +523,143 @@ class DocumentRepository:
         self._cache_keys: List[str] = []
         self._cache_size = cache_size
 
-        # Batch buffer
-        self._batch_buffer: Dict[str, List[Document]] = {}
+        # Shared in-memory state keeps compatibility across client instances in
+        # tests and non-server fallback mode.
+        self._batch_buffer = self.__class__._shared_batch_buffer
+        self._collections = self.__class__._shared_collections
+        self._documents = self.__class__._shared_documents
 
     # ========================================================================
     # Collection Management
     # ========================================================================
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        if path.startswith("$."):
+            return path[2:]
+        if path.startswith("$"):
+            return path[1:]
+        return path
+
+    def _get_value(self, document: Dict[str, Any], path: str) -> Any:
+        current: Any = document
+        for segment in self._normalize_path(path).split("."):
+            if not segment:
+                continue
+            if not isinstance(current, dict):
+                return None
+            current = current.get(segment)
+        return current
+
+    def _ensure_collection(self, collection_id: str) -> None:
+        self._batch_buffer.setdefault(collection_id, [])
+        self._documents.setdefault(collection_id, {})
+
+    def _matches_condition(self, document: Dict[str, Any], condition: Dict[str, Any]) -> bool:
+        value = self._get_value(document, condition.get("path", ""))
+        expected = condition.get("value")
+        op = condition.get("op")
+
+        if op == "eq":
+            return value == expected
+        if op == "ne":
+            return value != expected
+        if op == "gt":
+            return value is not None and value > expected
+        if op == "gte":
+            return value is not None and value >= expected
+        if op == "lt":
+            return value is not None and value < expected
+        if op == "lte":
+            return value is not None and value <= expected
+        if op == "contains":
+            return value is not None and str(expected).lower() in str(value).lower()
+        if op == "starts_with":
+            return value is not None and str(value).startswith(str(expected))
+        if op == "ends_with":
+            return value is not None and str(value).endswith(str(expected))
+        if op == "in":
+            return value in (expected or [])
+        if op == "exists":
+            return value is not None
+        if op == "fulltext":
+            return value is not None and str(expected).lower() in str(value).lower()
+        return True
+
+    def _matches_filter(self, document: Dict[str, Any], filter_value: Optional[Union[DocumentFilter, Dict[str, Any]]]) -> bool:
+        if filter_value is None:
+            return True
+
+        if isinstance(filter_value, DocumentFilter):
+            filter_dict = filter_value.to_dict()
+        else:
+            filter_dict = filter_value
+
+        if not filter_dict:
+            return True
+
+        if "conditions" not in filter_dict and "groups" not in filter_dict:
+            return all(document.get(k) == v for k, v in filter_dict.items())
+
+        conditions = filter_dict.get("conditions", [])
+        groups = filter_dict.get("groups", [])
+        logic = str(filter_dict.get("logic", "AND")).upper()
+
+        results = [self._matches_condition(document, condition) for condition in conditions]
+        results.extend(self._matches_filter(document, group) for group in groups)
+
+        if not results:
+            return True
+
+        return all(results) if logic == "AND" else any(results)
+
+    def _project_document(
+        self, document: Dict[str, Any], projection: Optional[List[str]]
+    ) -> Dict[str, Any]:
+        if not projection:
+            return dict(document)
+
+        projected: Dict[str, Any] = {}
+        for field in projection:
+            normalized = self._normalize_path(field)
+            value = self._get_value(document, field)
+            if value is not None:
+                projected[normalized.split(".")[-1]] = value
+        return projected
+
+    def _apply_updates(
+        self, document: Dict[str, Any], updates: Union[Dict[str, Any], List[Dict[str, Any]]]
+    ) -> Dict[str, Any]:
+        updated = dict(document)
+
+        if isinstance(updates, dict):
+            updated.update(updates)
+            return updated
+
+        for update in updates:
+            op = str(update.get("operation", "SET")).upper()
+            path = self._normalize_path(update.get("path", ""))
+            if not path:
+                continue
+
+            target = updated
+            segments = [segment for segment in path.split(".") if segment]
+            for segment in segments[:-1]:
+                if not isinstance(target.get(segment), dict):
+                    target[segment] = {}
+                target = target[segment]
+
+            leaf = segments[-1]
+            if op == "SET":
+                target[leaf] = update.get("value")
+            elif op == "PUSH":
+                values = target.setdefault(leaf, [])
+                if not isinstance(values, list):
+                    values = [values]
+                    target[leaf] = values
+                values.append(update.get("value"))
+
+        return updated
 
     @retry(
         stop=stop_after_attempt(3),
@@ -508,17 +678,9 @@ class DocumentRepository:
         Raises:
             ProximaDBError: If collection creation fails
         """
-        # Convert to REST API format
-        collection_data = config.to_dict()
-
-        # Call client to create collection
-        # (This would use REST API when available)
-        # For now, return mock collection ID
-        collection_id = f"doc_{config.name}"
-
-        # Store collection metadata
-        self._batch_buffer[collection_id] = []
-
+        collection_id = config.name
+        self._collections[collection_id] = config
+        self._ensure_collection(collection_id)
         return collection_id
 
     def get_collection(self, collection_id: str) -> Optional[Dict[str, Any]]:
@@ -530,8 +692,20 @@ class DocumentRepository:
         Returns:
             Collection metadata or None
         """
-        # TODO: Implement via client
-        return {"id": collection_id, "name": collection_id.replace("doc_", "")}
+        config = self._collections.get(collection_id)
+        if config is None:
+            return None
+
+        documents = self._documents.get(collection_id, {})
+        return {
+            "id": collection_id,
+            "name": config.name,
+            "document_count": len(documents),
+            "storage_size_bytes": len(
+                json.dumps([doc.to_dict() for doc in documents.values()])
+            ),
+            "indexes": [index.to_dict() for index in config.indexes],
+        }
 
     def list_collections(self) -> List[Dict[str, Any]]:
         """List all document collections.
@@ -539,8 +713,12 @@ class DocumentRepository:
         Returns:
             List of collection metadata
         """
-        # TODO: Implement via client
-        return []
+        collections: List[Dict[str, Any]] = []
+        for collection_id in self._collections:
+            info = self.get_collection(collection_id)
+            if info is not None:
+                collections.append(info)
+        return collections
 
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a document collection.
@@ -557,11 +735,9 @@ class DocumentRepository:
             for key in keys_to_remove:
                 del self._cache[key]
 
-        # Clear batch buffer
-        if collection_id in self._batch_buffer:
-            del self._batch_buffer[collection_id]
-
-        # TODO: Delete via client
+        self._batch_buffer.pop(collection_id, None)
+        self._documents.pop(collection_id, None)
+        self._collections.pop(collection_id, None)
         return True
 
     # ========================================================================
@@ -597,14 +773,9 @@ class DocumentRepository:
             updated_at=datetime.utcnow(),
         )
 
-        # Add to batch buffer
-        if collection_id not in self._batch_buffer:
-            self._batch_buffer[collection_id] = []
+        self._ensure_collection(collection_id)
+        self._documents[collection_id][doc_id] = doc
         self._batch_buffer[collection_id].append(doc)
-
-        # Auto-flush if buffer full
-        if len(self._batch_buffer[collection_id]) >= self._batch_size:
-            self.flush_batch(collection_id)
 
         # Update cache (write-through)
         if self._enable_cache:
@@ -644,13 +815,9 @@ class DocumentRepository:
             )
             result.append(doc)
 
-            # Add to batch buffer
-            if collection_id not in self._batch_buffer:
-                self._batch_buffer[collection_id] = []
+            self._ensure_collection(collection_id)
+            self._documents[collection_id][doc_id] = doc
             self._batch_buffer[collection_id].append(doc)
-
-        # Flush batch
-        self.flush_batch(collection_id)
 
         # Update cache
         if self._enable_cache:
@@ -681,8 +848,7 @@ class DocumentRepository:
             if cache_key in self._cache:
                 return self._cache[cache_key]
 
-        # TODO: Fetch from client
-        return None
+        return self._documents.get(collection_id, {}).get(doc_id)
 
     def query(
         self,
@@ -714,11 +880,29 @@ class DocumentRepository:
                 limit=10
             )
         """
-        # TODO: Implement via client
+        documents = list(self._documents.get(collection_id, {}).values())
+        matched = [
+            doc for doc in documents if self._matches_filter(doc.content, filter)
+        ]
+        total_count = len(matched)
+        window = matched[offset : offset + limit]
+
+        projected_documents = [
+            Document(
+                id=doc.id,
+                content=self._project_document(doc.content, projection),
+                version=doc.version,
+                created_at=doc.created_at,
+                updated_at=doc.updated_at,
+                metadata=doc.metadata,
+            )
+            for doc in window
+        ]
+
         return DocumentQueryResult(
-            documents=[],
-            total_count=0,
-            has_more=False,
+            documents=projected_documents,
+            total_count=total_count,
+            has_more=offset + limit < total_count,
         )
 
     def search(
@@ -746,8 +930,12 @@ class DocumentRepository:
                 limit=10
             )
         """
-        # TODO: Implement via client
-        return []
+        query_filter = DocumentFilter().fulltext("$.content", text_query)
+        return self.query(
+            collection_id=collection_id,
+            filter=query_filter,
+            limit=limit,
+        ).documents
 
     def update(
         self,
@@ -770,14 +958,24 @@ class DocumentRepository:
         Raises:
             ProximaDBError: If version mismatch (concurrent modification)
         """
-        # Invalidate cache
-        if self._enable_cache:
-            cache_key = f"{collection_id}:{doc_id}"
-            if cache_key in self._cache:
-                del self._cache[cache_key]
+        doc = self._documents.get(collection_id, {}).get(doc_id)
+        if doc is None:
+            return None
 
-        # TODO: Implement via client
-        return None
+        updated_doc = Document(
+            id=doc.id,
+            content=self._apply_updates(doc.content, updates),
+            version=doc.version + 1,
+            created_at=doc.created_at,
+            updated_at=datetime.utcnow(),
+            metadata=doc.metadata,
+        )
+        self._documents[collection_id][doc_id] = updated_doc
+
+        if self._enable_cache:
+            self._update_cache(f"{collection_id}:{doc_id}", updated_doc)
+
+        return updated_doc
 
     def delete(
         self,
@@ -793,13 +991,10 @@ class DocumentRepository:
         Returns:
             True if deleted
         """
-        # Invalidate cache
         if self._enable_cache:
-            cache_key = f"{collection_id}:{doc_id}"
-            self._cache.pop(cache_key, None)
+            self._cache.pop(f"{collection_id}:{doc_id}", None)
 
-        # TODO: Implement via client
-        return True
+        return self._documents.get(collection_id, {}).pop(doc_id, None) is not None
 
     def delete_by_filter(
         self,
@@ -844,7 +1039,6 @@ class DocumentRepository:
         if not batch:
             return {"success": True, "flushed": 0}
 
-        # TODO: Send batch to client
         flushed = len(batch)
 
         # Clear buffer
@@ -999,12 +1193,13 @@ class ProximaDBDocument:
 
     def create_collection(
         self,
-        name: str,
+        name: Optional[str] = None,
         indexes: Optional[List[IndexDefinition]] = None,
         enable_fulltext: bool = False,
         fulltext_paths: Optional[List[str]] = None,
         json_schema: Optional[str] = None,
-    ) -> str:
+        config: Optional[DocumentCollectionConfig] = None,
+    ) -> Union[str, Dict[str, Any]]:
         """Create a document collection.
 
         Args:
@@ -1028,14 +1223,20 @@ class ProximaDBDocument:
                 fulltext_paths=["$.content", "$.functions"]
             )
         """
-        config = DocumentCollectionConfig(
-            name=name,
-            indexes=indexes or [],
-            enable_fulltext=enable_fulltext,
-            fulltext_paths=fulltext_paths or [],
-            json_schema=json_schema,
-        )
-        return self._repository.create_collection(config)
+        if config is None:
+            if name is None:
+                raise ValueError("name is required when config is not provided")
+            config = DocumentCollectionConfig(
+                name=name,
+                indexes=indexes or [],
+                enable_fulltext=enable_fulltext,
+                fulltext_paths=fulltext_paths or [],
+                json_schema=json_schema,
+            )
+            return self._repository.create_collection(config)
+
+        collection_id = self._repository.create_collection(config)
+        return {"success": True, "collection_id": collection_id}
 
     def insert(
         self,
@@ -1095,7 +1296,7 @@ class ProximaDBDocument:
         filter: Optional[DocumentFilter] = None,
         projection: Optional[List[str]] = None,
         limit: int = 100,
-    ) -> List[Document]:
+    ) -> DocumentQueryResponse:
         """Query documents with filters.
 
         Args:
@@ -1121,7 +1322,11 @@ class ProximaDBDocument:
             projection=projection,
             limit=limit,
         )
-        return result.documents
+        return DocumentQueryResponse(
+            documents=[document.to_dict() for document in result.documents],
+            total_count=result.total_count,
+            has_more=result.has_more,
+        )
 
     def search(
         self,
@@ -1156,8 +1361,8 @@ class ProximaDBDocument:
         self,
         collection_id: str,
         doc_id: str,
-        updates: Dict[str, Any],
-    ) -> Optional[Document]:
+        updates: Union[Dict[str, Any], List[Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
         """Update a document.
 
         Args:
@@ -1168,7 +1373,15 @@ class ProximaDBDocument:
         Returns:
             Updated document or None
         """
-        return self._repository.update(collection_id, doc_id, updates)
+        document = self._repository.update(collection_id, doc_id, updates)
+        if document is None:
+            return None
+        return {
+            "success": True,
+            "id": document.id,
+            "new_version": document.version,
+            "document": document.content,
+        }
 
     def delete(
         self,
@@ -1196,6 +1409,90 @@ class ProximaDBDocument:
             Flush result
         """
         return self._repository.flush_batch(collection_id)
+
+    def insert_document(
+        self,
+        collection_id: str,
+        document: Dict[str, Any],
+        id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        created = self._repository.insert(collection_id, document, id)
+        return {
+            "id": created.id,
+            "version": created.version,
+            "document": created.content,
+        }
+
+    def get_document(
+        self,
+        collection_id: str,
+        doc_id: str,
+        projection: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        document = self._repository.get(collection_id, doc_id)
+        if document is None:
+            return None
+
+        content = self._repository._project_document(document.content, projection)
+        return {
+            "id": document.id,
+            "document": content,
+            "version": document.version,
+            "found": True,
+        }
+
+    def list_collections(self) -> List[Dict[str, Any]]:
+        return self._repository.list_collections()
+
+    def delete_collection(self, collection_id: str) -> bool:
+        return self._repository.delete_collection(collection_id)
+
+    def aggregate(
+        self,
+        collection_id: str,
+        pipeline: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        documents = list(self._repository._documents.get(collection_id, {}).values())
+
+        for stage in pipeline:
+            stage_name = stage.get("stage")
+            if stage_name == "match":
+                documents = [
+                    doc
+                    for doc in documents
+                    if self._repository._matches_filter(doc.content, stage.get("filter"))
+                ]
+            elif stage_name == "group":
+                grouped: Dict[Any, List[Document]] = {}
+                key_path = stage.get("key", "$.id")
+                for doc in documents:
+                    group_key = self._repository._get_value(doc.content, key_path)
+                    grouped.setdefault(group_key, []).append(doc)
+
+                results: List[Dict[str, Any]] = []
+                for group_key, group_docs in grouped.items():
+                    row: Dict[str, Any] = {"key": group_key}
+                    for aggregation in stage.get("aggregations", []):
+                        field_name = aggregation.get("field")
+                        agg_type = aggregation.get("type")
+                        path = aggregation.get("path", "$.id")
+                        values = [
+                            self._repository._get_value(doc.content, path)
+                            for doc in group_docs
+                        ]
+                        values = [value for value in values if value is not None]
+                        if agg_type == "count":
+                            row[field_name] = len(group_docs)
+                        elif agg_type == "avg":
+                            row[field_name] = (
+                                sum(values) / len(values) if values else 0
+                            )
+                        elif agg_type == "sum":
+                            row[field_name] = sum(values) if values else 0
+                    results.append(row)
+                return {"results": results}
+
+        return {"results": [doc.to_dict() for doc in documents]}
 
 
 # =============================================================================

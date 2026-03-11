@@ -26,6 +26,7 @@
 //! 3. Resume from token for fault tolerance
 //! 4. Stream change events asynchronously
 
+use serde_json::Map;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
@@ -43,9 +44,12 @@ use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 use mongodb::{
     Client,
     Collection,
-    change_stream::{event::ChangeStreamEvent, ChangeStream},
+    change_stream::event::ChangeStreamEvent,
     options::ClientOptions,
 };
+
+#[cfg(feature = "experimental-cdc-connectors")]
+use futures_util::StreamExt;
 
 /// MongoDB change stream wrapper
 #[cfg(feature = "experimental-cdc-connectors")]
@@ -93,7 +97,7 @@ impl MongoDbChangeStreamer {
         &mut self,
         collection: &str,
         _resume_token: Option<&str>,
-    ) -> CdcResult<ChangeStream<ChangeStreamEvent<mongodb::bson::Document>>> {
+    ) -> CdcResult<mongodb::change_stream::ChangeStream<ChangeStreamEvent<mongodb::bson::Document>>> {
         let client = self
             .client
             .as_ref()
@@ -300,7 +304,7 @@ impl CdcSource for MongoDbConnector {
         event_tx: mpsc::Sender<ChangeEvent>,
         offset_store: Arc<dyn OffsetStore>,
     ) -> CdcResult<SourceHandle> {
-        let _shutdown_rx = self.base.init_shutdown();
+        let shutdown_rx = self.base.init_shutdown();
         self.base.set_status(SourceStatus::Connecting);
 
         info!(
@@ -310,13 +314,29 @@ impl CdcSource for MongoDbConnector {
 
         #[cfg(feature = "experimental-cdc-connectors")]
         {
-            if let Some(token) = load_last_resume_token(&offset_store, self.name()).await? {
-                *self.resume_token.write().await = Some(ResumeToken::new(token));
-            }
-            info!(
-                "MongoDB CDC transport is not wired into live change streams yet; connector will remain idle"
-            );
-            let _ = event_tx;
+            // Clone necessary data for the spawned task
+            let mongo_config = self.mongo_config.clone();
+            let connector_name = self.name().to_string();
+            let resume_token = self.resume_token.clone();
+
+            // Load last resume token from offset store
+            let last_resume_token = load_last_resume_token(&offset_store, &connector_name).await?;
+
+            // Create MongoDB change stream runner
+            tokio::spawn(async move {
+                if let Err(e) = run_mongodb_change_stream(
+                    mongo_config,
+                    last_resume_token,
+                    event_tx,
+                    offset_store,
+                    resume_token,
+                    shutdown_rx,
+                )
+                .await
+                {
+                    warn!("MongoDB change stream error: {}", e);
+                }
+            });
         }
 
         #[cfg(not(feature = "experimental-cdc-connectors"))]
@@ -393,18 +413,291 @@ async fn load_last_resume_token(
     }
 }
 
-// Note: The full MongoDB change stream implementation with
-// run_mongodb_change_stream() and convert_change_stream_event()
-// is deferred to future work. The current implementation provides
-// the connection framework but does not wire up the live change stream.
-//
-// The mongodb crate API is complex and requires:
-// 1. Proper async iteration over change stream events
-// 2. BSON to serde_json conversion for MongoChangeEvent
-// 3. Resume token handling with the mongodb::change_stream::event::ResumeToken type
-//
-// This is similar to the MySQL connector which also has a simplified
-// implementation pending production binlog protocol support.
+/// Run MongoDB change stream
+#[cfg(feature = "experimental-cdc-connectors")]
+async fn run_mongodb_change_stream(
+    mongo_config: MongoDbConfig,
+    last_resume_token: Option<String>,
+    event_tx: mpsc::Sender<ChangeEvent>,
+    offset_store: Arc<dyn OffsetStore>,
+    current_resume_token: Arc<RwLock<Option<ResumeToken>>>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> CdcResult<()> {
+    // Get database name
+    let db_name = mongo_config
+        .database
+        .as_deref()
+        .unwrap_or("default")
+        .to_string();
+
+    // Create change streamer
+    let mut streamer = MongoDbChangeStreamer::new(&db_name);
+
+    // Connect to MongoDB
+    streamer
+        .connect(&mongo_config.connection_uri)
+        .await
+        .map_err(|e| CdcError::Connection(format!("Failed to connect to MongoDB: {}", e)))?;
+
+    info!("Connected to MongoDB for CDC, database: {}", db_name);
+
+    // Get first collection to watch
+    let collection = mongo_config
+        .collections
+        .first()
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "default_collection".to_string());
+
+    // Open change stream
+    let mut stream = streamer
+        .open_change_stream(&collection, last_resume_token.as_deref())
+        .await?;
+
+    info!(
+        "MongoDB change stream opened for collection: {}",
+        collection
+    );
+    info!("MongoDB change stream loop started");
+
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    info!("MongoDB change stream received shutdown signal");
+                    break;
+                }
+            }
+            Some(result) = stream.next() => {
+                match result {
+                    Ok(event) => {
+                        // Convert MongoDB ChangeStreamEvent to MongoChangeEvent
+                        let mongo_event = convert_change_stream_event(&event, &db_name);
+                        // Update resume token
+                        let token_data = mongo_event.id.data.clone();
+                        *current_resume_token.write().await = Some(mongo_event.id.clone());
+
+                        // Save to offset store periodically
+                        let offset = Offset::new(&format!("mongodb_{}", db_name), 0)
+                            .with_metadata("resume_token", token_data.clone());
+
+                        if let Err(e) = offset_store.store(&offset).await {
+                            warn!("Failed to save resume token: {}", e);
+                        }
+
+                        // Convert to CDC ChangeEvent using the connector's logic
+                        let operation = match mongo_event.operation_type {
+                            ChangeStreamOperation::Insert => Operation::Insert,
+                            ChangeStreamOperation::Update => Operation::Update,
+                            ChangeStreamOperation::Replace => Operation::Update,
+                            ChangeStreamOperation::Delete => Operation::Delete,
+                            ChangeStreamOperation::Drop | ChangeStreamOperation::DropDatabase => {
+                                Operation::Truncate
+                            }
+                            _ => continue, // Skip other operations
+                        };
+
+                        let key = mongo_event.get_id().unwrap_or_else(|| "unknown".to_string());
+
+                        let source =
+                            SourceInfo::mongodb(&mongo_event.ns.db, &format!("mongodb_{}", db_name));
+
+                        let mut cdc_event =
+                            ChangeEvent::new(source, operation, mongo_event.collection_name(), key);
+
+                        // Add after state from full document
+                        if let Some(ref doc) = mongo_event.full_document {
+                            cdc_event.after = Some(document_to_record_state(doc));
+                        }
+
+                        // Add before state if available
+                        if let Some(ref doc) = mongo_event.full_document_before_change {
+                            cdc_event.before = Some(document_to_record_state(doc));
+                        }
+
+                        // Send event through channel
+                        if let Err(e) = event_tx.send(cdc_event).await {
+                            warn!("Failed to send CDC event: {}", e);
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("MongoDB change stream error: {}", e);
+                        // In production, would implement retry logic here
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    info!("MongoDB change stream stopped");
+    Ok(())
+}
+
+/// Convert MongoDB ChangeStreamEvent to MongoChangeEvent
+#[cfg(feature = "experimental-cdc-connectors")]
+fn convert_change_stream_event(
+    event: &mongodb::change_stream::event::ChangeStreamEvent<mongodb::bson::Document>,
+    db_name: &str,
+) -> MongoChangeEvent {
+    use super::change_event::{DocumentKey, Namespace};
+
+    // Parse operation type
+    let operation_type = match event.operation_type {
+        mongodb::change_stream::event::OperationType::Insert => ChangeStreamOperation::Insert,
+        mongodb::change_stream::event::OperationType::Update => ChangeStreamOperation::Update,
+        mongodb::change_stream::event::OperationType::Replace => ChangeStreamOperation::Replace,
+        mongodb::change_stream::event::OperationType::Delete => ChangeStreamOperation::Delete,
+        mongodb::change_stream::event::OperationType::Drop => ChangeStreamOperation::Drop,
+        mongodb::change_stream::event::OperationType::DropDatabase => {
+            ChangeStreamOperation::DropDatabase
+        }
+        mongodb::change_stream::event::OperationType::Invalidate => {
+            ChangeStreamOperation::Invalidate
+        }
+        mongodb::change_stream::event::OperationType::Rename => ChangeStreamOperation::Rename,
+        _ => ChangeStreamOperation::Invalidate, // Default to invalidate for unknown types
+    };
+
+    // Parse namespace - handle optional
+    let ns = if let Some(ref event_ns) = event.ns {
+        Namespace::new(&event_ns.db, event_ns.coll.as_deref().unwrap_or("unknown"))
+    } else {
+        Namespace::new(db_name, "unknown")
+    };
+
+    // Parse document key
+    let document_key = event.document_key.as_ref().and_then(|dk| {
+        dk.get("_id")
+            .and_then(|id| {
+                // Convert BSON value to serde_json Value
+                if let Some(str_val) = id.as_str() {
+                    Some(serde_json::json!(str_val))
+                } else if let Some(oid) = id.as_object_id() {
+                    Some(serde_json::json!(oid.to_hex()))
+                } else if let Some(i64_val) = id.as_i64() {
+                    Some(serde_json::json!(i64_val))
+                } else {
+                    id.as_f64().map(|f| serde_json::json!(f))
+                }
+            })
+            .map(|id_value| DocumentKey {
+                id: id_value,
+                extra: HashMap::new(),
+            })
+    });
+
+    // Parse resume token - convert to string
+    let id = ResumeToken {
+        data: format!("{:?}", event.id),
+    };
+
+    let full_document = event.full_document.as_ref().map(bson_to_json);
+    let full_document_before_change = event.full_document_before_change.as_ref().map(bson_to_json);
+
+    MongoChangeEvent {
+        id,
+        operation_type,
+        cluster_time: None,
+        ns,
+        document_key,
+        full_document,
+        full_document_before_change,
+        update_description: None,
+        txn_number: None,
+        lsid: None,
+    }
+}
+
+/// Convert BSON Document to serde_json Value
+#[cfg(feature = "experimental-cdc-connectors")]
+fn bson_to_json(doc: &mongodb::bson::Document) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (key, value) in doc.iter() {
+        map.insert(key.clone(), convert_bson_to_json(value));
+    }
+    serde_json::Value::Object(map)
+}
+
+/// Helper function to convert BSON value to JSON value
+#[cfg(feature = "experimental-cdc-connectors")]
+fn convert_bson_to_json(bson: &mongodb::bson::Bson) -> serde_json::Value {
+    use mongodb::bson::Bson;
+
+    match bson {
+        Bson::String(s) => serde_json::json!(s),
+        Bson::Int32(i) => serde_json::json!(i),
+        Bson::Int64(i) => serde_json::json!(i),
+        Bson::Double(f) => serde_json::json!(f),
+        Bson::Boolean(b) => serde_json::json!(b),
+        Bson::Null => serde_json::Value::Null,
+        Bson::Array(arr) => {
+            let vals: Vec<serde_json::Value> = arr.iter().map(convert_bson_to_json).collect();
+            serde_json::json!(vals)
+        }
+        Bson::Document(doc) => bson_to_json(doc),
+        Bson::ObjectId(oid) => serde_json::json!(oid.to_hex()),
+        Bson::DateTime(dt) => {
+            // Use try_to_rfc3339_string instead of deprecated to_rfc3339_string
+            serde_json::json!(
+                dt.try_to_rfc3339_string()
+                    .unwrap_or_else(|_| dt.to_string())
+            )
+        }
+        Bson::Binary(bin) => {
+            serde_json::json!(bin.bytes)
+        }
+        Bson::RegularExpression(re) => {
+            serde_json::json!(re.pattern)
+        }
+        Bson::MinKey => serde_json::json!({"$minKey": 1}),
+        Bson::MaxKey => serde_json::json!({"$maxKey": 1}),
+        Bson::Symbol(s) => serde_json::json!(s),
+        Bson::Undefined => serde_json::Value::Null,
+        _ => serde_json::Value::Null, // Fallback for complex types
+    }
+}
+
+/// Convert BSON document to RecordState (helper function)
+#[cfg(feature = "experimental-cdc-connectors")]
+fn document_to_record_state(
+    doc: &serde_json::Value,
+) -> RecordState {
+    let mut metadata = HashMap::new();
+    let mut vector = None;
+
+    if let serde_json::Value::Object(obj) = doc {
+        for (key, value) in obj {
+            // Check if this is a vector field (array of numbers)
+            if let serde_json::Value::Array(arr) = value {
+                if arr.iter().all(|v| v.is_f64() || v.is_i64()) {
+                    let parsed: Result<Vec<f32>, _> = arr
+                        .iter()
+                        .map(|v| {
+                            v.as_f64()
+                                .or_else(|| v.as_i64().map(|i| i as f64))
+                                .map(|f| f as f32)
+                                .ok_or(())
+                        })
+                        .collect();
+                    if let Ok(vec) = parsed {
+                        vector = Some(vec);
+                        continue;
+                    }
+                }
+            }
+
+            // Add to metadata
+            metadata.insert(key.clone(), value.clone());
+        }
+    }
+
+    RecordState {
+        vector,
+        metadata,
+        raw: Some(doc.clone()),
+    }
+}
 
 #[cfg(test)]
 mod tests {

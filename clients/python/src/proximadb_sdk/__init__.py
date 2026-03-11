@@ -582,55 +582,26 @@ if _circuit_breaker_available:
         ]
     )
 
-# LangChain integration (if langchain-core is installed)
-try:
-    from .integrations.langchain import ProximaDBVectorStore
-
-    _langchain_available = True
-except ImportError:
-    _langchain_available = False
-
-# Victor integration (if victor-ai is installed)
-try:
-    from .integrations.victor import ProximaDBEmbeddingProvider
-
-    _victor_available = True
-except ImportError:
-    _victor_available = False
-
-# CrewAI integration (if crewai is installed)
-try:
-    from .integrations.crewai import ProximaDBKnowledgeSource, ProximaDBSearchTool
-
-    _crewai_available = True
-except ImportError:
-    _crewai_available = False
-
-# LangGraph integration (if langchain-core is installed)
-try:
-    from .integrations.langgraph import (
-        create_retriever_tool as create_langgraph_retriever,
-    )
-
-    _langgraph_available = True
-except ImportError:
-    _langgraph_available = False
-
-# DSPy integration (if dspy is installed)
-try:
-    from .integrations.dspy import ProximaDBRM
-
-    _dspy_available = True
-except ImportError:
-    _dspy_available = False
-
-# AutoGen integration (if autogen-agentchat is installed)
-try:
-    from .integrations.autogen import ProximaDBVectorDB
-
-    _autogen_available = True
-except ImportError:
-    _autogen_available = False
+# Optional integration exports are loaded lazily so importing the base SDK does
+# not pull in heavyweight third-party stacks or their side effects.
+_OPTIONAL_EXPORTS = {
+    "ProximaDBVectorStore": (".integrations.langchain", "ProximaDBVectorStore"),
+    "ProximaDBEmbeddingProvider": (
+        ".integrations.victor",
+        "ProximaDBEmbeddingProvider",
+    ),
+    "ProximaDBKnowledgeSource": (
+        ".integrations.crewai",
+        "ProximaDBKnowledgeSource",
+    ),
+    "ProximaDBSearchTool": (".integrations.crewai", "ProximaDBSearchTool"),
+    "create_langgraph_retriever": (
+        ".integrations.langgraph",
+        "create_retriever_tool",
+    ),
+    "ProximaDBRM": (".integrations.dspy", "ProximaDBRM"),
+    "ProximaDBVectorDB": (".integrations.autogen", "ProximaDBVectorDB"),
+}
 
 # Backwards compatibility aliases
 IndexConfig = IndexConfiguration  # Alias for backwards compatibility
@@ -642,24 +613,20 @@ __all__.extend(
         "Vector",
     ]
 )
+__all__.extend(_OPTIONAL_EXPORTS.keys())
 
-if _langchain_available:
-    __all__.append("ProximaDBVectorStore")
 
-if _victor_available:
-    __all__.append("ProximaDBEmbeddingProvider")
+def __getattr__(name):
+    """Load optional integrations only when their public export is accessed."""
+    if name in _OPTIONAL_EXPORTS:
+        import importlib
 
-if _crewai_available:
-    __all__.extend(["ProximaDBSearchTool", "ProximaDBKnowledgeSource"])
-
-if _langgraph_available:
-    __all__.append("create_langgraph_retriever")
-
-if _dspy_available:
-    __all__.append("ProximaDBRM")
-
-if _autogen_available:
-    __all__.append("ProximaDBVectorDB")
+        module_name, attr_name = _OPTIONAL_EXPORTS[name]
+        module = importlib.import_module(module_name, __name__)
+        value = getattr(module, attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # Graph Analytics
 try:
