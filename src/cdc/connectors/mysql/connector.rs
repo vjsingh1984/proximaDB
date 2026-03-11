@@ -26,16 +26,15 @@
 //! 3. Streaming binlog events
 //! 4. Tracking position and GTID
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, warn};
 
 use super::config::{BinlogPosition, MySqlConfig};
-use super::decoder::{BinlogDecoder, BinlogEvent, RowEventType};
+use super::decoder::{BinlogDecoder, BinlogEvent};
 use crate::cdc::config::SourceConfig;
 use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::{ChangeEvent, ConnectorType, Operation, RecordState, SourceInfo};
+use crate::cdc::event::{ChangeEvent, Operation, SourceInfo};
 use crate::cdc::offset::{Offset, OffsetStore};
 use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
@@ -47,8 +46,6 @@ use mysql_async::{Conn, Opts, Row as MySqlRow, prelude::*};
 pub struct MySqlBinlogStreamer {
     client: Option<mysql_async::Conn>,
     server_id: u32,
-    username: String,
-    password: String,
 }
 
 #[cfg(feature = "experimental-cdc-connectors")]
@@ -58,8 +55,6 @@ impl MySqlBinlogStreamer {
         Self {
             client: None,
             server_id: config.server_id,
-            username: config.username.clone(),
-            password: config.password.clone(),
         }
     }
 
@@ -70,7 +65,7 @@ impl MySqlBinlogStreamer {
             .map_err(|e| CdcError::Configuration(format!("Invalid MySQL connection URL: {}", e)))?;
 
         // Connect to MySQL
-        let client = Conn::new(opts)
+        let mut client = Conn::new(opts)
             .await
             .map_err(|e| CdcError::Connection(format!("Failed to connect to MySQL: {}", e)))?;
 
@@ -78,11 +73,11 @@ impl MySqlBinlogStreamer {
         //
         // Note: In MySQL 8.0+, the replication protocol has changed.
         // We use the simpler approach of setting the replica status directly.
-        let query = format!(
-            "SET @master_binlog_checksum = 'NONE'; \
-             SET GLOBAL binlog_format = 'ROW'; \
-             SET GLOBAL binlog_row_image = 'FULL';"
-        );
+        let query = r#"
+            SET @master_binlog_checksum = 'NONE';
+            SET GLOBAL binlog_format = 'ROW';
+            SET GLOBAL binlog_row_image = 'FULL'
+        "#;
 
         client
             .exec_drop(query, ())
@@ -94,7 +89,7 @@ impl MySqlBinlogStreamer {
         let binlog_query = format!("SHOW MASTER STATUS");
 
         // Get current binlog position
-        if let Ok(row) = client.query_first(binlog_query).await {
+        if let Ok(row) = client.query_first::<MySqlRow, _>(binlog_query).await {
             if let Some(position) = row {
                 info!("Current binlog position: {:?}", position);
             }
@@ -463,7 +458,7 @@ async fn run_mysql_binlog_stream(
     decoder: Arc<RwLock<BinlogDecoder>>,
     current_position: Arc<RwLock<Option<BinlogPosition>>>,
     current_gtid: Arc<RwLock<Option<String>>>,
-    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> CdcResult<()> {
     use crate::cdc::connectors::mysql::config::GtidMode;
 
@@ -520,7 +515,7 @@ async fn run_mysql_binlog_stream(
 
     // Poll for shutdown
     tokio::select! {
-        _ = shutdown_rx.recv() => {
+        _ = shutdown_rx.changed() => {
             info!("MySQL binlog stream received shutdown signal");
         }
     }
