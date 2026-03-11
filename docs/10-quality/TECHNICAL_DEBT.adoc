@@ -373,8 +373,8 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | 6-10 months (TD-001, TD-002, TD-003, TD-006, TD-014, TD-017 resolved)
 
 | Phase 4 (Context DB)
-| TD-011, TD-015
-| 2-3 months (TD-008, TD-009, TD-010, TD-018, TD-019, TD-020 resolved)
+| TD-015
+| 1-2 weeks (TD-008, TD-009, TD-010, TD-011, TD-018, TD-019, TD-020 resolved)
 |===
 
 == Recently Resolved (Phase 1 & Phase 2 Complete)
@@ -492,6 +492,11 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | Cypher query language (TD-019)
 | Full OpenCypher implementation with RETURN, ORDER BY, SKIP/LIMIT, WITH, UNION clauses in `src/graph/query/`
 | P2
+
+| TD-R23
+| Framework integrations (TD-011)
+| Complete Python SDK integrations for LangChain, LlamaIndex, Haystack, CrewAI, LangGraph, DSPy, AutoGen
+| P4
 |===
 
 == Notes

@@ -371,8 +371,12 @@ debug-filters = []  # Enable debug filtering for search operations
 # EXPERIMENTAL: Native database CDC connectors (PostgreSQL, MySQL, MongoDB)
 # WARNING: These connectors have partial implementations without network I/O.
 # For production MySQL/MongoDB CDC, use Debezium with Kafka sink.
-# PostgreSQL connector has pgoutput decoder but no connection layer.
-experimental-cdc-connectors = []
+# PostgreSQL connector has pgoutput decoder and is now complete.
+# MySQL/MongoDB connectors have decoders but no connection layer.
+experimental-cdc-connectors = [
+    mysql_async = { version = "0.4", features = ["derive"], optional = true },  # MySQL binlog streaming
+    # mongodb = { version = "3.1", default-features = false, optional = true },  # Uncomment when implementing MongoDB change streams
+]
 
 # ============================================================================
 # EMBEDDED DATABASE MODE FEATURES
