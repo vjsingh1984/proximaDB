@@ -847,6 +847,37 @@ impl std::fmt::Debug for FilesystemFactory {
 }
 
 impl FilesystemFactory {
+    fn maybe_wrap_with_encryption(
+        &self,
+        filesystem: Arc<dyn FileSystem>,
+    ) -> FsResult<Arc<dyn FileSystem>> {
+        let Some(env_var) = self.config.global_options.encryption.as_deref() else {
+            return Ok(filesystem);
+        };
+
+        let env_var = env_var.trim();
+        if env_var.is_empty() {
+            return Err(FilesystemError::Config(
+                "Filesystem encryption env var name cannot be empty".to_string(),
+            ));
+        }
+
+        let key_manager =
+            crate::storage::encryption::KeyManager::from_env(env_var).map_err(|e| {
+                FilesystemError::Config(format!(
+                    "Failed to load filesystem encryption key from {}: {}",
+                    env_var, e
+                ))
+            })?;
+        let version_manager = Arc::new(crate::storage::encryption::KeyVersionManager::new(
+            Arc::new(key_manager),
+        ));
+
+        Ok(Arc::new(
+            crate::storage::encryption::EncryptedFilesystem::new(filesystem, version_manager, true),
+        ))
+    }
+
     /// Create filesystem factory with default configuration
     ///
     /// **DEPRECATED**: Use `create_default()` instead. This method creates a non-functional
@@ -926,15 +957,21 @@ impl FilesystemFactory {
     async fn initialize_filesystems(&mut self) -> FsResult<()> {
         // Initialize local filesystem with root directory resolution
         if let Some(local_config) = &self.config.local {
-            let local_fs = LocalFileSystem::new(local_config.clone()).await?;
-            self.filesystems
-                .insert("file".to_string(), Arc::new(local_fs));
+            let local_fs: Arc<dyn FileSystem> =
+                Arc::new(LocalFileSystem::new(local_config.clone()).await?);
+            self.filesystems.insert(
+                "file".to_string(),
+                self.maybe_wrap_with_encryption(local_fs)?,
+            );
         } else {
             // Create default local filesystem without root restriction
             let default_config = local::LocalConfig::default();
-            let local_fs = LocalFileSystem::new(default_config).await?;
-            self.filesystems
-                .insert("file".to_string(), Arc::new(local_fs));
+            let local_fs: Arc<dyn FileSystem> =
+                Arc::new(LocalFileSystem::new(default_config).await?);
+            self.filesystems.insert(
+                "file".to_string(),
+                self.maybe_wrap_with_encryption(local_fs)?,
+            );
         }
 
         Ok(())
@@ -1077,6 +1114,16 @@ impl FilesystemFactory {
         trace!("to_path: {}", to_path);
         debug!("    [DEBUG] from_path resolved: {}", from_path);
         debug!("    [DEBUG] to_path resolved: {}", to_path);
+
+        if from_fs.filesystem_type() == "encrypted" || to_fs.filesystem_type() == "encrypted" {
+            let data = from_fs.read(&from_path).await?;
+            to_fs.write_atomic(&to_path, &data, None).await?;
+            trace!("Whole-file copy complete");
+            debug!("    ✅ [DEBUG] Whole-file copy complete");
+            trace!("📋 [] copy_atomic COMPLETE");
+            debug!("📋 [DEBUG] copy_atomic COMPLETE");
+            return Ok(());
+        }
 
         // Open source and destination files for streaming
         trace!("Opening source file for streaming...");
@@ -1701,6 +1748,38 @@ impl FilesystemFactory {
 #[cfg(test)]
 mod inline_tests {
     use super::*;
+    use std::ffi::OsString;
+    use tempfile::TempDir;
+
+    struct EnvVarGuard {
+        key: String,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self {
+                key: key.to_string(),
+                previous,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(previous) = &self.previous {
+                    std::env::set_var(&self.key, previous);
+                } else {
+                    std::env::remove_var(&self.key);
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_filesystem_factory_creation() {
@@ -1786,6 +1865,102 @@ mod inline_tests {
             FilesystemFactory::resolve_path("/local/path").expect("Failed to resolve local path"),
             "/local/path"
         );
+    }
+
+    #[tokio::test]
+    async fn test_filesystem_factory_wraps_local_fs_with_encryption() {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let _env = EnvVarGuard::set(
+            "TEST_PROXIMADB_FS_FACTORY_KEY",
+            "factory-test-master-key-32-bytes!!",
+        );
+
+        let config = FilesystemConfig {
+            local: Some(local::LocalConfig {
+                root_dir: Some(temp_dir.path().to_path_buf()),
+                ..Default::default()
+            }),
+            global_options: FileOptions {
+                encryption: Some("TEST_PROXIMADB_FS_FACTORY_KEY".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let factory = FilesystemFactory::create(config)
+            .await
+            .expect("failed to create encrypted filesystem factory");
+        let fs = factory
+            .get_filesystem("file:///tmp/proximadb-encrypted")
+            .expect("failed to get encrypted filesystem");
+
+        assert_eq!(fs.filesystem_type(), "encrypted");
+
+        let logical_path = temp_dir.path().join("wrapped.bin");
+        let logical_path = logical_path.to_string_lossy().to_string();
+        let encrypted_path = format!("{}.enc", logical_path);
+
+        fs.write(&logical_path, b"factory-secret", None)
+            .await
+            .expect("failed to write encrypted file");
+
+        assert!(std::path::Path::new(&encrypted_path).exists());
+        assert_eq!(
+            fs.read(&logical_path)
+                .await
+                .expect("failed to read encrypted file"),
+            b"factory-secret"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_copy_atomic_falls_back_for_encrypted_filesystems() {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let _env = EnvVarGuard::set(
+            "TEST_PROXIMADB_FS_COPY_KEY",
+            "copy-test-master-key-32-bytes!!!!!",
+        );
+
+        let config = FilesystemConfig {
+            local: Some(local::LocalConfig {
+                root_dir: Some(temp_dir.path().to_path_buf()),
+                ..Default::default()
+            }),
+            global_options: FileOptions {
+                encryption: Some("TEST_PROXIMADB_FS_COPY_KEY".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let factory = FilesystemFactory::create(config)
+            .await
+            .expect("failed to create encrypted filesystem factory");
+        let fs = factory
+            .get_filesystem("file:///tmp/proximadb-encrypted")
+            .expect("failed to get encrypted filesystem");
+
+        let src_url = format!("file://{}", temp_dir.path().join("src.bin").display());
+        let dst_url = format!("file://{}", temp_dir.path().join("dst.bin").display());
+        let src_path = FilesystemFactory::resolve_path(&src_url).expect("failed to resolve src");
+        let dst_path = FilesystemFactory::resolve_path(&dst_url).expect("failed to resolve dst");
+
+        fs.write(&src_path, b"copy-secret", None)
+            .await
+            .expect("failed to write source file");
+
+        factory
+            .copy_atomic(&src_url, &dst_url)
+            .await
+            .expect("copy_atomic should succeed for encrypted filesystems");
+
+        assert_eq!(
+            fs.read(&dst_path)
+                .await
+                .expect("failed to read copied file"),
+            b"copy-secret"
+        );
+        assert!(std::path::Path::new(&format!("{}.enc", dst_path)).exists());
     }
 }
 

@@ -112,6 +112,10 @@ impl EncryptedFilesystem {
             return Ok(None);
         }
 
+        if !self.encryption.is_enabled() {
+            return self.underlying.read(&actual_path).await.map(Some);
+        }
+
         let encrypted = self.underlying.read(&actual_path).await?;
         let decrypted = self
             .encryption
@@ -126,12 +130,13 @@ impl EncryptedFilesystem {
         data: &[u8],
         options: Option<FileOptions>,
     ) -> FsResult<()> {
+        let actual_path = self.actual_path(path);
         let encrypted = self
             .encryption
             .encrypt_file(path, data)
             .map_err(|e| Self::crypto_error("encryption", path, e))?;
         self.underlying
-            .write(&self.actual_path(path), &encrypted, options)
+            .write(&actual_path, &encrypted, options)
             .await
     }
 }
@@ -192,7 +197,8 @@ impl FileSystem for EncryptedFilesystem {
 
     async fn sync_file(&self, path: &str) -> FsResult<()> {
         if self.encrypted_exists(path).await? {
-            return self.underlying.sync_file(&self.actual_path(path)).await;
+            let actual_path = self.actual_path(path);
+            return self.underlying.sync_file(&actual_path).await;
         }
 
         self.underlying.sync_file(path).await
@@ -298,12 +304,13 @@ impl FileSystem for EncryptedFilesystem {
         data: &[u8],
         options: Option<FileOptions>,
     ) -> FsResult<()> {
+        let actual_path = self.actual_path(path);
         let encrypted = self
             .encryption
             .encrypt_file(path, data)
             .map_err(|e| Self::crypto_error("encryption", path, e))?;
         self.underlying
-            .write_atomic(&self.actual_path(path), &encrypted, options)
+            .write_atomic(&actual_path, &encrypted, options)
             .await
     }
 
@@ -342,26 +349,24 @@ mod tests {
         };
         let underlying: Arc<dyn FileSystem> = Arc::new(LocalFileSystem::new(config).await.unwrap());
         let fs = EncryptedFilesystem::new(underlying.clone(), test_key_manager(7), true);
+        let logical_path = temp_dir.path().join("roundtrip.bin");
+        let logical_path = logical_path.to_string_lossy().to_string();
+        let encrypted_path = format!("{}.enc", logical_path);
 
-        fs.write("roundtrip.bin", b"secret-data", None)
-            .await
-            .unwrap();
+        fs.write(&logical_path, b"secret-data", None).await.unwrap();
 
-        assert!(underlying.exists("roundtrip.bin.enc").await.unwrap());
-        assert_eq!(fs.read("roundtrip.bin").await.unwrap(), b"secret-data");
+        assert!(underlying.exists(&encrypted_path).await.unwrap());
+        assert_eq!(fs.read(&logical_path).await.unwrap(), b"secret-data");
         assert_ne!(
-            underlying.read("roundtrip.bin.enc").await.unwrap(),
+            underlying.read(&encrypted_path).await.unwrap(),
             b"secret-data".to_vec()
         );
 
-        let metadata = fs.metadata("roundtrip.bin").await.unwrap();
-        assert_eq!(metadata.path, "roundtrip.bin");
+        let metadata = fs.metadata(&logical_path).await.unwrap();
+        assert_eq!(metadata.path, logical_path);
         assert_eq!(metadata.size, b"secret-data".len() as u64);
 
-        assert_eq!(
-            fs.read_range("roundtrip.bin", 1, 6).await.unwrap(),
-            b"ecret-"
-        );
+        assert_eq!(fs.read_range(&logical_path, 1, 6).await.unwrap(), b"ecret-");
     }
 
     #[tokio::test]
@@ -373,15 +378,42 @@ mod tests {
         };
         let underlying: Arc<dyn FileSystem> = Arc::new(LocalFileSystem::new(config).await.unwrap());
         let fs = EncryptedFilesystem::new(underlying.clone(), test_key_manager(9), true);
+        let logical_path = temp_dir.path().join("plain.txt");
+        let logical_path = logical_path.to_string_lossy().to_string();
 
         underlying
-            .write("plain.txt", b"plain-data", None)
+            .write(&logical_path, b"plain-data", None)
             .await
             .unwrap();
 
-        assert!(fs.exists("plain.txt").await.unwrap());
-        assert_eq!(fs.read("plain.txt").await.unwrap(), b"plain-data");
-        assert_eq!(fs.read_range("plain.txt", 6, 4).await.unwrap(), b"data");
+        assert!(fs.exists(&logical_path).await.unwrap());
+        assert_eq!(fs.read(&logical_path).await.unwrap(), b"plain-data");
+        assert_eq!(fs.read_range(&logical_path, 6, 4).await.unwrap(), b"data");
+    }
+
+    #[tokio::test]
+    async fn test_encrypted_filesystem_disabled_mode_round_trip() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = LocalConfig {
+            root_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        let underlying: Arc<dyn FileSystem> = Arc::new(LocalFileSystem::new(config).await.unwrap());
+        let fs = EncryptedFilesystem::new(underlying.clone(), test_key_manager(10), false);
+        let logical_path = temp_dir.path().join("disabled.txt");
+        let logical_path = logical_path.to_string_lossy().to_string();
+        let encrypted_path = format!("{}.enc", logical_path);
+
+        fs.write(&logical_path, b"plain-disabled", None)
+            .await
+            .unwrap();
+
+        assert!(underlying.exists(&encrypted_path).await.unwrap());
+        assert_eq!(
+            underlying.read(&encrypted_path).await.unwrap(),
+            b"plain-disabled"
+        );
+        assert_eq!(fs.read(&logical_path).await.unwrap(), b"plain-disabled");
     }
 
     #[tokio::test]
@@ -393,8 +425,10 @@ mod tests {
         };
         let underlying: Arc<dyn FileSystem> = Arc::new(LocalFileSystem::new(config).await.unwrap());
         let fs = EncryptedFilesystem::new(underlying, test_key_manager(11), true);
+        let logical_path = temp_dir.path().join("stream.bin");
+        let logical_path = logical_path.to_string_lossy().to_string();
 
-        let err = fs.open_file("stream.bin", true).await.unwrap_err();
+        let err = fs.open_file(&logical_path, true).await.unwrap_err();
         assert!(matches!(err, FilesystemError::InvalidOperation(_)));
     }
 }

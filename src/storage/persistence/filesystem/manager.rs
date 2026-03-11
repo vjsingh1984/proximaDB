@@ -356,6 +356,34 @@ pub struct FilesystemManager {
 }
 
 impl FilesystemManager {
+    fn maybe_wrap_with_encryption(
+        &self,
+        filesystem: Box<dyn FileSystem>,
+    ) -> FsResult<Box<dyn FileSystem>> {
+        let Some(env_var) = self.config.global_options.encryption.as_deref() else {
+            return Ok(filesystem);
+        };
+
+        let env_var = env_var.trim();
+        if env_var.is_empty() {
+            return Err(FilesystemError::Config(
+                "Filesystem encryption env var name cannot be empty".to_string(),
+            ));
+        }
+
+        let key_manager = crate::storage::encryption::KeyManager::from_env(env_var)
+            .map_err(|e| FilesystemError::Config(format!("Failed to load filesystem encryption key from {}: {}", env_var, e)))?;
+        let version_manager = std::sync::Arc::new(
+            crate::storage::encryption::KeyVersionManager::new(std::sync::Arc::new(key_manager)),
+        );
+
+        Ok(Box::new(crate::storage::encryption::EncryptedFilesystem::new(
+            std::sync::Arc::from(filesystem),
+            version_manager,
+            true,
+        )))
+    }
+
     /// Create new filesystem manager
     pub async fn new(
         config: super::FilesystemConfig,
@@ -433,7 +461,7 @@ impl FilesystemManager {
                 let mut local_config = self.config.local.clone().clone();
                 // Set root directory to the base path from URL
                 local_config.root_dir = Some(PathBuf::from(&key.base_path));
-                Box::new(LocalFileSystem::new(local_config).await?)
+                self.maybe_wrap_with_encryption(Box::new(LocalFileSystem::new(local_config).await?))?
             },
             "s3" => {
                 let s3_config = self.config.s3.clone()
