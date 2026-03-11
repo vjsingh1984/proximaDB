@@ -699,6 +699,72 @@ try:
 except ImportError:
     _graph_available = False
 
+# Document Operations API (MongoDB-like document storage)
+try:
+    from .document import (
+        AggregationType as DocAggregationType,
+        CompressionAlgorithm as DocCompressionAlgorithm,
+        DocIndexType,
+        Document,
+        DocumentCollectionConfig,
+        DocumentFilter,
+        DocumentQueryResult,
+        DocumentRepository,
+        IndexDefinition,
+        ProximaDBDocument,
+        create_document_api,
+    )
+
+    _document_available = True
+except ImportError:
+    _document_available = False
+
+# Time-Series Operations API (Metrics and monitoring)
+try:
+    from .timeseries import (
+        AggregationType as TSAggregationType,
+        AggregatedMetric,
+        CompressionCodec as TSCompressionCodec,
+        DownsampleMode,
+        Metric,
+        ProximaDBTimeSeries,
+        TimeSeriesCollectionConfig,
+        TimeSeriesFilter,
+        TimeSeriesRepository,
+        ValueColumn,
+        ValueType,
+        create_timeseries_api,
+    )
+
+    _timeseries_available = True
+except ImportError:
+    _timeseries_available = False
+
+# Hybrid Query API (Multi-model fusion)
+try:
+    from .hybrid import (
+        CascadeFusion,
+        DocumentSearchResult,
+        FusionStrategy,
+        FusionStrategyBase,
+        GraphSearchResult,
+        HybridSearchResult,
+        HybridQueryRepository,
+        JoinType,
+        ProximaDBHybrid,
+        QueryModel,
+        ReciprocalRankFusion,
+        TimeSeriesResult,
+        VectorSearchResult,
+        WeightedFusion,
+        create_fusion_strategy,
+        create_hybrid_api,
+    )
+
+    _hybrid_available = True
+except ImportError:
+    _hybrid_available = False
+
 if _graph_analytics_available:
     __all__.extend(
         [
@@ -728,6 +794,63 @@ if _graph_available:
             "GraphPath",
             "GraphQueryResult",
             "create_graph_api",
+        ]
+    )
+
+if _document_available:
+    __all__.extend(
+        [
+            "ProximaDBDocument",
+            "Document",
+            "DocumentFilter",
+            "DocumentCollectionConfig",
+            "DocumentRepository",
+            "DocumentQueryResult",
+            "IndexDefinition",
+            "DocIndexType",
+            "DocCompressionAlgorithm",
+            "DocAggregationType",
+            "create_document_api",
+        ]
+    )
+
+if _timeseries_available:
+    __all__.extend(
+        [
+            "ProximaDBTimeSeries",
+            "Metric",
+            "AggregatedMetric",
+            "TimeSeriesCollectionConfig",
+            "TimeSeriesFilter",
+            "ValueColumn",
+            "ValueType",
+            "TSAggregationType",
+            "DownsampleMode",
+            "TSCompressionCodec",
+            "TimeSeriesRepository",
+            "create_timeseries_api",
+        ]
+    )
+
+if _hybrid_available:
+    __all__.extend(
+        [
+            "ProximaDBHybrid",
+            "FusionStrategy",
+            "HybridSearchResult",
+            "VectorSearchResult",
+            "GraphSearchResult",
+            "DocumentSearchResult",
+            "TimeSeriesResult",
+            "QueryModel",
+            "JoinType",
+            "ReciprocalRankFusion",
+            "WeightedFusion",
+            "CascadeFusion",
+            "FusionStrategyBase",
+            "HybridQueryRepository",
+            "create_hybrid_api",
+            "create_fusion_strategy",
         ]
     )
 

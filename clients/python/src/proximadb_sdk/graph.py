@@ -26,11 +26,9 @@ Example:
     ])
 
     # Cypher-like query
-    results = graph.query_cypher("""
-        MATCH (c:Function)-[:CALLS]->(f:Function)
-        WHERE c.name = 'main'
-        RETURN c, f
-    """)
+    results = graph.query_cypher(
+        "MATCH (c:Function)-[:CALLS]->(f:Function) WHERE c.name = 'main' RETURN c, f"
+    )
 
     # Find callers (reverse traversal)
     callers = graph.find_callers("func:parse_json")
@@ -314,11 +312,9 @@ class ProximaDBGraph:
             Graph query result with nodes, edges, and paths
 
         Example:
-            results = graph.query_cypher("""
-                MATCH (c:Function)-[:CALLS]->(f:Function)
-                WHERE c.name = 'main'
-                RETURN c, f
-            """)
+            results = graph.query_cypher(
+                "MATCH (c:Function)-[:CALLS]->(f:Function) WHERE c.name = 'main' RETURN c, f"
+            )
         """
         # Parse Cypher query
         parsed = self._parse_cypher(query)
