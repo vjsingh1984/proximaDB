@@ -163,6 +163,124 @@ class BaseProtocolAdapter(ABC):
         pass
 
     # ==========================================================================
+    # Document Operations
+    # ==========================================================================
+
+    @abstractmethod
+    def create_document_collection(
+        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
+    ) -> Dict[str, Any]:
+        """Create a document collection."""
+        pass
+
+    @abstractmethod
+    def insert_document(
+        self, collection_name: str, document: Dict[str, Any], id: Optional[str] = None, **kwargs
+    ) -> Dict[str, Any]:
+        """Insert a document."""
+        pass
+
+    @abstractmethod
+    def get_document(
+        self, collection_name: str, doc_id: str, projection: Optional[List[str]] = None, **kwargs
+    ) -> Optional[Dict[str, Any]]:
+        """Get a document by ID."""
+        pass
+
+    @abstractmethod
+    def query_documents(
+        self,
+        collection_name: str,
+        filter: Optional[Dict[str, Any]] = None,
+        projection: Optional[List[str]] = None,
+        limit: int = 100,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Query documents with filter."""
+        pass
+
+    @abstractmethod
+    def update_document(
+        self, collection_name: str, doc_id: str, updates: List[Dict[str, Any]], **kwargs
+    ) -> Dict[str, Any]:
+        """Update a document."""
+        pass
+
+    @abstractmethod
+    def delete_document(self, collection_name: str, doc_id: str, **kwargs) -> bool:
+        """Delete a document."""
+        pass
+
+    @abstractmethod
+    def list_document_collections(self, **kwargs) -> List[Dict[str, Any]]:
+        """List all document collections."""
+        pass
+
+    @abstractmethod
+    def delete_document_collection(self, collection_name: str, **kwargs) -> bool:
+        """Delete a document collection."""
+        pass
+
+    # ==========================================================================
+    # Hybrid Search Operations
+    # ==========================================================================
+
+    @abstractmethod
+    def hybrid_search(
+        self,
+        collection: str,
+        text_query: str,
+        query_vector: List[float],
+        fusion_strategy: str = "rrf",
+        top_k: int = 10,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Execute hybrid search combining BM25 and vector similarity."""
+        pass
+
+    # ==========================================================================
+    # Time-Series Operations
+    # ==========================================================================
+
+    @abstractmethod
+    def create_timeseries_collection(
+        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
+    ) -> Dict[str, Any]:
+        """Create a time-series collection."""
+        pass
+
+    @abstractmethod
+    def ingest_timeseries(
+        self, collection_name: str, points: List[Dict[str, Any]], **kwargs
+    ) -> Dict[str, Any]:
+        """Ingest time-series data points."""
+        pass
+
+    @abstractmethod
+    def query_timeseries(
+        self,
+        collection_name: str,
+        start_time: str,
+        end_time: str,
+        aggregation: str = "avg",
+        bucket_ms: Optional[int] = None,
+        tag_filters: Optional[Dict[str, str]] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Query time-series data with optional aggregation."""
+        pass
+
+    @abstractmethod
+    def list_timeseries_collections(self, **kwargs) -> List[Dict[str, Any]]:
+        """List all time-series collections."""
+        pass
+
+    @abstractmethod
+    def delete_timeseries_collection(self, collection_name: str, **kwargs) -> bool:
+        """Delete a time-series collection."""
+        pass
+
+    # ==========================================================================
     # Lifecycle Methods
     # ==========================================================================
 

@@ -33,15 +33,16 @@ Example:
     )
 
     # Federated SQL query
-    results = hybrid.sql("""
-        SELECT v.id, v.score, n.properties, d.document
-        FROM VECTOR_SEARCH('code_embeddings', ?, 10) v
-        JOIN GRAPH_QUERY('call_graph', 'MATCH (n)-[r:CALLS]->(m) RETURN n, r, m') g
-          ON v.id = g.node_id
-        JOIN DOCUMENT_QUERY('code_files', '{"language": "python"}') d
-          ON v.metadata.file_path = d.file_path
-        WHERE v.metadata.language = 'python'
-    """, query_vector)
+    results = hybrid.sql(
+        "SELECT v.id, v.score, n.properties, d.document "
+        "FROM VECTOR_SEARCH('code_embeddings', ?, 10) v "
+        "JOIN GRAPH_QUERY('call_graph', 'MATCH (n)-[r:CALLS]->(m) RETURN n, r, m') g "
+        "ON v.id = g.node_id "
+        "JOIN DOCUMENT_QUERY('code_files', '{\"language\": \"python\"}') d "
+        "ON v.metadata.file_path = d.file_path "
+        "WHERE v.metadata.language = 'python'",
+        query_vector,
+    )
 """
 
 from __future__ import annotations
@@ -779,14 +780,14 @@ class HybridQueryRepository:
             Query results
 
         Example:
-            results = await hybrid.sql_async(\"\"\"
-                SELECT v.id, v.score, n.properties, d.document
-                FROM VECTOR_SEARCH('code_embeddings', ?, 10) v
-                JOIN GRAPH_QUERY('call_graph', 'MATCH ...') g ON v.id = g.node_id
-                JOIN DOCUMENT_QUERY('code_files', '{"language": "python"}') d
-                  ON v.metadata.file_path = d.file_path
-            \"\"\", [query_vector])
-        \"\"\")
+            results = await hybrid.sql_async(
+                "SELECT v.id, v.score, n.properties, d.document "
+                "FROM VECTOR_SEARCH('code_embeddings', ?, 10) v "
+                "JOIN GRAPH_QUERY('call_graph', 'MATCH ...') g ON v.id = g.node_id "
+                "JOIN DOCUMENT_QUERY('code_files', '{"language": "python"}') d "
+                "ON v.metadata.file_path = d.file_path",
+                [query_vector],
+            )
         """
         # TODO: Implement via client's execute_sql method
         # This would use the unified query engine
@@ -1011,13 +1012,13 @@ class ProximaDBHybrid:
             Query results
 
         Example:
-            results = hybrid.sql(\"\"\"
-                SELECT v.id, v.score, d.document
-                FROM VECTOR_SEARCH('code_embeddings', ?, 10) v
-                JOIN DOCUMENT_QUERY('code_files', '{"language": "python"}') d
-                  ON v.metadata.file_path = d.file_path
-            \"\"\", [query_vector])
-        \"\"\")
+            results = hybrid.sql(
+                "SELECT v.id, v.score, d.document "
+                "FROM VECTOR_SEARCH('code_embeddings', ?, 10) v "
+                "JOIN DOCUMENT_QUERY('code_files', '{"language": "python"}') d "
+                "ON v.metadata.file_path = d.file_path",
+                [query_vector],
+            )
         """
         return self._repository.sql(query, params)
 

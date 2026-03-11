@@ -637,7 +637,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         # In a full implementation, this would:
         # 1. Query time-series for code churn
         # 2. Query time-series for complexity metrics
-        3. Combine with query frequency metrics
+        # 3. Combine with query frequency metrics
         # 4. Return ranked list
 
         return []
