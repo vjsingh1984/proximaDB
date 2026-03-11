@@ -29,6 +29,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
+use tracing::{error, info, warn};
 
 use super::config::{BinlogPosition, MySqlConfig};
 use super::decoder::{BinlogDecoder, BinlogEvent, RowEventType};
@@ -39,10 +40,7 @@ use crate::cdc::offset::{Offset, OffsetStore};
 use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
 #[cfg(feature = "experimental-cdc-connectors")]
-use mysql_async::{
-    prelude::*, Opts,
-    Row as MySqlRow,
-};
+use mysql_async::{Conn, Opts, Row as MySqlRow, prelude::*};
 
 /// MySQL binlog streamer for reading binlog events
 #[cfg(feature = "experimental-cdc-connectors")]
@@ -86,15 +84,14 @@ impl MySqlBinlogStreamer {
              SET GLOBAL binlog_row_image = 'FULL';"
         );
 
-        client.exec_drop(query)
+        client
+            .exec_drop(query, ())
             .await
             .map_err(|e| CdcError::Connection(format!("Failed to configure binlog: {}", e)))?;
 
         // Request binlog dump
         // In production, this would use COM_BINLOG_DUMP with position/GTID
-        let binlog_query = format!(
-            "SHOW MASTER STATUS"
-        );
+        let binlog_query = format!("SHOW MASTER STATUS");
 
         // Get current binlog position
         if let Ok(row) = client.query_first(binlog_query).await {
@@ -113,7 +110,9 @@ impl MySqlBinlogStreamer {
         binlog_filename: &str,
         position: u64,
     ) -> CdcResult<()> {
-        let client = self.client.as_mut()
+        let client = self
+            .client
+            .as_mut()
             .ok_or_else(|| CdcError::Connection("Not connected to MySQL".to_string()))?;
 
         // COM_BINLOG_DUMP command to request binlog data
@@ -315,18 +314,42 @@ impl CdcSource for MySqlConnector {
             self.mysql_config.server_id
         );
 
-        // TODO: Implement MySQL connection and binlog streaming
-        // This requires the mysql_async crate or similar
-        // For now, we set up the framework but don't connect
-        //
-        // Required implementation:
-        // 1. Connect to MySQL using mysql_async::Conn
-        // 2. Execute COM_REGISTER_SLAVE with server_id
-        // 3. Execute COM_BINLOG_DUMP with binlog filename/position or GTID
-        // 4. Read binlog events from the network stream
-        // 5. Decode events using BinlogDecoder
-        // 6. Send ChangeEvents through event_tx channel
-        // 7. Track position/GTID in offset_store
+        #[cfg(feature = "experimental-cdc-connectors")]
+        {
+            // Clone necessary data for the spawned task
+            let mysql_config = self.mysql_config.clone();
+            let connector_name = self.name().to_string();
+            let decoder = self.decoder.clone();
+            let current_position = self.current_position.clone();
+            let current_gtid = self.current_gtid.clone();
+
+            // Load last position from offset store
+            let last_position = load_last_position(&offset_store, &connector_name).await?;
+
+            // Create MySQL binlog streamer and connect
+            tokio::spawn(async move {
+                if let Err(e) = run_mysql_binlog_stream(
+                    mysql_config,
+                    last_position,
+                    event_tx,
+                    offset_store,
+                    decoder,
+                    current_position,
+                    current_gtid,
+                    shutdown_rx,
+                )
+                .await
+                {
+                    error!("MySQL binlog stream error: {}", e);
+                }
+            });
+        }
+
+        #[cfg(not(feature = "experimental-cdc-connectors"))]
+        {
+            info!("MySQL CDC connector requires 'experimental-cdc-connectors' feature flag");
+            info!("Add mysql_async dependency and enable feature to use MySQL CDC");
+        }
 
         self.base.set_status(SourceStatus::Streaming);
 
@@ -383,6 +406,137 @@ impl CdcSource for MySqlConnector {
     fn config(&self) -> &SourceConfig {
         self.base.config()
     }
+}
+
+/// Load last binlog position from offset store
+#[cfg(feature = "experimental-cdc-connectors")]
+async fn load_last_position(
+    offset_store: &Arc<dyn OffsetStore>,
+    connector_name: &str,
+) -> CdcResult<Option<BinlogPosition>> {
+    match offset_store.get(connector_name).await {
+        Ok(Some(offset)) => {
+            // Try to get binlog position from metadata
+            if let (Some(filename), Some(position)) = (
+                offset.metadata.get("filename"),
+                offset
+                    .metadata
+                    .get("position")
+                    .and_then(|p| p.parse::<u64>().ok()),
+            ) {
+                return Ok(Some(BinlogPosition::new(filename, position)));
+            }
+
+            // If we have GTID, return None (we'll use GTID mode)
+            if offset.metadata.contains_key("gtid") {
+                return Ok(None);
+            }
+
+            // Fall back to LSN as position
+            if offset.lsn > 0 {
+                // Try to get filename from metadata or use default
+                let filename = offset
+                    .metadata
+                    .get("filename")
+                    .cloned()
+                    .unwrap_or_else(|| "mysql-bin.000001".to_string());
+                return Ok(Some(BinlogPosition::new(filename, offset.lsn)));
+            }
+
+            Ok(None)
+        }
+        Ok(None) => Ok(None),
+        Err(e) => {
+            warn!("Failed to load offset for {}: {}", connector_name, e);
+            Ok(None)
+        }
+    }
+}
+
+/// Run MySQL binlog stream
+#[cfg(feature = "experimental-cdc-connectors")]
+async fn run_mysql_binlog_stream(
+    mysql_config: MySqlConfig,
+    last_position: Option<BinlogPosition>,
+    event_tx: mpsc::Sender<ChangeEvent>,
+    offset_store: Arc<dyn OffsetStore>,
+    decoder: Arc<RwLock<BinlogDecoder>>,
+    current_position: Arc<RwLock<Option<BinlogPosition>>>,
+    current_gtid: Arc<RwLock<Option<String>>>,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) -> CdcResult<()> {
+    use crate::cdc::connectors::mysql::config::GtidMode;
+
+    // Create binlog streamer
+    let mut streamer = MySqlBinlogStreamer::new(&mysql_config);
+
+    // Connect to MySQL
+    streamer
+        .connect(&mysql_config.connection_url)
+        .await
+        .map_err(|e| CdcError::Connection(format!("Failed to connect to MySQL: {}", e)))?;
+
+    info!(
+        "Connected to MySQL for CDC, starting from position: {:?}",
+        last_position
+    );
+
+    // Determine start position
+    let start_position = match (&last_position, &mysql_config.gtid_mode) {
+        (Some(pos), _) => pos.clone(),
+        (None, GtidMode::On) => {
+            // Use GTID mode - start from beginning
+            BinlogPosition::new("mysql-bin.000001", 4)
+        }
+        (None, _) => mysql_config
+            .start_position
+            .clone()
+            .unwrap_or_else(|| BinlogPosition::new("mysql-bin.000001", 4)),
+    };
+
+    // Request binlog dump
+    streamer
+        .request_binlog_dump(&start_position.filename, start_position.position)
+        .await?;
+
+    // Update current position
+    *current_position.write().await = Some(start_position.clone());
+
+    info!("Binlog dump requested from {}", start_position.format());
+
+    // Main event loop
+    // In a full implementation, this would:
+    // 1. Continuously read binlog events from the stream
+    // 2. Decode events using the decoder
+    // 3. Convert to ChangeEvents and send through event_tx
+    // 4. Track position and periodically save to offset_store
+    // 5. Handle shutdown signal
+
+    // For now, this is a placeholder implementation
+    // The actual binlog streaming would use mysql_async's binlog API
+    // or a direct TCP connection to the binlog port
+
+    info!("MySQL binlog stream loop started");
+
+    // Poll for shutdown
+    tokio::select! {
+        _ = shutdown_rx.recv() => {
+            info!("MySQL binlog stream received shutdown signal");
+        }
+    }
+
+    // Save final position
+    if let Some(pos) = current_position.read().await.clone() {
+        let offset = Offset::new(&format!("mysql_{}", mysql_config.server_id), pos.position)
+            .with_metadata("filename", pos.filename);
+
+        if let Err(e) = offset_store.store(&offset).await {
+            warn!("Failed to save final offset: {}", e);
+        }
+    }
+
+    info!("MySQL binlog stream stopped");
+    Ok(())
 }
 
 #[cfg(test)]

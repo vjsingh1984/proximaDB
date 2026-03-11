@@ -132,6 +132,10 @@ azure_storage = { version = "0.19", optional = true }
 azure_storage_blobs = { version = "0.19", optional = true }
 google-cloud-storage = { version = "0.15", optional = true }
 
+# Database CDC connectors (optional)
+mysql_async = { version = "0.34", features = ["derive"], optional = true }  # MySQL binlog streaming for CDC
+tokio-postgres = "0.7"  # PostgreSQL logical replication client for CDC
+
 # Vector operations & SIMD
 nalgebra = { version = "0.32", features = ["serde-serialize"] }  # For PCA eigendecomposition, with serde for model persistence
 half = "2.4"  # FP16 (float16) support for centroid quantization (50% storage reduction)
@@ -245,7 +249,6 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.0"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
-tokio-postgres = "0.7"  # PostgreSQL client for integration testing
 
 [features]
 default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]
@@ -373,10 +376,9 @@ debug-filters = []  # Enable debug filtering for search operations
 # For production MySQL/MongoDB CDC, use Debezium with Kafka sink.
 # PostgreSQL connector has pgoutput decoder and is now complete.
 # MySQL/MongoDB connectors have decoders but no connection layer.
-experimental-cdc-connectors = [
-    mysql_async = { version = "0.4", features = ["derive"], optional = true },  # MySQL binlog streaming
+experimental-cdc-connectors = ["dep:mysql_async"]
     # mongodb = { version = "3.1", default-features = false, optional = true },  # Uncomment when implementing MongoDB change streams
-]
+
 
 # ============================================================================
 # EMBEDDED DATABASE MODE FEATURES
