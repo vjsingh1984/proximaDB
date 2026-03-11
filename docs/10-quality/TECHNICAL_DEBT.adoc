@@ -64,12 +64,12 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *In Progress*
 | Cannot capture changes from PostgreSQL/MySQL/MongoDB natively
 | 1-2 months
-| *IN PROGRESS Mar 2026*: **PostgreSQL connector 100% complete** - Full logical replication with pgoutput protocol, WAL data reception via CopyBothStream, slot management, offset tracking, LSN tracking. MySQL/MongoDB 70% complete (decoders and event conversion done; missing network connection layer). Feature-gated behind `experimental-cdc-connectors`. Debezium still recommended for production MySQL/MongoDB.
+| *IN PROGRESS Mar 2026*: **PostgreSQL connector 100% complete** - Full logical replication with pgoutput protocol, WAL data reception via CopyBothStream, slot management, offset tracking, LSN tracking. MySQL 90% complete (binlog decoder + connection layer complete; requires production COM_BINLOG_DUMP implementation). MongoDB 70% complete (decoder done, connection layer pending). Feature-gated behind `experimental-cdc-connectors`. Debezium still recommended for production MySQL/MongoDB.
 |  |  |  |  |
 |---|---|---|---
 | **Connector** | **Status** | **Location** | **Features** |
 | **PostgreSQL** | ✅ Complete | `src/cdc/connectors/postgres/connector.rs` | Logical replication, pgoutput protocol, WAL streaming, slot management, LSN tracking, offset storage |
-| **MySQL** | 🔄 70% | `src/cdc/connectors/mysql/connector.rs` | Binlog decoder complete, connection layer pending (requires mysql_async crate) |
+| **MySQL** | 🔄 90% | `src/cdc/connectors/mysql/connector.rs` | Binlog decoder complete, MySqlBinlogStreamer connection layer, load_last_position(), run_mysql_binlog_stream() async loop. TODO: Production COM_BINLOG_DUMP protocol |
 | **MongoDB** | 🔄 70% | `src/cdc/connectors/mongodb/connector.rs` | Change stream decoder complete, connection layer pending (requires mongodb crate) |
 
 | TD-005
