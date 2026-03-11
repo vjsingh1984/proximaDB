@@ -149,7 +149,9 @@ impl LocalFileSystem {
     }
 
     /// Get the encryption layer if enabled
-    pub fn encryption_layer(&self) -> Option<&std::sync::Arc<crate::storage::encryption::FileEncryptionLayer>> {
+    pub fn encryption_layer(
+        &self,
+    ) -> Option<&std::sync::Arc<crate::storage::encryption::FileEncryptionLayer>> {
         self.encryption_layer.as_ref()
     }
 
@@ -521,7 +523,9 @@ impl FileSystem for LocalFileSystem {
                 .map_err(FilesystemError::Io)?;
 
             // Write all data
-            file.write_all(&data_to_write).await.map_err(FilesystemError::Io)?;
+            file.write_all(&data_to_write)
+                .await
+                .map_err(FilesystemError::Io)?;
 
             // Sync data to disk to prevent truncation issues
             file.sync_all().await.map_err(FilesystemError::Io)?;

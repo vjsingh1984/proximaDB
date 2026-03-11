@@ -21,9 +21,11 @@
 
 use futures::stream::StreamExt;
 use std::collections::HashMap;
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, watch};
 use tokio::time::{Duration, timeout};
+use tokio_postgres::types::Type;
 use tracing::{debug, error, info, warn};
 
 use super::config::PostgresConfig;
@@ -167,7 +169,7 @@ async fn run_replication_stream(
         .parse()
         .map_err(|e| CdcError::Configuration(format!("Invalid connection string: {}", e)))?;
 
-    // Use replication connection
+    // Use replication connection with simple protocol
     let (client, mut connection) = config
         .connect(tokio_postgres::NoTls)
         .await
@@ -193,32 +195,147 @@ async fn run_replication_stream(
         )
     };
 
-    // The copy_both call returns types that aren't publicly exposed by tokio-postgres
-    // For this experimental implementation, we set up the replication connection
-    // but don't actually read from the stream (which would require more complex handling)
-    //
-    // TODO: Implement proper WAL data reading from the replication stream.
-    // This requires either:
-    // 1. Using a different PostgreSQL client library with better replication support
-    // 2. Working with tokio-postgres internals (which are private)
-    // 3. Implementing the PostgreSQL replication protocol from scratch
+    info!("Executing: {}", query);
 
-    info!(
-        "Replication connection established for {} (WAL reading not yet implemented)",
-        connector_name
-    );
+    // Execute START_REPLICATION using copy both
+    // This returns a CopyBothStream which we use to read WAL data
+    let copy_stream = client
+        .copy_both(&query, &[])
+        .await
+        .map_err(|e| CdcError::Connection(format!("Failed to start replication: {}", e)))?;
 
-    // Wait for shutdown signal
+    info!("Replication stream started for {}", connector_name);
+
+    // Read from the replication stream
+    // CopyBothStream returns (data, update) where:
+    // - data: WAL data received from server
+    // - update: Connection update message
+    let (mut data_rx, mut update_rx) = copy_stream.split();
+
+    // Spawn task to handle connection updates
+    tokio::spawn(async move {
+        while let Some(update) = update_rx.next().await {
+            match update {
+                Ok(_) => debug!("Received connection update"),
+                Err(e) => {
+                    error!("Connection update error: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+
+    // Process WAL data
+    let mut wal_data_buffer = Vec::new();
+
     loop {
+        // Check for shutdown
         if *shutdown_rx.borrow() {
             info!("Shutdown requested, stopping replication");
             break;
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // Read WAL data with timeout
+        match timeout(Duration::from_secs(5), data_rx.next()).await {
+            Ok(Some(Ok(data))) => {
+                wal_data_buffer.extend_from_slice(&data);
+
+                // Process complete messages from buffer
+                while let Some((msg_type, msg_data, new_lsn)) =
+                    Self::parse_wal_message(&mut wal_data_buffer)
+                {
+                    debug!(
+                        "Received WAL message: type={}, lsn={}, len={}",
+                        msg_type,
+                        new_lsn,
+                        msg_data.len()
+                    );
+
+                    // Update current LSN
+                    *current_lsn.write().await = new_lsn;
+
+                    // Process pgoutput messages
+                    if let Ok(event) = decoder.write().await.decode(&msg_data) {
+                        if let Some(change_event) =
+                            convert_pgoutput_to_change_event(event, new_lsn, &current_tx).await
+                        {
+                            // Send change event
+                            if event_tx.send(change_event).await.is_err() {
+                                error!("Failed to send change event, channel closed");
+                                break;
+                            }
+                        }
+                    }
+
+                    // Store offset periodically
+                    if new_lsn % 1000 == 0 {
+                        let offset = Offset::new(&connector_name, new_lsn);
+                        if let Err(e) = offset_store.store(&connector_name, &offset).await {
+                            warn!("Failed to store offset: {}", e);
+                        }
+                    }
+                }
+            }
+            Ok(Some(Err(e))) => {
+                error!("Error reading from replication stream: {}", e);
+                break;
+            }
+            Ok(None) => {
+                info!("Replication stream ended");
+                break;
+            }
+            Err(_) => {
+                // Timeout is expected - continue loop
+            }
+        }
     }
 
-    info!("Replication stream stopped");
+    info!("Replication stream stopped for {}", connector_name);
     Ok(())
+}
+
+impl PostgresCdcSource {
+    /// Parse WAL messages from buffer
+    ///
+    /// PostgreSQL replication stream sends messages with format:
+    /// - 1 byte: message type
+    /// - 4 bytes: message length (excluding type and length)
+    /// - N bytes: message data
+    fn parse_wal_message(buffer: &mut Vec<u8>) -> Option<(u8, Vec<u8>, u64)> {
+        // Minimum message size is 5 bytes (type + length)
+        if buffer.len() < 5 {
+            return None;
+        }
+
+        // Read message type (first byte)
+        let msg_type = buffer[0];
+
+        // Read message length (next 4 bytes, big-endian)
+        let msg_len = u32::from_be_bytes([buffer[1], buffer[2], buffer[3], buffer[4]]) as usize;
+
+        // Check if we have the complete message
+        if buffer.len() < 5 + msg_len {
+            return None;
+        }
+
+        // Extract message data
+        let msg_data = buffer[5..5 + msg_len].to_vec();
+
+        // Remove processed message from buffer
+        *buffer = buffer[5 + msg_len..].to_vec();
+
+        // For XLogData messages, extract LSN from the WAL data
+        // XLogData format: start_lsn (8 bytes), end_lsn (8 bytes), timestamp (8 bytes), data
+        let lsn = if msg_type == b'w' && msg_data.len() >= 24 {
+            let lsn_bytes = &msg_data[0..8];
+            u64::from_be_bytes(lsn_bytes.try_into().unwrap())
+        } else {
+            // For other messages, use a dummy LSN
+            0
+        };
+
+        Some((msg_type, msg_data, lsn))
+    }
 }
 
 /// Convert pgoutput event to ChangeEvent

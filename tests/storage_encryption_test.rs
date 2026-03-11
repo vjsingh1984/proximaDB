@@ -13,8 +13,8 @@ use tempfile::TempDir;
 use proximadb::storage::encryption::{
     EncryptionConfig, FileEncryptionLayer, KeyManager, KeyVersionManager,
 };
-use proximadb::storage::persistence::filesystem::{FileSystem, FsResult};
 use proximadb::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+use proximadb::storage::persistence::filesystem::{FileSystem, FsResult};
 
 #[tokio::test]
 async fn test_file_encryption_roundtrip() {
@@ -57,7 +57,8 @@ async fn test_file_encryption_roundtrip() {
         .expect("Failed to write encrypted data");
 
     // Read back and verify
-    let read_data = fs.read(test_path)
+    let read_data = fs
+        .read(test_path)
         .await
         .expect("Failed to read encrypted data");
 
@@ -89,9 +90,7 @@ async fn test_file_encryption_disabled() {
         .expect("Failed to write data");
 
     // Read back and verify
-    let read_data = fs.read(test_path)
-        .await
-        .expect("Failed to read data");
+    let read_data = fs.read(test_path).await.expect("Failed to read data");
 
     assert_eq!(read_data, test_data, "Data should match original");
 }
@@ -133,11 +132,15 @@ async fn test_file_encryption_with_large_data() {
         .expect("Failed to write large encrypted data");
 
     // Read back and verify
-    let read_data = fs.read(test_path)
+    let read_data = fs
+        .read(test_path)
         .await
         .expect("Failed to read large encrypted data");
 
-    assert_eq!(read_data, test_data, "Decrypted large data should match original");
+    assert_eq!(
+        read_data, test_data,
+        "Decrypted large data should match original"
+    );
 }
 
 #[tokio::test]
@@ -155,11 +158,7 @@ async fn test_encryption_layer_access() {
     let key_version_manager = Arc::new(KeyVersionManager::new(key_manager));
 
     // Create encryption layer
-    let encryption_layer = Arc::new(FileEncryptionLayer::new(
-        key_version_manager,
-        true,
-        4096,
-    ));
+    let encryption_layer = Arc::new(FileEncryptionLayer::new(key_version_manager, true, 4096));
 
     // Create filesystem with encryption
     let fs = LocalFileSystem::new_with_encryption(config, Some(encryption_layer))
@@ -188,11 +187,7 @@ async fn test_encryption_without_key_fails_gracefully() {
     let key_version_manager = Arc::new(KeyVersionManager::new(key_manager));
 
     // Create filesystem with encryption
-    let encryption_layer = Arc::new(FileEncryptionLayer::new(
-        key_version_manager,
-        true,
-        4096,
-    ));
+    let encryption_layer = Arc::new(FileEncryptionLayer::new(key_version_manager, true, 4096));
     let fs = LocalFileSystem::new_with_encryption(config, Some(encryption_layer))
         .await
         .expect("Failed to create filesystem");
@@ -217,11 +212,7 @@ async fn test_encryption_without_key_fails_gracefully() {
     let key_manager2 = Arc::new(KeyManager::new(different_key));
     let key_version_manager2 = Arc::new(KeyVersionManager::new(key_manager2));
 
-    let encryption_layer2 = Arc::new(FileEncryptionLayer::new(
-        key_version_manager2,
-        true,
-        4096,
-    ));
+    let encryption_layer2 = Arc::new(FileEncryptionLayer::new(key_version_manager2, true, 4096));
 
     // Copy the encrypted file to the new temp directory
     let old_path = temp_dir.path().join("secret_file.txt");

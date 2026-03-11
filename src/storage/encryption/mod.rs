@@ -14,6 +14,7 @@
 // - <5% performance overhead
 
 pub mod file_encryption;
+pub mod filesystem;
 pub mod key_manager;
 pub mod wal_encryption;
 
@@ -25,6 +26,7 @@ use anyhow::Result;
 use sha2::{Digest, Sha256};
 
 pub use file_encryption::FileEncryptionLayer;
+pub use filesystem::EncryptedFilesystem;
 pub use key_manager::{KeyManager, KeyVersion, KeyVersionManager};
 pub use wal_encryption::WALEncryptionLayer;
 
