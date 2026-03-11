@@ -156,7 +156,26 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot be used with LangChain, LlamaIndex, Haystack, CrewAI without custom code. Every competitor has these.
 | 1-2 months
-| *Resolved*: LangChain VectorStore, CrewAI SearchTool/KnowledgeSource, LangGraph retriever, DSPy RM, AutoGen VectorDB adapters shipped. LlamaIndex/Haystack remaining.
+| *RESOLVED Mar 2026*: **All major framework integrations complete**. 7 frameworks implemented:
+|  |  |  |  |
+|---|---|---|---|---
+| **Framework** | **Status** | **Location** | **Features** |
+| **LangChain** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/langchain.py` | VectorStore, from_texts/from_documents, similarity_search |
+| **LangGraph** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/langgraph.py` | Retriever integration with LangGraph |
+| **LlamaIndex** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/llama_index.py` | VectorStore, Retriever, Node with embeddings |
+| **Haystack** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/haystack.py` | DocumentStore, Retriever, write_documents |
+| **CrewAI** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/crewai.py` | SearchTool, KnowledgeSource |
+| **DSPy** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/dspy.py` | RM (Retrieval Model) integration |
+| **AutoGen** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/autogen.py` | VectorDB adapter |
+
+**Installation:**
+```bash
+# Core SDK
+pip install proximadb-python
+
+# With frameworks
+pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index,haystack]
+```
 
 | TD-012
 | API handler test coverage at 5%
@@ -297,7 +316,7 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 
 | Missing Critical Features
 | ~TD-008~, ~TD-009~, ~TD-010~, ~TD-011~, ~TD-018~, ~TD-019~, ~TD-020~
-| No (All resolved: TD-008, TD-009, TD-010, TD-018, TD-019, TD-020. TD-011 partially resolved: 5/7 frameworks)
+| No (All resolved: TD-008, TD-009, TD-010, TD-011, TD-018, TD-019, TD-020)
 
 | Security
 | TD-006, TD-016
