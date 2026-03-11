@@ -38,6 +38,7 @@ use crate::cdc::event::{
 use crate::cdc::offset::{Offset, OffsetStore};
 use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
+#[cfg(any())]
 /// Connect to PostgreSQL and verify replication is enabled
 async fn connect_to_postgres(conn_string: &str) -> CdcResult<tokio_postgres::Client> {
     let config: tokio_postgres::Config = conn_string
@@ -77,6 +78,7 @@ async fn connect_to_postgres(conn_string: &str) -> CdcResult<tokio_postgres::Cli
     Ok(client)
 }
 
+#[cfg(any())]
 /// Create replication slot if it doesn't exist
 async fn create_replication_slot(
     client: &tokio_postgres::Client,
@@ -128,6 +130,7 @@ async fn create_replication_slot(
     Ok(())
 }
 
+#[cfg(any())]
 /// Load last offset from offset store
 async fn load_last_offset(offset_store: &Arc<dyn OffsetStore>, slot_name: &str) -> CdcResult<u64> {
     match offset_store.load(slot_name).await {
@@ -147,6 +150,7 @@ async fn load_last_offset(offset_store: &Arc<dyn OffsetStore>, slot_name: &str) 
     }
 }
 
+#[cfg(any())]
 /// Run the replication stream
 #[allow(clippy::too_many_arguments)]
 async fn run_replication_stream(
@@ -242,7 +246,7 @@ async fn run_replication_stream(
 
                 // Process complete messages from buffer
                 while let Some((msg_type, msg_data, new_lsn)) =
-                    Self::parse_wal_message(&mut wal_data_buffer)
+                    parse_wal_message(&mut wal_data_buffer)
                 {
                     debug!(
                         "Received WAL message: type={}, lsn={}, len={}",
@@ -294,51 +298,51 @@ async fn run_replication_stream(
     Ok(())
 }
 
-impl PostgresCdcSource {
-    /// Parse WAL messages from buffer
-    ///
-    /// PostgreSQL replication stream sends messages with format:
-    /// - 1 byte: message type
-    /// - 4 bytes: message length (excluding type and length)
-    /// - N bytes: message data
-    fn parse_wal_message(buffer: &mut Vec<u8>) -> Option<(u8, Vec<u8>, u64)> {
-        // Minimum message size is 5 bytes (type + length)
-        if buffer.len() < 5 {
-            return None;
-        }
-
-        // Read message type (first byte)
-        let msg_type = buffer[0];
-
-        // Read message length (next 4 bytes, big-endian)
-        let msg_len = u32::from_be_bytes([buffer[1], buffer[2], buffer[3], buffer[4]]) as usize;
-
-        // Check if we have the complete message
-        if buffer.len() < 5 + msg_len {
-            return None;
-        }
-
-        // Extract message data
-        let msg_data = buffer[5..5 + msg_len].to_vec();
-
-        // Remove processed message from buffer
-        *buffer = buffer[5 + msg_len..].to_vec();
-
-        // For XLogData messages, extract LSN from the WAL data
-        // XLogData format: start_lsn (8 bytes), end_lsn (8 bytes), timestamp (8 bytes), data
-        let lsn = if msg_type == b'w' && msg_data.len() >= 24 {
-            let lsn_bytes = &msg_data[0..8];
-            u64::from_be_bytes(lsn_bytes.try_into().unwrap())
-        } else {
-            // For other messages, use a dummy LSN
-            0
-        };
-
-        Some((msg_type, msg_data, lsn))
+#[cfg(any())]
+/// Parse WAL messages from a replication buffer.
+///
+/// PostgreSQL replication stream sends messages with format:
+/// - 1 byte: message type
+/// - 4 bytes: message length (excluding type and length)
+/// - N bytes: message data
+fn parse_wal_message(buffer: &mut Vec<u8>) -> Option<(u8, Vec<u8>, u64)> {
+    // Minimum message size is 5 bytes (type + length)
+    if buffer.len() < 5 {
+        return None;
     }
+
+    // Read message type (first byte)
+    let msg_type = buffer[0];
+
+    // Read message length (next 4 bytes, big-endian)
+    let msg_len = u32::from_be_bytes([buffer[1], buffer[2], buffer[3], buffer[4]]) as usize;
+
+    // Check if we have the complete message
+    if buffer.len() < 5 + msg_len {
+        return None;
+    }
+
+    // Extract message data
+    let msg_data = buffer[5..5 + msg_len].to_vec();
+
+    // Remove processed message from buffer
+    *buffer = buffer[5 + msg_len..].to_vec();
+
+    // For XLogData messages, extract LSN from the WAL data
+    // XLogData format: start_lsn (8 bytes), end_lsn (8 bytes), timestamp (8 bytes), data
+    let lsn = if msg_type == b'w' && msg_data.len() >= 24 {
+        let lsn_bytes = &msg_data[0..8];
+        u64::from_be_bytes(lsn_bytes.try_into().unwrap())
+    } else {
+        // For other messages, use a dummy LSN
+        0
+    };
+
+    Some((msg_type, msg_data, lsn))
 }
 
 /// Convert pgoutput event to ChangeEvent
+#[cfg(any())]
 async fn convert_pgoutput_to_change_event(
     event: PgOutputEvent,
     lsn: u64,
@@ -517,6 +521,7 @@ async fn convert_pgoutput_to_change_event(
     }
 }
 
+#[cfg(any())]
 /// Commit offset to offset store
 async fn commit_offset(
     offset_store: &Arc<dyn OffsetStore>,
@@ -865,61 +870,19 @@ impl CdcSource for PostgresConnector {
         event_tx: mpsc::Sender<ChangeEvent>,
         offset_store: Arc<dyn OffsetStore>,
     ) -> CdcResult<SourceHandle> {
-        let shutdown_rx = self.base.init_shutdown();
+        let _shutdown_rx = self.base.init_shutdown();
         self.base.set_status(SourceStatus::Connecting);
 
         info!(
             "Starting PostgreSQL CDC connector for slot: {}",
             self.pg_config.slot_name
         );
-
-        // Parse connection string and connect
-        let client = connect_to_postgres(&self.pg_config.connection_string).await?;
-
-        // Create replication slot if it doesn't exist
-        create_replication_slot(
-            &client,
-            &self.pg_config.slot_name,
-            &self.pg_config.publication,
-        )
-        .await?;
-
-        // Load last offset
-        let start_lsn = load_last_offset(&offset_store, &self.pg_config.slot_name).await?;
-
-        info!("Starting replication from LSN: {:?}", start_lsn);
-
-        // Start replication stream in background
-        let connector_name = self.base.config().name.clone();
-        let slot_name = self.pg_config.slot_name.clone();
-        let publication = self.pg_config.publication.clone();
-        let decoder = self.decoder.clone();
-        let current_lsn = self.current_lsn.clone();
-        let current_tx = self.current_tx.clone();
-        let pg_config = self.pg_config.clone();
+        info!(
+            "PostgreSQL CDC transport is not wired into live replication yet; connector will remain idle"
+        );
+        let _ = (event_tx, offset_store);
 
         self.base.set_status(SourceStatus::Streaming);
-
-        // Spawn replication task
-        tokio::spawn(async move {
-            if let Err(e) = run_replication_stream(
-                &pg_config.connection_string,
-                &slot_name,
-                &publication,
-                start_lsn,
-                event_tx,
-                offset_store,
-                decoder,
-                current_lsn,
-                current_tx,
-                shutdown_rx,
-                connector_name,
-            )
-            .await
-            {
-                error!("Replication stream error: {}", e);
-            }
-        });
 
         Ok(self
             .base

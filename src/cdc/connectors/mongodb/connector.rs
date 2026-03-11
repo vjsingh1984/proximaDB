@@ -19,6 +19,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
+use tracing::info;
 
 use super::change_event::{ChangeStreamOperation, MongoChangeEvent, ResumeToken};
 use super::config::MongoDbConfig;

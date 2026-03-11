@@ -684,6 +684,21 @@ try:
 except ImportError:
     _graph_analytics_available = False
 
+# Graph Operations API (High-level interface for Victor integration)
+try:
+    from .graph import (
+        ProximaDBGraph,
+        GraphEdge,
+        GraphNode,
+        GraphPath,
+        GraphQueryResult,
+        create_graph_api,
+    )
+
+    _graph_available = True
+except ImportError:
+    _graph_available = False
+
 if _graph_analytics_available:
     __all__.extend(
         [
@@ -701,6 +716,18 @@ if _graph_analytics_available:
             "PatternMatchMode",
             "node",
             "relationship",
+        ]
+    )
+
+if _graph_available:
+    __all__.extend(
+        [
+            "ProximaDBGraph",
+            "GraphNode",
+            "GraphEdge",
+            "GraphPath",
+            "GraphQueryResult",
+            "create_graph_api",
         ]
     )
 
