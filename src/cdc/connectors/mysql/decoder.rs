@@ -532,24 +532,27 @@ fn rows_to_json(rows: &[RowData], table_map: &Option<TableMapEvent>) -> Option<s
     // Use "after" for INSERT/UPDATE, "before" for DELETE
     let columns = row.after.as_ref().or(row.before.as_ref())?;
 
-    let columns_def = table_map.as_ref().map(|t| &t.columns).unwrap_or(&vec![]);
+    let empty_columns = vec![];
+    let columns_def = table_map.as_ref().map(|t| &t.columns).unwrap_or(&empty_columns);
 
     let mut obj = serde_json::map::Map::new();
     for (i, col) in columns.iter().enumerate() {
         let col_name = columns_def
             .get(i)
             .and_then(|c| c.name.as_ref())
-            .unwrap_or(&format!("col_{}", i));
+            .cloned()
+            .unwrap_or_else(|| format!("col_{}", i));
 
         let value = match col {
             ColumnValue::Null => serde_json::Value::Null,
             ColumnValue::String(s) => serde_json::json!(s),
-            ColumnValue::Int(i) | ColumnValue::UInt(i) => serde_json::json!(i),
+            ColumnValue::Int(i) => serde_json::json!(i),
+            ColumnValue::UInt(u) => serde_json::json!(u),
             ColumnValue::Float(f) => serde_json::json!(f),
             ColumnValue::Bytes(b) => serde_json::json!(b),
             ColumnValue::Json(j) => j.clone(),
         };
-        obj.insert(col_name.clone(), value);
+        obj.insert(col_name, value);
     }
 
     Some(serde_json::Value::Object(obj))
