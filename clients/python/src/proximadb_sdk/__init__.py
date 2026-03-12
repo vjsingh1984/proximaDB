@@ -603,6 +603,34 @@ _OPTIONAL_EXPORTS = {
     "ProximaDBVectorDB": (".integrations.autogen", "ProximaDBVectorDB"),
 }
 
+_OPTIONAL_EXPORT_DEPENDENCIES = {
+    "ProximaDBVectorStore": ("langchain_core",),
+    "ProximaDBEmbeddingProvider": ("victor",),
+    "ProximaDBKnowledgeSource": ("crewai",),
+    "ProximaDBSearchTool": ("crewai",),
+    "create_langgraph_retriever": ("langchain_core",),
+    "ProximaDBRM": ("dspy",),
+    "ProximaDBVectorDB": ("autogen_agentchat", "pyautogen"),
+}
+
+
+def _optional_export_is_available(name: str) -> bool:
+    import importlib
+    import importlib.util
+
+    dependencies = _OPTIONAL_EXPORT_DEPENDENCIES.get(name, ())
+    if not dependencies:
+        return True
+    for dep in dependencies:
+        if importlib.util.find_spec(dep) is None:
+            continue
+        try:
+            importlib.import_module(dep)
+            return True
+        except Exception:
+            continue
+    return False
+
 # Backwards compatibility aliases
 IndexConfig = IndexConfiguration  # Alias for backwards compatibility
 Vector = VectorRecord  # Alias for backwards compatibility
@@ -613,7 +641,9 @@ __all__.extend(
         "Vector",
     ]
 )
-__all__.extend(_OPTIONAL_EXPORTS.keys())
+__all__.extend(
+    name for name in _OPTIONAL_EXPORTS.keys() if _optional_export_is_available(name)
+)
 
 
 def __getattr__(name):
@@ -621,8 +651,19 @@ def __getattr__(name):
     if name in _OPTIONAL_EXPORTS:
         import importlib
 
+        if not _optional_export_is_available(name):
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r} "
+                f"(optional dependency not installed)"
+            )
         module_name, attr_name = _OPTIONAL_EXPORTS[name]
-        module = importlib.import_module(module_name, __name__)
+        try:
+            module = importlib.import_module(module_name, __name__)
+        except Exception as exc:
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r} "
+                f"(optional dependency import failed: {exc})"
+            ) from exc
         value = getattr(module, attr_name)
         globals()[name] = value
         return value
@@ -911,6 +952,7 @@ try:
         connect_embedded,
         create_embedding_model,
     )
+    from .embedded_multi import EmbeddedMultiModelProvider
 
     _embedded_available = True
 except ImportError:
@@ -924,6 +966,7 @@ if _embedded_available:
             "EmbeddedCollection",
             "EmbeddedConfig",
             "EmbeddedMultiModalQueryExecutor",
+            "EmbeddedMultiModelProvider",
             "connect_embedded",
             # Embedding models
             "BaseEmbeddingModel",
