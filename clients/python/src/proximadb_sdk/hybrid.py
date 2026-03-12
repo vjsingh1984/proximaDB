@@ -1160,16 +1160,58 @@ class ProximaDBHybrid:
         document_filter = document_filter or filters
 
         if vector_query is not None or text_query is not None:
-            vector_results = self._mock_vector_results(
-                vector_collection or "hybrid_collection",
-                top_k,
-                document_filter,
-            )
-            document_results = self._mock_document_results(
-                text_query,
-                top_k,
-                document_filter,
-            )
+            # Execute vector search on server
+            vector_results = []
+            if vector_query is not None and vector_collection:
+                try:
+                    vector_response = self._client.search_vectors(
+                        collection=vector_collection,
+                        query_vector=vector_query,
+                        top_k=top_k,
+                        filters=document_filter
+                    )
+                    # Convert to VectorSearchResult format
+                    vector_results = [
+                        VectorSearchResult(
+                            id=result.get("id", ""),
+                            score=result.get("score", 0.0),
+                            rank=idx + 1,
+                            metadata=result.get("metadata", {}),
+                            collection=vector_collection
+                        )
+                        for idx, result in enumerate(vector_response.get("results", [])[:top_k], 1)
+                    ]
+                except Exception as e:
+                    # Log error but continue with document search
+                    import warnings
+                    warnings.warn(f"Vector search failed: {e}")
+
+            # Execute document/bm25 search on server
+            document_results = []
+            if text_query is not None:
+                try:
+                    document_response = self._client.query_documents(
+                        collection_name=document_collection or "hybrid_collection",
+                        filter=document_filter,
+                        limit=top_k
+                    )
+                    # Convert to DocumentSearchResult format
+                    document_results = [
+                        DocumentSearchResult(
+                            id=doc.get("id", ""),
+                            score=1.0 / (idx + 1),  # Simple ranking based on position
+                            rank=idx + 1,
+                            document=doc.get("data", doc),
+                            metadata=doc.get("metadata", {})
+                        )
+                        for idx, doc in enumerate(document_response.get("documents", [])[:top_k], 1)
+                    ]
+                except Exception as e:
+                    # Log error but continue with vector results
+                    import warnings
+                    warnings.warn(f"Document search failed: {e}")
+
+            # Fuse results
             fusion = self._resolve_fusion(fusion_strategy)
             return fusion.fuse(vector_results, document_results, top_k=top_k, weights=weights)
 

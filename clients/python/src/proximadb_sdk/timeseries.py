@@ -850,10 +850,32 @@ class TimeSeriesRepository:
     )
     def create_collection(self, config: TimeSeriesCollectionConfig) -> str:
         """Create a time-series collection."""
-        collection_id = config.name
-        self._collections[collection_id] = config
-        self._ensure_collection(collection_id)
-        return collection_id
+        # Call the server to create the collection
+        try:
+            result = self._client.create_timeseries_collection(
+                name=config.name,
+                timestamp_column=config.timestamp_column,
+                value_columns=[
+                    {
+                        "name": vc.name,
+                        "data_type": str(vc.data_type.value).split(".")[-1],
+                        "aggregation": str(vc.aggregation.value).split(".")[-1],
+                    }
+                    for vc in config.value_columns
+                ],
+                tag_columns=config.tag_columns
+            )
+
+            collection_id = result.get("collection_id", config.name)
+
+            # Store in local cache for fast access
+            self._collections[collection_id] = config
+            self._ensure_collection(collection_id)
+
+            return collection_id
+
+        except Exception as e:
+            raise ProximaDBError(f"Failed to create timeseries collection '{config.name}': {e}")
 
     def get_collection(self, collection_id: str) -> Optional[Dict[str, Any]]:
         """Get collection metadata."""
@@ -888,24 +910,66 @@ class TimeSeriesRepository:
         if not metrics:
             return {"success": True, "ingested_count": 0, "failed_count": 0}
 
-        self._infer_collection(
-            collection_id,
-            [metric if isinstance(metric, Metric) else Metric(**metric) for metric in metrics],
-        )
-        self._ensure_collection(collection_id)
+        # Call the server to ingest timeseries data
+        try:
+            # Normalize metrics to dict format
+            points_data = []
+            for metric in metrics:
+                if isinstance(metric, Metric):
+                    metric_dict = metric.to_dict()
+                else:
+                    metric_dict = metric
 
-        normalized = [self._normalize_metric(metric) for metric in metrics]
-        self._points[collection_id].extend(normalized)
-        self._batch_buffer[collection_id].extend(normalized)
+                # Convert Metric to point format
+                point = {
+                    "timestamp": metric_dict.get("timestamp"),
+                    "values": metric_dict.get("values", {}),
+                    "tags": metric_dict.get("tags", {})
+                }
+                points_data.append(point)
 
-        if len(self._batch_buffer[collection_id]) >= self._batch_size:
-            self.flush_batch(collection_id)
+            result = self._client.ingest_timeseries(
+                collection_name=collection_id,
+                points=points_data
+            )
 
-        return {
-            "success": True,
-            "ingested_count": len(normalized),
-            "failed_count": 0,
-        }
+            # Update local cache
+            self._infer_collection(
+                collection_id,
+                [metric if isinstance(metric, Metric) else Metric(**metric) for metric in metrics],
+            )
+            self._ensure_collection(collection_id)
+
+            normalized = [self._normalize_metric(metric) for metric in metrics]
+            self._points[collection_id].extend(normalized)
+            self._batch_buffer[collection_id].extend(normalized)
+
+            if len(self._batch_buffer[collection_id]) >= self._batch_size:
+                self.flush_batch(collection_id)
+
+            return result
+
+        except Exception as e:
+            # Fallback to local ingestion for offline scenarios
+            self._infer_collection(
+                collection_id,
+                [metric if isinstance(metric, Metric) else Metric(**metric) for metric in metrics],
+            )
+            self._ensure_collection(collection_id)
+
+            normalized = [self._normalize_metric(metric) for metric in metrics]
+            self._points[collection_id].extend(normalized)
+            self._batch_buffer[collection_id].extend(normalized)
+
+            if len(self._batch_buffer[collection_id]) >= self._batch_size:
+                self.flush_batch(collection_id)
+
+            return {
+                "success": True,
+                "ingested_count": len(normalized),
+                "failed_count": 0,
+                "fallback": "local",
+            }
 
     def ingest_batch(
         self,
