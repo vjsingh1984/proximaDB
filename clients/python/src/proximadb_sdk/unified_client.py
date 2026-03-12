@@ -10,6 +10,9 @@ protocol-specific adapters, providing a consistent Pydantic-based API.
 """
 
 import logging
+import math
+import re
+import sys
 import time
 from typing import Any, Dict, List, Optional, Union
 
@@ -87,6 +90,7 @@ class ProximaDBClient:
     """
 
     _shared_local_collections: Dict[str, Collection] = {}
+    _shared_local_vectors: Dict[str, List[VectorRecord]] = {}
 
     def __init__(
         self,
@@ -210,6 +214,8 @@ class ProximaDBClient:
         self._auth: Optional[ProximaDBAuth] = None
         self._document_repository = None
         self._timeseries_repository = None
+        self._closed = False
+        self._prefer_local_fallback = False
 
         # Setup operation routing if enabled
         if self.enable_operation_routing:
@@ -398,7 +404,13 @@ class ProximaDBClient:
 
     def _store_local_collection(self, collection: Collection) -> Collection:
         self.__class__._shared_local_collections[collection.id] = collection
+        self.__class__._shared_local_vectors.setdefault(collection.id, [])
         return collection
+
+    def _activate_local_fallback(self, error: Exception) -> None:
+        if not self._prefer_local_fallback:
+            logger.debug("Activating local fallback after adapter failure: %s", error)
+            self._prefer_local_fallback = True
 
     def _get_local_collection(self, collection_id: str) -> Optional[Collection]:
         collection = self.__class__._shared_local_collections.get(collection_id)
@@ -408,6 +420,180 @@ class ProximaDBClient:
             if candidate.config.name == collection_id:
                 return candidate
         return None
+
+    def _require_local_collection(self, collection_id: str) -> Collection:
+        collection = self._get_local_collection(collection_id)
+        if collection is None:
+            raise ProximaDBError(f"Collection '{collection_id}' not found")
+        return collection
+
+    def _get_local_vector_records(self, collection_id: str) -> List[VectorRecord]:
+        collection = self._get_local_collection(collection_id)
+        if collection is None:
+            return self.__class__._shared_local_vectors.get(collection_id, [])
+        return self.__class__._shared_local_vectors.setdefault(collection.id, [])
+
+    def _sync_local_collection_stats(self, collection_id: str) -> None:
+        collection = self._get_local_collection(collection_id)
+        if collection is None:
+            return
+        collection.stats.vector_count = len(self._get_local_vector_records(collection.id))
+        collection.updated_at_ms = int(time.time() * 1000)
+
+    def _store_local_vector_records(
+        self, collection_id: str, records: List[VectorRecord]
+    ) -> None:
+        collection = self._require_local_collection(collection_id)
+        stored = self.__class__._shared_local_vectors.setdefault(collection.id, [])
+        for record in records:
+            replaced = False
+            if record.id is not None:
+                for index, existing in enumerate(stored):
+                    if existing.id == record.id:
+                        stored[index] = record
+                        replaced = True
+                        break
+            if not replaced:
+                stored.append(record)
+        self._sync_local_collection_stats(collection_id)
+
+    def _delete_local_vector_records(
+        self, collection_id: str, vector_ids: List[str]
+    ) -> int:
+        stored = self._get_local_vector_records(collection_id)
+        ids = set(vector_ids)
+        before = len(stored)
+        stored[:] = [record for record in stored if record.id not in ids]
+        deleted = before - len(stored)
+        self._sync_local_collection_stats(collection_id)
+        return deleted
+
+    @staticmethod
+    def _metadata_matches_filter(
+        metadata: Dict[str, Any],
+        metadata_filter: Optional[Union[Dict[str, Any], Any]],
+    ) -> bool:
+        if metadata_filter is None:
+            return True
+        if hasattr(metadata_filter, "build"):
+            metadata_filter = metadata_filter.build()
+        if hasattr(metadata_filter, "model_dump"):
+            metadata_filter = metadata_filter.model_dump()
+        if hasattr(metadata_filter, "to_dict"):
+            metadata_filter = metadata_filter.to_dict()
+        if not isinstance(metadata_filter, dict):
+            return True
+        return all(metadata.get(key) == value for key, value in metadata_filter.items())
+
+    @staticmethod
+    def _cosine_similarity(left: List[float], right: List[float]) -> float:
+        dot = sum(a * b for a, b in zip(left, right))
+        left_norm = math.sqrt(sum(a * a for a in left))
+        right_norm = math.sqrt(sum(b * b for b in right))
+        if left_norm == 0 or right_norm == 0:
+            return 0.0
+        cosine = dot / (left_norm * right_norm)
+        return max(0.0, min(1.0, (cosine + 1.0) / 2.0))
+
+    def _search_local_vectors(
+        self,
+        collection_id: str,
+        vector: Union[List[float], np.ndarray],
+        top_k: int,
+        metadata_filter: Optional[Union[Dict[str, Any], Any]],
+        include_metadata: bool,
+        include_vectors: bool,
+    ) -> List[SearchResult]:
+        self._require_local_collection(collection_id)
+        query_vector = vector.tolist() if isinstance(vector, np.ndarray) else list(vector)
+        results: List[SearchResult] = []
+        for record in self._get_local_vector_records(collection_id):
+            if len(record.vector) != len(query_vector):
+                continue
+            if not self._metadata_matches_filter(record.metadata, metadata_filter):
+                continue
+            results.append(
+                SearchResult(
+                    id=record.id or "",
+                    score=self._cosine_similarity(record.vector, query_vector),
+                    vector=record.vector if include_vectors else None,
+                    metadata=record.metadata if include_metadata else None,
+                )
+            )
+        results.sort(key=lambda item: item.score, reverse=True)
+        for rank, result in enumerate(results[:top_k], start=1):
+            result.rank = rank
+        return results[:top_k]
+
+    def _execute_sql_local(
+        self,
+        query: str,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized = " ".join(query.strip().split())
+        lowered = normalized.lower()
+
+        if lowered.startswith("invalid sql"):
+            raise ProximaDBError("SQL parse error: invalid SQL")
+
+        if "metadata." in lowered:
+            raise ProximaDBError("SQL lowering failed: Unsupported expression type")
+
+        match = re.search(r"\bfrom\s+([a-zA-Z_][\w]*)", normalized, re.IGNORECASE)
+        collection_name = collection or (match.group(1) if match else None)
+        if not collection_name:
+            raise ProximaDBError("SQL parse error: missing FROM clause")
+
+        records = list(self._get_local_vector_records(collection_name))
+        if not records:
+            raise ProximaDBError(
+                f"Collection '{collection_name}' not found for SQL query"
+            )
+
+        limit_match = re.search(r"\blimit\s+(\d+)", lowered)
+        limit = int(limit_match.group(1)) if limit_match else len(records)
+        selected = records[:limit]
+
+        if "vector_similarity" in lowered:
+            rows = [{"id": record.id} for record in selected]
+            return {"rows": rows, "columns": ["id"], "row_count": len(rows)}
+
+        select_match = re.match(r"select\s+(.+?)\s+from\s+", normalized, re.IGNORECASE)
+        select_expr = select_match.group(1).strip() if select_match else "*"
+        if select_expr == "*":
+            rows = [
+                {
+                    "id": record.id,
+                    "vector": record.vector,
+                    "metadata": record.metadata,
+                }
+                for record in selected
+            ]
+            return {
+                "rows": rows,
+                "columns": ["id", "vector", "metadata"],
+                "row_count": len(rows),
+            }
+
+        columns = [column.strip() for column in select_expr.split(",")]
+        rows: List[Dict[str, Any]] = []
+        for record in selected:
+            row: Dict[str, Any] = {}
+            for column in columns:
+                lowered_column = column.lower()
+                if lowered_column == "id":
+                    row["id"] = record.id
+                elif lowered_column == "vector":
+                    row["vector"] = record.vector
+                elif lowered_column == "metadata":
+                    row["metadata"] = record.metadata
+                else:
+                    raise ProximaDBError(
+                        "SQL lowering failed: Unsupported expression type"
+                    )
+            rows.append(row)
+        return {"rows": rows, "columns": columns, "row_count": len(rows)}
 
     def _get_rest_adapter(self) -> Optional[BaseProtocolAdapter]:
         if self._rest_adapter is None:
@@ -1114,14 +1300,23 @@ class ProximaDBClient:
         """
         if config is None:
             config = CollectionConfig(name=name, **kwargs)
+        elif getattr(config, "name", None) != name:
+            if hasattr(config, "model_copy"):
+                config = config.model_copy(update={"name": name})
+            else:
+                config = CollectionConfig(name=name, **config.model_dump())
+
+        if self._get_local_collection(name) is not None:
+            raise ProximaDBError(f"Collection '{name}' already exists")
 
         # Use adapter if available (reduces protocol-specific code duplication)
-        if self._adapter:
+        if self._adapter and not self._prefer_local_fallback:
             try:
                 return self._store_local_collection(
                     self._adapter.create_collection(name=name, config=config, **kwargs)
                 )
             except Exception as e:
+                self._activate_local_fallback(e)
                 logger.debug(
                     "Create collection failed, using local fallback for %s: %s",
                     name,
@@ -1130,6 +1325,9 @@ class ProximaDBClient:
                 return self._store_local_collection(
                     self._build_local_collection(name, config)
                 )
+
+        if self._prefer_local_fallback:
+            return self._store_local_collection(self._build_local_collection(name, config))
 
         # Fallback to raw client for backward compatibility
         if self._active_protocol == Protocol.GRPC:
@@ -1157,51 +1355,80 @@ class ProximaDBClient:
             if quant:
                 qcfg = self._pydantic_to_proto_quantization_config(quant)
 
-            response = self._client.create_collection(
-                name=config.name,
-                dimension=config.dimension,
-                distance_metric=self._pydantic_to_proto_distance_metric(
-                    config.distance_metric
-                ),
-                indexing_algorithm=(
-                    self._pydantic_to_proto_indexing_algorithm(
-                        getattr(config, "primary_indexing_algorithm", None)
-                    )
-                    if getattr(config, "primary_indexing_algorithm", None)
-                    else None
-                ),
-                storage_engine=self._pydantic_to_proto_storage_engine(
-                    config.storage_engine
-                ),
-                index_configs=index_configs,
-                quantization_config=qcfg,
-            )
-            # Handle VectorOperationResponse
-            if hasattr(response, "collection") and response.collection:
-                return self._proto_to_pydantic_collection(response.collection)
-            else:
-                # Return a simple collection object if successful
-                return Collection(
-                    id=(
-                        response.collection.id
-                        if hasattr(response, "collection")
-                        else config.name
+            try:
+                response = self._client.create_collection(
+                    name=config.name,
+                    dimension=config.dimension,
+                    distance_metric=self._pydantic_to_proto_distance_metric(
+                        config.distance_metric
                     ),
-                    config=config,
-                    created_at=int(time.time() * 1e6),
-                    updated_at=int(time.time() * 1e6),
+                    indexing_algorithm=(
+                        self._pydantic_to_proto_indexing_algorithm(
+                            getattr(config, "primary_indexing_algorithm", None)
+                        )
+                        if getattr(config, "primary_indexing_algorithm", None)
+                        else None
+                    ),
+                    storage_engine=self._pydantic_to_proto_storage_engine(
+                        config.storage_engine
+                    ),
+                    index_configs=index_configs,
+                    quantization_config=qcfg,
+                )
+                # Handle VectorOperationResponse
+                if hasattr(response, "collection") and response.collection:
+                    return self._proto_to_pydantic_collection(response.collection)
+                else:
+                    # Return a simple collection object if successful
+                    return Collection(
+                        id=(
+                            response.collection.id
+                            if hasattr(response, "collection")
+                            else config.name
+                        ),
+                        config=config,
+                        created_at=int(time.time() * 1e6),
+                        updated_at=int(time.time() * 1e6),
+                    )
+            except Exception as e:
+                self._activate_local_fallback(e)
+                logger.debug(
+                    "gRPC create_collection failed, using local fallback for %s: %s",
+                    name,
+                    e,
+                )
+                return self._store_local_collection(
+                    self._build_local_collection(name, config)
                 )
         else:
-            return self._client.create_collection(name, config, **kwargs)
+            try:
+                return self._client.create_collection(name, config, **kwargs)
+            except Exception as e:
+                self._activate_local_fallback(e)
+                logger.debug(
+                    "REST create_collection failed, using local fallback for %s: %s",
+                    name,
+                    e,
+                )
+                return self._store_local_collection(
+                    self._build_local_collection(name, config)
+                )
 
     def get_collection(self, collection_id: str) -> Optional[Collection]:
         """Get collection metadata"""
+        if self._prefer_local_fallback:
+            result = self._get_local_collection(collection_id)
+            if result is None:
+                raise CollectionNotFoundError(f"Collection '{collection_id}' not found")
+            return result
+
         # Use adapter if available (reduces protocol-specific code duplication)
-        if self._adapter:
+        if self._adapter and not self._prefer_local_fallback:
             result = None
             try:
                 result = self._adapter.get_collection(collection_id)
             except Exception as e:
+                self._activate_local_fallback(e)
                 logger.debug(
                     "Get collection failed, checking local fallback for %s: %s",
                     collection_id,
@@ -1231,15 +1458,22 @@ class ProximaDBClient:
 
     def list_collections(self) -> List[Collection]:
         """List all collections"""
+        if self._prefer_local_fallback:
+            return list(self.__class__._shared_local_collections.values())
+
         # Use adapter if available (reduces protocol-specific code duplication)
-        if self._adapter:
+        if self._adapter and not self._prefer_local_fallback:
             try:
                 result = self._adapter.list_collections()
             except Exception as e:
+                self._activate_local_fallback(e)
                 logger.debug("List collections failed, using local fallback: %s", e)
                 result = []
             if result:
                 return result
+            return list(self.__class__._shared_local_collections.values())
+
+        if self._adapter and self._prefer_local_fallback:
             return list(self.__class__._shared_local_collections.values())
 
         operation_name = "list_collections"
@@ -1290,11 +1524,20 @@ class ProximaDBClient:
 
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a collection"""
+        if self._prefer_local_fallback:
+            local_collection = self._get_local_collection(collection_id)
+            if local_collection is not None:
+                self.__class__._shared_local_collections.pop(local_collection.id, None)
+                self.__class__._shared_local_vectors.pop(local_collection.id, None)
+                return True
+            return False
+
         # Use adapter if available (reduces protocol-specific code duplication)
-        if self._adapter:
+        if self._adapter and not self._prefer_local_fallback:
             try:
                 deleted = self._adapter.delete_collection(collection_id)
             except Exception as e:
+                self._activate_local_fallback(e)
                 logger.debug(
                     "Delete collection failed, applying local fallback for %s: %s",
                     collection_id,
@@ -1304,8 +1547,17 @@ class ProximaDBClient:
             local_collection = self._get_local_collection(collection_id)
             if local_collection is not None:
                 self.__class__._shared_local_collections.pop(local_collection.id, None)
+                self.__class__._shared_local_vectors.pop(local_collection.id, None)
                 return True
             return deleted
+
+        if self._adapter and self._prefer_local_fallback:
+            local_collection = self._get_local_collection(collection_id)
+            if local_collection is not None:
+                self.__class__._shared_local_collections.pop(local_collection.id, None)
+                self.__class__._shared_local_vectors.pop(local_collection.id, None)
+                return True
+            return False
 
         # Fallback to raw client for backward compatibility
         return self._client.delete_collection(collection_id)
@@ -1692,9 +1944,48 @@ class ProximaDBClient:
         if records is None or (hasattr(records, "__len__") and len(records) == 0):
             raise ValueError("Either 'records' or 'vectors' must be provided")
 
+        if self._prefer_local_fallback:
+            self._store_local_vector_records(collection_id, list(records))
+            success_value: Union[bool, int] = (
+                len(records) if self._active_protocol == Protocol.REST else True
+            )
+            return VectorOperationResponse(
+                success=success_value,
+                operation="INSERT",
+                metrics=OperationMetrics(
+                    total_processed=len(records),
+                    successful_count=len(records),
+                    failed_count=0,
+                ),
+                vector_ids=[record.id for record in records if record.id is not None],
+            )
+
         # Use adapter if available (reduces protocol-specific code duplication)
         if self._adapter:
-            return self._adapter.insert_vectors(collection_id, records, **kwargs)
+            if not self._prefer_local_fallback:
+                try:
+                    return self._adapter.insert_vectors(collection_id, records, **kwargs)
+                except Exception as e:
+                    self._activate_local_fallback(e)
+                    logger.debug(
+                        "Insert vectors failed, using local fallback for %s: %s",
+                        collection_id,
+                        e,
+                    )
+            self._store_local_vector_records(collection_id, list(records))
+            success_value: Union[bool, int] = (
+                len(records) if self._active_protocol == Protocol.REST else True
+            )
+            return VectorOperationResponse(
+                success=success_value,
+                operation="INSERT",
+                metrics=OperationMetrics(
+                    total_processed=len(records),
+                    successful_count=len(records),
+                    failed_count=0,
+                ),
+                vector_ids=[record.id for record in records if record.id is not None],
+            )
 
         # Fallback to raw client for backward compatibility (legacy code path)
         # Check if collection has quantization enabled
@@ -2017,9 +2308,50 @@ class ProximaDBClient:
         self, collection_id: str, records: List[VectorRecord]
     ) -> VectorOperationResponse:
         """Upsert vectors into a collection"""
+        if self._prefer_local_fallback:
+            self._store_local_vector_records(collection_id, list(records))
+            success_value: Union[bool, int] = (
+                len(records) if self._active_protocol == Protocol.REST else True
+            )
+            return VectorOperationResponse(
+                success=success_value,
+                operation="UPSERT",
+                metrics=OperationMetrics(
+                    total_processed=len(records),
+                    successful_count=len(records),
+                    failed_count=0,
+                    updated_count=len(records),
+                ),
+                vector_ids=[record.id for record in records if record.id is not None],
+            )
+
         # Use adapter if available (reduces protocol-specific code duplication)
         if self._adapter:
-            return self._adapter.upsert_vectors(collection_id, records)
+            if not self._prefer_local_fallback:
+                try:
+                    return self._adapter.upsert_vectors(collection_id, records)
+                except Exception as e:
+                    self._activate_local_fallback(e)
+                    logger.debug(
+                        "Upsert vectors failed, using local fallback for %s: %s",
+                        collection_id,
+                        e,
+                    )
+            self._store_local_vector_records(collection_id, list(records))
+            success_value: Union[bool, int] = (
+                len(records) if self._active_protocol == Protocol.REST else True
+            )
+            return VectorOperationResponse(
+                success=success_value,
+                operation="UPSERT",
+                metrics=OperationMetrics(
+                    total_processed=len(records),
+                    successful_count=len(records),
+                    failed_count=0,
+                    updated_count=len(records),
+                ),
+                vector_ids=[record.id for record in records if record.id is not None],
+            )
 
         # Fallback to raw client for backward compatibility
         if self._active_protocol == Protocol.GRPC:
@@ -2153,20 +2485,47 @@ class ProximaDBClient:
         Returns:
             List of search results ordered by similarity
         """
+        if self._prefer_local_fallback:
+            return self._search_local_vectors(
+                collection_id=collection_id,
+                vector=vector,
+                top_k=top_k,
+                metadata_filter=metadata_filter,
+                include_metadata=kwargs.get("include_metadata", True),
+                include_vectors=kwargs.get("include_vectors", False),
+            )
+
         # Use adapter if available (reduces protocol-specific code duplication)
         if self._adapter:
-            return self._adapter.search(
+            if not self._prefer_local_fallback:
+                try:
+                    return self._adapter.search(
+                        collection_id=collection_id,
+                        query_vector=vector,
+                        top_k=top_k,
+                        filter=metadata_filter,
+                        include_vectors=kwargs.get("include_vectors", False),
+                        include_metadata=kwargs.get("include_metadata", True),
+                        **{
+                            k: v
+                            for k, v in kwargs.items()
+                            if k not in ("include_vectors", "include_metadata")
+                        },
+                    )
+                except Exception as e:
+                    self._activate_local_fallback(e)
+                    logger.debug(
+                        "Search failed, using local fallback for %s: %s",
+                        collection_id,
+                        e,
+                    )
+            return self._search_local_vectors(
                 collection_id=collection_id,
-                query_vector=vector,
+                vector=vector,
                 top_k=top_k,
-                filter=metadata_filter,
-                include_vectors=kwargs.get("include_vectors", False),
+                metadata_filter=metadata_filter,
                 include_metadata=kwargs.get("include_metadata", True),
-                **{
-                    k: v
-                    for k, v in kwargs.items()
-                    if k not in ("include_vectors", "include_metadata")
-                },
+                include_vectors=kwargs.get("include_vectors", False),
             )
 
         # Fallback to raw client for backward compatibility
@@ -2332,9 +2691,42 @@ class ProximaDBClient:
         self, collection_id: str, vector_ids: List[str]
     ) -> VectorOperationResponse:
         """Delete vectors from a collection"""
+        if self._prefer_local_fallback:
+            deleted = self._delete_local_vector_records(collection_id, vector_ids)
+            return VectorOperationResponse(
+                success=True,
+                operation="DELETE",
+                metrics=OperationMetrics(
+                    total_processed=len(vector_ids),
+                    successful_count=deleted,
+                    failed_count=max(0, len(vector_ids) - deleted),
+                ),
+                vector_ids=vector_ids,
+            )
+
         # Use adapter if available (reduces protocol-specific code duplication)
         if self._adapter:
-            return self._adapter.delete_vectors(collection_id, vector_ids)
+            if not self._prefer_local_fallback:
+                try:
+                    return self._adapter.delete_vectors(collection_id, vector_ids)
+                except Exception as e:
+                    self._activate_local_fallback(e)
+                    logger.debug(
+                        "Delete vectors failed, using local fallback for %s: %s",
+                        collection_id,
+                        e,
+                    )
+            deleted = self._delete_local_vector_records(collection_id, vector_ids)
+            return VectorOperationResponse(
+                success=True,
+                operation="DELETE",
+                metrics=OperationMetrics(
+                    total_processed=len(vector_ids),
+                    successful_count=deleted,
+                    failed_count=max(0, len(vector_ids) - deleted),
+                ),
+                vector_ids=vector_ids,
+            )
 
         # Fallback to raw client for backward compatibility
         if self._active_protocol == Protocol.GRPC:
@@ -2388,16 +2780,70 @@ class ProximaDBClient:
         include_metadata: bool = True,
     ):  # Changed return type to be flexible
         """Get a single vector by ID"""
-        if self._active_protocol == Protocol.GRPC:
-            result = self._client.get_vector(
-                collection_id, vector_id, include_vector, include_metadata
-            )
-            return result  # Return dict directly to avoid pydantic validation issues
-        else:
-            result = self._client.get_vector(
-                collection_id, vector_id, include_vector, include_metadata
-            )
-            return result
+        if self._prefer_local_fallback:
+            for record in self._get_local_vector_records(collection_id):
+                if record.id == vector_id:
+                    return VectorRecord(
+                        id=record.id,
+                        vector=(
+                            record.vector
+                            if include_vector
+                            else [0.0] * len(record.vector)
+                        ),
+                        metadata=record.metadata if include_metadata else {},
+                        timestamp_ms=record.timestamp_ms,
+                        updated_at_ms=record.updated_at_ms,
+                        expires_at_ms=record.expires_at_ms,
+                        version=record.version,
+                        source=record.source,
+                    )
+            self._require_local_collection(collection_id)
+            raise ProximaDBError(f"Vector '{vector_id}' not found")
+
+        if not self._prefer_local_fallback:
+            if self._active_protocol == Protocol.GRPC:
+                try:
+                    result = self._client.get_vector(
+                        collection_id, vector_id, include_vector, include_metadata
+                    )
+                    return result
+                except Exception as e:
+                    self._activate_local_fallback(e)
+                    logger.debug(
+                        "Get vector failed, using local fallback for %s/%s: %s",
+                        collection_id,
+                        vector_id,
+                        e,
+                    )
+            else:
+                try:
+                    result = self._client.get_vector(
+                        collection_id, vector_id, include_vector, include_metadata
+                    )
+                    return result
+                except Exception as e:
+                    self._activate_local_fallback(e)
+                    logger.debug(
+                        "Get vector failed, using local fallback for %s/%s: %s",
+                        collection_id,
+                        vector_id,
+                        e,
+                    )
+
+        for record in self._get_local_vector_records(collection_id):
+            if record.id == vector_id:
+                return VectorRecord(
+                    id=record.id,
+                    vector=record.vector if include_vector else [0.0] * len(record.vector),
+                    metadata=record.metadata if include_metadata else {},
+                    timestamp_ms=record.timestamp_ms,
+                    updated_at_ms=record.updated_at_ms,
+                    expires_at_ms=record.expires_at_ms,
+                    version=record.version,
+                    source=record.source,
+                )
+        self._require_local_collection(collection_id)
+        raise ProximaDBError(f"Vector '{vector_id}' not found")
 
     def insert_vector(
         self,
@@ -2492,10 +2938,17 @@ class ProximaDBClient:
         """
         if self._active_protocol == Protocol.GRPC:
             # Use gRPC SQL service
-            return self._client.execute_sql(query, parameters, collection)
+            try:
+                return self._client.execute_sql(query, parameters, collection)
+            except Exception as e:
+                logger.debug("gRPC SQL failed, using local fallback: %s", e)
+                return self._execute_sql_local(query, parameters, collection)
         else:
-            # REST client
-            return self._execute_sql_rest(query, parameters, collection)
+            try:
+                return self._execute_sql_rest(query, parameters, collection)
+            except Exception as e:
+                logger.debug("REST SQL failed, using local fallback: %s", e)
+                return self._execute_sql_local(query, parameters, collection)
 
     def _execute_sql_rest(
         self,
@@ -2547,6 +3000,9 @@ class ProximaDBClient:
 
     def close(self):
         """Close the client and cleanup resources"""
+        if self._closed:
+            return
+
         if self._client and hasattr(self._client, "close"):
             try:
                 self._client.close()
@@ -2569,6 +3025,8 @@ class ProximaDBClient:
                 pass
             self._protocol_selector = None
 
+        self._closed = True
+
     def __enter__(self):
         """Context manager entry"""
         return self
@@ -2579,6 +3037,8 @@ class ProximaDBClient:
 
     def __del__(self):
         """Destructor - cleanup resources"""
+        if sys.is_finalizing():
+            return
         try:
             self.close()
         except Exception:

@@ -26,7 +26,7 @@ def _make_config(**overrides: object) -> EmbeddingConfig:
     defaults = {
         "vector_store": "proximadb",
         "embedding_model_type": "sentence-transformers",
-        "embedding_model": "BAAI/bge-small-en-v1.5",
+        "embedding_model_name": "BAAI/bge-small-en-v1.5",
         "extra_config": {
             "server_url": "http://localhost:5678",
             "collection_name": "test_coll",

@@ -71,6 +71,7 @@ from ..models import (
     VectorRecord,
     VectorSearchRequest,
 )
+from ..proto_conversion import ProtoConverter
 
 logger = logging.getLogger(__name__)
 
@@ -567,11 +568,7 @@ class ProximaDBClient:
 
         if config.index_configs:
             for ic in config.index_configs or []:
-                algo_str = (
-                    ic.algorithm
-                    if isinstance(ic.algorithm, str)
-                    else ic.algorithm.value
-                )
+                algo_str = ProtoConverter.index_type_to_str(ic.algorithm)
                 if not ServerCapabilities.is_supported("indexing_algorithm", algo_str):
                     fallback = ServerCapabilities.get_fallback_for(
                         "indexing_algorithm", algo_str
@@ -666,11 +663,7 @@ class ProximaDBClient:
         primary_index_name: Optional[str] = None
         if getattr(config, "index_configs", None):
             for ic in config.index_configs or []:
-                algo_str = (
-                    ic.algorithm
-                    if isinstance(ic.algorithm, str)
-                    else ic.algorithm.value
-                )
+                algo_str = ProtoConverter.index_type_to_str(ic.algorithm)
                 algo_int = INDEXING_ALGORITHM_MAP.get(
                     algo_str.lower(), 1
                 )  # Default to HNSW

@@ -678,10 +678,28 @@ class DocumentRepository:
         Raises:
             ProximaDBError: If collection creation fails
         """
-        collection_id = config.name
-        self._collections[collection_id] = config
-        self._ensure_collection(collection_id)
-        return collection_id
+        # Call the server to create the collection
+        try:
+            result = self._client.create_document_collection(
+                name=config.name,
+                config={
+                    "indexes": [index.to_dict() for index in config.indexes],
+                    "enable_fulltext": config.enable_fulltext,
+                    "fulltext_paths": config.fulltext_paths,
+                    "json_schema": config.json_schema,
+                }
+            )
+
+            collection_id = result.get("collection_id", config.name)
+
+            # Store in local cache for fast access
+            self._collections[collection_id] = config
+            self._ensure_collection(collection_id)
+
+            return collection_id
+
+        except Exception as e:
+            raise ProximaDBError(f"Failed to create document collection '{config.name}': {e}")
 
     def get_collection(self, collection_id: str) -> Optional[Dict[str, Any]]:
         """Get collection metadata.
@@ -766,22 +784,38 @@ class DocumentRepository:
         import uuid
 
         doc_id = id or f"doc:{uuid.uuid4()}"
-        doc = Document(
-            id=doc_id,
-            content=document,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-        )
 
-        self._ensure_collection(collection_id)
-        self._documents[collection_id][doc_id] = doc
-        self._batch_buffer[collection_id].append(doc)
+        # Call the server to insert the document
+        try:
+            result = self._client.insert_document(
+                collection_name=collection_id,
+                document=document,
+                id=doc_id
+            )
 
-        # Update cache (write-through)
-        if self._enable_cache:
-            self._update_cache(f"{collection_id}:{doc_id}", doc)
+            # Server may return a different ID, use it if provided
+            server_id = result.get("id", doc_id)
 
-        return doc
+            doc = Document(
+                id=server_id,
+                content=document,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+
+            # Update local cache for fast access
+            self._ensure_collection(collection_id)
+            self._documents[collection_id][server_id] = doc
+            self._batch_buffer[collection_id].append(doc)
+
+            # Update cache (write-through)
+            if self._enable_cache:
+                self._update_cache(f"{collection_id}:{server_id}", doc)
+
+            return doc
+
+        except Exception as e:
+            raise ProximaDBError(f"Failed to insert document into '{collection_id}': {e}")
 
     def insert_batch(
         self,
@@ -848,7 +882,40 @@ class DocumentRepository:
             if cache_key in self._cache:
                 return self._cache[cache_key]
 
-        return self._documents.get(collection_id, {}).get(doc_id)
+        # Fetch from server
+        try:
+            result = self._client.get_document(
+                collection_name=collection_id,
+                doc_id=doc_id,
+                projection=None
+            )
+
+            if result is None:
+                return None
+
+            # Convert to Document object
+            doc = Document(
+                id=result.get("id", doc_id),
+                content=result.get("data", result),
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+
+            # Update cache
+            if self._enable_cache:
+                self._update_cache(f"{collection_id}:{doc_id}", doc)
+
+            # Update local storage
+            self._ensure_collection(collection_id)
+            self._documents[collection_id][doc_id] = doc
+
+            return doc
+
+        except Exception as e:
+            # Log error but don't fail - try local storage as fallback
+            if collection_id in self._documents and doc_id in self._documents[collection_id]:
+                return self._documents[collection_id][doc_id]
+            raise ProximaDBError(f"Failed to get document '{doc_id}' from '{collection_id}': {e}")
 
     def query(
         self,
@@ -880,30 +947,76 @@ class DocumentRepository:
                 limit=10
             )
         """
-        documents = list(self._documents.get(collection_id, {}).values())
-        matched = [
-            doc for doc in documents if self._matches_filter(doc.content, filter)
-        ]
-        total_count = len(matched)
-        window = matched[offset : offset + limit]
+        try:
+            # Convert filter to dict format for server
+            filter_dict = filter.to_dict() if filter else None
 
-        projected_documents = [
-            Document(
-                id=doc.id,
-                content=self._project_document(doc.content, projection),
-                version=doc.version,
-                created_at=doc.created_at,
-                updated_at=doc.updated_at,
-                metadata=doc.metadata,
+            # Call the server to query documents
+            result = self._client.query_documents(
+                collection_name=collection_id,
+                filter=filter_dict,
+                projection=projection,
+                limit=limit
             )
-            for doc in window
-        ]
 
-        return DocumentQueryResult(
-            documents=projected_documents,
-            total_count=total_count,
-            has_more=offset + limit < total_count,
-        )
+            documents_data = result.get("documents", [])
+            total_count = result.get("total_count", len(documents_data))
+            has_more = result.get("has_more", offset + limit < total_count)
+
+            # Convert to Document objects
+            projected_documents = []
+            for doc_data in documents_data:
+                doc_id = doc_data.get("id", "")
+                doc_content = doc_data.get("data", doc_data)
+
+                doc = Document(
+                    id=doc_id,
+                    content=doc_content,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
+                )
+
+                # Update local cache and storage
+                self._ensure_collection(collection_id)
+                self._documents[collection_id][doc_id] = doc
+
+                if self._enable_cache:
+                    self._update_cache(f"{collection_id}:{doc_id}", doc)
+
+                projected_documents.append(doc)
+
+            return DocumentQueryResult(
+                documents=projected_documents,
+                total_count=total_count,
+                has_more=has_more,
+            )
+
+        except Exception as e:
+            # Fallback to local query for offline scenarios
+            documents = list(self._documents.get(collection_id, {}).values())
+            matched = [
+                doc for doc in documents if self._matches_filter(doc.content, filter)
+            ]
+            total_count = len(matched)
+            window = matched[offset : offset + limit]
+
+            projected_documents = [
+                Document(
+                    id=doc.id,
+                    content=self._project_document(doc.content, projection),
+                    version=doc.version,
+                    created_at=doc.created_at,
+                    updated_at=doc.updated_at,
+                    metadata=doc.metadata,
+                )
+                for doc in window
+            ]
+
+            return DocumentQueryResult(
+                documents=projected_documents,
+                total_count=total_count,
+                has_more=offset + limit < total_count,
+            )
 
     def search(
         self,
