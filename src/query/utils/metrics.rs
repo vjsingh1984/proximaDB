@@ -19,13 +19,17 @@ static QUERY_TELEMETRY_SINK: Lazy<Mutex<Option<QueryTelemetrySink>>> =
     Lazy::new(|| Mutex::new(None));
 
 pub fn configure_query_telemetry(service: Arc<ObservabilityService>, namespace: impl Into<String>) {
-    let mut guard = QUERY_TELEMETRY_SINK
-        .lock()
-        .expect("query telemetry sink mutex poisoned");
-    *guard = Some(QueryTelemetrySink {
-        service,
-        namespace: namespace.into(),
-    });
+    match QUERY_TELEMETRY_SINK.lock() {
+        Ok(mut guard) => {
+            *guard = Some(QueryTelemetrySink {
+                service,
+                namespace: namespace.into(),
+            });
+        }
+        Err(e) => {
+            tracing::error!("Failed to configure query telemetry (mutex poisoned): {}", e);
+        }
+    }
 }
 
 pub fn record_query_start(kind: &str) {
@@ -128,10 +132,13 @@ fn emit_query_metrics(kind: &str, ok: bool, latency_ms: u64) {
 }
 
 fn current_sink() -> Option<QueryTelemetrySink> {
-    QUERY_TELEMETRY_SINK
-        .lock()
-        .expect("query telemetry sink mutex poisoned")
-        .clone()
+    match QUERY_TELEMETRY_SINK.lock() {
+        Ok(guard) => guard.clone(),
+        Err(e) => {
+            tracing::error!("Failed to access query telemetry sink (mutex poisoned): {}", e);
+            None
+        }
+    }
 }
 
 fn string_value(value: impl Into<String>) -> SqlValue {

@@ -2296,8 +2296,14 @@ impl FederatedExecutor {
 
         let mut row_indices: Vec<usize> = (0..batch.num_rows()).collect();
         row_indices.sort_by(|left, right| {
-            Self::compare_rows(&batch, *left, *right, order_by)
-                .expect("sort columns should be validated before sorting")
+            match Self::compare_rows(&batch, *left, *right, order_by) {
+                Ok(ordering) => ordering,
+                Err(e) => {
+                    tracing::error!("Failed to compare rows during sort: {}", e);
+                    // Fallback to maintaining original order on error
+                    std::cmp::Ordering::Equal
+                }
+            }
         });
 
         let take_indices = Self::build_take_indices(
