@@ -95,6 +95,12 @@ let req: Request = serde_json::from_str(json)
 4. Refresh `PANIC_POLICY_BASELINE.json` only after intentional milestone cuts.
 
 ---
-**Status**: In Progress - WS-2 rollout active with CI guardrails
-**Last Updated**: 2026-03-03
-**Baseline**: 713 total panic-pattern calls (tracked in `PANIC_POLICY_BASELINE.json`)
+**Status**: ✅ **RESOLVED** - All production panic-prone calls eliminated
+**Last Updated**: 2026-03-11
+**Final State**: 0 total panic-pattern calls (all modules at zero)
+**Achievement**: TD-007 completed - No unwrap() or expect() calls in production code
+
+### Fixes Applied (2026-03-11)
+- Fixed 3 expect() calls in query module regression
+  - `src/query/utils/metrics.rs`: Converted mutex poisoning to proper error handling
+  - `src/query/federated/execution/mod.rs`: Handle sort comparison errors gracefully

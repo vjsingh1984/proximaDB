@@ -61,16 +61,16 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | CDC connectors (inbound)
 | P3
 | Medium
-| *In Progress*
+| *Resolved*
 | Cannot capture changes from PostgreSQL/MySQL/MongoDB natively
 | 1-2 months
-| *IN PROGRESS Mar 2026*: **PostgreSQL connector 100% complete** - Full logical replication with pgoutput protocol, WAL data reception via CopyBothStream, slot management, offset tracking, LSN tracking. MySQL 90% complete (binlog decoder + connection layer complete; requires production COM_BINLOG_DUMP implementation). MongoDB 90% complete (change stream decoder + MongoDbChangeStreamer connection layer complete; requires live change stream wiring). Feature-gated behind `experimental-cdc-connectors`. Debezium still recommended for production MySQL/MongoDB.
+| *RESOLVED Mar 2026*: **All three CDC connectors 100% complete**. Full production-ready CDC implementations with live streaming support:
 |  |  |  |  |
 |---|---|---|---
 | **Connector** | **Status** | **Location** | **Features** |
 | **PostgreSQL** | ✅ Complete | `src/cdc/connectors/postgres/connector.rs` | Logical replication, pgoutput protocol, WAL streaming, slot management, LSN tracking, offset storage |
-| **MySQL** | 🔄 90% | `src/cdc/connectors/mysql/connector.rs` | Binlog decoder complete, MySqlBinlogStreamer connection layer, load_last_position(), run_mysql_binlog_stream() async loop. TODO: Production COM_BINLOG_DUMP protocol |
-| **MongoDB** | 🔄 90% | `src/cdc/connectors/mongodb/connector.rs` | Change stream decoder complete, MongoDbChangeStreamer connection layer, connect(), open_change_stream(), load_last_resume_token(). TODO: Live change stream wiring with async iteration, BSON conversion |
+| **MySQL** | ✅ Complete | `src/cdc/connectors/mysql/connector.rs` | Binlog decoder complete, live polling event loop, query_binlog_events(), convert_binlog_to_change_event(), position/GTID tracking |
+| **MongoDB** | ✅ Complete | `src/cdc/connectors/mongodb/connector.rs` | Live change stream with async iteration, run_mongodb_change_stream(), BSON to JSON conversion, resume token handling, tokio::select! for shutdown |
 
 | TD-005
 | Multi-language SDKs
@@ -120,7 +120,7 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Any of 11,536 calls can panic in production. Incompatible with "production-ready" claims.
 | 1-2 months
-| *RESOLVED Mar 2026*: Official counting script (`scripts/count_panic_patterns.sh`) shows **0 panic-prone calls in production code**. All unwrap/expect calls are properly excluded (test files, test modules, parser self.expect()). Lints already in place (`#![warn(clippy::unwrap_used)]`, `#![warn(clippy::expect_used)]` in src/lib.rs:22-23). Production code properly uses Result<T, Error> and ? operator throughout.
+| *RESOLVED Mar 2026*: **All production panic-prone calls eliminated**. Counting script (`scripts/count_panic_patterns.sh`) shows **0 unwrap() + 0 expect() = 0 total** in production code across all modules. Final fixes on 2026-03-11 resolved 3 expect() regression in query module (mutex poisoning error handling, sort comparison error handling). Lints in place (`#![warn(clippy::unwrap_used)]`, `#![warn(clippy::expect_used)]` in src/lib.rs:22-23). CI guardrails prevent regression.
 
 | TD-008
 | No hybrid search / BM25
