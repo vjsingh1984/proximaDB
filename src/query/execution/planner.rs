@@ -12,6 +12,7 @@ use crate::query::execution::{
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use anyhow::{Result, anyhow};
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -1119,12 +1120,17 @@ struct SksFollowArgs {
 }
 
 /// Cost model for execution planning optimization
+///
+/// When `collection_stats` are available the model scales estimates by
+/// actual cardinality; otherwise it falls back to the original fixed costs.
 pub struct CostModel {
     // Cost estimates for different operation types
     vector_search_base_cost: f64,
     graph_traversal_base_cost: f64,
     metadata_filter_cost: f64,
     fusion_cost: f64,
+    /// Collection statistics for cardinality-aware costing (keyed by collection id)
+    collection_stats: HashMap<String, crate::storage::traits::CollectionStats>,
 }
 
 impl CostModel {
@@ -1134,6 +1140,70 @@ impl CostModel {
             graph_traversal_base_cost: 2.0,
             metadata_filter_cost: 0.1, // Very low due to HashMap optimization
             fusion_cost: 0.5,
+            collection_stats: HashMap::new(),
+        }
+    }
+
+    /// Register collection statistics for cardinality-aware cost estimation
+    pub fn with_collection_stats(
+        mut self,
+        collection_id: String,
+        stats: crate::storage::traits::CollectionStats,
+    ) -> Self {
+        self.collection_stats.insert(collection_id, stats);
+        self
+    }
+
+    /// Estimate the output cardinality of an operation
+    ///
+    /// Returns estimated number of rows produced. When collection stats are
+    /// available, estimates are grounded in real cardinalities; otherwise
+    /// conservative defaults are used.
+    pub fn estimate_cardinality(&self, operation: &ExecutionOperation) -> u64 {
+        match operation {
+            ExecutionOperation::VectorSearch {
+                collection_id,
+                top_k,
+                filters,
+                ..
+            } => {
+                let base_rows = self
+                    .collection_stats
+                    .get(collection_id)
+                    .map(|s| s.row_count)
+                    .unwrap_or(10_000);
+                // Vector search returns at most top_k results
+                let top_k_u64 = *top_k as u64;
+                let capped = top_k_u64.min(base_rows);
+                // Filters reduce output further (assume 50% selectivity as fallback)
+                if filters.is_some() {
+                    (capped as f64 * 0.5).max(1.0) as u64
+                } else {
+                    capped
+                }
+            }
+            ExecutionOperation::GraphTraversal { max_depth, .. } => {
+                // Exponential fan-out estimate, capped
+                let fan_out = 5u64; // average edges per node
+                fan_out.saturating_pow(*max_depth).min(100_000)
+            }
+            ExecutionOperation::Fusion { .. } => {
+                // Fusion merges results — conservative estimate
+                1_000
+            }
+            ExecutionOperation::Project { .. } => {
+                // Projection doesn't change cardinality — pass through
+                1_000
+            }
+            ExecutionOperation::Aggregate { .. } => {
+                // Aggregation typically reduces rows significantly
+                100
+            }
+            ExecutionOperation::Join { .. } => {
+                // Join cardinality depends on both sides; conservative default
+                10_000
+            }
+            _ => 1_000,
         }
     }
 
@@ -1146,15 +1216,44 @@ impl CostModel {
     }
 
     /// Estimate cost for individual operation
+    ///
+    /// When collection statistics are available, costs scale with the
+    /// collection's row count. For vector search this means larger
+    /// collections are proportionally more expensive. For operations
+    /// without stats the original fixed costs are returned.
     pub fn estimate_operation_cost(&self, operation: &ExecutionOperation) -> f64 {
         match operation {
-            ExecutionOperation::VectorSearch { top_k, filters, .. } => {
-                let base_cost = self.vector_search_base_cost * (*top_k as f64).log10();
+            ExecutionOperation::VectorSearch {
+                collection_id,
+                top_k,
+                filters,
+                ..
+            } => {
+                let top_k_f = (*top_k as f64).max(1.0);
+                let base_cost = self.vector_search_base_cost * top_k_f.log10();
                 let filter_cost = match filters {
                     Some(_) => self.metadata_filter_cost, // HashMap filtering is cheap
                     None => 0.0,
                 };
-                base_cost + filter_cost
+                // Scale by collection size when stats are available
+                let scale = self
+                    .collection_stats
+                    .get(collection_id)
+                    .map(|s| {
+                        let n = s.row_count as f64;
+                        if n <= 1.0 {
+                            return 1.0;
+                        }
+                        // With HNSW index: O(log n), without: O(n)
+                        if s.has_hnsw_index {
+                            n.log2() / 10.0 // sub-linear
+                        } else {
+                            n / 10_000.0 // linear scan scaling
+                        }
+                    })
+                    .unwrap_or(1.0)
+                    .max(0.1);
+                (base_cost + filter_cost) * scale
             }
             ExecutionOperation::GraphTraversal { max_depth, .. } => {
                 self.graph_traversal_base_cost * (*max_depth as f64)

@@ -671,7 +671,7 @@ impl QueryOptimizer {
 /// Query statistics collector
 pub struct QueryStatistics {
     /// Collection statistics
-    collection_stats: RwLock<HashMap<String, CollectionStats>>,
+    collection_stats: RwLock<HashMap<String, OptimizerCollectionStats>>,
     /// Query execution history
     query_history: RwLock<Vec<QueryHistoryEntry>>,
     /// Total queries executed
@@ -680,9 +680,13 @@ pub struct QueryStatistics {
     total_execution_time_us: AtomicU64,
 }
 
-/// Statistics for a collection
+/// Optimizer-local collection statistics with column-level detail
+///
+/// Extends the canonical `storage::traits::CollectionStats` with optimizer-specific
+/// fields (distinct counts per column, name, timestamps). Use `From<storage::traits::CollectionStats>`
+/// to convert from the canonical form.
 #[derive(Debug, Clone)]
-pub struct CollectionStats {
+pub struct OptimizerCollectionStats {
     /// Collection name
     pub name: String,
     /// Estimated row count
@@ -693,6 +697,19 @@ pub struct CollectionStats {
     pub distinct_counts: HashMap<String, u64>,
     /// Last updated timestamp
     pub last_updated: u64,
+}
+
+impl OptimizerCollectionStats {
+    /// Create from canonical CollectionStats with a collection name
+    pub fn from_canonical(name: String, stats: &crate::storage::traits::CollectionStats) -> Self {
+        Self {
+            name,
+            row_count: stats.row_count,
+            avg_row_size: stats.avg_vector_bytes,
+            distinct_counts: HashMap::new(),
+            last_updated: 0,
+        }
+    }
 }
 
 /// Historical query execution entry
@@ -720,12 +737,12 @@ impl QueryStatistics {
     }
 
     /// Get collection statistics
-    pub fn get_collection_stats(&self, collection: &str) -> Option<CollectionStats> {
+    pub fn get_collection_stats(&self, collection: &str) -> Option<OptimizerCollectionStats> {
         self.collection_stats.read().get(collection).cloned()
     }
 
     /// Update collection statistics
-    pub fn update_collection_stats(&self, stats: CollectionStats) {
+    pub fn update_collection_stats(&self, stats: OptimizerCollectionStats) {
         let name = stats.name.clone();
         self.collection_stats.write().insert(name, stats);
     }
@@ -1039,6 +1056,50 @@ fn compute_query_hash(query: &MultiModelQuery) -> u64 {
     hasher.finish()
 }
 
+// ============================================================================
+// FUSION STRATEGY SELECTION (Cost-Based Optimizer)
+// ============================================================================
+
+/// Fusion strategy for combining results from multi-model sub-queries
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FusionStrategy {
+    /// Reciprocal Rank Fusion — normalizes heterogeneous score scales
+    Rrf,
+    /// Intersection — keeps only results present in all sub-queries
+    Intersection,
+    /// Union — returns results from any sub-query (maximum recall)
+    Union,
+    /// Weighted sum — linearly combines scores with caller-supplied weights
+    WeightedSum,
+}
+
+/// Select the optimal fusion strategy based on query characteristics
+///
+/// Decision logic:
+/// - **Rrf**: when both vector and graph components are present, scores come
+///   from fundamentally different distributions (cosine similarity vs path
+///   length); RRF normalizes via rank position.
+/// - **Intersection**: when combined filter selectivity is very low (<10%),
+///   taking the intersection maximizes precision.
+/// - **Union**: default strategy — maximizes recall by including results
+///   from any sub-query.
+pub fn select_fusion_strategy(
+    has_vector_component: bool,
+    has_graph_component: bool,
+    filter_selectivity: f64,
+) -> FusionStrategy {
+    if has_vector_component && has_graph_component {
+        // Heterogeneous score scales — use RRF for normalization
+        FusionStrategy::Rrf
+    } else if filter_selectivity < 0.1 {
+        // Highly selective filters — intersect for precision
+        FusionStrategy::Intersection
+    } else {
+        // Default — union for maximum recall
+        FusionStrategy::Union
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1283,7 +1344,7 @@ mod tests {
     fn test_collection_stats() {
         let stats = QueryStatistics::new();
 
-        let collection_stats = CollectionStats {
+        let collection_stats = OptimizerCollectionStats {
             name: "products".to_string(),
             row_count: 1_000_000,
             avg_row_size: 512,
@@ -1706,5 +1767,40 @@ mod tests {
         // invalidate_plan_cache should not panic when cache is None
         optimizer.invalidate_plan_cache();
         optimizer.invalidate_collection_plans("test_collection");
+    }
+
+    // ========================================================================
+    // FUSION STRATEGY SELECTION TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_fusion_strategy_rrf_for_vector_and_graph() {
+        let strategy = select_fusion_strategy(true, true, 0.5);
+        assert_eq!(strategy, FusionStrategy::Rrf);
+    }
+
+    #[test]
+    fn test_fusion_strategy_intersection_for_selective_filter() {
+        let strategy = select_fusion_strategy(true, false, 0.05);
+        assert_eq!(strategy, FusionStrategy::Intersection);
+    }
+
+    #[test]
+    fn test_fusion_strategy_union_default() {
+        let strategy = select_fusion_strategy(true, false, 0.5);
+        assert_eq!(strategy, FusionStrategy::Union);
+    }
+
+    #[test]
+    fn test_fusion_strategy_rrf_overrides_selectivity() {
+        // Even with low selectivity, vector+graph uses RRF
+        let strategy = select_fusion_strategy(true, true, 0.01);
+        assert_eq!(strategy, FusionStrategy::Rrf);
+    }
+
+    #[test]
+    fn test_fusion_strategy_no_components() {
+        let strategy = select_fusion_strategy(false, false, 0.5);
+        assert_eq!(strategy, FusionStrategy::Union);
     }
 }

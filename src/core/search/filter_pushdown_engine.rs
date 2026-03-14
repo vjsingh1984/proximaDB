@@ -175,7 +175,7 @@ impl FilterPushdownPlanner {
     pub fn plan_pushdown(
         &self,
         filter_expression: &FilterExpression,
-        collection_stats: Option<&CollectionStats>,
+        collection_stats: Option<&FilterCollectionStats>,
     ) -> Result<FilterPushdownPlan> {
         info!("Planning filter pushdown for: {:?}", filter_expression);
 
@@ -360,7 +360,7 @@ impl FilterPushdownPlanner {
     fn estimate_selectivity(
         &self,
         storage_filter: &StorageFilter,
-        collection_stats: Option<&CollectionStats>,
+        collection_stats: Option<&FilterCollectionStats>,
     ) -> f32 {
         if let Some(stats) = collection_stats {
             // Use collection statistics for accurate estimation
@@ -375,7 +375,7 @@ impl FilterPushdownPlanner {
     fn estimate_selectivity_with_stats(
         &self,
         storage_filter: &StorageFilter,
-        stats: &CollectionStats,
+        stats: &FilterCollectionStats,
     ) -> f32 {
         let mut selectivity = 1.0;
 
@@ -433,7 +433,7 @@ impl FilterPushdownPlanner {
     fn create_index_filter(
         &self,
         storage_filter: &StorageFilter,
-        collection_stats: Option<&CollectionStats>,
+        collection_stats: Option<&FilterCollectionStats>,
     ) -> Result<IndexFilter> {
         // For now, create a basic index filter
         // In a full implementation, this would:
@@ -457,9 +457,12 @@ impl FilterPushdownPlanner {
     }
 }
 
-/// Collection statistics for filter optimization
+/// Filter-specific collection statistics for pushdown optimization
+///
+/// Distinct from `storage::traits::CollectionStats` — this carries per-column
+/// statistics needed by the filter pushdown engine (distinct values, nulls, min/max).
 #[derive(Debug, Clone)]
-pub struct CollectionStats {
+pub struct FilterCollectionStats {
     pub total_vectors: usize,
     pub column_stats: HashMap<String, ColumnStats>,
 }
@@ -489,7 +492,7 @@ pub struct FilterPushdownPlan {
 /// Apply filter pushdown to search context
 pub fn apply_filter_pushdown_to_context(
     filter_expression: Option<&FilterExpression>,
-    collection_stats: Option<&CollectionStats>,
+    collection_stats: Option<&FilterCollectionStats>,
 ) -> Result<Option<FilterPushdownPlan>> {
     let filter_expression = match filter_expression {
         Some(f) => f,

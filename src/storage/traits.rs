@@ -551,6 +551,45 @@ pub trait InternalCollectionProvider: MetadataProvider + Send + Sync {
     // All methods are inherited from MetadataProvider.
 }
 
+/// Canonical statistics for cost-based query optimization
+///
+/// This is the **single source of truth** for collection statistics across
+/// ProximaDB. All components (query planner, optimizer, AutoML, EXPLAIN)
+/// should use this struct. Engine-specific or module-specific stat types
+/// should convert to/from this canonical form.
+///
+/// Used by the query planner's `CostModel` to estimate operation costs
+/// and select optimal join/fusion strategies.
+#[derive(Debug, Clone, Default)]
+pub struct CollectionStats {
+    /// Number of rows/vectors in the collection
+    pub row_count: u64,
+    /// Average vector size in bytes
+    pub avg_vector_bytes: u64,
+    /// Storage engine strategy used for this collection
+    pub engine_strategy: StorageEngineStrategy,
+    /// Whether a metadata index exists for fast filtering
+    pub has_metadata_index: bool,
+    /// Whether an HNSW index is available for approximate nearest neighbor search
+    pub has_hnsw_index: bool,
+    /// Total storage bytes consumed by this collection
+    pub total_bytes: u64,
+    /// Vector dimensionality (if known)
+    pub dimension: Option<u32>,
+    /// Index type in use (e.g., "hnsw", "ivf", "flat")
+    pub index_type: Option<String>,
+}
+
+impl From<crate::proto::proximadb_v1::CollectionStats> for CollectionStats {
+    fn from(proto: crate::proto::proximadb_v1::CollectionStats) -> Self {
+        Self {
+            row_count: proto.vector_count as u64,
+            total_bytes: proto.data_size_bytes as u64,
+            ..Self::default()
+        }
+    }
+}
+
 /// Unified storage engine trait implementing Strategy Pattern
 ///
 /// Common operations have default implementations that can be overridden.
@@ -670,6 +709,19 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn scan_capabilities(&self) -> crate::storage::unified_scan_strategy::ScanCapabilities {
         // OCP: Delegate to CapabilityFactory instead of hardcoded match
         CapabilityFactory::create(self.strategy()).scan_capabilities()
+    }
+
+    /// Get collection statistics for cost-based query optimization
+    ///
+    /// Returns cardinality and index information used by the query planner's
+    /// `CostModel` to estimate operation costs and select optimal join/fusion
+    /// strategies. Default implementation returns basic stats; engines should
+    /// override for accurate cardinality data.
+    async fn collection_stats(&self, _collection_id: &str) -> Result<CollectionStats> {
+        Ok(CollectionStats {
+            engine_strategy: self.strategy(),
+            ..CollectionStats::default()
+        })
     }
 
     // =============================================================================
@@ -1696,6 +1748,7 @@ impl StorageQueryContext {
                 crate::proto::proximadb_v1::StorageEngine::Helix => StorageEngineStrategy::Helix,
                 crate::proto::proximadb_v1::StorageEngine::Swift => StorageEngineStrategy::Swift,
                 crate::proto::proximadb_v1::StorageEngine::Raptor => StorageEngineStrategy::Raptor,
+                crate::proto::proximadb_v1::StorageEngine::Tst => StorageEngineStrategy::TimeSeries,
                 _ => StorageEngineStrategy::Sst, // Default to SST for unknown engines
             })
             .unwrap_or(StorageEngineStrategy::Sst);

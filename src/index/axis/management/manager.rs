@@ -1150,10 +1150,10 @@ impl AxisManager {
     }
 
     /// Get collection statistics
-    pub async fn get_collection_stats(&self, collection_id: &str) -> Result<CollectionStats> {
+    pub async fn get_collection_stats(&self, collection_id: &str) -> Result<IndexCollectionStats> {
         let search_strategy = self.get_collection_strategy(collection_id).await?;
 
-        Ok(CollectionStats {
+        Ok(IndexCollectionStats {
             collection_id: collection_id.to_string(),
             strategy_type: search_strategy
                 .indexes
@@ -1740,9 +1740,12 @@ impl AxisManager {
     }
 }
 
-/// Collection statistics
+/// AXIS index-level collection statistics
+///
+/// Distinct from `storage::traits::CollectionStats` — carries index-specific
+/// metadata (strategy_type, last_updated timestamp).
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct CollectionStats {
+pub struct IndexCollectionStats {
     pub collection_id: String,
     pub strategy_type: Data,
     pub total_vectors: u64,
