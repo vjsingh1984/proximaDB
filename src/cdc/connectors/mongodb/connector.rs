@@ -26,7 +26,6 @@
 //! 3. Resume from token for fault tolerance
 //! 4. Stream change events asynchronously
 
-use serde_json::Map;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
@@ -42,10 +41,7 @@ use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
 #[cfg(feature = "experimental-cdc-connectors")]
 use mongodb::{
-    Client,
-    Collection,
-    change_stream::event::ChangeStreamEvent,
-    options::ClientOptions,
+    Client, Collection, change_stream::event::ChangeStreamEvent, options::ClientOptions,
 };
 
 #[cfg(feature = "experimental-cdc-connectors")]
@@ -97,7 +93,8 @@ impl MongoDbChangeStreamer {
         &mut self,
         collection: &str,
         _resume_token: Option<&str>,
-    ) -> CdcResult<mongodb::change_stream::ChangeStream<ChangeStreamEvent<mongodb::bson::Document>>> {
+    ) -> CdcResult<mongodb::change_stream::ChangeStream<ChangeStreamEvent<mongodb::bson::Document>>>
+    {
         let client = self
             .client
             .as_ref()
@@ -660,9 +657,7 @@ fn convert_bson_to_json(bson: &mongodb::bson::Bson) -> serde_json::Value {
 
 /// Convert BSON document to RecordState (helper function)
 #[cfg(feature = "experimental-cdc-connectors")]
-fn document_to_record_state(
-    doc: &serde_json::Value,
-) -> RecordState {
+fn document_to_record_state(doc: &serde_json::Value) -> RecordState {
     let mut metadata = HashMap::new();
     let mut vector = None;
 

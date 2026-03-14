@@ -31,8 +31,8 @@
 use std::collections::HashMap;
 use std::io::{self, Cursor, Read};
 
-use serde_json;
 use crate::cdc::error::{CdcError, CdcResult};
+use serde_json;
 
 /// Helper trait for reading values
 trait ReadExt {
@@ -458,13 +458,19 @@ impl BinlogEvent {
     /// Get the database name
     pub fn database(&self) -> String {
         match self {
-            BinlogEvent::WriteRows(e) => e.table_map.as_ref()
+            BinlogEvent::WriteRows(e) => e
+                .table_map
+                .as_ref()
                 .map(|t| t.schema.clone())
                 .unwrap_or_default(),
-            BinlogEvent::UpdateRows(e) => e.table_map.as_ref()
+            BinlogEvent::UpdateRows(e) => e
+                .table_map
+                .as_ref()
                 .map(|t| t.schema.clone())
                 .unwrap_or_default(),
-            BinlogEvent::DeleteRows(e) => e.table_map.as_ref()
+            BinlogEvent::DeleteRows(e) => e
+                .table_map
+                .as_ref()
                 .map(|t| t.schema.clone())
                 .unwrap_or_default(),
             _ => String::new(),
@@ -474,12 +480,9 @@ impl BinlogEvent {
     /// Get the table name
     pub fn table_name(&self) -> Option<String> {
         match self {
-            BinlogEvent::WriteRows(e) => e.table_map.as_ref()
-                .map(|t| t.table.clone()),
-            BinlogEvent::UpdateRows(e) => e.table_map.as_ref()
-                .map(|t| t.table.clone()),
-            BinlogEvent::DeleteRows(e) => e.table_map.as_ref()
-                .map(|t| t.table.clone()),
+            BinlogEvent::WriteRows(e) => e.table_map.as_ref().map(|t| t.table.clone()),
+            BinlogEvent::UpdateRows(e) => e.table_map.as_ref().map(|t| t.table.clone()),
+            BinlogEvent::DeleteRows(e) => e.table_map.as_ref().map(|t| t.table.clone()),
             _ => None,
         }
     }
@@ -488,14 +491,24 @@ impl BinlogEvent {
     pub fn row_id(&self) -> Option<String> {
         match self {
             BinlogEvent::WriteRows(e) => e.rows.first().and_then(|r| {
-                r.after.as_ref().and_then(|cols| cols.first().and_then(|c| c.as_string()))
+                r.after
+                    .as_ref()
+                    .and_then(|cols| cols.first().and_then(|c| c.as_string()))
             }),
             BinlogEvent::UpdateRows(e) => e.rows.first().and_then(|r| {
-                r.before.as_ref().and_then(|cols| cols.first().and_then(|c| c.as_string()))
-                    .or_else(|| r.after.as_ref().and_then(|cols| cols.first().and_then(|c| c.as_string())))
+                r.before
+                    .as_ref()
+                    .and_then(|cols| cols.first().and_then(|c| c.as_string()))
+                    .or_else(|| {
+                        r.after
+                            .as_ref()
+                            .and_then(|cols| cols.first().and_then(|c| c.as_string()))
+                    })
             }),
             BinlogEvent::DeleteRows(e) => e.rows.first().and_then(|r| {
-                r.before.as_ref().and_then(|cols| cols.first().and_then(|c| c.as_string()))
+                r.before
+                    .as_ref()
+                    .and_then(|cols| cols.first().and_then(|c| c.as_string()))
             }),
             _ => None,
         }
@@ -533,7 +546,10 @@ fn rows_to_json(rows: &[RowData], table_map: &Option<TableMapEvent>) -> Option<s
     let columns = row.after.as_ref().or(row.before.as_ref())?;
 
     let empty_columns = vec![];
-    let columns_def = table_map.as_ref().map(|t| &t.columns).unwrap_or(&empty_columns);
+    let columns_def = table_map
+        .as_ref()
+        .map(|t| &t.columns)
+        .unwrap_or(&empty_columns);
 
     let mut obj = serde_json::map::Map::new();
     for (i, col) in columns.iter().enumerate() {

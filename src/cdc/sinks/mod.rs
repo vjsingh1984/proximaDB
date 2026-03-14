@@ -41,7 +41,7 @@ mod webhook;
 
 pub use kafka::{KafkaAcks, KafkaCompression, KafkaConfig, KafkaSink};
 pub use traits::RetryConfig;
-pub use traits::{CdcSink, SinkConfig, SinkError, SinkResult, SinkStats};
+pub use traits::{CdcSink, MessageFormat, SinkConfig, SinkError, SinkResult, SinkStats};
 pub use webhook::{HttpMethod, WebhookConfig, WebhookSink};
 
 use crate::cdc::error::{CdcError, CdcResult};

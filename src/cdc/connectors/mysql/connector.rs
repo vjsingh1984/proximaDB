@@ -657,9 +657,9 @@ async fn convert_binlog_to_change_event(
     let collection = format!("{}.{}", binlog_event.database(), table_name);
 
     // Extract key from binlog event
-    let key = binlog_event.row_id().unwrap_or_else(|| {
-        format!("{}-{}", table_name, binlog_event.position().unwrap_or(0))
-    });
+    let key = binlog_event
+        .row_id()
+        .unwrap_or_else(|| format!("{}-{}", table_name, binlog_event.position().unwrap_or(0)));
 
     // Create source info
     let source = SourceInfo::mysql(&binlog_event.database(), server_id);
