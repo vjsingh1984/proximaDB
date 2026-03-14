@@ -1232,6 +1232,14 @@ impl PatternMatcher {
         result: &MatchResult,
         variable_spec: &str,
     ) -> Option<serde_json::Value> {
+        // Handle the special "score" variable which maps to MatchResult.score
+        if variable_spec == "score" {
+            return Some(serde_json::Value::Number(
+                serde_json::Number::from_f64(result.score)
+                    .unwrap_or_else(|| serde_json::Number::from(0)),
+            ));
+        }
+
         // Parse variable_spec to extract variable name and property
         // Examples: "n" -> ("n", None), "n.name" -> ("n", Some("name"))
         let parts: Vec<&str> = variable_spec.split('.').collect();
