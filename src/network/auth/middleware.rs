@@ -733,7 +733,7 @@ mod tests {
     use crate::network::auth::jwt::JwtService;
     use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::unified_auth::{
-        ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, SSOConfig,
+        ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
     };
     use crate::security::unified_rbac::RBACConfig;
     use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
@@ -842,6 +842,7 @@ mod tests {
                     aws_iam: None,
                     azure_ad: None,
                 },
+                mtls: MtlsConfig::default(),
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),
@@ -889,6 +890,7 @@ mod tests {
                     aws_iam: None,
                     azure_ad: None,
                 },
+                mtls: MtlsConfig::default(),
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),

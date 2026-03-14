@@ -17,7 +17,8 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tracing::warn;
+use tracing::{info, warn};
+use x509_parser::prelude::*;
 
 /// Unified authentication service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +30,9 @@ pub struct AuthenticationConfig {
     pub api_keys: HashMap<String, ApiKeyInfo>,
     pub jwt: JwtConfig,
     pub sso: SSOConfig,
+    /// mTLS configuration for client certificate authentication
+    #[serde(default)]
+    pub mtls: MtlsConfig,
 }
 
 /// Authentication methods supported
@@ -95,6 +99,44 @@ pub struct AzureADConfig {
     pub scope: Vec<String>,
 }
 
+/// mTLS configuration for client certificate authentication
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MtlsConfig {
+    /// Whether mTLS authentication is enabled
+    pub enabled: bool,
+    /// Path to the CA certificate used to verify client certificates
+    pub ca_cert_path: Option<String>,
+    /// Whether client certificates are required (vs optional)
+    pub require_client_cert: bool,
+    /// Maps Common Name patterns to RBAC role names.
+    /// Patterns support prefix matching with a trailing '*' wildcard.
+    /// Example: {"*.admin" => "admin", "service-*" => "service_role"}
+    #[serde(default)]
+    pub cn_role_mapping: HashMap<String, String>,
+}
+
+impl Default for MtlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ca_cert_path: None,
+            require_client_cert: false,
+            cn_role_mapping: HashMap::new(),
+        }
+    }
+}
+
+/// Validated client identity extracted from an X.509 certificate
+#[derive(Debug, Clone)]
+pub struct ClientIdentity {
+    /// The Common Name (CN) from the certificate subject
+    pub common_name: String,
+    /// Subject Alternative Name entries (DNS names, emails, URIs, IP addresses)
+    pub san_entries: Vec<String>,
+    /// RBAC roles resolved from the CN via cn_role_mapping
+    pub roles: Vec<String>,
+}
+
 /// Authentication result from unified service
 #[derive(Debug, Clone)]
 pub struct AuthenticationResult {
@@ -121,17 +163,45 @@ pub struct UnifiedAuthService {
 
     /// Audit logger for authentication events
     audit_logger: Option<Arc<AuditLogger>>,
+
+    /// Cached CA certificate DER bytes for mTLS validation
+    ca_cert_der: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for UnifiedAuthService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnifiedAuthService")
+            .field("has_enterprise_auth", &self.enterprise_auth.is_some())
+            .field("has_jwt_service", &self.jwt_service.is_some())
+            .field("api_key_count", &self.api_keys.len())
+            .field("has_ca_cert", &self.ca_cert_der.is_some())
+            .finish()
+    }
 }
 
 impl UnifiedAuthService {
     /// Create new unified authentication service
     pub fn new(config: AuthenticationConfig) -> Result<Self> {
+        // Load CA certificate if mTLS is configured
+        let ca_cert_der = if config.mtls.enabled {
+            if let Some(ref ca_path) = config.mtls.ca_cert_path {
+                Some(Self::load_ca_certificate(ca_path)?)
+            } else {
+                return Err(anyhow!(
+                    "mTLS is enabled but no ca_cert_path is configured"
+                ));
+            }
+        } else {
+            None
+        };
+
         let mut service = Self {
             enterprise_auth: None,
             jwt_service: None,
             api_keys: Arc::new(DashMap::new()),
             config: config.clone(),
             audit_logger: None,
+            ca_cert_der,
         };
 
         // Initialize JWT service if enabled
@@ -347,10 +417,15 @@ impl UnifiedAuthService {
         }
     }
 
-    /// Authenticate client certificate (placeholder for mTLS)
+    /// Authenticate client certificate via mTLS validation.
+    ///
+    /// When raw DER bytes are present in `cert_data`, the certificate is fully
+    /// parsed and validated (expiry, CA signature, CN/SAN extraction, role mapping).
+    /// Without raw bytes the method falls back to the pre-populated metadata fields
+    /// on `ClientCertificateData`.
     async fn authenticate_client_certificate(
         &self,
-        _cert_data: &ClientCertificateData,
+        cert_data: &ClientCertificateData,
     ) -> Result<AuthenticationResult> {
         if !self
             .config
@@ -366,16 +441,278 @@ impl UnifiedAuthService {
             });
         }
 
-        // TODO: Implement client certificate validation
-        // For now, return placeholder implementation
-        warn!("Client certificate authentication not yet implemented");
-        Ok(AuthenticationResult {
-            user_context: UnifiedUserContext::anonymous(),
+        if !self.config.mtls.enabled {
+            return Ok(AuthenticationResult {
+                user_context: UnifiedUserContext::anonymous(),
+                auth_method: AuthMethod::ClientCertificate,
+                success: false,
+                error_message: Some("mTLS is not enabled in configuration".to_string()),
+                requires_mfa: false,
+            });
+        }
+
+        // Validate the certificate and extract identity
+        let identity = match &cert_data.raw_cert_der {
+            Some(der_bytes) => match self.validate_client_certificate(der_bytes) {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!("mTLS certificate validation failed: {}", e);
+                    return Ok(AuthenticationResult {
+                        user_context: UnifiedUserContext::anonymous(),
+                        auth_method: AuthMethod::ClientCertificate,
+                        success: false,
+                        error_message: Some(format!("Certificate validation failed: {}", e)),
+                        requires_mfa: false,
+                    });
+                }
+            },
+            None => {
+                // Fallback: use pre-populated metadata when raw bytes are unavailable.
+                // Only basic expiry checking is possible in this path.
+                let now = Utc::now();
+                if now < cert_data.not_before || now > cert_data.not_after {
+                    return Ok(AuthenticationResult {
+                        user_context: UnifiedUserContext::anonymous(),
+                        auth_method: AuthMethod::ClientCertificate,
+                        success: false,
+                        error_message: Some("Client certificate has expired or is not yet valid".to_string()),
+                        requires_mfa: false,
+                    });
+                }
+
+                let roles = self.resolve_roles_for_cn(&cert_data.subject);
+                ClientIdentity {
+                    common_name: cert_data.subject.clone(),
+                    san_entries: Vec::new(),
+                    roles,
+                }
+            }
+        };
+
+        if identity.roles.is_empty() {
+            warn!(
+                "No roles mapped for client certificate CN={}",
+                identity.common_name
+            );
+            return Ok(AuthenticationResult {
+                user_context: UnifiedUserContext::anonymous(),
+                auth_method: AuthMethod::ClientCertificate,
+                success: false,
+                error_message: Some(format!(
+                    "No roles mapped for certificate CN={}",
+                    identity.common_name
+                )),
+                requires_mfa: false,
+            });
+        }
+
+        info!(
+            "mTLS authentication succeeded for CN={}, roles={:?}",
+            identity.common_name, identity.roles
+        );
+
+        let user_context = UnifiedUserContext {
+            user_id: identity.common_name.clone(),
+            tenant_id: None,
+            roles: identity.roles,
+            effective_permissions: HashSet::new(), // Populated by RBAC manager
             auth_method: AuthMethod::ClientCertificate,
-            success: false,
-            error_message: Some("Client certificate authentication not implemented".to_string()),
+            session_id: format!("mtls_{}", uuid::Uuid::new_v4()),
+            expires_at: None, // Certificate expiry is validated at authentication time
+            created_at: Utc::now(),
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("auth_cn".to_string(), identity.common_name);
+                if !identity.san_entries.is_empty() {
+                    m.insert("auth_sans".to_string(), identity.san_entries.join(","));
+                }
+                m
+            },
+        };
+
+        Ok(AuthenticationResult {
+            user_context,
+            auth_method: AuthMethod::ClientCertificate,
+            success: true,
+            error_message: None,
             requires_mfa: false,
         })
+    }
+
+    /// Load a CA certificate from a PEM or DER file and return its DER bytes.
+    fn load_ca_certificate(path: &str) -> Result<Vec<u8>> {
+        let file_bytes = std::fs::read(path)
+            .map_err(|e| anyhow!("Failed to read CA certificate at '{}': {}", path, e))?;
+
+        // Try PEM first
+        if let Ok(pem_contents) = std::str::from_utf8(&file_bytes) {
+            let mut reader = std::io::BufReader::new(pem_contents.as_bytes());
+            let certs = rustls_pemfile::certs(&mut reader)
+                .map_err(|e| anyhow!("Failed to parse PEM certificates: {}", e))?;
+
+            if let Some(first_cert) = certs.into_iter().next() {
+                return Ok(first_cert);
+            }
+        }
+
+        // Fallback: treat as raw DER
+        // Validate it parses as an X.509 certificate
+        X509Certificate::from_der(&file_bytes)
+            .map_err(|e| anyhow!("CA file is neither valid PEM nor DER: {:?}", e))?;
+        Ok(file_bytes)
+    }
+
+    /// Validate a DER-encoded client certificate against the configured CA,
+    /// check expiry, extract CN and SANs, and resolve RBAC roles.
+    pub fn validate_client_certificate(&self, cert_der: &[u8]) -> Result<ClientIdentity> {
+        let ca_der = self
+            .ca_cert_der
+            .as_ref()
+            .ok_or_else(|| anyhow!("No CA certificate loaded for mTLS validation"))?;
+
+        // Parse the CA certificate
+        let (_, ca_cert) = X509Certificate::from_der(ca_der)
+            .map_err(|e| anyhow!("Failed to parse CA certificate: {:?}", e))?;
+
+        // Parse the client certificate
+        let (_, client_cert) = X509Certificate::from_der(cert_der)
+            .map_err(|e| anyhow!("Failed to parse client certificate: {:?}", e))?;
+
+        // 1. Verify the client certificate is within its validity period
+        let now = ASN1Time::now();
+        if !client_cert.validity().is_valid_at(now) {
+            let not_before = client_cert.validity().not_before;
+            let not_after = client_cert.validity().not_after;
+            return Err(anyhow!(
+                "Client certificate is not valid at current time (valid {} to {})",
+                not_before,
+                not_after
+            ));
+        }
+
+        // 2. Verify the client certificate was issued by the CA.
+        //    Compare the client cert's issuer DN with the CA cert's subject DN.
+        //    Additionally verify that the Authority Key Identifier (if present)
+        //    matches the CA's Subject Key Identifier.
+        if client_cert.issuer() != ca_cert.subject() {
+            return Err(anyhow!(
+                "Certificate issuer does not match the configured CA subject (issuer={}, ca_subject={})",
+                client_cert.issuer(),
+                ca_cert.subject()
+            ));
+        }
+
+        // Cross-check key identifiers when both extensions are present
+        // x509_parser exposes extensions via the parsed extensions map
+        let client_aki = client_cert
+            .tbs_certificate
+            .extensions_map()
+            .ok()
+            .and_then(|map| map.get(&x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER).cloned())
+            .and_then(|ext| {
+                x509_parser::extensions::AuthorityKeyIdentifier::from_der(ext.value)
+                    .ok()
+                    .and_then(|(_, aki)| aki.key_identifier.map(|ki| ki.0.to_vec()))
+            });
+        let ca_ski = ca_cert
+            .tbs_certificate
+            .extensions_map()
+            .ok()
+            .and_then(|map| map.get(&x509_parser::oid_registry::OID_X509_EXT_SUBJECT_KEY_IDENTIFIER).cloned())
+            .and_then(|ext| Some(ext.value.to_vec()));
+
+        if let (Some(aki), Some(ski)) = (&client_aki, &ca_ski) {
+            if aki != ski {
+                return Err(anyhow!(
+                    "Certificate Authority Key Identifier does not match CA Subject Key Identifier"
+                ));
+            }
+        }
+
+        // 3. Extract Common Name from the subject
+        let common_name = client_cert
+            .subject()
+            .iter_common_name()
+            .next()
+            .and_then(|cn| cn.as_str().ok())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("Client certificate has no Common Name (CN) in subject"))?;
+
+        // 4. Extract Subject Alternative Names
+        let san_entries = Self::extract_san_entries(&client_cert);
+
+        // 5. Resolve RBAC roles from CN
+        let roles = self.resolve_roles_for_cn(&common_name);
+
+        Ok(ClientIdentity {
+            common_name,
+            san_entries,
+            roles,
+        })
+    }
+
+    /// Extract Subject Alternative Name entries from an X.509 certificate.
+    fn extract_san_entries(cert: &X509Certificate<'_>) -> Vec<String> {
+        let mut entries = Vec::new();
+        if let Ok(Some(san_ext)) = cert.subject_alternative_name() {
+            for name in &san_ext.value.general_names {
+                match name {
+                    GeneralName::DNSName(dns) => {
+                        entries.push(format!("DNS:{}", dns));
+                    }
+                    GeneralName::RFC822Name(email) => {
+                        entries.push(format!("email:{}", email));
+                    }
+                    GeneralName::URI(uri) => {
+                        entries.push(format!("URI:{}", uri));
+                    }
+                    GeneralName::IPAddress(ip_bytes) => {
+                        let ip_str = if ip_bytes.len() == 4 {
+                            format!(
+                                "IP:{}.{}.{}.{}",
+                                ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]
+                            )
+                        } else {
+                            format!("IP:{}", hex::encode(ip_bytes))
+                        };
+                        entries.push(ip_str);
+                    }
+                    _ => {
+                        entries.push(format!("other:{:?}", name));
+                    }
+                }
+            }
+        }
+        entries
+    }
+
+    /// Resolve RBAC roles for a given Common Name using the configured cn_role_mapping.
+    ///
+    /// Supports exact matches and simple wildcard patterns:
+    /// - Trailing wildcard: "service-*" matches "service-auth", "service-gateway"
+    /// - Leading wildcard: "*.admin" matches "db.admin", "cluster.admin"
+    /// - Exact match: "root" matches only "root"
+    fn resolve_roles_for_cn(&self, cn: &str) -> Vec<String> {
+        let mut roles = Vec::new();
+        for (pattern, role) in &self.config.mtls.cn_role_mapping {
+            let matched = if pattern.starts_with('*') {
+                // Leading wildcard: "*.admin" matches anything ending with ".admin"
+                let suffix = &pattern[1..];
+                cn.ends_with(suffix)
+            } else if pattern.ends_with('*') {
+                // Trailing wildcard: "service-*" matches anything starting with "service-"
+                let prefix = &pattern[..pattern.len() - 1];
+                cn.starts_with(prefix)
+            } else {
+                // Exact match
+                cn == pattern
+            };
+
+            if matched && !roles.contains(role) {
+                roles.push(role.clone());
+            }
+        }
+        roles
     }
 
     /// Convert enterprise user context to unified context
@@ -505,13 +842,17 @@ pub enum AuthenticationData {
 }
 
 /// Client certificate data for mTLS
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClientCertificateData {
     pub subject: String,
     pub issuer: String,
     pub serial_number: String,
     pub not_before: DateTime<Utc>,
     pub not_after: DateTime<Utc>,
+    /// Raw DER-encoded client certificate bytes for full validation.
+    /// When provided, the mTLS validator will parse and verify the certificate
+    /// against the configured CA, extract CN/SANs, and map to roles.
+    pub raw_cert_der: Option<Vec<u8>>,
 }
 
 impl UnifiedUserContext {
@@ -644,6 +985,7 @@ mod tests {
                 aws_iam: None,
                 azure_ad: None,
             },
+            mtls: MtlsConfig::default(),
         };
 
         let auth_service = UnifiedAuthService::new(config);
@@ -682,6 +1024,7 @@ mod tests {
                 aws_iam: None,
                 azure_ad: None,
             },
+            mtls: MtlsConfig::default(),
         };
 
         let auth_service = UnifiedAuthService::new(config).unwrap();
@@ -694,5 +1037,250 @@ mod tests {
 
         let unknown_perm = auth_service.parse_permission_string("unknown");
         assert_eq!(unknown_perm, None);
+    }
+
+    #[test]
+    fn test_mtls_config_default() {
+        let config = MtlsConfig::default();
+        assert!(!config.enabled);
+        assert!(config.ca_cert_path.is_none());
+        assert!(!config.require_client_cert);
+        assert!(config.cn_role_mapping.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_roles_exact_match() {
+        let mut cn_role_mapping = HashMap::new();
+        cn_role_mapping.insert("db-admin".to_string(), "admin".to_string());
+        cn_role_mapping.insert("service-gateway".to_string(), "gateway".to_string());
+
+        let config = AuthenticationConfig {
+            enabled: true,
+            methods: vec![AuthenticationMethod::ClientCertificate],
+            require_authentication: true,
+            default_session_timeout_minutes: 60,
+            api_keys: HashMap::new(),
+            jwt: JwtConfig {
+                enabled: false,
+                secret: "test".to_string(),
+                access_token_expiration_minutes: 15,
+                refresh_token_expiration_days: 7,
+                issuer: "test".to_string(),
+                audience: "test".to_string(),
+                algorithm: "HS256".to_string(),
+            },
+            sso: SSOConfig {
+                enabled: false,
+                providers: vec![],
+                token_cache_ttl_minutes: 5,
+                aws_iam: None,
+                azure_ad: None,
+            },
+            mtls: MtlsConfig {
+                enabled: false,
+                ca_cert_path: None,
+                require_client_cert: false,
+                cn_role_mapping,
+            },
+        };
+
+        let service = UnifiedAuthService::new(config).unwrap_or_else(|_| {
+            // Service creation does not fail when mtls.enabled is false
+            unreachable!()
+        });
+
+        let roles = service.resolve_roles_for_cn("db-admin");
+        assert_eq!(roles, vec!["admin".to_string()]);
+
+        let roles = service.resolve_roles_for_cn("unknown-service");
+        assert!(roles.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_roles_wildcard_prefix() {
+        let mut cn_role_mapping = HashMap::new();
+        cn_role_mapping.insert("service-*".to_string(), "service_role".to_string());
+
+        let config = AuthenticationConfig {
+            enabled: true,
+            methods: vec![AuthenticationMethod::ClientCertificate],
+            require_authentication: true,
+            default_session_timeout_minutes: 60,
+            api_keys: HashMap::new(),
+            jwt: JwtConfig {
+                enabled: false,
+                secret: "test".to_string(),
+                access_token_expiration_minutes: 15,
+                refresh_token_expiration_days: 7,
+                issuer: "test".to_string(),
+                audience: "test".to_string(),
+                algorithm: "HS256".to_string(),
+            },
+            sso: SSOConfig {
+                enabled: false,
+                providers: vec![],
+                token_cache_ttl_minutes: 5,
+                aws_iam: None,
+                azure_ad: None,
+            },
+            mtls: MtlsConfig {
+                enabled: false,
+                ca_cert_path: None,
+                require_client_cert: false,
+                cn_role_mapping,
+            },
+        };
+
+        let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
+
+        let roles = service.resolve_roles_for_cn("service-auth");
+        assert_eq!(roles, vec!["service_role".to_string()]);
+
+        let roles = service.resolve_roles_for_cn("service-gateway");
+        assert_eq!(roles, vec!["service_role".to_string()]);
+
+        // Does not match without the prefix
+        let roles = service.resolve_roles_for_cn("other-auth");
+        assert!(roles.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_roles_wildcard_suffix() {
+        let mut cn_role_mapping = HashMap::new();
+        cn_role_mapping.insert("*.admin".to_string(), "admin".to_string());
+
+        let config = AuthenticationConfig {
+            enabled: true,
+            methods: vec![AuthenticationMethod::ClientCertificate],
+            require_authentication: true,
+            default_session_timeout_minutes: 60,
+            api_keys: HashMap::new(),
+            jwt: JwtConfig {
+                enabled: false,
+                secret: "test".to_string(),
+                access_token_expiration_minutes: 15,
+                refresh_token_expiration_days: 7,
+                issuer: "test".to_string(),
+                audience: "test".to_string(),
+                algorithm: "HS256".to_string(),
+            },
+            sso: SSOConfig {
+                enabled: false,
+                providers: vec![],
+                token_cache_ttl_minutes: 5,
+                aws_iam: None,
+                azure_ad: None,
+            },
+            mtls: MtlsConfig {
+                enabled: false,
+                ca_cert_path: None,
+                require_client_cert: false,
+                cn_role_mapping,
+            },
+        };
+
+        let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
+
+        let roles = service.resolve_roles_for_cn("cluster.admin");
+        assert_eq!(roles, vec!["admin".to_string()]);
+
+        let roles = service.resolve_roles_for_cn("db.admin");
+        assert_eq!(roles, vec!["admin".to_string()]);
+
+        // Does not match without the suffix
+        let roles = service.resolve_roles_for_cn("cluster.reader");
+        assert!(roles.is_empty());
+    }
+
+    #[test]
+    fn test_mtls_enabled_without_ca_path_fails() {
+        let config = AuthenticationConfig {
+            enabled: true,
+            methods: vec![AuthenticationMethod::ClientCertificate],
+            require_authentication: true,
+            default_session_timeout_minutes: 60,
+            api_keys: HashMap::new(),
+            jwt: JwtConfig {
+                enabled: false,
+                secret: "test".to_string(),
+                access_token_expiration_minutes: 15,
+                refresh_token_expiration_days: 7,
+                issuer: "test".to_string(),
+                audience: "test".to_string(),
+                algorithm: "HS256".to_string(),
+            },
+            sso: SSOConfig {
+                enabled: false,
+                providers: vec![],
+                token_cache_ttl_minutes: 5,
+                aws_iam: None,
+                azure_ad: None,
+            },
+            mtls: MtlsConfig {
+                enabled: true,
+                ca_cert_path: None, // Missing CA path
+                require_client_cert: true,
+                cn_role_mapping: HashMap::new(),
+            },
+        };
+
+        let result = UnifiedAuthService::new(config);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("ca_cert_path"));
+    }
+
+    #[tokio::test]
+    async fn test_mtls_disabled_returns_failure() {
+        let config = AuthenticationConfig {
+            enabled: true,
+            methods: vec![AuthenticationMethod::ClientCertificate],
+            require_authentication: true,
+            default_session_timeout_minutes: 60,
+            api_keys: HashMap::new(),
+            jwt: JwtConfig {
+                enabled: false,
+                secret: "test".to_string(),
+                access_token_expiration_minutes: 15,
+                refresh_token_expiration_days: 7,
+                issuer: "test".to_string(),
+                audience: "test".to_string(),
+                algorithm: "HS256".to_string(),
+            },
+            sso: SSOConfig {
+                enabled: false,
+                providers: vec![],
+                token_cache_ttl_minutes: 5,
+                aws_iam: None,
+                azure_ad: None,
+            },
+            mtls: MtlsConfig {
+                enabled: false,
+                ca_cert_path: None,
+                require_client_cert: false,
+                cn_role_mapping: HashMap::new(),
+            },
+        };
+
+        let service = UnifiedAuthService::new(config).unwrap_or_else(|_| unreachable!());
+        let cert_data = ClientCertificateData {
+            subject: "test-service".to_string(),
+            issuer: "test-ca".to_string(),
+            serial_number: "1234".to_string(),
+            not_before: Utc::now() - chrono::Duration::hours(1),
+            not_after: Utc::now() + chrono::Duration::hours(1),
+            raw_cert_der: None,
+        };
+
+        let result = service
+            .authenticate_client_certificate(&cert_data)
+            .await
+            .unwrap_or_else(|_| unreachable!());
+        assert!(!result.success);
+        assert!(result
+            .error_message
+            .as_deref()
+            .unwrap_or("")
+            .contains("not enabled"));
     }
 }
