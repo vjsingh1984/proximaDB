@@ -1005,35 +1005,71 @@ class TimeSeriesRepository:
         start = self._parse_timestamp(start_time)
         end = self._parse_timestamp(end_time)
 
-        points = [
-            point
-            for point in self._points.get(collection_id, [])
-            if start <= point["timestamp"] <= end
-            and self._matches_filter(point, filter, tag_filters)
-        ]
-
         resolved_aggregation = self._normalize_aggregation(aggregation)
         resolved_bucket_ms = bucket_ms or self._interval_to_bucket_ms(interval)
-        if resolved_aggregation is None:
-            raw_points = [self._serialize_point(point) for point in points[:limit]]
+
+        try:
+            import warnings
+            result = self._client.query_timeseries(
+                collection_name=collection_id,
+                start_time=start.isoformat(),
+                end_time=end.isoformat(),
+                aggregation=resolved_aggregation.value if resolved_aggregation else None,
+                bucket_ms=resolved_bucket_ms,
+                tag_filters=tag_filters,
+                limit=limit,
+            )
+            # Parse server response
+            raw_points = result.get("points", [])
+            metrics_data = result.get("metrics", [])
+            if metrics_data:
+                metrics = [
+                    Metric(
+                        timestamp=m.get("timestamp", ""),
+                        values=m.get("values", {}),
+                        tags=m.get("tags", {}),
+                    )
+                    for m in metrics_data[:limit]
+                ]
+                return TimeSeriesQueryResponse(
+                    metrics=metrics,
+                    total_points=result.get("total_points", len(metrics_data)),
+                    query_time_ms=int((time.time() - started_at) * 1000),
+                )
+            else:
+                return TimeSeriesQueryResponse(
+                    raw_points=raw_points[:limit],
+                    total_points=result.get("total_points", len(raw_points)),
+                    query_time_ms=int((time.time() - started_at) * 1000),
+                )
+        except Exception as e:
+            warnings.warn(f"Server query failed, using local storage: {e}")
+            # Fall back to local storage
+            points = [
+                point
+                for point in self._points.get(collection_id, [])
+                if start <= point["timestamp"] <= end
+                and self._matches_filter(point, filter, tag_filters)
+            ]
+            if resolved_aggregation is None:
+                raw_points = [self._serialize_point(point) for point in points[:limit]]
+                return TimeSeriesQueryResponse(
+                    raw_points=raw_points,
+                    total_points=len(points),
+                    query_time_ms=int((time.time() - started_at) * 1000),
+                )
+            metrics = self._aggregate_points(
+                collection_id=collection_id,
+                points=points,
+                aggregation=resolved_aggregation,
+                bucket_ms=resolved_bucket_ms,
+                value_columns=value_columns,
+            )[:limit]
             return TimeSeriesQueryResponse(
-                raw_points=raw_points,
+                metrics=metrics,
                 total_points=len(points),
                 query_time_ms=int((time.time() - started_at) * 1000),
             )
-
-        metrics = self._aggregate_points(
-            collection_id=collection_id,
-            points=points,
-            aggregation=resolved_aggregation,
-            bucket_ms=resolved_bucket_ms,
-            value_columns=value_columns,
-        )[:limit]
-        return TimeSeriesQueryResponse(
-            metrics=metrics,
-            total_points=len(points),
-            query_time_ms=int((time.time() - started_at) * 1000),
-        )
 
     def get_latest(
         self,

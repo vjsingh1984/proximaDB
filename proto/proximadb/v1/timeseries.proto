@@ -30,20 +30,20 @@ enum TimeSeriesValueType {
 }
 
 // Aggregation types for time-series data
-enum AggregationType {
-  AGGREGATION_TYPE_UNSPECIFIED = 0;
-  AGGREGATION_TYPE_SUM = 1;
-  AGGREGATION_TYPE_AVG = 2;
-  AGGREGATION_TYPE_MIN = 3;
-  AGGREGATION_TYPE_MAX = 4;
-  AGGREGATION_TYPE_COUNT = 5;
-  AGGREGATION_TYPE_OHLC = 6;     // Open-High-Low-Close (for financial data)
-  AGGREGATION_TYPE_VWAP = 7;     // Volume-Weighted Average Price
-  AGGREGATION_TYPE_STDDEV = 8;   // Standard Deviation
-  AGGREGATION_TYPE_P50 = 9;      // 50th percentile (median)
-  AGGREGATION_TYPE_P90 = 10;     // 90th percentile
-  AGGREGATION_TYPE_P95 = 11;     // 95th percentile
-  AGGREGATION_TYPE_P99 = 12;     // 99th percentile
+enum TimeSeriesAggregationType {
+  TIME_SERIES_AGGREGATION_TYPE_UNSPECIFIED = 0;
+  TIME_SERIES_AGGREGATION_TYPE_SUM = 1;
+  TIME_SERIES_AGGREGATION_TYPE_AVG = 2;
+  TIME_SERIES_AGGREGATION_TYPE_MIN = 3;
+  TIME_SERIES_AGGREGATION_TYPE_MAX = 4;
+  TIME_SERIES_AGGREGATION_TYPE_COUNT = 5;
+  TIME_SERIES_AGGREGATION_TYPE_OHLC = 6;     // Open-High-Low-Close (for financial data)
+  TIME_SERIES_AGGREGATION_TYPE_VWAP = 7;     // Volume-Weighted Average Price
+  TIME_SERIES_AGGREGATION_TYPE_STDDEV = 8;   // Standard Deviation
+  TIME_SERIES_AGGREGATION_TYPE_P50 = 9;      // 50th percentile (median)
+  TIME_SERIES_AGGREGATION_TYPE_P90 = 10;     // 90th percentile
+  TIME_SERIES_AGGREGATION_TYPE_P95 = 11;     // 95th percentile
+  TIME_SERIES_AGGREGATION_TYPE_P99 = 12;     // 99th percentile
 }
 
 // Compression codecs for time-series data
@@ -71,7 +71,7 @@ enum DownsampleMode {
 message ValueColumn {
   string name = 1;                           // Column name
   TimeSeriesValueType data_type = 2;         // Data type
-  AggregationType default_aggregation = 3;   // Default aggregation
+  TimeSeriesAggregationType default_aggregation = 3;   // Default aggregation
   CompressionCodec compression = 4;          // Compression codec
 }
 
@@ -145,7 +145,7 @@ message IngestTimeSeriesResponse {
 message QueryTimeSeriesRequest {
   string collection = 1;
   TimeSeriesFilter filter = 2;
-  AggregationType aggregation = 3;
+  TimeSeriesAggregationType aggregation = 3;
   uint64 bucket_ms = 4;                       // Aggregation bucket size (ms)
   repeated string value_columns = 5;          // Columns to retrieve
   uint32 limit = 6;                           // Maximum results
@@ -211,19 +211,19 @@ message AggregationOperation {
 
 message DownsampleOperation {
   uint64 bucket_ms = 1;
-  AggregationType aggregation = 2;
+  TimeSeriesAggregationType aggregation = 2;
   repeated string value_columns = 3;
 }
 
 message GroupByOperation {
   repeated string tag_columns = 1;
-  AggregationType aggregation = 2;
+  TimeSeriesAggregationType aggregation = 2;
   uint64 bucket_ms = 3;
 }
 
 message RollupOperation {
   uint64 interval_ms = 1;
-  AggregationType aggregation = 2;
+  TimeSeriesAggregationType aggregation = 2;
 }
 
 message AggregateTimeSeriesResponse {

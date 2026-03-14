@@ -25,6 +25,8 @@ pub enum StorageEngine {
     Nova,
     /// RAPTOR - Adaptive row-group for dynamic workloads
     Raptor,
+    /// TST - Time-series optimized storage
+    Tst,
 }
 
 impl StorageEngine {
@@ -37,6 +39,7 @@ impl StorageEngine {
             StorageEngine::Swift => "swift",
             StorageEngine::Nova => "nova",
             StorageEngine::Raptor => "raptor",
+            StorageEngine::Tst => "tst",
         }
     }
 }
@@ -52,6 +55,7 @@ impl std::str::FromStr for StorageEngine {
             "swift" => Ok(StorageEngine::Swift),
             "nova" => Ok(StorageEngine::Nova),
             "raptor" => Ok(StorageEngine::Raptor),
+            "tst" => Ok(StorageEngine::Tst),
             _ => Err(ProximaError::Collection(CollectionError::UnknownEngine {
                 engine: s.to_string(),
             })),
@@ -878,6 +882,7 @@ mod tests {
             "helix".parse::<StorageEngine>().unwrap(),
             StorageEngine::Helix
         );
+        assert_eq!("tst".parse::<StorageEngine>().unwrap(), StorageEngine::Tst);
         assert!("invalid".parse::<StorageEngine>().is_err());
     }
 
@@ -885,5 +890,6 @@ mod tests {
     fn test_storage_engine_as_str() {
         assert_eq!(StorageEngine::Sst.as_str(), "sst");
         assert_eq!(StorageEngine::Helix.as_str(), "helix");
+        assert_eq!(StorageEngine::Tst.as_str(), "tst");
     }
 }

@@ -1,7 +1,7 @@
 = Best-in-Class Foundation Execution Tracker
 :toc: left
 :toclevels: 2
-:last-updated: 2026-03-03
+:last-updated: 2026-03-12
 
 [.lead]
 Operational execution tracker for closing foundation gaps and achieving best-in-class product quality (UX, robustness, and product-market fit).
@@ -59,7 +59,7 @@ Primary objective:
 | WS-3
 | Capability Exposure Layer (Engine Parity)
 | Implemented engines are consistently exposed across proto/server/embedded.
-| Not Started
+| In Progress
 | TST/EventLog available in proto enums, API mappings, embedded API, and e2e tests.
 
 | WS-4
@@ -181,6 +181,12 @@ Primary objective:
 | Cleared `storage` expect tail from 36 to 0 via lock-poison recovery, metadata downcast guards, and fallible Arrow builder handling; then closed `query` residual tail from 3 to 0. Refreshed panic-policy baseline to 713 total with critical surfaces pinned at zero (`network_rest`, `api_handlers`, `graph`, `query`).
 | `src/storage/engines/impls/swift/id_index.rs`, `src/storage/engines/core/formats/columnar/serialization.rs`, `src/storage/engines/impls/raptor/writer.rs`, `src/storage/engines/impls/helix/hilbert_curve.rs`, `src/storage/{transaction_coordinator.rs,encryption/mod.rs,common/mmap_vectors.rs}`, `src/storage/document/indexes/{array_index.rs,path_index.rs}`, `src/storage/engines/core/formats/{columnar/nova_metadata.rs,proximablocks/swift_metadata.rs,proximablocks/sst_metadata.rs,columnar/parquet_write_engine/streaming_writer.rs}`, `src/storage/engines/impls/{sst/indexed_reader.rs,viper/indexed_reader.rs}`, `src/query/{execution/executor.rs,rl_planner/bandit.rs}`, `docs/_internal/roadmap/PANIC_POLICY_BASELINE.json`, `make panic-policy-module-guard`, `cargo check --lib`
 | Continue WS-2 on unwrap-dominant tail (`storage` 170, `core` 31), then reduce `services` expect tail (3).
+
+| 2026-03-12
+| WS-3 TST exposure layer kickoff
+| Added `TST` to the canonical storage-engine proto enum and checked-in Rust bindings; normalized embedded, REST v2, multiplex REST, Arrow Flight, and Rust SDK engine parsing to use canonical mappings; fixed stale REST v2 raw enum values; skipped default HNSW auto-provisioning for TST collections; added embedded parity coverage for `create_collection(..., "tst")`.
+| `proto/proximadb/v1/vector_types.proto`, `src/proto/proximadb.v1.rs`, `src/core/{conversions.rs,utils/validation.rs,storage/engines.rs,compact_enums.rs}`, `src/embedded/mod.rs`, `src/network/{rest/v2/collections.rs,multiplex/handlers/rest.rs,arrow_ipc/service.rs}`, `src/services/collection/manager.rs`, `src/storage/{background_flush_context.rs,engine_capabilities.rs,traits.rs}`, `src/storage/common/{compaction_utils.rs,engine_config.rs,flush_handler_trait.rs}`, `src/storage/engines/factory.rs`, `src/storage/persistence/write_ahead_log/flush_coordinator.rs`, `src/storage/trait_components/capabilities.rs`, `clients/rust/src/{collection.rs,error.rs}`, `tests/embedded_engine_parity_test.rs`
+| Finish EventLog exposure semantics and replace temporary TST shared-compaction fallbacks with dedicated handlers/configs, then widen verification to targeted Rust tests and `make test-rust`.
 |===
 
 == Current Priority Queue
