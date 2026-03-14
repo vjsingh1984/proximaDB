@@ -27,6 +27,7 @@ pub enum StorageEngineType {
     SWIFT,
     HELIX,
     RAPTOR,
+    TST,
 }
 
 impl std::fmt::Display for StorageEngineType {
@@ -38,6 +39,7 @@ impl std::fmt::Display for StorageEngineType {
             StorageEngineType::SWIFT => write!(f, "SWIFT"),
             StorageEngineType::HELIX => write!(f, "HELIX"),
             StorageEngineType::RAPTOR => write!(f, "RAPTOR"),
+            StorageEngineType::TST => write!(f, "TST"),
         }
     }
 }
@@ -51,6 +53,7 @@ impl StorageEngineType {
             Ok(StorageEngine::Viper) => StorageEngineType::VIPER,
             Ok(StorageEngine::Nova) => StorageEngineType::NOVA,
             Ok(StorageEngine::Swift) => StorageEngineType::SWIFT,
+            Ok(StorageEngine::Tst) => StorageEngineType::TST,
             _ => StorageEngineType::VIPER, // Default to VIPER
         }
     }
@@ -64,6 +67,7 @@ impl StorageEngineType {
             "SWIFT" => StorageEngineType::SWIFT,
             "HELIX" => StorageEngineType::HELIX,
             "RAPTOR" => StorageEngineType::RAPTOR,
+            "TST" => StorageEngineType::TST,
             _ => StorageEngineType::VIPER, // Default to VIPER
         }
     }
@@ -77,6 +81,7 @@ impl StorageEngineType {
             StorageEngineType::SWIFT => ".swift",
             StorageEngineType::HELIX => ".helix",
             StorageEngineType::RAPTOR => ".raptor",
+            StorageEngineType::TST => ".tst",
         }
     }
 }
@@ -489,6 +494,7 @@ impl StorageEngineType {
             StorageEngineType::SWIFT => "SWIFT",
             StorageEngineType::HELIX => "HELIX",
             StorageEngineType::RAPTOR => "RAPTOR",
+            StorageEngineType::TST => "TST",
         }
     }
 }

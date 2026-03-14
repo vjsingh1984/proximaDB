@@ -634,6 +634,7 @@ impl FlightService for ProximaFlightService {
                     "swift" => crate::proto::proximadb_v1::StorageEngine::Swift,
                     "nova" => crate::proto::proximadb_v1::StorageEngine::Nova,
                     "raptor" => crate::proto::proximadb_v1::StorageEngine::Raptor,
+                    "tst" => crate::proto::proximadb_v1::StorageEngine::Tst,
                     _ => crate::proto::proximadb_v1::StorageEngine::Sst,
                 };
 

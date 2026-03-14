@@ -183,6 +183,52 @@ impl PartitionedStorage {
         Ok(())
     }
 
+    /// Write a batch of log entries efficiently
+    ///
+    /// Groups entries by partition key and acquires each partition's write lock
+    /// only once, reducing lock contention compared to calling `write()` per entry.
+    pub async fn write_batch(&self, logs: &[LogEntry]) -> Result<usize> {
+        if logs.is_empty() {
+            return Ok(0);
+        }
+
+        // Group entries by partition key to minimize lock acquisitions
+        let mut grouped: HashMap<i64, Vec<&LogEntry>> = HashMap::new();
+        for log in logs {
+            let key = self.partition_key(log.timestamp_ns);
+            grouped.entry(key).or_default().push(log);
+        }
+
+        let mut total_written = 0usize;
+        let mut total_bytes = 0u64;
+
+        // Process each partition group with a single lock acquisition
+        for (_partition_key, partition_logs) in &grouped {
+            // Use the first entry's timestamp to get/create the partition
+            let partition = self
+                .get_or_create_partition(partition_logs[0].timestamp_ns)
+                .await;
+
+            // Acquire write lock once for the entire batch within this partition
+            let mut entries = partition.entries.write().await;
+            entries.reserve(partition_logs.len());
+
+            for log in partition_logs {
+                let entry_size = self.estimate_entry_size(log);
+                total_bytes += entry_size;
+                entries.push((*log).clone());
+                total_written += 1;
+            }
+        }
+
+        // Update counters in bulk
+        self.entry_count
+            .fetch_add(total_written as u64, Ordering::Relaxed);
+        self.total_bytes.fetch_add(total_bytes, Ordering::Relaxed);
+
+        Ok(total_written)
+    }
+
     /// Estimate size of a LogEntry in bytes
     fn estimate_entry_size(&self, entry: &LogEntry) -> u64 {
         // Base message size overhead
@@ -695,6 +741,43 @@ mod tests {
 
         let results = storage.query(now - 1000, now + 3000, 10).await.unwrap();
         assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_write_batch() {
+        let storage = PartitionedStorage::new("/tmp/test_batch").unwrap();
+
+        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let hour_ns = 3600 * 1_000_000_000i64;
+
+        // Create logs spanning two different partitions
+        let logs = vec![
+            make_log(now, "Batch Log 1"),
+            make_log(now + 1000, "Batch Log 2"),
+            make_log(now + 2000, "Batch Log 3"),
+            make_log(now + hour_ns, "Batch Log 4 (next partition)"),
+        ];
+
+        let written = storage.write_batch(&logs).await.unwrap();
+        assert_eq!(written, 4);
+        assert_eq!(storage.count().await, 4);
+        assert_eq!(storage.partition_count().await, 2);
+
+        // Verify we can query the entries
+        let results = storage
+            .query(now - 1000, now + hour_ns + 1000, 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_write_batch_empty() {
+        let storage = PartitionedStorage::new("/tmp/test_batch_empty").unwrap();
+
+        let written = storage.write_batch(&[]).await.unwrap();
+        assert_eq!(written, 0);
+        assert_eq!(storage.count().await, 0);
     }
 
     #[tokio::test]

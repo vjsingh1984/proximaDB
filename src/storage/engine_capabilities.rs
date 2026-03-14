@@ -140,6 +140,17 @@ impl EngineCapabilities {
                 CompressionAlgorithm::CompressionBrotli
             }
 
+            // TST recommendations prioritize balanced archival efficiency.
+            (StorageEngine::Tst, CompressionPriority::Speed) => {
+                CompressionAlgorithm::CompressionLz4
+            }
+            (StorageEngine::Tst, CompressionPriority::Balanced) => {
+                CompressionAlgorithm::CompressionZstd
+            }
+            (StorageEngine::Tst, CompressionPriority::Ratio) => {
+                CompressionAlgorithm::CompressionBrotli
+            }
+
             // Default
             _ => CompressionAlgorithm::CompressionNone,
         }
@@ -226,21 +237,14 @@ impl EngineCapabilities {
             StorageEngine::Nova => "NOVA",
             StorageEngine::Swift => "SWIFT",
             StorageEngine::Raptor => "RAPTOR",
+            StorageEngine::Tst => "TST",
             _ => "Unknown",
         }
     }
 
     /// Convert integer engine type to StorageEngine enum
     pub fn engine_from_int(engine_type: i32) -> StorageEngine {
-        match engine_type {
-            1 => StorageEngine::Sst,
-            2 => StorageEngine::Viper,
-            3 => StorageEngine::Helix,
-            4 => StorageEngine::Nova,
-            5 => StorageEngine::Swift,
-            6 => StorageEngine::Raptor,
-            _ => StorageEngine::Unspecified,
-        }
+        StorageEngine::try_from(engine_type).unwrap_or(StorageEngine::Unspecified)
     }
 
     // ========================================================================

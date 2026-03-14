@@ -328,6 +328,13 @@ pub struct CollectionInfo {
     pub disk_usage_bytes: u64,
 }
 
+fn collection_engine_name(storage_engine: Option<i32>) -> String {
+    crate::core::conversions::storage_engine_to_string(
+        storage_engine.unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32),
+    )
+    .to_string()
+}
+
 /// Storage statistics
 #[derive(Debug, Clone)]
 pub struct StorageStats {
@@ -1092,21 +1099,11 @@ impl EmbeddedProximaDB {
             StorageConfig,
         };
 
-        let storage_engine = match engine
-            .unwrap_or(&self.config.default_engine)
-            .to_lowercase()
-            .as_str()
-        {
-            "sst" => crate::proto::proximadb_v1::StorageEngine::Sst,
-            "helix" => crate::proto::proximadb_v1::StorageEngine::Helix,
-            "viper" => crate::proto::proximadb_v1::StorageEngine::Viper,
-            "nova" => crate::proto::proximadb_v1::StorageEngine::Nova,
-            "swift" => crate::proto::proximadb_v1::StorageEngine::Swift,
-            "raptor" => crate::proto::proximadb_v1::StorageEngine::Raptor,
-            other => {
-                return Err(format!("Unknown storage engine: {}", other).into());
-            }
-        };
+        let requested_engine = engine.unwrap_or(&self.config.default_engine);
+        let storage_engine = crate::core::conversions::parse_storage_engine(requested_engine)
+            .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
+                format!("Unknown storage engine: {}", requested_engine).into()
+            })?;
 
         // Create default HNSW index config for automatic index building
         // This enables AXIS EventLog consumer to build HNSW indexes on flush
@@ -1127,6 +1124,12 @@ impl EmbeddedProximaDB {
             ..Default::default()
         };
 
+        let index_configs = if storage_engine == crate::proto::proximadb_v1::StorageEngine::Tst {
+            vec![]
+        } else {
+            vec![default_hnsw_config]
+        };
+
         let collection_config = CollectionConfig {
             name: name.to_string(),
             dimension,
@@ -1135,7 +1138,7 @@ impl EmbeddedProximaDB {
                 compression: Some(CompressionAlgorithm::CompressionLz4 as i32),
                 ..Default::default()
             }),
-            index_configs: vec![default_hnsw_config], // Enable HNSW by default
+            index_configs,
             ..Default::default()
         };
 
@@ -1185,7 +1188,7 @@ impl EmbeddedProximaDB {
     /// # Arguments
     /// * `name` - Collection name
     /// * `dimension` - Vector dimension
-    /// * `engine` - Optional storage engine ("sst", "helix", "viper", "swift", "nova", "raptor")
+    /// * `engine` - Optional storage engine ("sst", "helix", "viper", "swift", "nova", "raptor", "tst")
     /// * `index_type` - Index type: "hnsw", "ivf", "flat", "lsh", or "none"
     ///
     /// # Example
@@ -1204,21 +1207,11 @@ impl EmbeddedProximaDB {
             IvfConfig, LshConfig, StorageConfig,
         };
 
-        let storage_engine = match engine
-            .unwrap_or(&self.config.default_engine)
-            .to_lowercase()
-            .as_str()
-        {
-            "sst" => crate::proto::proximadb_v1::StorageEngine::Sst,
-            "helix" => crate::proto::proximadb_v1::StorageEngine::Helix,
-            "viper" => crate::proto::proximadb_v1::StorageEngine::Viper,
-            "nova" => crate::proto::proximadb_v1::StorageEngine::Nova,
-            "swift" => crate::proto::proximadb_v1::StorageEngine::Swift,
-            "raptor" => crate::proto::proximadb_v1::StorageEngine::Raptor,
-            other => {
-                return Err(format!("Unknown storage engine: {}", other).into());
-            }
-        };
+        let requested_engine = engine.unwrap_or(&self.config.default_engine);
+        let storage_engine = crate::core::conversions::parse_storage_engine(requested_engine)
+            .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
+                format!("Unknown storage engine: {}", requested_engine).into()
+            })?;
 
         // Build index config based on requested type
         let index_configs = match index_type.to_lowercase().as_str() {
@@ -1711,7 +1704,7 @@ impl EmbeddedProximaDB {
                     name: config.name,
                     dimension: config.dimension,
                     vector_count: c.stats.map(|s| s.vector_count as u64).unwrap_or(0),
-                    engine: format!("{:?}", config.storage_engine.unwrap_or(0)),
+                    engine: collection_engine_name(config.storage_engine),
                     disk_usage_bytes: 0, // TODO: Calculate actual disk usage
                 }
             }))
@@ -1740,7 +1733,7 @@ impl EmbeddedProximaDB {
                         name: config.name,
                         dimension: config.dimension,
                         vector_count: c.stats.map(|s| s.vector_count as u64).unwrap_or(0),
-                        engine: format!("{:?}", config.storage_engine.unwrap_or(0)),
+                        engine: collection_engine_name(config.storage_engine),
                         disk_usage_bytes: 0, // TODO: Calculate actual disk usage
                     }
                 })
@@ -5078,6 +5071,18 @@ mod tests {
             .with_node_id("leader-node");
         assert_eq!(config.access_mode, AccessMode::LeaderFollower);
         assert_eq!(config.node_id, Some("leader-node".to_string()));
+    }
+
+    #[test]
+    fn test_collection_engine_name_uses_storage_engine_strings() {
+        assert_eq!(
+            collection_engine_name(Some(crate::proto::proximadb_v1::StorageEngine::Tst as i32)),
+            "tst"
+        );
+        assert_eq!(
+            collection_engine_name(Some(crate::proto::proximadb_v1::StorageEngine::Sst as i32)),
+            "sst"
+        );
     }
 
     // ========================================================================

@@ -27,7 +27,10 @@ pub fn configure_query_telemetry(service: Arc<ObservabilityService>, namespace: 
             });
         }
         Err(e) => {
-            tracing::error!("Failed to configure query telemetry (mutex poisoned): {}", e);
+            tracing::error!(
+                "Failed to configure query telemetry (mutex poisoned): {}",
+                e
+            );
         }
     }
 }
@@ -135,7 +138,10 @@ fn current_sink() -> Option<QueryTelemetrySink> {
     match QUERY_TELEMETRY_SINK.lock() {
         Ok(guard) => guard.clone(),
         Err(e) => {
-            tracing::error!("Failed to access query telemetry sink (mutex poisoned): {}", e);
+            tracing::error!(
+                "Failed to access query telemetry sink (mutex poisoned): {}",
+                e
+            );
             None
         }
     }

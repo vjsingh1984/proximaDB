@@ -411,9 +411,15 @@ impl QueryLowering {
         Ok(group_exprs)
     }
 
-    /// Lower function calls with special handling for vector and SKS functions
+    /// Lower function calls with special handling for vector, SKS, and window functions
     async fn lower_function_call(&self, func: &Function) -> Result<Expr> {
         let name = func.name.to_string();
+
+        // Check if this is a window function (has OVER clause)
+        if let Some(ref window_type) = func.over {
+            return self.lower_window_function(&name, func, window_type).await;
+        }
+
         // In sqlparser 0.59, func.args is FunctionArguments enum
         let arg_list = match &func.args {
             sqlparser::ast::FunctionArguments::List(func_arg_list) => &func_arg_list.args,
@@ -442,6 +448,108 @@ impl QueryLowering {
             Ok(Expr::FuncCall { name, args })
         } else {
             Ok(Expr::FuncCall { name, args })
+        }
+    }
+
+    /// Lower a window function (func(...) OVER (...)) to internal AST WindowCall
+    async fn lower_window_function(
+        &self,
+        name: &str,
+        func: &Function,
+        window_type: &sqlparser::ast::WindowType,
+    ) -> Result<Expr> {
+        // Lower function arguments
+        let arg_list = match &func.args {
+            sqlparser::ast::FunctionArguments::List(func_arg_list) => &func_arg_list.args,
+            _ => {
+                return Err(anyhow!(
+                    "Unsupported function argument type in window function"
+                ));
+            }
+        };
+        let args = self.lower_function_args(arg_list).await?;
+
+        match window_type {
+            sqlparser::ast::WindowType::WindowSpec(spec) => {
+                // Lower PARTITION BY expressions
+                let mut partition_by = Vec::new();
+                for partition_expr in &spec.partition_by {
+                    partition_by.push(self.lower_expr(partition_expr).await?);
+                }
+
+                // Lower ORDER BY expressions within the window
+                let order_by = self.lower_order_by(&spec.order_by).await?;
+
+                // Lower window frame specification
+                let frame = if let Some(ref sql_frame) = spec.window_frame {
+                    Some(self.lower_window_frame(sql_frame).await?)
+                } else {
+                    None
+                };
+
+                Ok(Expr::WindowCall {
+                    func: name.to_uppercase(),
+                    args,
+                    partition_by,
+                    order_by,
+                    frame,
+                })
+            }
+            sqlparser::ast::WindowType::NamedWindow(_) => Err(anyhow!(
+                "Named window references (WINDOW clause) not yet supported"
+            )),
+        }
+    }
+
+    /// Lower a sqlparser WindowFrame to internal AST WindowFrame
+    async fn lower_window_frame(
+        &self,
+        sql_frame: &sqlparser::ast::WindowFrame,
+    ) -> Result<crate::query::ast::WindowFrame> {
+        let unit = match sql_frame.units {
+            sqlparser::ast::WindowFrameUnits::Rows => crate::query::ast::WindowFrameUnit::Rows,
+            sqlparser::ast::WindowFrameUnits::Range => crate::query::ast::WindowFrameUnit::Range,
+            sqlparser::ast::WindowFrameUnits::Groups => crate::query::ast::WindowFrameUnit::Groups,
+        };
+
+        let start = self
+            .lower_window_frame_bound(&sql_frame.start_bound)
+            .await?;
+
+        let end = if let Some(ref end_bound) = sql_frame.end_bound {
+            Some(self.lower_window_frame_bound(end_bound).await?)
+        } else {
+            None
+        };
+
+        Ok(crate::query::ast::WindowFrame { unit, start, end })
+    }
+
+    /// Lower a sqlparser WindowFrameBound to internal AST WindowFrameBound
+    async fn lower_window_frame_bound(
+        &self,
+        bound: &sqlparser::ast::WindowFrameBound,
+    ) -> Result<crate::query::ast::WindowFrameBound> {
+        match bound {
+            sqlparser::ast::WindowFrameBound::CurrentRow => {
+                Ok(crate::query::ast::WindowFrameBound::CurrentRow)
+            }
+            sqlparser::ast::WindowFrameBound::Preceding(maybe_expr) => {
+                let lowered = if let Some(expr) = maybe_expr {
+                    Some(Box::new(self.lower_expr(expr).await?))
+                } else {
+                    None
+                };
+                Ok(crate::query::ast::WindowFrameBound::Preceding(lowered))
+            }
+            sqlparser::ast::WindowFrameBound::Following(maybe_expr) => {
+                let lowered = if let Some(expr) = maybe_expr {
+                    Some(Box::new(self.lower_expr(expr).await?))
+                } else {
+                    None
+                };
+                Ok(crate::query::ast::WindowFrameBound::Following(lowered))
+            }
         }
     }
 
@@ -1115,6 +1223,118 @@ mod lowering_tests {
         // The lowered AST should represent metadata access in a way that
         // the execution engine can optimize to O(1) HashMap lookups
         assert!(matches!(ast, Query::Select(_)));
+    }
+
+    #[tokio::test]
+    async fn test_window_function_row_number() {
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
+        let sql = "SELECT id, ROW_NUMBER() OVER (PARTITION BY category ORDER BY price DESC) FROM products";
+
+        let ast = lowering
+            .lower_sql(sql)
+            .await
+            .expect("Window function SQL lowering should not fail in test");
+
+        match ast {
+            Query::Select(select) => {
+                assert_eq!(select.projection.len(), 2);
+                // Second projection item should be a WindowCall
+                let window_item = &select.projection[1];
+                match &window_item.expr {
+                    Expr::WindowCall {
+                        func,
+                        args,
+                        partition_by,
+                        order_by,
+                        frame,
+                    } => {
+                        assert_eq!(func, "ROW_NUMBER");
+                        assert!(args.is_empty());
+                        assert_eq!(partition_by.len(), 1);
+                        assert!(
+                            matches!(&partition_by[0], Expr::Identifier(id) if id == "category")
+                        );
+                        assert_eq!(order_by.len(), 1);
+                        assert!(!order_by[0].asc); // DESC
+                        assert!(frame.is_none());
+                    }
+                    other => panic!("Expected WindowCall, got: {:?}", other),
+                }
+            }
+            _ => panic!("Expected Select query"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_window_function_sum_with_frame() {
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
+        let sql = "SELECT id, SUM(price) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM products";
+
+        let ast = lowering
+            .lower_sql(sql)
+            .await
+            .expect("Window function with frame SQL lowering should not fail in test");
+
+        match ast {
+            Query::Select(select) => {
+                let window_item = &select.projection[1];
+                match &window_item.expr {
+                    Expr::WindowCall {
+                        func,
+                        args,
+                        partition_by,
+                        order_by,
+                        frame,
+                    } => {
+                        assert_eq!(func, "SUM");
+                        assert_eq!(args.len(), 1);
+                        assert!(partition_by.is_empty());
+                        assert_eq!(order_by.len(), 1);
+                        let frame = frame.as_ref().expect("frame should be present");
+                        assert!(matches!(frame.unit, WindowFrameUnit::Rows));
+                        assert!(matches!(frame.start, WindowFrameBound::Preceding(None)));
+                        assert!(matches!(frame.end, Some(WindowFrameBound::CurrentRow)));
+                    }
+                    other => panic!("Expected WindowCall, got: {:?}", other),
+                }
+            }
+            _ => panic!("Expected Select query"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_window_function_rank() {
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
+        let sql = "SELECT id, RANK() OVER (ORDER BY price) FROM products";
+
+        let ast = lowering
+            .lower_sql(sql)
+            .await
+            .expect("Window function RANK lowering should not fail in test");
+
+        match ast {
+            Query::Select(select) => {
+                let window_item = &select.projection[1];
+                match &window_item.expr {
+                    Expr::WindowCall {
+                        func,
+                        partition_by,
+                        order_by,
+                        ..
+                    } => {
+                        assert_eq!(func, "RANK");
+                        assert!(partition_by.is_empty());
+                        assert_eq!(order_by.len(), 1);
+                        assert!(order_by[0].asc); // default ASC
+                    }
+                    other => panic!("Expected WindowCall, got: {:?}", other),
+                }
+            }
+            _ => panic!("Expected Select query"),
+        }
     }
 
     #[tokio::test]

@@ -845,6 +845,9 @@ pub async fn explain_sql(
         query_stats: None,
         execution_strategy: Some(format!("{:?}", explain_result.query_type)),
         estimated_total_cost: Some(explain_result.estimated_cost),
+        cost_breakdown: None,
+        join_strategy: None,
+        fusion_strategy: None,
     };
 
     let response = ExplainQueryResponse {

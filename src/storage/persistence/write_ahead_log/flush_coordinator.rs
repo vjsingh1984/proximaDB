@@ -320,6 +320,7 @@ impl WALFlushCoordinator {
                 match StorageEngine::try_from(config.storage_engine.unwrap_or(0)) {
                     Ok(StorageEngine::Viper) => "viper",
                     Ok(StorageEngine::Sst) => "sst",
+                    Ok(StorageEngine::Tst) => "tst",
                     _ => preferred_engine.unwrap_or("viper"), // Default to viper or provided preference
                 }
             } else {

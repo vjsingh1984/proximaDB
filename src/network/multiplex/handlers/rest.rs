@@ -296,6 +296,7 @@ impl RestHandler {
             "nova" | "3" => StorageEngine::Nova,
             "swift" | "7" => StorageEngine::Swift,
             "raptor" | "6" => StorageEngine::Raptor,
+            "tst" | "9" => StorageEngine::Tst,
             _ => StorageEngine::Sst,
         };
         let distance = match metric_str.to_lowercase().as_str() {

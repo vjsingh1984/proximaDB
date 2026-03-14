@@ -187,6 +187,49 @@ pub enum Expr {
         lat: Box<Expr>,
         lon: Box<Expr>,
     },
+    /// Window function call: func(...) OVER (PARTITION BY ... ORDER BY ... frame)
+    WindowCall {
+        /// Function name (ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, SUM, COUNT, etc.)
+        func: String,
+        /// Function arguments
+        args: Vec<Expr>,
+        /// PARTITION BY expressions
+        partition_by: Vec<Expr>,
+        /// ORDER BY expressions within the window
+        order_by: Vec<OrderByExpr>,
+        /// Window frame specification
+        frame: Option<WindowFrame>,
+    },
+}
+
+/// Window frame specification
+#[derive(Debug, Clone)]
+pub struct WindowFrame {
+    /// Frame unit (ROWS, RANGE, GROUPS)
+    pub unit: WindowFrameUnit,
+    /// Frame start bound
+    pub start: WindowFrameBound,
+    /// Frame end bound (if BETWEEN specified)
+    pub end: Option<WindowFrameBound>,
+}
+
+/// Window frame unit
+#[derive(Debug, Clone)]
+pub enum WindowFrameUnit {
+    Rows,
+    Range,
+    Groups,
+}
+
+/// Window frame bound
+#[derive(Debug, Clone)]
+pub enum WindowFrameBound {
+    /// CURRENT ROW
+    CurrentRow,
+    /// N PRECEDING (None means UNBOUNDED PRECEDING)
+    Preceding(Option<Box<Expr>>),
+    /// N FOLLOWING (None means UNBOUNDED FOLLOWING)
+    Following(Option<Box<Expr>>),
 }
 
 #[derive(Debug, Clone)]
@@ -222,4 +265,120 @@ pub enum BinaryOp {
     Mul,
     Div,
     Mod,
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn test_window_call_ast_construction() {
+        let expr = Expr::WindowCall {
+            func: "ROW_NUMBER".to_string(),
+            args: vec![],
+            partition_by: vec![Expr::Identifier("category".to_string())],
+            order_by: vec![OrderByExpr {
+                expr: Expr::Identifier("price".to_string()),
+                asc: false,
+            }],
+            frame: None,
+        };
+        match expr {
+            Expr::WindowCall {
+                func,
+                partition_by,
+                order_by,
+                frame,
+                ..
+            } => {
+                assert_eq!(func, "ROW_NUMBER");
+                assert_eq!(partition_by.len(), 1);
+                assert_eq!(order_by.len(), 1);
+                assert!(!order_by[0].asc);
+                assert!(frame.is_none());
+            }
+            _ => panic!("Expected WindowCall"),
+        }
+    }
+
+    #[test]
+    fn test_window_call_with_frame() {
+        let expr = Expr::WindowCall {
+            func: "SUM".to_string(),
+            args: vec![Expr::Identifier("amount".to_string())],
+            partition_by: vec![],
+            order_by: vec![OrderByExpr {
+                expr: Expr::Identifier("date".to_string()),
+                asc: true,
+            }],
+            frame: Some(WindowFrame {
+                unit: WindowFrameUnit::Rows,
+                start: WindowFrameBound::Preceding(None),
+                end: Some(WindowFrameBound::CurrentRow),
+            }),
+        };
+        match expr {
+            Expr::WindowCall {
+                func, args, frame, ..
+            } => {
+                assert_eq!(func, "SUM");
+                assert_eq!(args.len(), 1);
+                let frame = frame.as_ref().expect("frame should be present");
+                assert!(matches!(frame.unit, WindowFrameUnit::Rows));
+                assert!(matches!(frame.start, WindowFrameBound::Preceding(None)));
+                assert!(matches!(frame.end, Some(WindowFrameBound::CurrentRow)));
+            }
+            _ => panic!("Expected WindowCall"),
+        }
+    }
+
+    #[test]
+    fn test_window_frame_with_numeric_bound() {
+        let frame = WindowFrame {
+            unit: WindowFrameUnit::Range,
+            start: WindowFrameBound::Preceding(Some(Box::new(Expr::Literal(Literal::Number(5.0))))),
+            end: Some(WindowFrameBound::Following(Some(Box::new(Expr::Literal(
+                Literal::Number(3.0),
+            ))))),
+        };
+        assert!(matches!(frame.unit, WindowFrameUnit::Range));
+        match &frame.start {
+            WindowFrameBound::Preceding(Some(expr)) => {
+                assert!(
+                    matches!(expr.as_ref(), Expr::Literal(Literal::Number(n)) if (*n - 5.0).abs() < f64::EPSILON)
+                );
+            }
+            _ => panic!("Expected Preceding with value"),
+        }
+    }
+
+    #[test]
+    fn test_window_call_aggregate_over() {
+        // Test: COUNT(*) OVER (PARTITION BY dept ORDER BY hire_date)
+        let expr = Expr::WindowCall {
+            func: "COUNT".to_string(),
+            args: vec![Expr::Identifier("*".to_string())],
+            partition_by: vec![Expr::Identifier("dept".to_string())],
+            order_by: vec![OrderByExpr {
+                expr: Expr::Identifier("hire_date".to_string()),
+                asc: true,
+            }],
+            frame: None,
+        };
+        match expr {
+            Expr::WindowCall {
+                func,
+                args,
+                partition_by,
+                order_by,
+                ..
+            } => {
+                assert_eq!(func, "COUNT");
+                assert_eq!(args.len(), 1);
+                assert_eq!(partition_by.len(), 1);
+                assert_eq!(order_by.len(), 1);
+            }
+            _ => panic!("Expected WindowCall"),
+        }
+    }
 }

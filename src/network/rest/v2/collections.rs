@@ -70,7 +70,7 @@ pub struct CreateCollectionV2Request {
     pub dimension: u32,
     /// Storage engine selection
     ///
-    /// Options: "auto", "sst", "helix", "viper", "swift", "nova", "raptor"
+    /// Options: "auto", "sst", "helix", "viper", "swift", "nova", "raptor", "tst"
     /// Default: "auto" (system selects optimal engine)
     pub engine: Option<String>,
     /// Schema definition with column types
@@ -225,7 +225,9 @@ pub async fn create_collection_v2(
 
     // Validate engine if specified
     let engine = request.engine.as_deref().unwrap_or("auto");
-    let valid_engines = ["auto", "sst", "helix", "viper", "swift", "nova", "raptor"];
+    let valid_engines = [
+        "auto", "sst", "helix", "viper", "swift", "nova", "raptor", "tst",
+    ];
     if !valid_engines.contains(&engine) {
         return Err(ApiError::InvalidArgument(format!(
             "Invalid storage engine '{}'. Valid engines: {:?}",
@@ -348,14 +350,12 @@ pub async fn create_collection_v2(
 
     // Create collection config for unified handlers
     // Map engine name to StorageEngine enum value
-    let storage_engine_value = match engine {
-        "sst" => 1,    // StorageEngine::Sst
-        "helix" => 2,  // StorageEngine::Helix
-        "viper" => 3,  // StorageEngine::Viper
-        "swift" => 4,  // StorageEngine::Swift
-        "nova" => 5,   // StorageEngine::Nova
-        "raptor" => 6, // StorageEngine::Raptor
-        _ => 0,        // StorageEngine::Auto
+    let storage_engine_value = if engine == "auto" {
+        crate::proto::proximadb_v1::StorageEngine::Unspecified as i32
+    } else {
+        crate::core::conversions::parse_storage_engine(engine)
+            .map(|engine| engine as i32)
+            .map_err(|e| ApiError::InvalidArgument(e.to_string()))?
     };
 
     // Map distance metric name to DistanceMetric enum value
@@ -773,5 +773,17 @@ mod tests {
         let column: ColumnDefinition = serde_json::from_str(json).unwrap();
         assert_eq!(column.precision, Some(10));
         assert_eq!(column.scale, Some(2));
+    }
+
+    #[test]
+    fn test_v2_storage_engine_mapping_uses_proto_enum_values() {
+        assert_eq!(
+            crate::core::conversions::parse_storage_engine("sst").unwrap() as i32,
+            crate::proto::proximadb_v1::StorageEngine::Sst as i32
+        );
+        assert_eq!(
+            crate::core::conversions::parse_storage_engine("tst").unwrap() as i32,
+            crate::proto::proximadb_v1::StorageEngine::Tst as i32
+        );
     }
 }

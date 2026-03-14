@@ -74,10 +74,14 @@ pub fn parse_distance_metric(metric: &str) -> Result<DistanceMetric> {
 pub fn parse_storage_engine(engine: &str) -> Result<StorageEngine> {
     match engine.to_lowercase().as_str() {
         "sst" => Ok(StorageEngine::Sst),
+        "helix" => Ok(StorageEngine::Helix),
         "viper" => Ok(StorageEngine::Viper),
         "nova" => Ok(StorageEngine::Nova),
         "swift" => Ok(StorageEngine::Swift),
-        // Note: Prism engine was removed from proto definition
+        "raptor" => Ok(StorageEngine::Raptor),
+        "mmap" => Ok(StorageEngine::Mmap),
+        "hybrid" => Ok(StorageEngine::Hybrid),
+        "tst" => Ok(StorageEngine::Tst),
         _ => Err(anyhow::anyhow!("Invalid storage engine: {}", engine)),
     }
 }
@@ -114,9 +118,14 @@ pub fn distance_metric_to_string(metric: i32) -> &'static str {
 pub fn storage_engine_to_string(engine: i32) -> &'static str {
     match StorageEngine::try_from(engine) {
         Ok(StorageEngine::Sst) => "sst",
+        Ok(StorageEngine::Helix) => "helix",
         Ok(StorageEngine::Viper) => "viper",
         Ok(StorageEngine::Nova) => "nova",
         Ok(StorageEngine::Swift) => "swift",
+        Ok(StorageEngine::Raptor) => "raptor",
+        Ok(StorageEngine::Mmap) => "mmap",
+        Ok(StorageEngine::Hybrid) => "hybrid",
+        Ok(StorageEngine::Tst) => "tst",
         _ => "unknown",
     }
 }

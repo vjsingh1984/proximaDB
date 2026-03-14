@@ -23,6 +23,8 @@ pub enum StorageEngineType {
     Viper,
     /// SST - Hybrid columnar SSTable engine for OLTP workloads (ProximaBlocks format)
     Sst,
+    /// TST - Time-series optimized storage engine
+    Tst,
 }
 
 impl TryFrom<i32> for StorageEngineType {
@@ -35,6 +37,9 @@ impl TryFrom<i32> for StorageEngineType {
             }
             x if x == crate::proto::proximadb_v1::StorageEngine::Sst as i32 => {
                 Ok(StorageEngineType::Sst)
+            }
+            x if x == crate::proto::proximadb_v1::StorageEngine::Tst as i32 => {
+                Ok(StorageEngineType::Tst)
             }
             _ => Err(anyhow!("Unknown storage engine type: {}", value)),
         }
@@ -165,6 +170,7 @@ impl BackgroundFlushContext {
         match engine {
             StorageEngineType::Viper => ProtoStorageEngine::Viper as i32,
             StorageEngineType::Sst => ProtoStorageEngine::Sst as i32,
+            StorageEngineType::Tst => ProtoStorageEngine::Tst as i32,
         }
     }
 
@@ -258,6 +264,11 @@ impl BackgroundFlushContext {
                 compression_type: "snappy".to_string(),
                 level: 1, // Fast compression for OLTP
             },
+            StorageEngineType::Tst => CompressionConfig {
+                enabled: true,
+                compression_type: "zstd".to_string(),
+                level: 3, // Balanced archival compression for time-series workloads
+            },
         };
 
         // Parse quantization config if present
@@ -288,6 +299,7 @@ impl BackgroundFlushContext {
         let batch_size_hint = match storage_engine {
             StorageEngineType::Viper => Some(1000.min(10000 / (config.dimension / 100).max(1))),
             StorageEngineType::Sst => Some(500.min(5000 / (config.dimension / 100).max(1))),
+            StorageEngineType::Tst => Some(2000.min(20000 / (config.dimension / 100).max(1))),
         };
 
         Ok(Self {
@@ -329,6 +341,7 @@ impl BackgroundFlushContext {
         match self.storage_engine {
             StorageEngineType::Viper => "viper",
             StorageEngineType::Sst => "sst",
+            StorageEngineType::Tst => "tst",
         }
     }
 
@@ -342,6 +355,11 @@ impl BackgroundFlushContext {
                 (base_size / dimension_factor).max(1_000).min(50_000)
             }
             StorageEngineType::Sst => 1_000, // Smaller for OLTP workloads
+            StorageEngineType::Tst => {
+                let base_size = 20_000;
+                let dimension_factor = (self.dimension / 100).max(1);
+                (base_size / dimension_factor).max(2_000).min(100_000)
+            }
         }
     }
 
@@ -359,6 +377,12 @@ impl BackgroundFlushContext {
                 let base_threshold = 10_000;
                 let dimension_factor = (self.dimension / 100).max(1);
                 (base_threshold / dimension_factor).max(1_000).min(25_000)
+            }
+            StorageEngineType::Tst => {
+                // TST favors larger time-windowed flushes for partition efficiency.
+                let base_threshold = 100_000;
+                let dimension_factor = (self.dimension / 100).max(1);
+                (base_threshold / dimension_factor).max(5_000).min(250_000)
             }
         }
     }

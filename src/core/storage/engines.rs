@@ -12,8 +12,13 @@ impl StorageEngine {
         &[
             StorageEngine::Viper,
             StorageEngine::Sst,
+            StorageEngine::Helix,
+            StorageEngine::Swift,
+            StorageEngine::Nova,
+            StorageEngine::Raptor,
             StorageEngine::Mmap,
             StorageEngine::Hybrid,
+            StorageEngine::Tst,
         ]
     }
 

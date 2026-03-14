@@ -137,6 +137,7 @@ mysql_async = { version = "0.34", features = ["derive"], optional = true }  # My
 tokio-postgres = "0.7"  # PostgreSQL logical replication client for CDC
 mongodb = { version = "3.5", default-features = false, features = ["rustls-tls", "bson-2", "compat-3-3-0"], optional = true }  # MongoDB change stream for CDC
 futures-util = { version = "0.3", optional = true }  # Stream utilities for MongoDB change stream
+rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }  # Kafka producer for CDC sink
 
 # Vector operations & SIMD
 nalgebra = { version = "0.32", features = ["serde-serialize"] }  # For PCA eigendecomposition, with serde for model persistence
@@ -379,6 +380,9 @@ debug-filters = []  # Enable debug filtering for search operations
 # PostgreSQL connector has pgoutput decoding, but live transport remains partial.
 # MySQL/MongoDB connectors have decoders but no connection layer.
 experimental-cdc-connectors = ["dep:mysql_async", "dep:mongodb", "dep:futures-util"]
+
+# Real Kafka transport for CDC sink (requires librdkafka)
+cdc-kafka = ["dep:rdkafka"]
 
 
 # ============================================================================
