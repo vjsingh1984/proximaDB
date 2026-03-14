@@ -104,6 +104,7 @@ pub mod index;
 pub mod ohlc;
 pub mod partition;
 pub mod query;
+pub mod recovery;
 
 use anyhow::Result;
 use arrow::array::{Float64Array, Int64Array, StringArray};
@@ -138,6 +139,7 @@ pub use compression::{CompressionConfig, TimeSeriesCompressor};
 pub use downsample::{DownsampleConfig, DownsampleInterval, Downsampler};
 pub use ohlc::{OHLC, OHLCBar, OHLCQuery};
 pub use partition::{ColumnarPartition, PartitionKey, TimePartition};
+pub use recovery::{TstRecoveryStats, TstWalRecovery, TstWalWriter};
 
 /// Configuration for the Time-Series storage engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,6 +324,10 @@ pub struct TimeSeriesEngine {
 
     /// Filesystem factory for I/O operations
     filesystem_factory: FilesystemFactory,
+
+    /// Optional WAL writer for durability
+    /// When set, all writes are logged to WAL before being applied to in-memory state
+    wal_writer: Option<TstWalWriter>,
 }
 
 impl TimeSeriesEngine {
@@ -358,7 +364,28 @@ impl TimeSeriesEngine {
             asof_join_engine: ASOFJoin::new(),
             downsampled_data: Arc::new(RwLock::new(BTreeMap::new())),
             filesystem_factory,
+            wal_writer: None,
         })
+    }
+
+    /// Enable WAL for this engine instance.
+    ///
+    /// After calling this, all writes (insert_record, insert_ohlc) will be
+    /// logged to the WAL before being applied to in-memory state.
+    pub async fn enable_wal(&mut self, wal_path: &std::path::Path) -> Result<()> {
+        let writer = TstWalWriter::new(wal_path).await?;
+        self.wal_writer = Some(writer);
+        tracing::info!("TST WAL enabled at: {:?}", wal_path);
+        Ok(())
+    }
+
+    /// Recover engine state from WAL.
+    ///
+    /// Should be called during startup before serving any requests.
+    /// This replays all WAL entries to rebuild in-memory partitions.
+    pub async fn recover_from_wal(&mut self, wal_path: &std::path::Path) -> Result<TstRecoveryStats> {
+        let recovery = TstWalRecovery::new(wal_path.to_path_buf());
+        recovery.recover(self).await
     }
 
     /// Insert a time-series record
@@ -371,6 +398,12 @@ impl TimeSeriesEngine {
         timestamp: DateTime<Utc>,
         record: VectorRecord,
     ) -> Result<()> {
+        // Write to WAL before applying to in-memory state
+        if let Some(ref wal) = self.wal_writer {
+            wal.log_insert_record(collection_id, timestamp, &record)
+                .await?;
+        }
+
         // Determine partition key from timestamp
         let partition_key = self.config.partition_duration.truncate(timestamp);
 
@@ -439,6 +472,12 @@ impl TimeSeriesEngine {
         close: f64,
         volume: i64,
     ) -> Result<()> {
+        // Write to WAL before applying to in-memory state
+        if let Some(ref wal) = self.wal_writer {
+            wal.log_insert_ohlc(collection_id, symbol, timestamp, open, high, low, close, volume)
+                .await?;
+        }
+
         let bar = OHLCBar {
             symbol: symbol.to_string(),
             timestamp,
@@ -558,6 +597,28 @@ impl TimeSeriesEngine {
         self.partitions
             .get_mut(&partition_key)
             .ok_or_else(|| anyhow::anyhow!("Partition not found after creation: {}", partition_key))
+    }
+
+    /// Ensure a partition exists for the given key, creating it if necessary.
+    ///
+    /// Used during WAL recovery to replay CreatePartition operations.
+    pub async fn ensure_partition(
+        &mut self,
+        collection_id: &str,
+        partition_key: DateTime<Utc>,
+    ) -> Result<()> {
+        if !self.partitions.contains_key(&partition_key) {
+            let partition = TimePartition::new(partition_key, collection_id.to_string())?;
+            self.partitions.insert(partition_key, partition);
+        }
+        Ok(())
+    }
+
+    /// Remove a partition by its key.
+    ///
+    /// Used during WAL recovery to replay DropPartition operations.
+    pub fn remove_partition(&mut self, partition_key: &DateTime<Utc>) {
+        self.partitions.remove(partition_key);
     }
 
     /// Identify partitions that overlap with the time range
@@ -1575,6 +1636,7 @@ impl Clone for TimeSeriesEngine {
                         unsafe { std::mem::zeroed() }
                     })
             },
+            wal_writer: None, // WAL writer is not cloned; clones are for scan iterators only
         }
     }
 }

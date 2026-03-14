@@ -56,6 +56,9 @@ pub enum UnifiedWALOperation {
         batch_id: Option<String>,
     },
 
+    /// Time-series operation
+    TimeSeriesOp(TimeSeriesOperation),
+
     /// Checkpoint operation for recovery
     Checkpoint {
         sequence_number: u64,
@@ -65,6 +68,42 @@ pub enum UnifiedWALOperation {
         graphs: Vec<String>,
         document_collections: Vec<String>,
         observability_namespaces: Vec<String>,
+    },
+}
+
+/// Time-series operations for WAL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TimeSeriesOperation {
+    /// Insert a time-series record into a partition
+    InsertRecord {
+        collection_id: String,
+        /// Timestamp in milliseconds since Unix epoch
+        timestamp_ms: i64,
+        record: VectorRecord,
+    },
+    /// Insert an OHLC bar
+    InsertOHLC {
+        collection_id: String,
+        symbol: String,
+        /// Timestamp in milliseconds since Unix epoch
+        timestamp_ms: i64,
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        volume: i64,
+    },
+    /// Create a new time partition
+    CreatePartition {
+        collection_id: String,
+        /// Partition start timestamp in milliseconds since Unix epoch
+        partition_key_ms: i64,
+    },
+    /// Drop a time partition
+    DropPartition {
+        collection_id: String,
+        /// Partition start timestamp in milliseconds since Unix epoch
+        partition_key_ms: i64,
     },
 }
 
@@ -251,6 +290,11 @@ impl UnifiedWALEntry {
     /// Check if this is an observability operation
     pub fn is_observability_operation(&self) -> bool {
         matches!(&self.operation, UnifiedWALOperation::ObservabilityOp(_))
+    }
+
+    /// Check if this is a time-series operation
+    pub fn is_timeseries_operation(&self) -> bool {
+        matches!(&self.operation, UnifiedWALOperation::TimeSeriesOp(_))
     }
 }
 
