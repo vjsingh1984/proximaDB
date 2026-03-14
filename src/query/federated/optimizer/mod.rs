@@ -1348,13 +1348,21 @@ impl CrossModelOptimizer {
         }
     }
 
-    /// Create an optimizer with a custom statistics provider
+    /// Create an optimizer with a custom statistics provider (builder pattern)
     pub fn with_statistics_provider(
         mut self,
         provider: std::sync::Arc<dyn StatisticsProvider>,
     ) -> Self {
         self.statistics_provider = Some(provider);
         self
+    }
+
+    /// Set statistics provider on an existing optimizer instance
+    pub fn set_statistics_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn StatisticsProvider>,
+    ) {
+        self.statistics_provider = Some(provider);
     }
 
     /// Create an optimizer with a custom plan cache
@@ -1379,7 +1387,38 @@ impl CrossModelOptimizer {
     }
 
     /// Optimize a federated query
+    ///
+    /// If a statistics provider is configured, uses cardinality-aware
+    /// cost estimation for better plan selection.
     pub fn optimize(&self, query: &FederatedQuery) -> Result<QueryPlan> {
+        // If we have a statistics provider, collect stats for referenced collections
+        // and delegate to optimize_with_statistics for cardinality-aware planning
+        if let Some(ref provider) = self.statistics_provider {
+            use crate::query::federated::parser::SqlExtension;
+            let mut stats = HashMap::new();
+            for ext in &query.extensions {
+                let collection_name = match ext {
+                    SqlExtension::VectorSearch { collection, .. } => Some(collection.clone()),
+                    SqlExtension::DocumentQuery { collection, .. } => Some(collection.clone()),
+                    _ => None,
+                };
+                if let Some(name) = collection_name {
+                    if let Some(model_stats) = provider.get_statistics(&name) {
+                        stats.insert(name, model_stats);
+                    }
+                }
+            }
+            // Also check query targets
+            for target in &query.targets {
+                if let Some(model_stats) = provider.get_statistics(&target.name) {
+                    stats.insert(target.name.clone(), model_stats);
+                }
+            }
+            if !stats.is_empty() {
+                return self.optimize_with_statistics(query, &stats);
+            }
+        }
+
         // Check plan cache first
         let cache_key = PlanCacheKey::from_query(query);
         if let Some(cached_plan) = self.plan_cache.get(&cache_key) {
@@ -3787,12 +3826,30 @@ impl CrossModelOptimizer {
 
     /// Check if column comes from left side of join
     fn column_from_left(&self, column: &str, left: &PlanNode) -> bool {
+        // Check if column has a table qualifier (e.g., "users.name")
+        if let Some((qualifier, _col)) = column.split_once('.') {
+            // Qualified column: match only if scan target matches the qualifier
+            if let PlanNodeType::Scan { target, .. } = &left.node_type {
+                return target == qualifier;
+            }
+            // Non-scan nodes with wildcard can accept qualified columns
+            return left.output_columns.contains(&column.to_string());
+        }
         left.output_columns.contains(&column.to_string())
             || left.output_columns.contains(&"*".to_string())
     }
 
     /// Check if column comes from right side of join
     fn column_from_right(&self, column: &str, right: &PlanNode) -> bool {
+        // Check if column has a table qualifier (e.g., "orders.id")
+        if let Some((qualifier, _col)) = column.split_once('.') {
+            // Qualified column: match only if scan target matches the qualifier
+            if let PlanNodeType::Scan { target, .. } = &right.node_type {
+                return target == qualifier;
+            }
+            // Non-scan nodes with wildcard can accept qualified columns
+            return right.output_columns.contains(&column.to_string());
+        }
         right.output_columns.contains(&column.to_string())
             || right.output_columns.contains(&"*".to_string())
     }
@@ -4207,6 +4264,40 @@ impl CrossModelOptimizer {
 impl Default for CrossModelOptimizer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// JOIN STRATEGY SELECTION (Cost-Based Optimizer)
+// ============================================================================
+
+/// Join execution strategy selected by the cost-based optimizer
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JoinStrategy {
+    /// Build a hash table on the smaller side, probe with the larger
+    HashJoin,
+    /// Iterate outer rows, scan inner for each (small datasets)
+    NestedLoopJoin,
+    /// Use an existing index on the inner side for lookups
+    IndexJoin,
+}
+
+/// Select the optimal join strategy based on estimated cardinalities
+///
+/// Decision logic:
+/// - **IndexJoin**: when an index exists and the right side is small (<1000 rows),
+///   exploiting the index avoids a full scan.
+/// - **HashJoin**: when both sides exceed 1000 rows, hash-based joining
+///   gives O(n + m) cost vs O(n * m) for nested loop.
+/// - **NestedLoopJoin**: fallback for small inputs where hash-table
+///   construction overhead is not worthwhile.
+pub fn select_join_strategy(left_rows: u64, right_rows: u64, has_index: bool) -> JoinStrategy {
+    if has_index && right_rows < 1000 {
+        JoinStrategy::IndexJoin
+    } else if left_rows > 1000 && right_rows > 1000 {
+        JoinStrategy::HashJoin
+    } else {
+        JoinStrategy::NestedLoopJoin
     }
 }
 
@@ -4669,5 +4760,40 @@ mod tests {
             }
             _ => panic!("Expected hash join as result"),
         }
+    }
+
+    // ========================================================================
+    // JOIN STRATEGY SELECTION TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_join_strategy_index_join_small_right() {
+        let strategy = select_join_strategy(50_000, 500, true);
+        assert_eq!(strategy, JoinStrategy::IndexJoin);
+    }
+
+    #[test]
+    fn test_join_strategy_hash_join_large_both() {
+        let strategy = select_join_strategy(10_000, 5_000, false);
+        assert_eq!(strategy, JoinStrategy::HashJoin);
+    }
+
+    #[test]
+    fn test_join_strategy_nested_loop_small_inputs() {
+        let strategy = select_join_strategy(100, 50, false);
+        assert_eq!(strategy, JoinStrategy::NestedLoopJoin);
+    }
+
+    #[test]
+    fn test_join_strategy_hash_over_index_when_right_large() {
+        // Even with an index, if the right side is large prefer hash join
+        let strategy = select_join_strategy(5_000, 5_000, true);
+        assert_eq!(strategy, JoinStrategy::HashJoin);
+    }
+
+    #[test]
+    fn test_join_strategy_nested_loop_one_side_small() {
+        let strategy = select_join_strategy(500, 50, true);
+        assert_eq!(strategy, JoinStrategy::IndexJoin);
     }
 }

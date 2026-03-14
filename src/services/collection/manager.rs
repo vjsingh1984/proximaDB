@@ -424,7 +424,12 @@ impl CollectionService {
 
         // Add default HNSW index configuration if not provided
         // This enables AXIS indexes for accelerated vector search
-        if enriched_config.index_configs.is_empty() {
+        let resolved_engine = crate::proto::proximadb_v1::StorageEngine::try_from(
+            config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
+        )
+        .unwrap_or(StorageEngine::Sst);
+
+        if enriched_config.index_configs.is_empty() && resolved_engine != StorageEngine::Tst {
             use crate::proto::proximadb_v1::{HnswConfig, IndexConfig, IndexingAlgorithm};
 
             let default_hnsw_config = IndexConfig {
@@ -449,6 +454,11 @@ impl CollectionService {
             info!(
                 "📊 Created default HNSW index for collection '{}' (dimension: {})",
                 config.name, config.dimension
+            );
+        } else if enriched_config.index_configs.is_empty() {
+            info!(
+                "📊 Skipping default HNSW index for time-series collection '{}'",
+                config.name
             );
         }
 
@@ -846,11 +856,9 @@ impl CollectionService {
 
                 // Add storage engine specific hints
                 hints["storage_engine"] =
-                    match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
-                        1 => serde_json::json!("VIPER"),
-                        2 => serde_json::json!("LSM"),
-                        _ => serde_json::json!("LSM"),
-                    };
+                    serde_json::json!(crate::core::conversions::storage_engine_to_string(
+                        config.storage_engine.unwrap_or(StorageEngine::Sst as i32)
+                    ));
 
                 Ok(Some(hints))
             } else {
@@ -893,11 +901,9 @@ impl CollectionService {
         if let Some(_proto) = self.get_native_proto(identifier).await? {
             if let Some(config) = _proto.config.as_ref() {
                 // Build storage config from proto
-                let engine_name = match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
-                    1 => "VIPER",
-                    2 => "LSM",
-                    _ => "LSM", // Default
-                };
+                let engine_name = crate::core::conversions::storage_engine_to_string(
+                    config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
+                );
 
                 let mut storage_config = serde_json::json!({
                     "engine": engine_name,
@@ -1073,6 +1079,46 @@ impl CollectionService {
         }
 
         Ok(())
+    }
+
+    /// Get collection statistics for cost-based query optimization
+    ///
+    /// Returns canonical `CollectionStats` from the storage engine, enriched
+    /// with metadata from the collection config (dimension, index type).
+    /// Used by the query planner's CostModel.
+    pub async fn get_collection_stats(
+        &self,
+        collection_name: &str,
+        storage_engine: Option<&std::sync::Arc<dyn crate::storage::traits::UnifiedStorageEngine>>,
+    ) -> Result<crate::storage::traits::CollectionStats> {
+        // If a storage engine is provided, delegate to it for real stats
+        if let Some(engine) = storage_engine {
+            let mut stats = engine.collection_stats(collection_name).await?;
+
+            // Enrich with metadata from collection config
+            if let Some(collection) = self.collection(collection_name).await? {
+                if let Some(config) = &collection.config {
+                    stats.dimension = Some(config.dimension as u32);
+                }
+            }
+
+            return Ok(stats);
+        }
+
+        // Fallback: return stats from proto collection metadata
+        if let Some(collection) = self.collection(collection_name).await? {
+            let mut stats = crate::storage::traits::CollectionStats::default();
+            if let Some(proto_stats) = collection.stats {
+                stats.row_count = proto_stats.vector_count as u64;
+                stats.total_bytes = proto_stats.data_size_bytes as u64;
+            }
+            if let Some(config) = &collection.config {
+                stats.dimension = Some(config.dimension as u32);
+            }
+            return Ok(stats);
+        }
+
+        Ok(crate::storage::traits::CollectionStats::default())
     }
 
     /// Get collection UUID by name or UUID

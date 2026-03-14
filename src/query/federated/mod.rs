@@ -146,6 +146,19 @@ pub struct FederatedQueryContext {
 }
 
 impl FederatedQueryContext {
+    /// Set a statistics provider for cost-based optimization
+    ///
+    /// When set, `execute()` will use `optimize_with_statistics()` instead of
+    /// `optimize()`, enabling cardinality-aware cost estimation from real
+    /// collection stats provided by the storage engine layer.
+    pub fn with_statistics_provider(
+        mut self,
+        provider: std::sync::Arc<dyn crate::query::federated::optimizer::StatisticsProvider>,
+    ) -> Self {
+        self.optimizer.set_statistics_provider(provider);
+        self
+    }
+
     /// Create a new federated query context
     pub fn new(storage: Arc<MultiModelStorageFacade>) -> Self {
         Self {
