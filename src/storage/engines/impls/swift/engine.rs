@@ -111,6 +111,7 @@ pub fn get_collection_pca_model(
 /// - **Point Query**: ~0.1-1ms (mmap + hierarchical lookup)
 /// - **Batch Query**: ~5-20ms (SuperBlock scan)
 /// - **Compression**: 4-6x (Proxima encoding)
+#[deprecated(since = "0.3.0", note = "SWIFT is experimental. Use SST or NOVA instead.")]
 pub struct SwiftEngine {
     /// **Optimized Operations Handler**
     ///
@@ -253,7 +254,7 @@ pub struct SwiftEngine {
     >,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, deprecated)]
 impl SwiftEngine {
     /// Create a new SWIFT engine instance (stateless)
     /// Collection info comes from FlushParameters and StorageQueryContext at runtime
@@ -960,6 +961,7 @@ impl SwiftEngine {
     }
 }
 
+#[allow(deprecated)]
 #[async_trait]
 impl UnifiedStorageEngine for SwiftEngine {
     // =============================================================================
@@ -1694,6 +1696,7 @@ impl UnifiedStorageEngine for SwiftEngine {
 }
 
 /// Implementation of UniversallyOptimized trait for SWIFT engine
+#[allow(deprecated)]
 #[async_trait::async_trait]
 impl UniversallyOptimized for SwiftEngine {
     /// Get the universal performance optimizer instance
@@ -1770,6 +1773,7 @@ impl UniversallyOptimized for SwiftEngine {
 }
 
 // Helper methods for SwiftEngine
+#[allow(deprecated)]
 impl SwiftEngine {
     // Removed unnecessary helper methods - engines already have these components as fields
     // Distance and quantization engines are accessed directly from struct fields

@@ -4,7 +4,7 @@
 //!
 //! The StorageEngineFactory is the central point for creating storage engine
 //! instances in ProximaDB. It provides a unified interface for instantiating
-//! any of the 6 storage engines based on configuration or strategy.
+//! any of the supported storage engines based on configuration or strategy.
 //!
 //! ## Design Pattern:
 //!
@@ -178,6 +178,7 @@ impl StorageEngineFactory {
                     )
                 }
             }
+            ProtoStorageEngine::Tst => Self::create_tst(),
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
                 Self::create_sst()
@@ -230,6 +231,7 @@ impl StorageEngineFactory {
                     )
                 }
             }
+            ProtoStorageEngine::Tst => Self::create_tst_async().await,
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
                 Self::create_sst_async().await
@@ -336,6 +338,11 @@ impl StorageEngineFactory {
         ))
     }
 
+    /// Async version for use within async contexts (e.g., tests)
+    pub async fn create_tst_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        Self::create_tst()
+    }
+
     /// Create VIPER engine with default configuration
     ///
     /// ## VIPER Initialization:
@@ -400,6 +407,7 @@ impl StorageEngineFactory {
     ///
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
+    #[allow(deprecated)]
     pub fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("SWIFT engine is experimental and not production-ready");
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
@@ -412,6 +420,7 @@ impl StorageEngineFactory {
     ///
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
+    #[allow(deprecated)]
     pub async fn create_swift_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("SWIFT engine is experimental and not production-ready");
         info!("Creating SWIFT storage engine");
@@ -488,6 +497,7 @@ impl StorageEngineFactory {
     ///
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
+    #[allow(deprecated)]
     pub fn create_raptor() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("RAPTOR engine is experimental and not production-ready");
         let runtime = tokio::runtime::Runtime::new()?;
@@ -499,6 +509,7 @@ impl StorageEngineFactory {
     ///
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
+    #[allow(deprecated)]
     pub async fn create_raptor_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("RAPTOR engine is experimental and not production-ready");
         info!("Creating RAPTOR storage engine");

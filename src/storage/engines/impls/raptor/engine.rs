@@ -110,6 +110,7 @@ type VectorSearchResult = OptimizedSearchRecord;
 ///
 // Old optimization structures removed - now using UniversalPerformanceOptimizer
 // The universal optimizer provides all these capabilities through a unified interface
+#[deprecated(since = "0.3.0", note = "RAPTOR is experimental. Use SST or HELIX instead.")]
 #[allow(dead_code)]
 pub struct RaptorEngine {
     /// **Engine Configuration**
@@ -352,7 +353,7 @@ pub struct RaptorEngine {
     axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, deprecated)]
 impl RaptorEngine {
     /// Smart quantization selection using shared logic
     fn should_use_persistent_quantization(
@@ -2113,6 +2114,7 @@ impl RaptorEngine {
     }
 }
 
+#[allow(deprecated)]
 #[async_trait]
 impl UnifiedStorageEngine for RaptorEngine {
     fn engine_name(&self) -> &'static str {
@@ -2728,6 +2730,7 @@ impl UnifiedStorageEngine for RaptorEngine {
 }
 
 // AXIS integration helper methods
+#[allow(deprecated)]
 impl RaptorEngine {
     /// Get the AXIS manager if configured
     ///
@@ -2886,6 +2889,7 @@ struct FileMetadata {
 }
 
 /// Implementation of UniversallyOptimized trait for RAPTOR engine
+#[allow(deprecated)]
 #[async_trait]
 impl UniversallyOptimized for RaptorEngine {
     /// Get the universal performance optimizer instance
