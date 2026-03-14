@@ -1355,6 +1355,41 @@ impl UnifiedStorageEngine for NovaEngine {
         self.compaction_ops.compact(params).await
     }
 
+    async fn collection_stats(
+        &self,
+        _collection_id: &str,
+    ) -> Result<crate::storage::traits::CollectionStats> {
+        let stats = self.statistics.read().await;
+        let total_bytes = stats.total_storage_bytes;
+        let collection_count = stats.collection_count as u64;
+
+        // Estimate per-collection row count from total storage and collection count
+        let per_collection_bytes = if collection_count > 0 {
+            total_bytes / collection_count
+        } else {
+            total_bytes
+        };
+
+        // NOVA uses columnar Parquet: avg ~256 bytes per vector after compression
+        let avg_record_bytes: u64 = 256;
+        let estimated_row_count = if avg_record_bytes > 0 && per_collection_bytes > 0 {
+            per_collection_bytes / avg_record_bytes
+        } else {
+            0
+        };
+
+        Ok(crate::storage::traits::CollectionStats {
+            row_count: estimated_row_count,
+            avg_vector_bytes: avg_record_bytes,
+            engine_strategy: crate::storage::traits::StorageEngineStrategy::Nova,
+            has_metadata_index: true, // NOVA has zone maps and bloom filters
+            has_hnsw_index: false,
+            total_bytes: per_collection_bytes,
+            dimension: None,
+            index_type: Some("zone_map".to_string()),
+        })
+    }
+
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
 

@@ -2137,6 +2137,44 @@ impl UnifiedStorageEngine for HelixEngine {
         Ok(None)
     }
 
+    async fn collection_stats(
+        &self,
+        collection_id: &str,
+    ) -> Result<crate::storage::traits::CollectionStats> {
+        // HELIX uses PCA-reduced Hilbert curve storage
+        // Scan filesystem for collection data files
+        let storage_url = format!("/data/collections/{}", collection_id);
+        let fs = self.filesystem.clone();
+
+        let mut total_bytes: u64 = 0;
+        if let Ok(entries) = fs.list(&storage_url).await {
+            for entry in &entries {
+                if !entry.metadata.is_directory {
+                    total_bytes += entry.metadata.size as u64;
+                }
+            }
+        }
+
+        // HELIX stores PCA-reduced vectors: typically 128 dims * 4 bytes + metadata
+        let avg_record_bytes: u64 = 640;
+        let estimated_row_count = if total_bytes > 0 {
+            total_bytes / avg_record_bytes
+        } else {
+            0
+        };
+
+        Ok(crate::storage::traits::CollectionStats {
+            row_count: estimated_row_count,
+            avg_vector_bytes: 512,
+            engine_strategy: crate::storage::traits::StorageEngineStrategy::Helix,
+            has_metadata_index: false,
+            has_hnsw_index: false,
+            total_bytes,
+            dimension: Some(self.config.pca_dimensions as u32),
+            index_type: Some("hilbert_curve".to_string()),
+        })
+    }
+
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let metrics = self.metrics.read().await;
         let mut map = HashMap::new();

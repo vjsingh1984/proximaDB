@@ -2797,6 +2797,33 @@ impl UnifiedStorageEngine for ViperEngine {
 
         Ok(results)
     }
+    async fn collection_stats(
+        &self,
+        _collection_id: &str,
+    ) -> Result<crate::storage::traits::CollectionStats> {
+        use std::sync::atomic::Ordering;
+        let total_vectors = self.stats.total_vectors.load(Ordering::Relaxed);
+        let total_bytes = self.stats.total_size_bytes.load(Ordering::Relaxed);
+        let total_storage = self.stats.total_storage_size_bytes.load(Ordering::Relaxed);
+
+        let avg_vector_bytes = if total_vectors > 0 {
+            total_bytes / total_vectors
+        } else {
+            0
+        };
+
+        Ok(crate::storage::traits::CollectionStats {
+            row_count: total_vectors,
+            avg_vector_bytes,
+            engine_strategy: crate::storage::traits::StorageEngineStrategy::Viper,
+            has_metadata_index: true, // VIPER has Parquet predicate pushdown
+            has_hnsw_index: false,
+            total_bytes: total_storage,
+            dimension: None,
+            index_type: Some("parquet_statistics".to_string()),
+        })
+    }
+
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
         // Basic engine metrics (using atomic operations)
