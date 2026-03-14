@@ -7,6 +7,8 @@
 
 pub mod executor;
 pub mod planner;
+pub mod window_executor;
+pub mod datafusion_bridge;
 
 use crate::core::search::FilterExpression;
 use crate::graph::GraphOperationsService;
