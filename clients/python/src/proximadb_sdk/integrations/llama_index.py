@@ -33,6 +33,7 @@ import uuid
 from typing import Any, List, Optional
 
 from llama_index.core.base.base_retriever import BaseRetriever
+from llama_index.core.schema import Document
 from llama_index.core.vector_stores import (
     VectorStore,
     VectorStoreQuery,
@@ -45,7 +46,6 @@ from llama_index.core.vector_stores.types import (
     Node,
     VectorStoreQueryMode,
 )
-from llama_index.core.schema import Document
 
 from proximadb_sdk.models import VectorRecord
 

@@ -7,23 +7,24 @@ Tests the multi-model hybrid search functionality combining:
 - Multiple fusion strategies (RRF, Weighted, Cascade, etc.)
 """
 
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 # Add the src directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.hybrid import (
-    ProximaDBHybrid,
-    FusionStrategy,
-    ReciprocalRankFusion,
-    WeightedFusion,
     CascadeFusion,
-    HybridSearchResult,
-    VectorSearchResult,
     DocumentSearchResult,
+    FusionStrategy,
+    HybridSearchResult,
+    ProximaDBHybrid,
+    ReciprocalRankFusion,
+    VectorSearchResult,
+    WeightedFusion,
 )
 
 
@@ -246,8 +247,8 @@ class TestHybridSearchAPI:
 
     def test_hybrid_search_performance(self, hybrid_api, test_collection_name):
         """Test hybrid search performance metrics."""
-        import time
         import random
+        import time
 
         query_vector = [random.random() for _ in range(384)]
 

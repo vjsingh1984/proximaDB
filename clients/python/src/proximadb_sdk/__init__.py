@@ -697,11 +697,11 @@ except ImportError:
 # Graph Operations API (High-level interface for Victor integration)
 try:
     from .graph import (
-        ProximaDBGraph,
         GraphEdge,
         GraphNode,
         GraphPath,
         GraphQueryResult,
+        ProximaDBGraph,
         create_graph_api,
     )
 
@@ -711,9 +711,9 @@ except ImportError:
 
 # Document Operations API (MongoDB-like document storage)
 try:
+    from .document import AggregationType as DocAggregationType
+    from .document import CompressionAlgorithm as DocCompressionAlgorithm
     from .document import (
-        AggregationType as DocAggregationType,
-        CompressionAlgorithm as DocCompressionAlgorithm,
         DocIndexType,
         Document,
         DocumentCollectionConfig,
@@ -732,9 +732,11 @@ except ImportError:
 # Time-Series Operations API (Metrics and monitoring)
 try:
     from .timeseries import (
-        AggregationType as TSAggregationType,
         AggregatedMetric,
-        CompressionCodec as TSCompressionCodec,
+    )
+    from .timeseries import AggregationType as TSAggregationType
+    from .timeseries import CompressionCodec as TSCompressionCodec
+    from .timeseries import (
         DownsampleMode,
         Metric,
         ProximaDBTimeSeries,
@@ -758,8 +760,8 @@ try:
         FusionStrategy,
         FusionStrategyBase,
         GraphSearchResult,
-        HybridSearchResult,
         HybridQueryRepository,
+        HybridSearchResult,
         JoinType,
         ProximaDBHybrid,
         QueryModel,

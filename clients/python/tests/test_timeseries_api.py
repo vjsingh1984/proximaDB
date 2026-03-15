@@ -9,22 +9,23 @@ Tests the multi-model time-series storage functionality including:
 - Downsampling and rollup operations
 """
 
-import pytest
-import sys
 import os
+import sys
 from datetime import datetime, timedelta
+
+import pytest
 
 # Add the src directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.timeseries import (
+    AggregationType,
     ProximaDBTimeSeries,
     TimeSeriesCollectionConfig,
+    TimeSeriesFilter,
     ValueColumn,
     ValueType,
-    AggregationType,
-    TimeSeriesFilter,
 )
 
 

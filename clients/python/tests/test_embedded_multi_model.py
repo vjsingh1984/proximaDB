@@ -10,11 +10,12 @@ Tests the embedded multi-model code analysis functionality including:
 - Repository-level batch operations
 """
 
-import pytest
-import sys
 import os
+import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 # Add the src directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
