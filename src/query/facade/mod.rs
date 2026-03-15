@@ -258,6 +258,7 @@ pub struct GraphQueryResult {
 
 /// Execution metrics for debugging and optimization
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ExecutionMetrics {
     /// Which execution path was used
     pub execution_path: String,

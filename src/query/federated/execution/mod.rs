@@ -808,13 +808,18 @@ impl FederatedExecutor {
         })?;
         let mut current = &json;
         for segment in nested_path {
-            current = current.get(*segment).ok_or_else(|| {
-                anyhow!(
-                    "Nested path '{}.{}' was not found in correlated source",
-                    source,
-                    nested_path.join(".")
-                )
-            })?;
+            // Try direct path first, then fall back to looking under "fields" key
+            // (SqlObject serializes with a "fields" wrapper)
+            current = current
+                .get(*segment)
+                .or_else(|| current.get("fields").and_then(|f| f.get(*segment)))
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Nested path '{}.{}' was not found in correlated source",
+                        source,
+                        nested_path.join(".")
+                    )
+                })?;
         }
 
         Self::parse_vector_from_json_value(current, source, nested_path)
@@ -840,7 +845,11 @@ impl FederatedExecutor {
                 })
             }
             serde_json::Value::Object(object) => {
-                for wrapper_key in ["array_value", "values", "object_value"] {
+                // Handle proto SqlValue wrapper: { "value": { "arrayValue": { "values": [...] } } }
+                if let Some(inner) = object.get("value") {
+                    return Self::parse_vector_from_json_value(inner, source, nested_path);
+                }
+                for wrapper_key in ["array_value", "arrayValue", "values", "object_value"] {
                     if let Some(inner) = object.get(wrapper_key) {
                         return Self::parse_vector_from_json_value(inner, source, nested_path);
                     }
