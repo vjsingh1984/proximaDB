@@ -264,4 +264,4 @@ class ProximaDBRetriever(BaseRetriever):
         )
 
         result = self._vector_store.query(query)
-        return result.nodes
+        return list(result.nodes)

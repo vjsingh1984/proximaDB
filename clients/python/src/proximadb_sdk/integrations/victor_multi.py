@@ -430,7 +430,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
                 by_file[file_path].append(result)
 
         # Score each file
-        scored: List[tuple[str, float, Dict[str, Any]]] = []
+        scored: List[tuple[str, float, Optional[Dict[str, Any]]]] = []
 
         for file_path, file_results in by_file.items():
             # Combine scores from different result types
@@ -453,7 +453,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
 
         # Sort by score (descending) and take top_k
         scored.sort(key=lambda x: x[1], reverse=True)
-        return [result for _, _, result in scored[:top_k]]
+        return [result for _, _, result in scored[:top_k] if result is not None]
 
     # ========================================================================
     # Code Analysis Utilities
@@ -698,7 +698,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         if max_files:
             code_files = code_files[:max_files]
 
-        results = {
+        results: Dict[str, Any] = {
             "files_processed": 0,
             "files_failed": 0,
             "total_chunks": 0,

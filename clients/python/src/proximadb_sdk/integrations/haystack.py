@@ -38,7 +38,7 @@ Example::
 from __future__ import annotations
 
 import uuid
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Union, cast
 
 from haystack.dataclasses import Document
 from haystack.document_stores import DuplicatePolicy
@@ -195,12 +195,13 @@ class ProximaDBDocumentStore:
             List of document lists (one list per query).
         """
         # Handle both single query and multiple queries
+        queries: List[List[float]]
         if isinstance(embedding_function[0], list):
             # Multiple query embeddings
-            queries = embedding_function
+            queries = cast(List[List[float]], embedding_function)
         else:
             # Single query embedding
-            queries = [embedding_function]
+            queries = [cast(List[float], embedding_function)]
 
         all_results: List[List[Document]] = []
 
@@ -241,9 +242,9 @@ class ProximaDBDocumentStore:
         metadata = dict(result.metadata) if result.metadata else {}
 
         # Extract text content from source or metadata
-        text_content = result.source
+        text_content: Optional[str] = result.source
         if text_content is None:
-            text_content = metadata.pop(self._text_key, "")
+            text_content = str(metadata.pop(self._text_key, ""))
 
         return Document(
             id=result.id,
