@@ -517,6 +517,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Create a document collection via REST."""
         try:
             import requests
+
             response = self._client._session.post(
                 f"{self._url}/api/v1/documents/collections",
                 json={"name": name, **(config or {})},
@@ -529,11 +530,16 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def insert_document(
-        self, collection_name: str, document: Dict[str, Any], id: Optional[str] = None, **kwargs
+        self,
+        collection_name: str,
+        document: Dict[str, Any],
+        id: Optional[str] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Insert a document via REST."""
         try:
             import requests
+
             response = self._client._session.post(
                 f"{self._url}/api/v1/documents/collections/{collection_name}/documents",
                 json={"id": id, "document": document},
@@ -546,11 +552,16 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def get_document(
-        self, collection_name: str, doc_id: str, projection: Optional[List[str]] = None, **kwargs
+        self,
+        collection_name: str,
+        doc_id: str,
+        projection: Optional[List[str]] = None,
+        **kwargs,
     ) -> Optional[Dict[str, Any]]:
         """Get a document by ID via REST."""
         try:
             import requests
+
             params = {}
             if projection:
                 params["projection"] = ",".join(projection)
@@ -578,6 +589,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Query documents with filter via REST."""
         try:
             import requests
+
             body = {}
             if filter:
                 body["filter"] = filter
@@ -601,6 +613,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Update a document via REST."""
         try:
             import requests
+
             response = self._client._session.put(
                 f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
                 json={"updates": updates},
@@ -616,6 +629,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Delete a document via REST."""
         try:
             import requests
+
             response = self._client._session.delete(
                 f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
                 timeout=self._client._timeout,
@@ -631,6 +645,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """List all document collections via REST."""
         try:
             import requests
+
             response = self._client._session.get(
                 f"{self._url}/api/v1/documents/collections",
                 timeout=self._client._timeout,
@@ -645,6 +660,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Delete a document collection via REST."""
         try:
             import requests
+
             response = self._client._session.delete(
                 f"{self._url}/api/v1/documents/collections/{collection_name}",
                 timeout=self._client._timeout,
@@ -672,6 +688,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Execute hybrid search via REST."""
         try:
             import requests
+
             response = self._client._session.post(
                 f"{self._url}/api/v1/hybrid/search",
                 json={
@@ -699,6 +716,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Create a time-series collection via REST."""
         try:
             import requests
+
             response = self._client._session.post(
                 f"{self._url}/api/v1/timeseries/collections",
                 json={"name": name, **(config or {})},
@@ -716,6 +734,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Ingest time-series data points via REST."""
         try:
             import requests
+
             response = self._client._session.post(
                 f"{self._url}/api/v1/timeseries/collections/{collection_name}/ingest",
                 json={"points": points},
@@ -740,6 +759,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Query time-series data with optional aggregation via REST."""
         try:
             import requests
+
             body = {
                 "start_time": start_time,
                 "end_time": end_time,
@@ -764,6 +784,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """List all time-series collections via REST."""
         try:
             import requests
+
             response = self._client._session.get(
                 f"{self._url}/api/v1/timeseries/collections",
                 timeout=self._client._timeout,
@@ -778,6 +799,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         """Delete a time-series collection via REST."""
         try:
             import requests
+
             response = self._client._session.delete(
                 f"{self._url}/api/v1/timeseries/collections/{collection_name}",
                 timeout=self._client._timeout,

@@ -110,7 +110,10 @@ type VectorSearchResult = OptimizedSearchRecord;
 ///
 // Old optimization structures removed - now using UniversalPerformanceOptimizer
 // The universal optimizer provides all these capabilities through a unified interface
-#[deprecated(since = "0.3.0", note = "RAPTOR is experimental. Use SST or HELIX instead.")]
+#[deprecated(
+    since = "0.3.0",
+    note = "RAPTOR is experimental. Use SST or HELIX instead."
+)]
 #[allow(dead_code)]
 pub struct RaptorEngine {
     /// **Engine Configuration**

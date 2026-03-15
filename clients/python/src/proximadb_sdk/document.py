@@ -82,7 +82,6 @@ from tenacity import (
 
 from .exceptions import ProximaDBError
 
-
 # =============================================================================
 # Enums and Constants
 # =============================================================================
@@ -230,8 +229,16 @@ class Document:
             id=data["id"],
             content=data["document"],
             version=data.get("version", 1),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
-            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else None,
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if data.get("created_at")
+                else None
+            ),
+            updated_at=(
+                datetime.fromisoformat(data["updated_at"])
+                if data.get("updated_at")
+                else None
+            ),
             metadata=data.get("metadata"),
         )
 
@@ -555,7 +562,9 @@ class DocumentRepository:
         self._batch_buffer.setdefault(collection_id, [])
         self._documents.setdefault(collection_id, {})
 
-    def _matches_condition(self, document: Dict[str, Any], condition: Dict[str, Any]) -> bool:
+    def _matches_condition(
+        self, document: Dict[str, Any], condition: Dict[str, Any]
+    ) -> bool:
         value = self._get_value(document, condition.get("path", ""))
         expected = condition.get("value")
         op = condition.get("op")
@@ -586,7 +595,11 @@ class DocumentRepository:
             return value is not None and str(expected).lower() in str(value).lower()
         return True
 
-    def _matches_filter(self, document: Dict[str, Any], filter_value: Optional[Union[DocumentFilter, Dict[str, Any]]]) -> bool:
+    def _matches_filter(
+        self,
+        document: Dict[str, Any],
+        filter_value: Optional[Union[DocumentFilter, Dict[str, Any]]],
+    ) -> bool:
         if filter_value is None:
             return True
 
@@ -605,7 +618,9 @@ class DocumentRepository:
         groups = filter_dict.get("groups", [])
         logic = str(filter_dict.get("logic", "AND")).upper()
 
-        results = [self._matches_condition(document, condition) for condition in conditions]
+        results = [
+            self._matches_condition(document, condition) for condition in conditions
+        ]
         results.extend(self._matches_filter(document, group) for group in groups)
 
         if not results:
@@ -628,7 +643,9 @@ class DocumentRepository:
         return projected
 
     def _apply_updates(
-        self, document: Dict[str, Any], updates: Union[Dict[str, Any], List[Dict[str, Any]]]
+        self,
+        document: Dict[str, Any],
+        updates: Union[Dict[str, Any], List[Dict[str, Any]]],
     ) -> Dict[str, Any]:
         updated = dict(document)
 
@@ -687,7 +704,7 @@ class DocumentRepository:
                     "enable_fulltext": config.enable_fulltext,
                     "fulltext_paths": config.fulltext_paths,
                     "json_schema": config.json_schema,
-                }
+                },
             )
 
             collection_id = result.get("collection_id", config.name)
@@ -699,7 +716,9 @@ class DocumentRepository:
             return collection_id
 
         except Exception as e:
-            raise ProximaDBError(f"Failed to create document collection '{config.name}': {e}")
+            raise ProximaDBError(
+                f"Failed to create document collection '{config.name}': {e}"
+            )
 
     def get_collection(self, collection_id: str) -> Optional[Dict[str, Any]]:
         """Get collection metadata.
@@ -749,7 +768,9 @@ class DocumentRepository:
         """
         # Clear cache for this collection
         if self._enable_cache:
-            keys_to_remove = [k for k in self._cache.keys() if k.startswith(f"{collection_id}:")]
+            keys_to_remove = [
+                k for k in self._cache.keys() if k.startswith(f"{collection_id}:")
+            ]
             for key in keys_to_remove:
                 del self._cache[key]
 
@@ -788,9 +809,7 @@ class DocumentRepository:
         # Call the server to insert the document
         try:
             result = self._client.insert_document(
-                collection_name=collection_id,
-                document=document,
-                id=doc_id
+                collection_name=collection_id, document=document, id=doc_id
             )
 
             # Server may return a different ID, use it if provided
@@ -815,7 +834,9 @@ class DocumentRepository:
             return doc
 
         except Exception as e:
-            raise ProximaDBError(f"Failed to insert document into '{collection_id}': {e}")
+            raise ProximaDBError(
+                f"Failed to insert document into '{collection_id}': {e}"
+            )
 
     def insert_batch(
         self,
@@ -885,9 +906,7 @@ class DocumentRepository:
         # Fetch from server
         try:
             result = self._client.get_document(
-                collection_name=collection_id,
-                doc_id=doc_id,
-                projection=None
+                collection_name=collection_id, doc_id=doc_id, projection=None
             )
 
             if result is None:
@@ -913,9 +932,14 @@ class DocumentRepository:
 
         except Exception as e:
             # Log error but don't fail - try local storage as fallback
-            if collection_id in self._documents and doc_id in self._documents[collection_id]:
+            if (
+                collection_id in self._documents
+                and doc_id in self._documents[collection_id]
+            ):
                 return self._documents[collection_id][doc_id]
-            raise ProximaDBError(f"Failed to get document '{doc_id}' from '{collection_id}': {e}")
+            raise ProximaDBError(
+                f"Failed to get document '{doc_id}' from '{collection_id}': {e}"
+            )
 
     def query(
         self,
@@ -956,7 +980,7 @@ class DocumentRepository:
                 collection_name=collection_id,
                 filter=filter_dict,
                 projection=projection,
-                limit=limit
+                limit=limit,
             )
 
             documents_data = result.get("documents", [])
@@ -1125,7 +1149,9 @@ class DocumentRepository:
         """
         # Invalidate all cache entries for this collection
         if self._enable_cache:
-            keys_to_remove = [k for k in self._cache.keys() if k.startswith(f"{collection_id}:")]
+            keys_to_remove = [
+                k for k in self._cache.keys() if k.startswith(f"{collection_id}:")
+            ]
             for key in keys_to_remove:
                 del self._cache[key]
 
@@ -1242,7 +1268,9 @@ class DocumentRepository:
             collection_id: Optional collection ID (clears all if None)
         """
         if collection_id:
-            keys_to_remove = [k for k in self._cache.keys() if k.startswith(f"{collection_id}:")]
+            keys_to_remove = [
+                k for k in self._cache.keys() if k.startswith(f"{collection_id}:")
+            ]
             for key in keys_to_remove:
                 del self._cache[key]
                 if key in self._cache_keys:
@@ -1573,7 +1601,9 @@ class ProximaDBDocument:
                 documents = [
                     doc
                     for doc in documents
-                    if self._repository._matches_filter(doc.content, stage.get("filter"))
+                    if self._repository._matches_filter(
+                        doc.content, stage.get("filter")
+                    )
                 ]
             elif stage_name == "group":
                 grouped: Dict[Any, List[Document]] = {}
@@ -1597,9 +1627,7 @@ class ProximaDBDocument:
                         if agg_type == "count":
                             row[field_name] = len(group_docs)
                         elif agg_type == "avg":
-                            row[field_name] = (
-                                sum(values) / len(values) if values else 0
-                            )
+                            row[field_name] = sum(values) / len(values) if values else 0
                         elif agg_type == "sum":
                             row[field_name] = sum(values) if values else 0
                     results.append(row)

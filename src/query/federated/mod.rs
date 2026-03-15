@@ -5,8 +5,9 @@
 //!
 //! The live server path is currently strongest for function-backed sources such as
 //! `VECTOR_SEARCH(...)`, `GRAPH_QUERY(...)`, `DOCUMENT_QUERY(...)`, `LOGS(...)`, and
-//! `METRICS(...)`. Generic relational scans and correlated multi-model joins still require
-//! additional execution work and are reported explicitly when not supported.
+//! `METRICS(...)`. Limited correlated `LATERAL` execution is now available when the outer
+//! source is also function-backed. Generic relational scans still require additional execution
+//! work and are reported explicitly when not supported.
 //!
 //! ## Architecture
 //!
@@ -88,7 +89,12 @@
 //! -- Function-backed sources are executable today:
 //! SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2, 0.3]', 10);
 //!
-//! -- Correlated LATERAL joins are planned but not fully executable yet:
+//! -- Function-backed correlated LATERAL joins execute today:
+//! -- SELECT *
+//! -- FROM DOCUMENT_QUERY('profiles') p
+//! -- JOIN LATERAL VECTOR_SEARCH('products', p.document.embedding, 10) v ON true;
+//!
+//! -- Generic relational outer scans still require a relational execution backend:
 //! -- SELECT u.name, v.score
 //! -- FROM users u
 //! -- JOIN LATERAL VECTOR_SEARCH('products', u.preference_vector, 10) v ON true;
@@ -347,7 +353,8 @@ impl FederatedQueryContext {
 mod tests {
     use crate::core::search::results::OptimizedSearchRecord;
     use crate::proto::proximadb_v1::{
-        DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject, SqlValue, sql_value,
+        DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlArray, SqlObject, SqlValue,
+        sql_value,
     };
     use crate::query::federated::{FederatedQueryContext, QueryResultCache};
     use crate::storage::MultiModelStorageFacade;
@@ -363,11 +370,12 @@ mod tests {
     use arrow::array::{Float32Array, Float64Array, Int64Array, StringArray};
     use async_trait::async_trait;
     use std::collections::HashMap;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     struct MockVectorEngine {
         filesystem_factory: FilesystemFactory,
         results: Vec<OptimizedSearchRecord>,
+        query_vectors: Mutex<Vec<Vec<f32>>>,
     }
 
     impl MockVectorEngine {
@@ -378,7 +386,15 @@ mod tests {
             Self {
                 filesystem_factory,
                 results,
+                query_vectors: Mutex::new(Vec::new()),
             }
+        }
+
+        fn recorded_queries(&self) -> Vec<Vec<f32>> {
+            self.query_vectors
+                .lock()
+                .expect("mock vector engine query tracking lock should not be poisoned")
+                .clone()
         }
     }
 
@@ -425,8 +441,14 @@ mod tests {
 
         async fn search_vectors_unified(
             &self,
-            _ctx: &crate::storage::traits::StorageQueryContext,
+            ctx: &crate::storage::traits::StorageQueryContext,
         ) -> Result<Vec<OptimizedSearchRecord>> {
+            if let Some(vector) = ctx.query_vector() {
+                self.query_vectors
+                    .lock()
+                    .expect("mock vector engine query tracking lock should not be poisoned")
+                    .push(vector.to_vec());
+            }
             Ok(self.results.clone())
         }
 
@@ -549,6 +571,19 @@ mod tests {
     fn string_value(value: &str) -> SqlValue {
         SqlValue {
             value: Some(sql_value::Value::StringValue(value.to_string())),
+        }
+    }
+
+    fn array_value(values: &[f64]) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::ArrayValue(SqlArray {
+                values: values
+                    .iter()
+                    .map(|value| SqlValue {
+                        value: Some(sql_value::Value::NumberValue(*value)),
+                    })
+                    .collect(),
+            })),
         }
     }
 
@@ -1024,7 +1059,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lateral_join_reports_unsupported_execution() {
+    async fn test_lateral_join_executes_for_function_backed_correlated_vector_search() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "profiles".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "profile-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[0.1, 0.2]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "profile-2".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[0.3, 0.4]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 2,
+                    updated_at_ns: 2,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.embedding, 1) v ON true",
+            )
+            .await
+            .expect("function-backed lateral join should execute");
+
+        assert_eq!(result.row_count(), 2);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(field_names, vec!["id", "document", "right_id", "score"]);
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_still_requires_relational_scan_backend_for_tables() {
         let storage = Arc::new(MultiModelStorageFacade::new());
         let ctx = FederatedQueryContext::new(storage);
 
@@ -1033,12 +1140,12 @@ mod tests {
                 "SELECT * FROM users u JOIN LATERAL VECTOR_SEARCH('products', u.embedding, 1) v ON true",
             )
             .await
-            .expect_err("lateral join should fail explicitly until correlated execution is implemented");
+            .expect_err("generic relational outer scans should still fail explicitly");
 
         assert!(
             error
                 .to_string()
-                .contains("Nested-loop/lateral join execution is not implemented")
+                .contains("Scan execution is not configured for target 'users'")
         );
     }
 }

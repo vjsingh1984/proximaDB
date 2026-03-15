@@ -8,12 +8,12 @@
 //! When DataFusion is not available, the bridge falls back to the native
 //! `WindowExecutor` from `window_executor.rs`.
 
+use super::QueryRow;
 use super::window_executor::{
     FrameBound, FrameDefinition, SortDirection, WindowFunctionCall, WindowSpec,
 };
 #[cfg(feature = "datafusion-integration")]
 use super::window_executor::{WindowFunction, WindowOrderBy};
-use super::QueryRow;
 use anyhow::Result;
 #[cfg(feature = "datafusion-integration")]
 use anyhow::anyhow;
@@ -27,9 +27,7 @@ use anyhow::anyhow;
 /// Returns the DataFusion `BuiltInWindowFunction` variant and whether the
 /// function is an aggregate (which uses a different DataFusion API path).
 #[cfg(feature = "datafusion-integration")]
-fn map_window_function(
-    func: &WindowFunction,
-) -> Result<DataFusionWindowFunctionKind> {
+fn map_window_function(func: &WindowFunction) -> Result<DataFusionWindowFunctionKind> {
     use datafusion::logical_expr::BuiltInWindowFunction;
 
     match func {
@@ -57,9 +55,7 @@ fn map_window_function(
         // Aggregate functions go through DataFusion's aggregate path
         WindowFunction::Sum => Ok(DataFusionWindowFunctionKind::Aggregate("SUM".to_string())),
         WindowFunction::Avg => Ok(DataFusionWindowFunctionKind::Aggregate("AVG".to_string())),
-        WindowFunction::Count => {
-            Ok(DataFusionWindowFunctionKind::Aggregate("COUNT".to_string()))
-        }
+        WindowFunction::Count => Ok(DataFusionWindowFunctionKind::Aggregate("COUNT".to_string())),
         WindowFunction::Min => Ok(DataFusionWindowFunctionKind::Aggregate("MIN".to_string())),
         WindowFunction::Max => Ok(DataFusionWindowFunctionKind::Aggregate("MAX".to_string())),
     }
@@ -168,8 +164,7 @@ impl DataFusionWindowExecutor {
         }
 
         // Native fallback (always available)
-        self.native
-            .execute_window_functions(rows, window_calls)
+        self.native.execute_window_functions(rows, window_calls)
     }
 
     /// Describe the window spec as a DataFusion-compatible representation.
@@ -260,9 +255,9 @@ impl DataFusionWindowExecutor {
                 let values: Vec<Option<String>> = rows
                     .iter()
                     .map(|row| {
-                        row.fields.get(name).and_then(|v| {
-                            v.as_str().map(|s| s.to_string())
-                        })
+                        row.fields
+                            .get(name)
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
                     })
                     .collect();
                 columns.push(Arc::new(StringArray::from(values)));
@@ -340,8 +335,8 @@ fn describe_bound(bound: &FrameBound, direction: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::window_executor::{WindowFunction, WindowOrderBy};
+    use super::*;
     use serde_json::json;
     use std::collections::HashMap;
 

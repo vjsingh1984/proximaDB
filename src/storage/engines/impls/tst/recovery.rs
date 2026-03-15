@@ -149,9 +149,10 @@ impl TstWalRecovery {
                 timestamp_ms,
                 record,
             } => {
-                let timestamp = DateTime::from_timestamp_millis(*timestamp_ms).ok_or_else(|| {
-                    anyhow::anyhow!("Invalid timestamp_ms in WAL record: {}", timestamp_ms)
-                })?;
+                let timestamp =
+                    DateTime::from_timestamp_millis(*timestamp_ms).ok_or_else(|| {
+                        anyhow::anyhow!("Invalid timestamp_ms in WAL record: {}", timestamp_ms)
+                    })?;
                 debug!(
                     "Replaying InsertRecord: collection={}, ts={}",
                     collection_id, timestamp
@@ -170,9 +171,10 @@ impl TstWalRecovery {
                 close,
                 volume,
             } => {
-                let timestamp = DateTime::from_timestamp_millis(*timestamp_ms).ok_or_else(|| {
-                    anyhow::anyhow!("Invalid timestamp_ms in WAL OHLC record: {}", timestamp_ms)
-                })?;
+                let timestamp =
+                    DateTime::from_timestamp_millis(*timestamp_ms).ok_or_else(|| {
+                        anyhow::anyhow!("Invalid timestamp_ms in WAL OHLC record: {}", timestamp_ms)
+                    })?;
                 debug!(
                     "Replaying InsertOHLC: collection={}, symbol={}, ts={}",
                     collection_id, symbol, timestamp
@@ -380,7 +382,16 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc);
             let seq2 = writer
-                .log_insert_ohlc("test_coll", "AAPL", ts2, 150.0, 155.0, 149.0, 153.0, 1000000)
+                .log_insert_ohlc(
+                    "test_coll",
+                    "AAPL",
+                    ts2,
+                    150.0,
+                    155.0,
+                    149.0,
+                    153.0,
+                    1000000,
+                )
                 .await
                 .unwrap();
             assert_eq!(seq2, 1);

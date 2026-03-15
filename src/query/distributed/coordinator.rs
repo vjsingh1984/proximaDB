@@ -28,13 +28,17 @@ use tracing::{debug, info};
 
 use crate::cluster::{ClusterManager, NodeInfo, RoutingService, ShardManager};
 use crate::core::error::ProximaDBError;
+use crate::graph::service::GraphOperationsService;
+use crate::observability::ObservabilityService;
 use crate::query::unified::ast::MultiModelQuery;
 use crate::query::unified::executor::ParallelExecutor;
 use crate::query::unified::fusion::SubQueryResult;
+use crate::services::operations::vectors::VectorOperationsService;
+use crate::storage::document::DocumentService;
 
 use super::aggregator::{AggregationStrategy, ResultAggregator};
 use super::planner::{DistributionStrategy, QueryPlanner, ShardedSubQuery};
-use super::remote::RemoteExecutor;
+use super::remote::{RemoteExecutor, RemoteQueryHandler};
 use super::shuffle::{ShuffleConfig, ShuffleExchange, ShuffleKey};
 
 /// Configuration for distributed query coordination
@@ -126,8 +130,15 @@ pub struct DistributedQueryCoordinator {
     /// Result aggregator
     aggregator: ResultAggregator,
     /// Local parallel executor
-    #[allow(dead_code)]
     local_executor: ParallelExecutor,
+    /// Vector execution service for local subqueries
+    vector_ops: Option<Arc<VectorOperationsService>>,
+    /// Document execution service for local subqueries
+    document_service: Option<Arc<DocumentService>>,
+    /// Graph execution service for local subqueries
+    graph_service: Option<Arc<GraphOperationsService>>,
+    /// Observability execution service for local subqueries
+    observability_service: Option<Arc<ObservabilityService>>,
     /// Execution statistics
     stats: Arc<RwLock<DistributedQueryStats>>,
     /// Result cache
@@ -160,6 +171,10 @@ impl DistributedQueryCoordinator {
             cluster_manager: None,
             routing_service: None,
             shard_manager: None,
+            vector_ops: None,
+            document_service: None,
+            graph_service: None,
+            observability_service: None,
             stats: Arc::new(RwLock::new(DistributedQueryStats::default())),
             result_cache: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -183,6 +198,45 @@ impl DistributedQueryCoordinator {
     pub fn with_shard_manager(mut self, shard_manager: Arc<ShardManager>) -> Self {
         self.shard_manager = Some(shard_manager);
         self
+    }
+
+    /// Wire vector operations into local subquery execution.
+    pub fn with_vector_ops(mut self, vector_ops: Arc<VectorOperationsService>) -> Self {
+        self.vector_ops = Some(vector_ops);
+        self
+    }
+
+    /// Wire document service into local subquery execution.
+    pub fn with_document_service(mut self, document_service: Arc<DocumentService>) -> Self {
+        self.document_service = Some(document_service);
+        self
+    }
+
+    /// Wire graph service into local subquery execution.
+    pub fn with_graph_service(mut self, graph_service: Arc<GraphOperationsService>) -> Self {
+        self.graph_service = Some(graph_service);
+        self
+    }
+
+    /// Wire observability service into local subquery execution.
+    pub fn with_observability_service(
+        mut self,
+        observability_service: Arc<ObservabilityService>,
+    ) -> Self {
+        self.observability_service = Some(observability_service);
+        self
+    }
+
+    /// Register a real remote execution handler for a node or address.
+    pub async fn register_remote_handler(
+        &self,
+        node_id: &str,
+        address: &str,
+        handler: Arc<dyn RemoteQueryHandler>,
+    ) {
+        self.remote_executor
+            .register_handler(node_id, address, handler)
+            .await;
     }
 
     /// Execute a distributed query
@@ -427,11 +481,36 @@ impl DistributedQueryCoordinator {
     /// Execute a local subquery
     async fn execute_local_subquery(
         &self,
-        _subquery: &ShardedSubQuery,
+        subquery: &ShardedSubQuery,
     ) -> Result<Vec<SubQueryResult>> {
-        // For now, return empty - actual implementation would use local_executor
-        // with proper service wiring
-        Ok(vec![])
+        if subquery.components.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let query = MultiModelQuery {
+            components: subquery.components.clone(),
+            ..MultiModelQuery::new()
+        };
+
+        let document_service = if let Some(document_service) = &self.document_service {
+            document_service.clone()
+        } else if let Some(vector_ops) = &self.vector_ops {
+            Arc::new(DocumentService::new(vector_ops.unified_engine()))
+        } else {
+            return Err(anyhow::anyhow!(
+                "Distributed local execution requires DocumentService wiring"
+            ));
+        };
+
+        self.local_executor
+            .execute_parallel_with_all_services(
+                &query,
+                self.vector_ops.clone(),
+                document_service,
+                self.graph_service.clone(),
+                self.observability_service.clone(),
+            )
+            .await
     }
 
     /// Check cache for query results

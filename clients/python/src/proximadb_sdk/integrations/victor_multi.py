@@ -136,12 +136,14 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
             chunks = self._chunk_code(content)
             for i, chunk in enumerate(chunks):
                 chunk_meta = base_meta.copy()
-                chunk_meta.update({
-                    "chunk_id": f"{file_hash}:{i}",
-                    "chunk_type": "code",
-                    "start_line": chunk.get("start_line", 0),
-                    "end_line": chunk.get("end_line", 0),
-                })
+                chunk_meta.update(
+                    {
+                        "chunk_id": f"{file_hash}:{i}",
+                        "chunk_type": "code",
+                        "start_line": chunk.get("start_line", 0),
+                        "end_line": chunk.get("end_line", 0),
+                    }
+                )
 
                 await self.index_document(
                     f"{file_hash}:chunk_{i}",
@@ -203,15 +205,17 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         syntax highlighting info, AST structure, and code statistics.
         """
         doc_meta = metadata.copy()
-        doc_meta.update({
-            "content_type": "code",
-            "language": language,
-            "size_bytes": len(content),
-            "encoding": "utf-8",
-            # Document-specific fields
-            "title": Path(file_path).name,
-            "file_extension": Path(file_path).suffix,
-        })
+        doc_meta.update(
+            {
+                "content_type": "code",
+                "language": language,
+                "size_bytes": len(content),
+                "encoding": "utf-8",
+                # Document-specific fields
+                "title": Path(file_path).name,
+                "file_extension": Path(file_path).suffix,
+            }
+        )
 
         # For document store, we use the REST API directly
         # This would need a document_insert method in the client
@@ -327,24 +331,28 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         # 1. Vector search
         vector_results = await self.search_similar(query, limit=top_k)
         for vr in vector_results:
-            results.append({
-                "type": "vector",
-                "score": vr.score,
-                "content": vr.content,
-                "metadata": vr.metadata,
-            })
+            results.append(
+                {
+                    "type": "vector",
+                    "score": vr.score,
+                    "content": vr.content,
+                    "metadata": vr.metadata,
+                }
+            )
 
         # 2. Graph search (if query provided)
         if graph_query:
             try:
                 graph_results = await self._search_graph(graph_query, top_k)
                 for gr in graph_results:
-                    results.append({
-                        "type": "graph",
-                        "score": gr.get("score", 0.0),
-                        "content": gr.get("content", ""),
-                        "metadata": gr.get("metadata", {}),
-                    })
+                    results.append(
+                        {
+                            "type": "graph",
+                            "score": gr.get("score", 0.0),
+                            "content": gr.get("content", ""),
+                            "metadata": gr.get("metadata", {}),
+                        }
+                    )
             except Exception as e:
                 # Graph search failed, continue with other results
                 pass
@@ -388,7 +396,9 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
                 filtered.append(result)
         return filtered
 
-    def _matches_filter(self, metadata: Dict[str, Any], filter_dict: Dict[str, Any]) -> bool:
+    def _matches_filter(
+        self, metadata: Dict[str, Any], filter_dict: Dict[str, Any]
+    ) -> bool:
         """Check if metadata matches filter criteria."""
         for key, value in filter_dict.items():
             if key not in metadata:
@@ -470,23 +480,27 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
             # - Chunk size limit
             if line.strip() == "" or i - current_start >= chunk_size:
                 if current_chunk:
-                    chunks.append({
-                        "content": "\n".join(current_chunk),
-                        "start_line": current_start + 1,
-                        "end_line": i + 1,
-                        "line_count": len(current_chunk),
-                    })
+                    chunks.append(
+                        {
+                            "content": "\n".join(current_chunk),
+                            "start_line": current_start + 1,
+                            "end_line": i + 1,
+                            "line_count": len(current_chunk),
+                        }
+                    )
                     current_chunk = []
                     current_start = i + 1
 
         # Add remaining content
         if current_chunk:
-            chunks.append({
-                "content": "\n".join(current_chunk),
-                "start_line": current_start + 1,
-                "end_line": len(lines),
-                "line_count": len(current_chunk),
-            })
+            chunks.append(
+                {
+                    "content": "\n".join(current_chunk),
+                    "start_line": current_start + 1,
+                    "end_line": len(lines),
+                    "line_count": len(current_chunk),
+                }
+            )
 
         return chunks
 
@@ -508,16 +522,22 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         metrics: List[Dict[str, Any]] = []
 
         # Lines of code
-        loc = sum(1 for line in lines if line.strip() and not line.strip().startswith("#"))
+        loc = sum(
+            1 for line in lines if line.strip() and not line.strip().startswith("#")
+        )
         metrics.append({"name": "lines_of_code", "value": loc, "language": language})
 
         # Function count (heuristic)
         func_count = sum(1 for line in lines if line.strip().startswith("def "))
-        metrics.append({"name": "function_count", "value": func_count, "language": language})
+        metrics.append(
+            {"name": "function_count", "value": func_count, "language": language}
+        )
 
         # Class count (heuristic)
         class_count = sum(1 for line in lines if line.strip().startswith("class "))
-        metrics.append({"name": "class_count", "value": class_count, "language": language})
+        metrics.append(
+            {"name": "class_count", "value": class_count, "language": language}
+        )
 
         # Max nesting depth
         max_depth = 0
@@ -526,7 +546,9 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
             stripped = line.strip()
             current_depth += stripped.count("{") - stripped.count("}")
             max_depth = max(max_depth, current_depth)
-        metrics.append({"name": "max_nesting_depth", "value": max_depth, "language": language})
+        metrics.append(
+            {"name": "max_nesting_depth", "value": max_depth, "language": language}
+        )
 
         return metrics
 
@@ -569,14 +591,18 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
                 continue
 
             # Check if chunk contains a function definition
-            if "def " in meta.get("content", "") or "async def " in meta.get("content", ""):
-                results.append({
-                    "file_path": meta.get("file_path", ""),
-                    "content": result.source or meta.get("content", ""),
-                    "score": result.score,
-                    "start_line": meta.get("start_line"),
-                    "end_line": meta.get("end_line"),
-                })
+            if "def " in meta.get("content", "") or "async def " in meta.get(
+                "content", ""
+            ):
+                results.append(
+                    {
+                        "file_path": meta.get("file_path", ""),
+                        "content": result.source or meta.get("content", ""),
+                        "score": result.score,
+                        "start_line": meta.get("start_line"),
+                        "end_line": meta.get("end_line"),
+                    }
+                )
 
         return results[:top_k]
 
@@ -693,14 +719,18 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
 
                 results["files_processed"] += 1
                 results["total_chunks"] += file_results.get("vectors", 0)
-                results["total_functions"] += file_results.get("graph", {}).get("functions", 0)
+                results["total_functions"] += file_results.get("graph", {}).get(
+                    "functions", 0
+                )
 
             except Exception as e:
                 results["files_failed"] += 1
-                results["errors"].append({
-                    "file": str(file_path),
-                    "error": str(e),
-                })
+                results["errors"].append(
+                    {
+                        "file": str(file_path),
+                        "error": str(e),
+                    }
+                )
 
         return results
 

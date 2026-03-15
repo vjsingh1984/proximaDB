@@ -1565,7 +1565,12 @@ impl ConsensusTransport for InMemoryTransport {
 
         let consensus = node.read().await;
         let (term, granted) = consensus
-            .handle_request_vote(req.term, &req.candidate_id, req.last_log_index, req.last_log_term)
+            .handle_request_vote(
+                req.term,
+                &req.candidate_id,
+                req.last_log_index,
+                req.last_log_term,
+            )
             .await;
         Ok(RequestVoteResponse {
             term,
@@ -1752,7 +1757,11 @@ async fn test_multinode_leader_election() {
     assert!(won, "n1 should win the election");
 
     // Exactly one leader in the cluster.
-    assert_eq!(count_leaders(&nodes).await, 1, "exactly one leader expected");
+    assert_eq!(
+        count_leaders(&nodes).await,
+        1,
+        "exactly one leader expected"
+    );
 
     // The leader should be n1.
     assert_eq!(find_leader_id(&nodes).await, Some("n1".to_string()));
@@ -1778,7 +1787,10 @@ async fn test_multinode_log_replication() {
     let (_hub, nodes) = build_three_node_cluster().await;
 
     // Elect n1 as leader.
-    assert!(trigger_election_on(&nodes[0].1).await, "n1 should become leader");
+    assert!(
+        trigger_election_on(&nodes[0].1).await,
+        "n1 should become leader"
+    );
 
     // Propose a command on the leader.
     {
@@ -1792,7 +1804,10 @@ async fn test_multinode_log_replication() {
             })
             .await;
         assert!(result.is_ok());
-        assert!(result.unwrap().success, "propose should succeed on the leader");
+        assert!(
+            result.unwrap().success,
+            "propose should succeed on the leader"
+        );
     }
 
     // Read the leader's log and term.
@@ -1842,7 +1857,10 @@ async fn test_multinode_leader_failover() {
     let (_hub, nodes) = build_three_node_cluster().await;
 
     // Elect n1 as leader.
-    assert!(trigger_election_on(&nodes[0].1).await, "n1 should become leader");
+    assert!(
+        trigger_election_on(&nodes[0].1).await,
+        "n1 should become leader"
+    );
     assert_eq!(count_leaders(&nodes).await, 1);
 
     let old_term = nodes[0].1.read().await.current_term().await;
@@ -1870,7 +1888,11 @@ async fn test_multinode_leader_failover() {
     assert!(won, "n2 should win election after leader failover");
 
     // Exactly one leader, and it is n2.
-    assert_eq!(count_leaders(&nodes).await, 1, "exactly one leader after failover");
+    assert_eq!(
+        count_leaders(&nodes).await,
+        1,
+        "exactly one leader after failover"
+    );
     assert_eq!(find_leader_id(&nodes).await, Some("n2".to_string()));
 }
 
@@ -1886,7 +1908,10 @@ async fn test_multinode_split_brain_protection() {
     let (hub, nodes) = build_three_node_cluster().await;
 
     // Step 1: Elect n1 as leader.
-    assert!(trigger_election_on(&nodes[0].1).await, "n1 should become leader");
+    assert!(
+        trigger_election_on(&nodes[0].1).await,
+        "n1 should become leader"
+    );
 
     // Step 2: Partition n1 from n2 and n3.
     {
@@ -2003,9 +2028,7 @@ async fn test_multinode_log_completeness_check() {
     // n3's log is not up-to-date.
     {
         let n1 = nodes[0].1.read().await;
-        let (_term, granted) = n1
-            .handle_request_vote(leader_term + 1, "n3", 0, 0)
-            .await;
+        let (_term, granted) = n1.handle_request_vote(leader_term + 1, "n3", 0, 0).await;
         assert!(
             !granted,
             "n1 should reject vote from n3 whose log is behind"

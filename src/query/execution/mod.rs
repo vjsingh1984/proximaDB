@@ -5,10 +5,10 @@
 //! Key architectural improvement: Uses HashMap metadata filtering for O(1) lookups
 //! instead of Vec<MetadataItem> linear scans, achieving 10x performance gain.
 
+pub mod datafusion_bridge;
 pub mod executor;
 pub mod planner;
 pub mod window_executor;
-pub mod datafusion_bridge;
 
 use crate::core::search::FilterExpression;
 use crate::graph::GraphOperationsService;

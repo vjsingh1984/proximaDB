@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 
 # Add the src directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from proximadb_sdk import EmbeddedMultiModelProvider
 
@@ -95,7 +95,7 @@ class Greeter:
     @pytest.mark.asyncio
     async def test_code_chunking(self, embedded_provider):
         """Test code chunking functionality."""
-        code = '''
+        code = """
 def function_one():
     pass
 
@@ -104,7 +104,7 @@ def function_two():
 
 class MyClass:
     pass
-'''
+"""
 
         chunks = embedded_provider._chunk_code(code)
 
@@ -186,10 +186,10 @@ def compute_result(x, y):
     async def test_hybrid_search(self, embedded_provider):
         """Test hybrid search across models."""
         # Index some code first
-        code = '''
+        code = """
 def example_function():
     pass
-'''
+"""
         await embedded_provider.index_code_file("test.py", code, "python")
 
         # Perform hybrid search
@@ -410,11 +410,13 @@ class TestEmbeddedAdapterMultiModel:
         points = []
         for i in range(10):
             timestamp = now + timedelta(seconds=i)
-            points.append({
-                "timestamp": timestamp.isoformat() + "Z",
-                "values": {"cpu": 50.0 + i},
-                "tags": {"host": "server1"},
-            })
+            points.append(
+                {
+                    "timestamp": timestamp.isoformat() + "Z",
+                    "values": {"cpu": 50.0 + i},
+                    "tags": {"host": "server1"},
+                }
+            )
 
         result = embedded_adapter.ingest_timeseries(
             collection_name="test_metrics",
@@ -542,7 +544,7 @@ class DataProcessor:
     @pytest.mark.asyncio
     async def test_javascript_code_indexing(self, provider):
         """Test indexing JavaScript code."""
-        js_code = '''
+        js_code = """
 // Example JavaScript module
 function processData(items) {
     return items.map(item => item.value);
@@ -557,7 +559,7 @@ class DataProcessor {
         return this.config.apply(data);
     }
 }
-'''
+"""
 
         results = await provider.index_code_file(
             file_path="example.js",
@@ -572,7 +574,7 @@ class DataProcessor {
     @pytest.mark.asyncio
     async def test_complexity_metrics(self, provider):
         """Test code complexity metrics extraction."""
-        complex_code = '''
+        complex_code = """
 def complex_function(x):
     if x > 0:
         if x > 10:
@@ -585,12 +587,14 @@ def complex_function(x):
         return -x
     else:
         return 0
-'''
+"""
 
         metrics = provider._extract_code_metrics(complex_code, "python")
 
         # Find max nesting depth metric
-        nesting_metric = next((m for m in metrics if m["name"] == "max_nesting_depth"), None)
+        nesting_metric = next(
+            (m for m in metrics if m["name"] == "max_nesting_depth"), None
+        )
         assert nesting_metric is not None
         assert nesting_metric["value"] > 3  # Should detect deep nesting
 

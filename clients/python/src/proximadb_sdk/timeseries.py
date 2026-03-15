@@ -90,7 +90,6 @@ from tenacity import (
 from .document import DocumentRepository
 from .exceptions import ProximaDBError
 
-
 # =============================================================================
 # Enums and Constants
 # =============================================================================
@@ -192,7 +191,9 @@ class ValueColumn:
         self.name = name
         raw_type = data_type if type is None else type
         self.data_type = (
-            raw_type if isinstance(raw_type, ValueType) else ValueType(str(raw_type).lower())
+            raw_type
+            if isinstance(raw_type, ValueType)
+            else ValueType(str(raw_type).lower())
         )
         self.aggregation = (
             aggregation
@@ -208,7 +209,9 @@ class ValueColumn:
 
     @type.setter
     def type(self, value: Union[ValueType, str]) -> None:
-        self.data_type = value if isinstance(value, ValueType) else ValueType(str(value).lower())
+        self.data_type = (
+            value if isinstance(value, ValueType) else ValueType(str(value).lower())
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format for API."""
@@ -267,7 +270,9 @@ class TimeSeriesCollectionConfig:
             column if isinstance(column, ValueColumn) else ValueColumn(**column)
             for column in (value_columns or [])
         ]
-        self.tag_columns = list(tag_columns if tag_columns is not None else (tags_columns or []))
+        self.tag_columns = list(
+            tag_columns if tag_columns is not None else (tags_columns or [])
+        )
         self.retention_ms = (
             retention_ms
             if retention_ms is not None
@@ -275,7 +280,9 @@ class TimeSeriesCollectionConfig:
         )
         codec = compression if default_compression is None else default_compression
         self.compression = (
-            codec if isinstance(codec, CompressionCodec) else CompressionCodec(str(codec).lower())
+            codec
+            if isinstance(codec, CompressionCodec)
+            else CompressionCodec(str(codec).lower())
         )
         self.downsampling = downsampling
         self.partitioning = partitioning
@@ -567,7 +574,7 @@ class TimeSeriesRepository:
 
     @staticmethod
     def _normalize_aggregation(
-        aggregation: Optional[Union[AggregationType, str]]
+        aggregation: Optional[Union[AggregationType, str]],
     ) -> Optional[AggregationType]:
         if aggregation is None:
             return None
@@ -620,7 +627,9 @@ class TimeSeriesRepository:
             tag_columns=list(normalized["tags"].keys()),
         )
 
-    def _normalize_metric(self, metric: Union[Metric, Dict[str, Any]]) -> Dict[str, Any]:
+    def _normalize_metric(
+        self, metric: Union[Metric, Dict[str, Any]]
+    ) -> Dict[str, Any]:
         if isinstance(metric, Metric):
             return {
                 "timestamp": self._parse_timestamp(metric.timestamp),
@@ -662,8 +671,12 @@ class TimeSeriesRepository:
             "name": config.name,
             "point_count": len(points),
             "storage_size_bytes": len(str(points)),
-            "oldest_timestamp": self._format_timestamp(min(timestamps)) if timestamps else None,
-            "newest_timestamp": self._format_timestamp(max(timestamps)) if timestamps else None,
+            "oldest_timestamp": (
+                self._format_timestamp(min(timestamps)) if timestamps else None
+            ),
+            "newest_timestamp": (
+                self._format_timestamp(max(timestamps)) if timestamps else None
+            ),
             "value_columns": [column.to_dict() for column in config.value_columns],
         }
 
@@ -681,7 +694,11 @@ class TimeSeriesRepository:
         if filter_value is None:
             return True
 
-        filter_dict = filter_value.to_dict() if isinstance(filter_value, TimeSeriesFilter) else dict(filter_value)
+        filter_dict = (
+            filter_value.to_dict()
+            if isinstance(filter_value, TimeSeriesFilter)
+            else dict(filter_value)
+        )
         logic = str(filter_dict.get("logic", "AND")).upper()
         results: List[bool] = []
 
@@ -716,9 +733,13 @@ class TimeSeriesRepository:
                 results.append(actual == expected)
 
         if filter_dict.get("start_time"):
-            results.append(point["timestamp"] >= self._parse_timestamp(filter_dict["start_time"]))
+            results.append(
+                point["timestamp"] >= self._parse_timestamp(filter_dict["start_time"])
+            )
         if filter_dict.get("end_time"):
-            results.append(point["timestamp"] <= self._parse_timestamp(filter_dict["end_time"]))
+            results.append(
+                point["timestamp"] <= self._parse_timestamp(filter_dict["end_time"])
+            )
 
         if not results:
             return True
@@ -742,16 +763,18 @@ class TimeSeriesRepository:
             return timestamp
         epoch_ms = int(timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
         rounded_ms = epoch_ms - (epoch_ms % bucket_ms)
-        return datetime.fromtimestamp(rounded_ms / 1000, tz=timezone.utc).replace(tzinfo=None)
+        return datetime.fromtimestamp(rounded_ms / 1000, tz=timezone.utc).replace(
+            tzinfo=None
+        )
 
-    def _aggregate_value(
-        self, values: List[Any], aggregation: AggregationType
-    ) -> Any:
+    def _aggregate_value(self, values: List[Any], aggregation: AggregationType) -> Any:
         if aggregation == AggregationType.COUNT:
             return len(values)
 
         numeric_values = [
-            value for value in values if isinstance(value, (int, float)) and not isinstance(value, bool)
+            value
+            for value in values
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
         ]
         if not numeric_values:
             return None
@@ -789,7 +812,9 @@ class TimeSeriesRepository:
             buckets.setdefault(bucket_key, []).append(point)
 
         results: List[Dict[str, Any]] = []
-        for (bucket_time, group_key), bucket_points in sorted(buckets.items(), key=lambda item: item[0][0]):
+        for (bucket_time, group_key), bucket_points in sorted(
+            buckets.items(), key=lambda item: item[0][0]
+        ):
             bucket_points = sorted(bucket_points, key=lambda point: point["timestamp"])
             primary_column = selected_columns[0] if selected_columns else None
             metric: Dict[str, Any] = {
@@ -808,7 +833,9 @@ class TimeSeriesRepository:
                     metric["tags"] = shared_tags
 
             if aggregation == AggregationType.OHLC and primary_column:
-                values = [point["values"].get(primary_column) for point in bucket_points]
+                values = [
+                    point["values"].get(primary_column) for point in bucket_points
+                ]
                 numeric_values = [
                     value
                     for value in values
@@ -863,7 +890,7 @@ class TimeSeriesRepository:
                     }
                     for vc in config.value_columns
                 ],
-                tag_columns=config.tag_columns
+                tag_columns=config.tag_columns,
             )
 
             collection_id = result.get("collection_id", config.name)
@@ -875,7 +902,9 @@ class TimeSeriesRepository:
             return collection_id
 
         except Exception as e:
-            raise ProximaDBError(f"Failed to create timeseries collection '{config.name}': {e}")
+            raise ProximaDBError(
+                f"Failed to create timeseries collection '{config.name}': {e}"
+            )
 
     def get_collection(self, collection_id: str) -> Optional[Dict[str, Any]]:
         """Get collection metadata."""
@@ -924,19 +953,21 @@ class TimeSeriesRepository:
                 point = {
                     "timestamp": metric_dict.get("timestamp"),
                     "values": metric_dict.get("values", {}),
-                    "tags": metric_dict.get("tags", {})
+                    "tags": metric_dict.get("tags", {}),
                 }
                 points_data.append(point)
 
             result = self._client.ingest_timeseries(
-                collection_name=collection_id,
-                points=points_data
+                collection_name=collection_id, points=points_data
             )
 
             # Update local cache
             self._infer_collection(
                 collection_id,
-                [metric if isinstance(metric, Metric) else Metric(**metric) for metric in metrics],
+                [
+                    metric if isinstance(metric, Metric) else Metric(**metric)
+                    for metric in metrics
+                ],
             )
             self._ensure_collection(collection_id)
 
@@ -953,7 +984,10 @@ class TimeSeriesRepository:
             # Fallback to local ingestion for offline scenarios
             self._infer_collection(
                 collection_id,
-                [metric if isinstance(metric, Metric) else Metric(**metric) for metric in metrics],
+                [
+                    metric if isinstance(metric, Metric) else Metric(**metric)
+                    for metric in metrics
+                ],
             )
             self._ensure_collection(collection_id)
 
@@ -1010,11 +1044,14 @@ class TimeSeriesRepository:
 
         try:
             import warnings
+
             result = self._client.query_timeseries(
                 collection_name=collection_id,
                 start_time=start.isoformat(),
                 end_time=end.isoformat(),
-                aggregation=resolved_aggregation.value if resolved_aggregation else None,
+                aggregation=(
+                    resolved_aggregation.value if resolved_aggregation else None
+                ),
                 bucket_ms=resolved_bucket_ms,
                 tag_filters=tag_filters,
                 limit=limit,
@@ -1141,7 +1178,9 @@ class TimeSeriesRepository:
                         collection_id=collection_id,
                         start_time=start_time,
                         end_time=end_time,
-                        aggregation=stage.get("aggregation", aggregation or AggregationType.AVG),
+                        aggregation=stage.get(
+                            "aggregation", aggregation or AggregationType.AVG
+                        ),
                         bucket_ms=stage.get("bucket_ms"),
                         value_columns=stage.get("value_columns"),
                     )
@@ -1171,7 +1210,9 @@ class TimeSeriesRepository:
                         collection_id=collection_id,
                         start_time=start_time,
                         end_time=end_time,
-                        aggregation=stage.get("aggregation", aggregation or AggregationType.AVG),
+                        aggregation=stage.get(
+                            "aggregation", aggregation or AggregationType.AVG
+                        ),
                         bucket_ms=stage.get("bucket_ms"),
                         value_columns=stage.get("value_columns"),
                     )
@@ -1194,7 +1235,9 @@ class TimeSeriesRepository:
         return {
             "results": metrics,
             "metrics": metrics,
-            "query_time_ms": response.get("query_time_ms", int((time.time() - started_at) * 1000)),
+            "query_time_ms": response.get(
+                "query_time_ms", int((time.time() - started_at) * 1000)
+            ),
         }
 
     def downsample(
@@ -1303,7 +1346,9 @@ class ProximaDBTimeSeries:
             name=name or "",
             timestamp_column=timestamp_column,
             value_columns=value_columns or [],
-            tag_columns=tag_columns if tag_columns is not None else (tags_columns or []),
+            tag_columns=(
+                tag_columns if tag_columns is not None else (tags_columns or [])
+            ),
             retention_ms=retention_ms,
             retention=retention,
             compression=compression,

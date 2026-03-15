@@ -112,6 +112,15 @@ impl QueryFacadeAdapter {
 
         let top_k = request.top_k as usize;
         let collection_id = request.collection_id.clone();
+        let simple_filters = request
+            .queries
+            .first()
+            .map(|q| q.filters.clone())
+            .unwrap_or_default();
+        let advanced_filter = request
+            .queries
+            .first()
+            .and_then(|q| q.advanced_filter.clone());
 
         debug!(
             vector_dims = query_vector.len(),
@@ -121,8 +130,14 @@ impl QueryFacadeAdapter {
         );
 
         // Create QueryRequest from proto request
-        let query_request =
+        let mut query_request =
             QueryRequest::vector_search(query_vector, top_k).with_target(&collection_id);
+        if !simple_filters.is_empty() {
+            query_request = query_request.with_vector_filters(simple_filters);
+        }
+        if let Some(filter) = advanced_filter {
+            query_request = query_request.with_vector_advanced_filter(filter);
+        }
 
         // Execute through facade
         let result = self.facade.execute(query_request).await?;
@@ -401,12 +416,18 @@ impl QueryFacadeAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
     use crate::proto::proximadb_v1::SearchQuery;
     use crate::query::facade::{FacadeConfig, QueryContext, QueryStrategy, QueryType, VectorMatch};
     use async_trait::async_trait;
 
     /// Mock strategy for testing
     struct MockVectorStrategy;
+
+    struct CapturingVectorStrategy {
+        captured: Arc<Mutex<Option<QueryRequest>>>,
+    }
 
     struct MockSqlRoutingStrategy;
 
@@ -472,6 +493,33 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl QueryStrategy for CapturingVectorStrategy {
+        fn name(&self) -> &str {
+            "capturing_vector"
+        }
+
+        fn can_handle(&self, request: &QueryRequest) -> bool {
+            matches!(request.query_type, QueryType::VectorSearch)
+        }
+
+        fn priority(&self) -> i32 {
+            100
+        }
+
+        async fn execute(&self, request: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
+            *self
+                .captured
+                .lock()
+                .expect("captured mutex should not be poisoned") = Some(request);
+
+            Ok(QueryResult {
+                data: QueryResultData::VectorResults(Vec::new()),
+                metrics: None,
+            })
+        }
+    }
+
     fn create_test_adapter() -> QueryFacadeAdapter {
         let strategies: Vec<Arc<dyn QueryStrategy>> = vec![Arc::new(MockVectorStrategy)];
         let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
@@ -480,6 +528,13 @@ mod tests {
 
     fn create_sql_routing_adapter() -> QueryFacadeAdapter {
         let strategies: Vec<Arc<dyn QueryStrategy>> = vec![Arc::new(MockSqlRoutingStrategy)];
+        let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
+        QueryFacadeAdapter::new(facade)
+    }
+
+    fn create_capturing_adapter(captured: Arc<Mutex<Option<QueryRequest>>>) -> QueryFacadeAdapter {
+        let strategies: Vec<Arc<dyn QueryStrategy>> =
+            vec![Arc::new(CapturingVectorStrategy { captured })];
         let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
         QueryFacadeAdapter::new(facade)
     }
@@ -529,6 +584,47 @@ mod tests {
         let result = adapter.vector_search(request).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("No query vector"));
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_preserves_filters_in_query_request() {
+        let captured = Arc::new(Mutex::new(None));
+        let adapter = create_capturing_adapter(captured.clone());
+        let mut filters = std::collections::HashMap::new();
+        filters.insert(
+            "category".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "books".to_string(),
+                )),
+            },
+        );
+
+        let request = VectorSearchRequest {
+            collection_id: "test_collection".to_string(),
+            top_k: 5,
+            queries: vec![SearchQuery {
+                vector: vec![0.1, 0.2, 0.3],
+                filters: filters.clone(),
+                advanced_filter: None,
+            }],
+            include_fields: None,
+            search_params: None,
+            distance_metric_override: None,
+            search_optimization: None,
+        };
+
+        adapter
+            .vector_search(request)
+            .await
+            .expect("vector search should succeed");
+
+        let request = captured
+            .lock()
+            .expect("captured mutex should not be poisoned")
+            .clone()
+            .expect("strategy should capture query request");
+        assert_eq!(request.params.vector_filters, filters);
     }
 
     #[test]

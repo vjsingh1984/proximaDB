@@ -58,5 +58,5 @@ pub mod shuffle;
 pub use aggregator::{AggregationStrategy, ResultAggregator};
 pub use coordinator::{DistributedQueryConfig, DistributedQueryCoordinator, QueryPlan, ShardInfo};
 pub use planner::{DistributionStrategy, ShardedSubQuery};
-pub use remote::{RemoteExecutor, RemoteQueryResult};
+pub use remote::{RemoteExecutor, RemoteQueryHandler, RemoteQueryResult};
 pub use shuffle::{ShuffleConfig, ShuffleExchange, ShuffleKey, ShuffleStats};

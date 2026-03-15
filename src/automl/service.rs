@@ -595,9 +595,9 @@ impl AutoMLService {
             AccessPattern::Random => (0.3, 0.55),  // Limited improvement
         };
 
-        let improvement =
-            (estimated_hit_rate_after - estimated_hit_rate_before) / estimated_hit_rate_before
-                * 100.0;
+        let improvement = (estimated_hit_rate_after - estimated_hit_rate_before)
+            / estimated_hit_rate_before
+            * 100.0;
 
         info!(
             "AutoML cache recommendation for {}: {:?} pattern, {:.1}% hit rate improvement",

@@ -226,11 +226,11 @@ impl VectorOperationsService {
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let collection_id = req.collection_id.clone();
         let top_k = req.top_k as usize;
-        let query_vector = req
+        let search_query = req
             .queries
             .get(0)
-            .map(|q| q.vector.clone())
             .ok_or_else(|| anyhow::anyhow!("No query vectors provided"))?;
+        let query_vector = search_query.vector.clone();
         let include_vectors = req
             .include_fields
             .as_ref()
@@ -251,9 +251,10 @@ impl VectorOperationsService {
             scenario: None,
             search_mode: crate::core::search::SearchMode::default(),
         });
+        let filter = Self::build_filter_expression_from_v1_query(search_query)?;
 
         let results = self
-            .unified_search_v1(&collection_id, query_vector, top_k, None, cfg)
+            .unified_search_v1(&collection_id, query_vector, top_k, filter, cfg)
             .await?;
 
         let (results, total_count) = if let Some(r) = results.into_iter().next() {
@@ -283,6 +284,48 @@ impl VectorOperationsService {
             error_message: None,
             error_code: None,
         })
+    }
+
+    fn build_filter_expression_from_v1_query(
+        query: &crate::proto::proximadb_v1::SearchQuery,
+    ) -> Result<Option<FilterExpression>> {
+        use crate::core::search::protocol_conversions::{
+            from_v1_metadata_filter, from_v1_simple_filters,
+        };
+
+        fn is_noop_filter(expr: &FilterExpression) -> bool {
+            matches!(expr, FilterExpression::And(parts) if parts.is_empty())
+        }
+
+        fn combine(
+            existing: Option<FilterExpression>,
+            next: FilterExpression,
+        ) -> Option<FilterExpression> {
+            if is_noop_filter(&next) {
+                return existing;
+            }
+
+            Some(match existing {
+                Some(current) => FilterExpression::And(vec![current, next]),
+                None => next,
+            })
+        }
+
+        let mut combined = None;
+
+        if !query.filters.is_empty() {
+            let simple = from_v1_simple_filters(&query.filters)
+                .map_err(|e| anyhow::anyhow!("Invalid v1 simple filters: {}", e))?;
+            combined = combine(combined, simple);
+        }
+
+        if let Some(advanced) = &query.advanced_filter {
+            let advanced = from_v1_metadata_filter(advanced)
+                .map_err(|e| anyhow::anyhow!("Invalid v1 metadata filter: {}", e))?;
+            combined = combine(combined, advanced);
+        }
+
+        Ok(combined)
     }
 
     /// Public v1 boundary: insert/upsert batch of vectors and return v1 response

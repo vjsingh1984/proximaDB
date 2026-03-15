@@ -83,8 +83,7 @@ pub mod config;
 pub mod connector;
 
 pub use change_event::{
-    ChangeStreamOperation, DocumentKey, MongoChangeEvent, Namespace, ResumeToken,
-    UpdateDescription,
+    ChangeStreamOperation, DocumentKey, MongoChangeEvent, Namespace, ResumeToken, UpdateDescription,
 };
 pub use config::{FullDocumentOption, MongoCollectionConfig, MongoDbConfig};
 pub use connector::MongoDbConnector;

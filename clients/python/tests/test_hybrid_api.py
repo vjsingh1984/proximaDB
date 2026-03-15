@@ -12,7 +12,7 @@ import sys
 import os
 
 # Add the src directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.hybrid import (
@@ -57,14 +57,17 @@ class TestHybridSearchAPI:
 
         # Create a vector collection with text content
         from proximadb_sdk import CollectionConfig
+
         config = CollectionConfig(
             name=test_collection_name,
             dimension=384,  # Common embedding dimension
-            description="Test collection for hybrid search"
+            description="Test collection for hybrid search",
         )
 
         try:
-            hybrid_api._client.create_collection(name=test_collection_name, config=config)
+            hybrid_api._client.create_collection(
+                name=test_collection_name, config=config
+            )
         except Exception:
             pass  # Collection might already exist
 
@@ -81,6 +84,7 @@ class TestHybridSearchAPI:
         # Create a test query vector (384 dimensions, typically from an embedding model)
         # For testing, we use a random vector
         import random
+
         query_vector = [random.random() for _ in range(384)]
 
         # Perform hybrid search with RRF
@@ -89,7 +93,7 @@ class TestHybridSearchAPI:
             query_vector=query_vector,
             text_query="python code example",
             fusion_strategy=FusionStrategy.RRF,
-            top_k=10
+            top_k=10,
         )
 
         # Verify results
@@ -110,6 +114,7 @@ class TestHybridSearchAPI:
     def test_hybrid_search_weighted(self, hybrid_api, test_collection_name):
         """Test hybrid search with Weighted Linear Fusion."""
         import random
+
         query_vector = [random.random() for _ in range(384)]
 
         # Create weighted fusion strategy
@@ -121,7 +126,7 @@ class TestHybridSearchAPI:
             query_vector=query_vector,
             text_query="machine learning algorithms",
             fusion_strategy=fusion,
-            top_k=5
+            top_k=5,
         )
 
         # Verify results
@@ -138,13 +143,12 @@ class TestHybridSearchAPI:
     def test_hybrid_search_cascade(self, hybrid_api, test_collection_name):
         """Test hybrid search with Cascade fusion."""
         import random
+
         query_vector = [random.random() for _ in range(384)]
 
         # Create cascade fusion strategy
         fusion = CascadeFusion(
-            primary_model="vector",
-            secondary_model="bm25",
-            threshold=0.7
+            primary_model="vector", secondary_model="bm25", threshold=0.7
         )
 
         # Perform hybrid search
@@ -153,7 +157,7 @@ class TestHybridSearchAPI:
             query_vector=query_vector,
             text_query="database optimization",
             fusion_strategy=fusion,
-            top_k=10
+            top_k=10,
         )
 
         # Verify results
@@ -162,6 +166,7 @@ class TestHybridSearchAPI:
     def test_hybrid_search_with_filters(self, hybrid_api, test_collection_name):
         """Test hybrid search with metadata filters."""
         import random
+
         query_vector = [random.random() for _ in range(384)]
 
         # Perform hybrid search with filters
@@ -171,7 +176,7 @@ class TestHybridSearchAPI:
             text_query="python programming",
             fusion_strategy=FusionStrategy.RRF,
             top_k=10,
-            filters={"category": "tutorial", "language": "python"}
+            filters={"category": "tutorial", "language": "python"},
         )
 
         # Verify results
@@ -180,7 +185,11 @@ class TestHybridSearchAPI:
         # If we have results, verify they match filters
         if isinstance(results, list) and len(results) > 0:
             for result in results:
-                metadata = result.metadata if isinstance(result, HybridSearchResult) else result.get("metadata", {})
+                metadata = (
+                    result.metadata
+                    if isinstance(result, HybridSearchResult)
+                    else result.get("metadata", {})
+                )
                 if metadata:
                     # Verify filter conditions
                     if "category" in metadata:
@@ -207,11 +216,13 @@ class TestHybridSearchAPI:
             "borda_count",
             "comb_sum",
             "comb_min",
-            "comb_max"
+            "comb_max",
         ]
 
         for expected in expected_strategies:
-            assert expected in strategy_names or any(expected in name for name in strategy_names)
+            assert expected in strategy_names or any(
+                expected in name for name in strategy_names
+            )
 
     def test_cross_model_join(self, hybrid_api):
         """Test cross-model join (vector + document)."""
@@ -227,7 +238,7 @@ class TestHybridSearchAPI:
             JOIN DOCUMENT_QUERY('{document_collection}', '{{"language": "python"}}') d
             ON v.metadata.file_id = d.file_id
             """,
-            query_vector=[0.1] * 384  # Sample vector
+            query_vector=[0.1] * 384,  # Sample vector
         )
 
         # Verify
@@ -237,6 +248,7 @@ class TestHybridSearchAPI:
         """Test hybrid search performance metrics."""
         import time
         import random
+
         query_vector = [random.random() for _ in range(384)]
 
         # Measure search time
@@ -246,7 +258,7 @@ class TestHybridSearchAPI:
             query_vector=query_vector,
             text_query="performance test query",
             fusion_strategy=FusionStrategy.RRF,
-            top_k=10
+            top_k=10,
         )
         end_time = time.time()
 
@@ -270,6 +282,7 @@ class TestHybridAdapterMethods:
         # Create vector collection
         try:
             from proximadb_sdk import CollectionConfig
+
             config = CollectionConfig(
                 name=test_collection,
                 dimension=384,
@@ -289,6 +302,7 @@ class TestHybridAdapterMethods:
     def test_adapter_hybrid_search_rrf(self, client, setup_collection):
         """Test hybrid search via adapter with RRF strategy."""
         import random
+
         query_vector = [random.random() for _ in range(384)]
 
         # Perform hybrid search via adapter
@@ -297,7 +311,7 @@ class TestHybridAdapterMethods:
             text_query="test query",
             query_vector=query_vector,
             fusion_strategy="rrf",
-            top_k=5
+            top_k=5,
         )
 
         # Verify
@@ -307,6 +321,7 @@ class TestHybridAdapterMethods:
     def test_adapter_hybrid_search_weighted(self, client, setup_collection):
         """Test hybrid search via adapter with weighted strategy."""
         import random
+
         query_vector = [random.random() for _ in range(384)]
 
         # Perform hybrid search via adapter
@@ -316,7 +331,7 @@ class TestHybridAdapterMethods:
             query_vector=query_vector,
             fusion_strategy="weighted_linear",
             top_k=5,
-            fusion_params={"alpha": 0.7, "bm25_normalize": True}
+            fusion_params={"alpha": 0.7, "bm25_normalize": True},
         )
 
         # Verify
@@ -325,6 +340,7 @@ class TestHybridAdapterMethods:
     def test_adapter_hybrid_search_cascade(self, client, setup_collection):
         """Test hybrid search via adapter with cascade strategy."""
         import random
+
         query_vector = [random.random() for _ in range(384)]
 
         # Perform hybrid search via adapter
@@ -333,7 +349,7 @@ class TestHybridAdapterMethods:
             text_query="cascade test",
             query_vector=query_vector,
             fusion_strategy="cascade",
-            top_k=10
+            top_k=10,
         )
 
         # Verify
@@ -342,6 +358,7 @@ class TestHybridAdapterMethods:
     def test_adapter_hybrid_search_metrics(self, client, setup_collection):
         """Test that hybrid search returns execution metrics."""
         import random
+
         query_vector = [random.random() for _ in range(384)]
 
         # Perform hybrid search
@@ -350,7 +367,7 @@ class TestHybridAdapterMethods:
             text_query="metrics test",
             query_vector=query_vector,
             fusion_strategy="rrf",
-            top_k=5
+            top_k=5,
         )
 
         # Verify metrics are present
@@ -438,9 +455,7 @@ class TestFusionStrategies:
 
         # Create cascade fusion (vector first, then BM25 for low scores)
         cascade = CascadeFusion(
-            primary_model="vector",
-            secondary_model="bm25",
-            threshold=0.8
+            primary_model="vector", secondary_model="bm25", threshold=0.8
         )
 
         # Fuse results

@@ -73,6 +73,7 @@ use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
 use crate::observability::query::ObservabilityQueryEngine;
 use crate::observability::storage::ObservabilityStorage;
+use crate::query::facade::strategies::{DistributedQueryStrategy, DistributedStrategyConfig};
 use crate::query::facade::{
     ColumnarStrategy, DocumentStrategy, FacadeConfig, GraphStrategy, ObservabilityStrategy,
     QueryFacadeAdapter, SqlStrategy, UnifiedQueryFacade, VectorSearchStrategy,
@@ -1358,20 +1359,38 @@ impl SharedServices {
             Arc::new(ColumnarStrategy::new());
         debug!("✅ SharedServices::new - ColumnarStrategy created for analytical queries");
 
+        // Create DistributedQueryStrategy for cluster-aware federated execution.
+        // This is only selected when the execution path is explicitly forced to "distributed".
+        let distributed_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
+            DistributedQueryStrategy::new(
+                "local-node".to_string(),
+                DistributedStrategyConfig::default(),
+            )
+            .with_vector_ops(vector_operations_service.clone())
+            .with_document_service(document_service.clone())
+            .with_graph_service(graph_service.clone())
+            .with_observability_service(observability_service.clone()),
+        );
+        debug!(
+            "✅ SharedServices::new - DistributedQueryStrategy created for forced distributed execution"
+        );
+
         // Build the unified facade with all strategies
         // Priority order: vector (100) > graph (75) > document (70) > observability (60) > columnar (50) > sql (25)
+        // Distributed strategy is force-path only and will not be selected automatically.
         let strategies = vec![
             vector_strategy,
             graph_strategy,
             document_strategy,
             observability_strategy,
             columnar_strategy,
+            distributed_strategy,
             sql_strategy,
         ];
         let query_facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
 
         info!(
-            "✅ SharedServices: UnifiedQueryFacade created with 6 strategies (vector, graph, document, observability, columnar, sql)"
+            "✅ SharedServices: UnifiedQueryFacade created with 7 strategies (vector, graph, document, observability, columnar, distributed, sql)"
         );
 
         // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing

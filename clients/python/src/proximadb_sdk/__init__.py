@@ -631,6 +631,7 @@ def _optional_export_is_available(name: str) -> bool:
             continue
     return False
 
+
 # Backwards compatibility aliases
 IndexConfig = IndexConfiguration  # Alias for backwards compatibility
 Vector = VectorRecord  # Alias for backwards compatibility
@@ -668,6 +669,7 @@ def __getattr__(name):
         globals()[name] = value
         return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Graph Analytics
 try:

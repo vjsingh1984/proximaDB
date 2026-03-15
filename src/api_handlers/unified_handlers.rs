@@ -501,66 +501,21 @@ impl UnifiedHandlers {
             }
         };
 
-        // Extract query vector (first query)
-        let top_k = request.top_k as usize;
-        let query_vector = request
-            .queries
-            .first()
-            .map(|q| q.vector.clone())
-            .ok_or_else(|| anyhow!("No query vectors provided"))?;
+        // Execute through the canonical v1 service path so filters/search semantics
+        // stay consistent across handlers and facade adapters.
+        let mut canonical_request = request;
+        canonical_request.collection_id = collection_id;
 
-        // Build unified config
-        let include_vectors = request
-            .include_fields
-            .as_ref()
-            .map(|f| f.vector)
-            .unwrap_or(false);
-        let include_metadata = request
-            .include_fields
-            .as_ref()
-            .map(|f| f.metadata)
-            .unwrap_or(true);
-        let cfg = crate::services::operations::vectors::UnifiedSearchConfig {
-            optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
-            progressive_search: true,
-            progressive_recalls: None,
-            include_vectors,
-            include_metadata,
-            scenario: None,
-            search_mode: crate::core::search::SearchMode::default(),
-        };
-
-        // Execute v1 search at the source
-        let results_v1 = self
+        let mut response = self
             .vector_operations_service
-            .unified_search_v1(&collection_id, query_vector, top_k, None, Some(cfg))
+            .search_v1(canonical_request)
             .await?;
 
-        // Assemble v1 operation response
-        let (results, total_count) = if let Some(r) = results_v1.into_iter().next() {
-            let total = r.total_found;
-            (Some(r), total)
-        } else {
-            (None, 0)
-        };
+        if let Some(metrics) = response.metrics.as_mut() {
+            metrics.processing_time_us = start_time.elapsed().as_micros() as i64;
+        }
 
-        Ok(crate::proto::proximadb_v1::VectorOperationResponse {
-            success: true,
-            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsSearch as i32,
-            metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
-                total_processed: total_count,
-                successful_count: total_count,
-                failed_count: 0,
-                updated_count: 0,
-                processing_time_us: start_time.elapsed().as_micros() as i64,
-                wal_write_time_us: 0,
-                index_update_time_us: 0,
-            }),
-            results,
-            vector_ids: vec![],
-            error_message: None,
-            error_code: None,
-        })
+        Ok(response)
     }
 
     /// Execute hybrid search (BM25 full-text + Vector similarity) with parallel execution

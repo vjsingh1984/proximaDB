@@ -18,6 +18,16 @@ This document provides a quick reference to ProximaDB's current roadmap status a
 
 == Active Plans (Current Focus)
 
+=== Foundational Multi-Model Execution Plan (2026)
+**Status**: In Progress +
+**Location**: link:active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc[active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc]
+
+Key focus areas:
+* Predicate propagation and public-path correctness
+* Document query execution completeness
+* Federated/distributed execution hardening
+* Roadmap and capability-claim alignment
+
 === Q3 2025 Implementation
 **Status**: In Progress +
 **Location**: link:active/Q3_2025_IMPLEMENTATION.adoc[active/Q3_2025_IMPLEMENTATION.adoc]

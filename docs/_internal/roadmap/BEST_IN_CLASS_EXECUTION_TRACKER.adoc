@@ -187,10 +187,34 @@ Primary objective:
 | Added `TST` to the canonical storage-engine proto enum and checked-in Rust bindings; normalized embedded, REST v2, multiplex REST, Arrow Flight, and Rust SDK engine parsing to use canonical mappings; fixed stale REST v2 raw enum values; skipped default HNSW auto-provisioning for TST collections; added embedded parity coverage for `create_collection(..., "tst")`.
 | `proto/proximadb/v1/vector_types.proto`, `src/proto/proximadb.v1.rs`, `src/core/{conversions.rs,utils/validation.rs,storage/engines.rs,compact_enums.rs}`, `src/embedded/mod.rs`, `src/network/{rest/v2/collections.rs,multiplex/handlers/rest.rs,arrow_ipc/service.rs}`, `src/services/collection/manager.rs`, `src/storage/{background_flush_context.rs,engine_capabilities.rs,traits.rs}`, `src/storage/common/{compaction_utils.rs,engine_config.rs,flush_handler_trait.rs}`, `src/storage/engines/factory.rs`, `src/storage/persistence/write_ahead_log/flush_coordinator.rs`, `src/storage/trait_components/capabilities.rs`, `clients/rust/src/{collection.rs,error.rs}`, `tests/embedded_engine_parity_test.rs`
 | Finish EventLog exposure semantics and replace temporary TST shared-compaction fallbacks with dedicated handlers/configs, then widen verification to targeted Rust tests and `make test-rust`.
+
+| 2026-03-14
+| WS-1/WS-0 foundational multi-model execution hardening kickoff
+| Added a persistent active execution plan for foundational multi-model correctness; started canonical-path fixes for vector predicate propagation and document query execution completeness after fresh architecture/code review identified public-path semantic gaps.
+| `docs/_internal/roadmap/implementation/active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc`, `src/query/facade/*`, `src/services/operations/vectors.rs`, `src/storage/document/*`, `src/api_handlers/unified_handlers.rs`
+| Complete F1/F2 implementation, add regression coverage, then update capability claims and strategic docs from verified code state.
+
+| 2026-03-14
+| WS-1/WS-3 distributed execution foundation
+| Registered the distributed strategy in the live unified facade, replaced empty local distributed subquery execution with real unified-executor dispatch, and added a conservative federated-extension translation layer so forced distributed queries now execute actual local vector/document/graph/observability components.
+| `src/query/facade/strategies/distributed.rs`, `src/query/distributed/coordinator.rs`, `src/network/multi_server.rs`, `docs/_internal/roadmap/implementation/active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc`
+| Finish compile/test verification, then move to correlated federated join execution and remote distributed semantics.
+
+| 2026-03-14
+| WS-1 function-backed correlated federated joins
+| Replaced the federated nested-loop execution stub with live function-backed `LATERAL` execution, added per-row correlated vector extraction from serialized outer documents, and updated federated planning to preserve SQL source order plus correlation metadata for `LATERAL` plans.
+| `src/query/federated/{execution/mod.rs,optimizer/mod.rs,mod.rs}`, `docs/_internal/roadmap/implementation/active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc`
+| Finish targeted cargo verification, then choose between widening correlated-source support or closing the generic relational scan backend gap.
+
+| 2026-03-14
+| WS-3 remote distributed execution contract
+| Replaced the remote distributed executor’s simulated empty-result behavior with a registered handler contract, made remote failures propagate instead of being silently dropped, and added focused remote executor regressions. This makes remote execution wiring honest before true transport is introduced.
+| `src/query/distributed/{remote.rs,coordinator.rs,mod.rs}`, `docs/_internal/roadmap/implementation/active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc`
+| Finish targeted cargo verification, then choose between the relational scan backend gap and real node-to-node transport for the next foundational execution slice.
 |===
 
 == Current Priority Queue
 
-1. Continue WS-2 panic burn-down in highest remaining modules (`storage`, `core`) while keeping `network_rest`, `api_handlers`, `graph`, and `query` pinned at zero.
-2. Reduce remaining `services` panic tail (3) and maintain stage-3 critical-module guard strict on PR + push.
-3. Expand drift assertions to additional customer-facing API docs beyond graph (hybrid, security, distributed operations).
+1. Finish verification for the F1/F2/F3 code now in flight, especially the new function-backed `LATERAL` and remote-handler execution paths.
+2. Close the next foundational federated gap: add the missing relational scan backend for generic table-led joins.
+3. Replace the handler-based remote execution contract with real node-to-node query transport and keep capability claims aligned with verified runtime behavior.

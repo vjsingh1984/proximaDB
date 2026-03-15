@@ -79,7 +79,6 @@ from tenacity import (
 
 from .exceptions import ProximaDBError
 
-
 # =============================================================================
 # Enums and Constants
 # =============================================================================
@@ -448,7 +447,9 @@ class ReciprocalRankFusion(FusionStrategyBase):
                 rrf_scores[result_id] += rrf_score
 
         # Sort by score
-        sorted_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
+        sorted_ids = sorted(
+            rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True
+        )
 
         # Build hybrid results
         hybrid_results = []
@@ -548,7 +549,11 @@ class WeightedFusion(FusionStrategyBase):
             normalized_results[model] = {}
             for result in model_results:
                 result_id = _result_id(result)
-                score = result.score if hasattr(result, "score") else result.get("score", 0.0)
+                score = (
+                    result.score
+                    if hasattr(result, "score")
+                    else result.get("score", 0.0)
+                )
                 normalized_results[model][result_id] = score / max_score
 
         # Calculate weighted scores
@@ -562,7 +567,9 @@ class WeightedFusion(FusionStrategyBase):
                 weighted_scores[result_id] += model_weight * norm_score
 
         # Sort by score
-        sorted_ids = sorted(weighted_scores.keys(), key=lambda x: weighted_scores[x], reverse=True)
+        sorted_ids = sorted(
+            weighted_scores.keys(), key=lambda x: weighted_scores[x], reverse=True
+        )
 
         # Build hybrid results
         hybrid_results = []
@@ -790,7 +797,12 @@ class HybridQueryRepository:
             task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Collect successful results
-            model_order = [QueryModel.VECTOR, QueryModel.GRAPH, QueryModel.DOCUMENT, QueryModel.TIMESERIES]
+            model_order = [
+                QueryModel.VECTOR,
+                QueryModel.GRAPH,
+                QueryModel.DOCUMENT,
+                QueryModel.TIMESERIES,
+            ]
             for i, result in enumerate(task_results):
                 if isinstance(result, Exception):
                     continue
@@ -1168,7 +1180,7 @@ class ProximaDBHybrid:
                         collection=vector_collection,
                         query_vector=vector_query,
                         top_k=top_k,
-                        filters=document_filter
+                        filters=document_filter,
                     )
                     # Convert to VectorSearchResult format
                     vector_results = [
@@ -1177,13 +1189,16 @@ class ProximaDBHybrid:
                             score=result.get("score", 0.0),
                             rank=idx + 1,
                             metadata=result.get("metadata", {}),
-                            collection=vector_collection
+                            collection=vector_collection,
                         )
-                        for idx, result in enumerate(vector_response.get("results", [])[:top_k], 1)
+                        for idx, result in enumerate(
+                            vector_response.get("results", [])[:top_k], 1
+                        )
                     ]
                 except Exception as e:
                     # Log error but continue with document search
                     import warnings
+
                     warnings.warn(f"Vector search failed: {e}")
 
             # Execute document/bm25 search on server
@@ -1193,7 +1208,7 @@ class ProximaDBHybrid:
                     document_response = self._client.query_documents(
                         collection_name=document_collection or "hybrid_collection",
                         filter=document_filter,
-                        limit=top_k
+                        limit=top_k,
                     )
                     # Convert to DocumentSearchResult format
                     document_results = [
@@ -1202,18 +1217,23 @@ class ProximaDBHybrid:
                             score=1.0 / (idx + 1),  # Simple ranking based on position
                             rank=idx + 1,
                             document=doc.get("data", doc),
-                            metadata=doc.get("metadata", {})
+                            metadata=doc.get("metadata", {}),
                         )
-                        for idx, doc in enumerate(document_response.get("documents", [])[:top_k], 1)
+                        for idx, doc in enumerate(
+                            document_response.get("documents", [])[:top_k], 1
+                        )
                     ]
                 except Exception as e:
                     # Log error but continue with vector results
                     import warnings
+
                     warnings.warn(f"Document search failed: {e}")
 
             # Fuse results
             fusion = self._resolve_fusion(fusion_strategy)
-            return fusion.fuse(vector_results, document_results, top_k=top_k, weights=weights)
+            return fusion.fuse(
+                vector_results, document_results, top_k=top_k, weights=weights
+            )
 
         return self._repository.search(
             vector_query=vector_query,

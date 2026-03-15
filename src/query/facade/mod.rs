@@ -106,6 +106,12 @@ pub struct QueryParams {
     pub force_path: Option<String>,
     /// Return execution metrics
     pub include_metrics: bool,
+    /// Simple equality filters for vector search requests
+    pub vector_filters: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    /// Structured filter tree for vector search requests
+    pub vector_advanced_filter: Option<crate::proto::proximadb_v1::MetadataFilter>,
+    /// Parsed document filter for document query execution
+    pub document_filter: Option<crate::proto::proximadb_v1::DocumentFilter>,
 }
 
 impl QueryRequest {
@@ -152,6 +158,16 @@ impl QueryRequest {
         }
     }
 
+    /// Create a document query request
+    pub fn document(query: impl Into<String>) -> Self {
+        Self {
+            query_type: QueryType::Document,
+            target: None,
+            content: QueryContent::Document(query.into()),
+            params: QueryParams::default(),
+        }
+    }
+
     /// Set target collection/graph
     pub fn with_target(mut self, target: impl Into<String>) -> Self {
         self.target = Some(target.into());
@@ -161,6 +177,33 @@ impl QueryRequest {
     /// Set query parameters
     pub fn with_params(mut self, params: QueryParams) -> Self {
         self.params = params;
+        self
+    }
+
+    /// Attach simple vector filters to the request
+    pub fn with_vector_filters(
+        mut self,
+        filters: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    ) -> Self {
+        self.params.vector_filters = filters;
+        self
+    }
+
+    /// Attach an advanced vector filter to the request
+    pub fn with_vector_advanced_filter(
+        mut self,
+        filter: crate::proto::proximadb_v1::MetadataFilter,
+    ) -> Self {
+        self.params.vector_advanced_filter = Some(filter);
+        self
+    }
+
+    /// Attach a parsed document filter to the request
+    pub fn with_document_filter(
+        mut self,
+        filter: crate::proto::proximadb_v1::DocumentFilter,
+    ) -> Self {
+        self.params.document_filter = Some(filter);
         self
     }
 

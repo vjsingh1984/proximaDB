@@ -16,19 +16,34 @@
 
 //! Remote Query Executor
 //!
-//! Executes queries on remote nodes via gRPC.
+//! Executes queries on remote nodes via registered handlers today, with gRPC
+//! transport intended to sit behind the same execution contract later.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
 use crate::query::unified::fusion::SubQueryResult;
 
 use super::planner::ShardedSubQuery;
+
+/// Executable remote subquery handler.
+///
+/// This provides a real execution contract for remote subqueries even before
+/// wire transport is fully productized. Implementations can be loopback,
+/// in-process test nodes, or future gRPC-backed handlers.
+#[async_trait]
+pub trait RemoteQueryHandler: Send + Sync {
+    async fn execute_remote_subquery(
+        &self,
+        subquery: &ShardedSubQuery,
+    ) -> Result<Vec<SubQueryResult>>;
+}
 
 /// Result from a remote query execution
 #[derive(Debug, Clone)]
@@ -45,7 +60,7 @@ pub struct RemoteQueryResult {
     pub is_retry: bool,
 }
 
-/// Executor for remote queries via gRPC
+/// Executor for remote queries across nodes.
 pub struct RemoteExecutor {
     /// Timeout for remote queries
     timeout: Duration,
@@ -57,6 +72,8 @@ pub struct RemoteExecutor {
     /// In a real implementation, this would hold gRPC clients
     #[allow(dead_code)]
     connection_pool: Arc<tokio::sync::RwLock<HashMap<String, RemoteConnection>>>,
+    /// Registered remote handlers keyed by node id or address.
+    handler_registry: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn RemoteQueryHandler>>>>,
 }
 
 /// A remote connection (placeholder for gRPC client)
@@ -77,7 +94,21 @@ impl RemoteExecutor {
             max_retries,
             semaphore: Arc::new(Semaphore::new(10)), // Max 10 concurrent remote queries
             connection_pool: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            handler_registry: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Register a handler for a remote node. The handler is addressable by both
+    /// node id and target address to simplify planner/coordinator wiring.
+    pub async fn register_handler(
+        &self,
+        node_id: &str,
+        address: &str,
+        handler: Arc<dyn RemoteQueryHandler>,
+    ) {
+        let mut registry = self.handler_registry.write().await;
+        registry.insert(node_id.to_string(), handler.clone());
+        registry.insert(address.to_string(), handler);
     }
 
     /// Execute subqueries in parallel on remote nodes
@@ -101,6 +132,7 @@ impl RemoteExecutor {
             let semaphore = self.semaphore.clone();
             let timeout = self.timeout;
             let max_retries = self.max_retries;
+            let handler_registry = self.handler_registry.clone();
 
             let handle = tokio::spawn(async move {
                 // Acquire semaphore
@@ -109,7 +141,7 @@ impl RemoteExecutor {
                     .await
                     .map_err(|e| anyhow!("Semaphore error: {}", e))?;
 
-                Self::execute_single_with_retry(&sq, timeout, max_retries).await
+                Self::execute_single_with_retry(&sq, timeout, max_retries, handler_registry).await
             });
 
             handles.push(handle);
@@ -117,6 +149,7 @@ impl RemoteExecutor {
 
         // Collect results
         let mut all_results = Vec::new();
+        let mut errors = Vec::new();
         for handle in handles {
             match handle.await {
                 Ok(Ok(remote_result)) => {
@@ -124,12 +157,21 @@ impl RemoteExecutor {
                 }
                 Ok(Err(e)) => {
                     warn!("Remote query failed: {}", e);
-                    // Continue with other results
+                    errors.push(e.to_string());
                 }
                 Err(e) => {
                     warn!("Task join error: {}", e);
+                    errors.push(e.to_string());
                 }
             }
+        }
+
+        if !errors.is_empty() {
+            return Err(anyhow!(
+                "{} remote subqueries failed: {}",
+                errors.len(),
+                errors.join("; ")
+            ));
         }
 
         Ok(all_results)
@@ -141,16 +183,33 @@ impl RemoteExecutor {
         subqueries: &[ShardedSubQuery],
     ) -> Result<Vec<SubQueryResult>> {
         let mut all_results = Vec::new();
+        let mut errors = Vec::new();
 
         for subquery in subqueries {
-            match Self::execute_single_with_retry(subquery, self.timeout, self.max_retries).await {
+            match Self::execute_single_with_retry(
+                subquery,
+                self.timeout,
+                self.max_retries,
+                self.handler_registry.clone(),
+            )
+            .await
+            {
                 Ok(remote_result) => {
                     all_results.extend(remote_result.results);
                 }
                 Err(e) => {
                     warn!("Remote query to {} failed: {}", subquery.target_node, e);
+                    errors.push(e.to_string());
                 }
             }
+        }
+
+        if !errors.is_empty() {
+            return Err(anyhow!(
+                "{} remote subqueries failed: {}",
+                errors.len(),
+                errors.join("; ")
+            ));
         }
 
         Ok(all_results)
@@ -161,11 +220,12 @@ impl RemoteExecutor {
         subquery: &ShardedSubQuery,
         timeout: Duration,
         max_retries: u32,
+        handler_registry: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn RemoteQueryHandler>>>>,
     ) -> Result<RemoteQueryResult> {
         let mut last_error = None;
 
         for attempt in 0..=max_retries {
-            match Self::execute_single(subquery, timeout).await {
+            match Self::execute_single(subquery, timeout, handler_registry.clone()).await {
                 Ok(mut result) => {
                     result.is_retry = attempt > 0;
                     return Ok(result);
@@ -194,6 +254,7 @@ impl RemoteExecutor {
     async fn execute_single(
         subquery: &ShardedSubQuery,
         timeout: Duration,
+        handler_registry: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn RemoteQueryHandler>>>>,
     ) -> Result<RemoteQueryResult> {
         let start = Instant::now();
 
@@ -204,27 +265,29 @@ impl RemoteExecutor {
             subquery.shard_ids.len()
         );
 
-        // In a full implementation, this would:
-        // 1. Get or create gRPC connection to target node
-        // 2. Serialize the subquery components
-        // 3. Send QueryRequest via gRPC
-        // 4. Wait for response (with timeout)
-        // 5. Deserialize results
+        let handler = {
+            let registry = handler_registry.read().await;
+            registry
+                .get(&subquery.target_node)
+                .cloned()
+                .or_else(|| registry.get(&subquery.target_address).cloned())
+        }
+        .ok_or_else(|| {
+            anyhow!(
+                "Remote query execution is not wired for node '{}' ({})",
+                subquery.target_node,
+                subquery.target_address
+            )
+        })?;
 
-        // For now, simulate the remote execution
         let result = tokio::time::timeout(timeout, async {
-            // Simulated remote execution
-            // In real implementation:
-            // - Connect to target_address via gRPC
-            // - Send query with shard_ids filter
-            // - Receive SubQueryResult response
-
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            let remote_start = Instant::now();
+            let results = handler.execute_remote_subquery(subquery).await?;
 
             Ok::<RemoteQueryResult, anyhow::Error>(RemoteQueryResult {
                 node_id: subquery.target_node.clone(),
-                results: Vec::new(), // Remote node would return actual results
-                remote_execution_time_us: 0,
+                results,
+                remote_execution_time_us: remote_start.elapsed().as_micros() as u64,
                 round_trip_time_us: start.elapsed().as_micros() as u64,
                 is_retry: false,
             })
@@ -262,6 +325,23 @@ impl RemoteExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::unified::ast::DataModel;
+    use crate::query::unified::fusion::SubQueryResult;
+    use async_trait::async_trait;
+
+    struct StaticRemoteHandler {
+        results: Vec<SubQueryResult>,
+    }
+
+    #[async_trait]
+    impl RemoteQueryHandler for StaticRemoteHandler {
+        async fn execute_remote_subquery(
+            &self,
+            _subquery: &ShardedSubQuery,
+        ) -> Result<Vec<SubQueryResult>> {
+            Ok(self.results.clone())
+        }
+    }
 
     #[test]
     fn test_remote_executor_creation() {
@@ -280,6 +360,15 @@ mod tests {
     #[tokio::test]
     async fn test_execute_single_subquery() {
         let executor = RemoteExecutor::new(Duration::from_secs(5), 1);
+        executor
+            .register_handler(
+                "node-2",
+                "node2:5679",
+                Arc::new(StaticRemoteHandler {
+                    results: vec![SubQueryResult::empty(DataModel::Document)],
+                }),
+            )
+            .await;
 
         let subquery = ShardedSubQuery {
             target_node: "node-2".to_string(),
@@ -291,13 +380,30 @@ mod tests {
         };
 
         let results = executor.execute_parallel(&[subquery]).await.unwrap();
-        // Results will be empty since we're simulating
-        assert!(results.is_empty());
+        assert_eq!(results.len(), 1);
     }
 
     #[tokio::test]
     async fn test_execute_sequential() {
         let executor = RemoteExecutor::new(Duration::from_secs(5), 1);
+        executor
+            .register_handler(
+                "node-1",
+                "node1:5679",
+                Arc::new(StaticRemoteHandler {
+                    results: vec![SubQueryResult::empty(DataModel::Vector)],
+                }),
+            )
+            .await;
+        executor
+            .register_handler(
+                "node-2",
+                "node2:5679",
+                Arc::new(StaticRemoteHandler {
+                    results: vec![SubQueryResult::empty(DataModel::Graph)],
+                }),
+            )
+            .await;
 
         let subqueries = vec![
             ShardedSubQuery {
@@ -319,7 +425,31 @@ mod tests {
         ];
 
         let results = executor.execute_sequential(&subqueries).await.unwrap();
-        // Results will be empty since we're simulating
-        assert!(results.is_empty());
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_execute_single_subquery_without_registered_handler_errors() {
+        let executor = RemoteExecutor::new(Duration::from_secs(5), 0);
+
+        let subquery = ShardedSubQuery {
+            target_node: "node-missing".to_string(),
+            target_address: "missing:5679".to_string(),
+            shard_ids: vec!["shard-1".to_string()],
+            components: Vec::new(),
+            collection: Some("test".to_string()),
+            priority: 0,
+        };
+
+        let error = executor
+            .execute_parallel(&[subquery])
+            .await
+            .expect_err("missing remote handler should fail explicitly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Remote query execution is not wired")
+        );
     }
 }

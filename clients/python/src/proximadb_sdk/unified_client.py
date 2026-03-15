@@ -437,7 +437,9 @@ class ProximaDBClient:
         collection = self._get_local_collection(collection_id)
         if collection is None:
             return
-        collection.stats.vector_count = len(self._get_local_vector_records(collection.id))
+        collection.stats.vector_count = len(
+            self._get_local_vector_records(collection.id)
+        )
         collection.updated_at_ms = int(time.time() * 1000)
 
     def _store_local_vector_records(
@@ -505,7 +507,9 @@ class ProximaDBClient:
         include_vectors: bool,
     ) -> List[SearchResult]:
         self._require_local_collection(collection_id)
-        query_vector = vector.tolist() if isinstance(vector, np.ndarray) else list(vector)
+        query_vector = (
+            vector.tolist() if isinstance(vector, np.ndarray) else list(vector)
+        )
         results: List[SearchResult] = []
         for record in self._get_local_vector_records(collection_id):
             if len(record.vector) != len(query_vector):
@@ -1327,7 +1331,9 @@ class ProximaDBClient:
                 )
 
         if self._prefer_local_fallback:
-            return self._store_local_collection(self._build_local_collection(name, config))
+            return self._store_local_collection(
+                self._build_local_collection(name, config)
+            )
 
         # Fallback to raw client for backward compatibility
         if self._active_protocol == Protocol.GRPC:
@@ -1437,9 +1443,7 @@ class ProximaDBClient:
             if result is None:
                 result = self._get_local_collection(collection_id)
             if result is None:
-                raise CollectionNotFoundError(
-                    f"Collection '{collection_id}' not found"
-                )
+                raise CollectionNotFoundError(f"Collection '{collection_id}' not found")
             return result
 
         # Fallback to raw client for backward compatibility
@@ -1451,9 +1455,7 @@ class ProximaDBClient:
         else:
             result = self._client.get_collection(collection_id)
             if result is None:
-                raise CollectionNotFoundError(
-                    f"Collection '{collection_id}' not found"
-                )
+                raise CollectionNotFoundError(f"Collection '{collection_id}' not found")
             return result
 
     def list_collections(self) -> List[Collection]:
@@ -1578,7 +1580,11 @@ class ProximaDBClient:
         for item in (config or {}).get("indexes", []):
             raw_type = item.get("type", item.get("index_type", "btree"))
             try:
-                index_type = raw_type if isinstance(raw_type, DocIndexType) else DocIndexType(str(raw_type).lower())
+                index_type = (
+                    raw_type
+                    if isinstance(raw_type, DocIndexType)
+                    else DocIndexType(str(raw_type).lower())
+                )
             except ValueError:
                 index_type = DocIndexType.BTREE
             indexes.append(
@@ -1697,7 +1703,9 @@ class ProximaDBClient:
         if adapter_result is not None:
             return adapter_result
 
-        document = self._get_document_repository().update(collection_name, doc_id, updates)
+        document = self._get_document_repository().update(
+            collection_name, doc_id, updates
+        )
         if document is None:
             return {"success": False, "id": doc_id}
         return {
@@ -1707,9 +1715,7 @@ class ProximaDBClient:
             "document": document.content,
         }
 
-    def delete_document(
-        self, collection_name: str, doc_id: str, **kwargs
-    ) -> bool:
+    def delete_document(self, collection_name: str, doc_id: str, **kwargs) -> bool:
         """Delete a document."""
         adapter_result = self._call_document_adapter(
             "delete_document", collection_name, doc_id, **kwargs
@@ -1729,9 +1735,7 @@ class ProximaDBClient:
 
         return self._get_document_repository().list_collections()
 
-    def delete_document_collection(
-        self, collection_name: str, **kwargs
-    ) -> bool:
+    def delete_document_collection(self, collection_name: str, **kwargs) -> bool:
         """Delete a document collection."""
         adapter_result = self._call_document_adapter(
             "delete_document_collection", collection_name, **kwargs
@@ -1818,9 +1822,7 @@ class ProximaDBClient:
 
         return self._get_timeseries_repository().list_collections()
 
-    def delete_timeseries_collection(
-        self, collection_name: str, **kwargs
-    ) -> bool:
+    def delete_timeseries_collection(self, collection_name: str, **kwargs) -> bool:
         """Delete a time-series collection."""
         adapter_result = self._call_timeseries_adapter(
             "delete_timeseries_collection", collection_name, **kwargs
@@ -1854,7 +1856,12 @@ class ProximaDBClient:
             except Exception as e:
                 logger.debug("REST hybrid search failed, using local fallback: %s", e)
 
-        from .hybrid import CascadeFusion, FusionStrategy, ProximaDBHybrid, WeightedFusion
+        from .hybrid import (
+            CascadeFusion,
+            FusionStrategy,
+            ProximaDBHybrid,
+            WeightedFusion,
+        )
 
         strategy: Union[str, FusionStrategy, Any] = fusion_strategy
         if isinstance(fusion_strategy, str):
@@ -1964,7 +1971,9 @@ class ProximaDBClient:
         if self._adapter:
             if not self._prefer_local_fallback:
                 try:
-                    return self._adapter.insert_vectors(collection_id, records, **kwargs)
+                    return self._adapter.insert_vectors(
+                        collection_id, records, **kwargs
+                    )
                 except Exception as e:
                     self._activate_local_fallback(e)
                     logger.debug(
@@ -2834,7 +2843,9 @@ class ProximaDBClient:
             if record.id == vector_id:
                 return VectorRecord(
                     id=record.id,
-                    vector=record.vector if include_vector else [0.0] * len(record.vector),
+                    vector=(
+                        record.vector if include_vector else [0.0] * len(record.vector)
+                    ),
                     metadata=record.metadata if include_metadata else {},
                     timestamp_ms=record.timestamp_ms,
                     updated_at_ms=record.updated_at_ms,

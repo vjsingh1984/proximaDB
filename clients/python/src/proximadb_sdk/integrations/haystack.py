@@ -154,7 +154,9 @@ class ProximaDBDocumentStore:
                 # Check if document exists
                 existing = self._client.get_vectors(self._collection_name, ids=[doc_id])
                 if existing:
-                    raise ValueError(f"Document {doc_id} already exists (policy=DuplicatePolicy.FAIL)")
+                    raise ValueError(
+                        f"Document {doc_id} already exists (policy=DuplicatePolicy.FAIL)"
+                    )
 
             records.append(
                 VectorRecord(

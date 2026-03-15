@@ -69,7 +69,10 @@ impl WindowFunction {
 
     /// Returns true if the function is a navigation function.
     pub fn is_navigation(&self) -> bool {
-        matches!(self, Self::Lag | Self::Lead | Self::FirstValue | Self::LastValue)
+        matches!(
+            self,
+            Self::Lag | Self::Lead | Self::FirstValue | Self::LastValue
+        )
     }
 }
 
@@ -176,8 +179,7 @@ impl WindowExecutor {
 
         // We tag each row with its original index so we can restore order after
         // partitioning and sorting.
-        let mut indexed_rows: Vec<(usize, QueryRow)> =
-            rows.into_iter().enumerate().collect();
+        let mut indexed_rows: Vec<(usize, QueryRow)> = rows.into_iter().enumerate().collect();
 
         for call in window_calls {
             // 1. Partition
@@ -274,8 +276,14 @@ impl WindowExecutor {
                     return na.partial_cmp(&nb).unwrap_or(Ordering::Equal);
                 }
                 // Fall back to string comparison
-                let sa = va.as_str().map(|s| s.to_string()).unwrap_or_else(|| va.to_string());
-                let sb = vb.as_str().map(|s| s.to_string()).unwrap_or_else(|| vb.to_string());
+                let sa = va
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| va.to_string());
+                let sb = vb
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| vb.to_string());
                 sa.cmp(&sb)
             }
         }
@@ -347,11 +355,7 @@ impl WindowExecutor {
         results.insert(partition[0].0, JsonValue::from(1_u64));
 
         for i in 1..partition.len() {
-            let same = Self::rows_equal_on_order_by(
-                &partition[i - 1].1,
-                &partition[i].1,
-                order_by,
-            );
+            let same = Self::rows_equal_on_order_by(&partition[i - 1].1, &partition[i].1, order_by);
             if same {
                 // Tie: same rank as previous
                 let rank = if dense { dense_rank } else { current_rank };
@@ -370,11 +374,7 @@ impl WindowExecutor {
     }
 
     /// Check whether two rows are equal on the ORDER BY fields.
-    fn rows_equal_on_order_by(
-        a: &QueryRow,
-        b: &QueryRow,
-        order_by: &[WindowOrderBy],
-    ) -> bool {
+    fn rows_equal_on_order_by(a: &QueryRow, b: &QueryRow, order_by: &[WindowOrderBy]) -> bool {
         order_by.iter().all(|ob| {
             let va = a.fields.get(&ob.field);
             let vb = b.fields.get(&ob.field);
@@ -410,9 +410,7 @@ impl WindowExecutor {
                 .collect();
 
             let result = match &call.function {
-                WindowFunction::Sum => {
-                    JsonValue::from(frame_values.iter().sum::<f64>())
-                }
+                WindowFunction::Sum => JsonValue::from(frame_values.iter().sum::<f64>()),
                 WindowFunction::Avg => {
                     if frame_values.is_empty() {
                         JsonValue::Null
@@ -439,10 +437,7 @@ impl WindowExecutor {
                     if frame_values.is_empty() {
                         JsonValue::Null
                     } else {
-                        let min = frame_values
-                            .iter()
-                            .copied()
-                            .fold(f64::INFINITY, f64::min);
+                        let min = frame_values.iter().copied().fold(f64::INFINITY, f64::min);
                         JsonValue::from(min)
                     }
                 }
@@ -517,7 +512,11 @@ impl WindowExecutor {
 
         for (pos, (idx, _)) in partition.iter().enumerate() {
             let target_pos = if is_lag {
-                if pos >= offset { Some(pos - offset) } else { None }
+                if pos >= offset {
+                    Some(pos - offset)
+                } else {
+                    None
+                }
             } else {
                 let t = pos + offset;
                 if t < partition.len() { Some(t) } else { None }
@@ -1083,15 +1082,42 @@ mod tests {
 
     #[test]
     fn test_window_function_from_name() {
-        assert_eq!(WindowFunction::from_name("row_number").unwrap(), WindowFunction::RowNumber);
-        assert_eq!(WindowFunction::from_name("RANK").unwrap(), WindowFunction::Rank);
-        assert_eq!(WindowFunction::from_name("Dense_Rank").unwrap(), WindowFunction::DenseRank);
-        assert_eq!(WindowFunction::from_name("sum").unwrap(), WindowFunction::Sum);
-        assert_eq!(WindowFunction::from_name("AVG").unwrap(), WindowFunction::Avg);
-        assert_eq!(WindowFunction::from_name("lag").unwrap(), WindowFunction::Lag);
-        assert_eq!(WindowFunction::from_name("LEAD").unwrap(), WindowFunction::Lead);
-        assert_eq!(WindowFunction::from_name("FIRST_VALUE").unwrap(), WindowFunction::FirstValue);
-        assert_eq!(WindowFunction::from_name("LAST_VALUE").unwrap(), WindowFunction::LastValue);
+        assert_eq!(
+            WindowFunction::from_name("row_number").unwrap(),
+            WindowFunction::RowNumber
+        );
+        assert_eq!(
+            WindowFunction::from_name("RANK").unwrap(),
+            WindowFunction::Rank
+        );
+        assert_eq!(
+            WindowFunction::from_name("Dense_Rank").unwrap(),
+            WindowFunction::DenseRank
+        );
+        assert_eq!(
+            WindowFunction::from_name("sum").unwrap(),
+            WindowFunction::Sum
+        );
+        assert_eq!(
+            WindowFunction::from_name("AVG").unwrap(),
+            WindowFunction::Avg
+        );
+        assert_eq!(
+            WindowFunction::from_name("lag").unwrap(),
+            WindowFunction::Lag
+        );
+        assert_eq!(
+            WindowFunction::from_name("LEAD").unwrap(),
+            WindowFunction::Lead
+        );
+        assert_eq!(
+            WindowFunction::from_name("FIRST_VALUE").unwrap(),
+            WindowFunction::FirstValue
+        );
+        assert_eq!(
+            WindowFunction::from_name("LAST_VALUE").unwrap(),
+            WindowFunction::LastValue
+        );
         assert!(WindowFunction::from_name("UNKNOWN").is_err());
     }
 

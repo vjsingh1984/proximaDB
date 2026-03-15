@@ -92,8 +92,8 @@ impl VectorSearchStrategy {
             collection_id,
             queries: vec![SearchQuery {
                 vector: query_vector,
-                filters: Default::default(),
-                advanced_filter: None,
+                filters: request.params.vector_filters.clone(),
+                advanced_filter: request.params.vector_advanced_filter.clone(),
             }],
             top_k: top_k as u32,
             include_fields: Some(IncludeFields {

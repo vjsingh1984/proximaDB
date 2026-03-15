@@ -154,8 +154,16 @@ class EmbeddedMultiModelProvider:
                 config={
                     "timestamp_column": "timestamp",
                     "value_columns": [
-                        {"name": "lines_of_code", "data_type": "int", "aggregation": "sum"},
-                        {"name": "complexity", "data_type": "float", "aggregation": "avg"},
+                        {
+                            "name": "lines_of_code",
+                            "data_type": "int",
+                            "aggregation": "sum",
+                        },
+                        {
+                            "name": "complexity",
+                            "data_type": "float",
+                            "aggregation": "avg",
+                        },
                     ],
                 },
             )
@@ -213,18 +221,21 @@ class EmbeddedMultiModelProvider:
             chunks = self._chunk_code(content)
             for i, chunk in enumerate(chunks):
                 chunk_meta = base_meta.copy()
-                chunk_meta.update({
-                    "chunk_id": f"{file_hash}:{i}",
-                    "chunk_type": "code",
-                    "start_line": chunk.get("start_line", 0),
-                    "end_line": chunk.get("end_line", 0),
-                })
+                chunk_meta.update(
+                    {
+                        "chunk_id": f"{file_hash}:{i}",
+                        "chunk_type": "code",
+                        "start_line": chunk.get("start_line", 0),
+                        "end_line": chunk.get("end_line", 0),
+                    }
+                )
 
                 # For embedded mode, we insert as vector records
                 # In production, this would use an embedding model
                 dummy_vector = [hash(f"{file_hash}:{i}") % 1000 / 1000.0] * 384
 
                 from proximadb_sdk.models import VectorRecord
+
                 record = VectorRecord(
                     id=f"{file_hash}:chunk_{i}",
                     vector=dummy_vector,
@@ -241,12 +252,14 @@ class EmbeddedMultiModelProvider:
         # 2. Document: Full file with rich metadata
         try:
             doc_meta = base_meta.copy()
-            doc_meta.update({
-                "content_type": "code",
-                "language": language,
-                "size_bytes": len(content),
-                "title": Path(file_path_str).name,
-            })
+            doc_meta.update(
+                {
+                    "content_type": "code",
+                    "language": language,
+                    "size_bytes": len(content),
+                    "title": Path(file_path_str).name,
+                }
+            )
 
             self._adapter.insert_document(
                 collection_name=self._document_collection,
@@ -299,7 +312,9 @@ class EmbeddedMultiModelProvider:
         - Import relationships as edges
         - Class hierarchies as edges
         """
-        file_hash = metadata.get("file_hash", hashlib.sha256(content.encode()).hexdigest())
+        file_hash = metadata.get(
+            "file_hash", hashlib.sha256(content.encode()).hexdigest()
+        )
 
         # Simple parsing for Python (can be extended)
         functions = []
@@ -313,7 +328,12 @@ class EmbeddedMultiModelProvider:
 
             # Function definitions
             if stripped.startswith("def ") or stripped.startswith("async def "):
-                func_name = stripped.split("(")[0].replace("def ", "").replace("async def ", "").strip()
+                func_name = (
+                    stripped.split("(")[0]
+                    .replace("def ", "")
+                    .replace("async def ", "")
+                    .strip()
+                )
                 if func_name:
                     functions.append(func_name)
 
@@ -335,7 +355,9 @@ class EmbeddedMultiModelProvider:
 
             # Class definitions
             if stripped.startswith("class "):
-                class_name = stripped.split("(")[0].replace("class ", "").strip().rstrip(":")
+                class_name = (
+                    stripped.split("(")[0].replace("class ", "").strip().rstrip(":")
+                )
                 if class_name:
                     classes.append(class_name)
 
@@ -420,23 +442,27 @@ class EmbeddedMultiModelProvider:
             # - Chunk size limit
             if line.strip() == "" or i - current_start >= chunk_size:
                 if current_chunk:
-                    chunks.append({
-                        "content": "\n".join(current_chunk),
-                        "start_line": current_start + 1,
-                        "end_line": i + 1,
-                        "line_count": len(current_chunk),
-                    })
+                    chunks.append(
+                        {
+                            "content": "\n".join(current_chunk),
+                            "start_line": current_start + 1,
+                            "end_line": i + 1,
+                            "line_count": len(current_chunk),
+                        }
+                    )
                     current_chunk = []
                     current_start = i + 1
 
         # Add remaining content
         if current_chunk:
-            chunks.append({
-                "content": "\n".join(current_chunk),
-                "start_line": current_start + 1,
-                "end_line": len(lines),
-                "line_count": len(current_chunk),
-            })
+            chunks.append(
+                {
+                    "content": "\n".join(current_chunk),
+                    "start_line": current_start + 1,
+                    "end_line": len(lines),
+                    "line_count": len(current_chunk),
+                }
+            )
 
         return chunks
 
@@ -458,16 +484,22 @@ class EmbeddedMultiModelProvider:
         metrics: List[Dict[str, Any]] = []
 
         # Lines of code
-        loc = sum(1 for line in lines if line.strip() and not line.strip().startswith("#"))
+        loc = sum(
+            1 for line in lines if line.strip() and not line.strip().startswith("#")
+        )
         metrics.append({"name": "lines_of_code", "value": loc, "language": language})
 
         # Function count (heuristic)
         func_count = sum(1 for line in lines if line.strip().startswith("def "))
-        metrics.append({"name": "function_count", "value": func_count, "language": language})
+        metrics.append(
+            {"name": "function_count", "value": func_count, "language": language}
+        )
 
         # Class count (heuristic)
         class_count = sum(1 for line in lines if line.strip().startswith("class "))
-        metrics.append({"name": "class_count", "value": class_count, "language": language})
+        metrics.append(
+            {"name": "class_count", "value": class_count, "language": language}
+        )
 
         # Max nesting depth
         max_depth = 0
@@ -476,7 +508,9 @@ class EmbeddedMultiModelProvider:
             stripped = line.strip()
             current_depth += stripped.count("{") - stripped.count("}")
             max_depth = max(max_depth, current_depth)
-        metrics.append({"name": "max_nesting_depth", "value": max_depth, "language": language})
+        metrics.append(
+            {"name": "max_nesting_depth", "value": max_depth, "language": language}
+        )
 
         return metrics
 
@@ -532,13 +566,15 @@ class EmbeddedMultiModelProvider:
             # Check if chunk contains a function definition
             content = result.metadata.get("content", "") if result.metadata else ""
             if "def " in content or "async def " in content:
-                filtered_results.append({
-                    "file_path": meta.get("file_path", ""),
-                    "content": content,
-                    "score": result.score,
-                    "start_line": meta.get("start_line"),
-                    "end_line": meta.get("end_line"),
-                })
+                filtered_results.append(
+                    {
+                        "file_path": meta.get("file_path", ""),
+                        "content": content,
+                        "score": result.score,
+                        "start_line": meta.get("start_line"),
+                        "end_line": meta.get("end_line"),
+                    }
+                )
 
         return filtered_results[:top_k]
 
@@ -630,14 +666,18 @@ class EmbeddedMultiModelProvider:
 
                 results["files_processed"] += 1
                 results["total_chunks"] += file_results.get("vectors", 0)
-                results["total_functions"] += file_results.get("graph", {}).get("functions", 0)
+                results["total_functions"] += file_results.get("graph", {}).get(
+                    "functions", 0
+                )
 
             except Exception as e:
                 results["files_failed"] += 1
-                results["errors"].append({
-                    "file": str(file_path),
-                    "error": str(e),
-                })
+                results["errors"].append(
+                    {
+                        "file": str(file_path),
+                        "error": str(e),
+                    }
+                )
 
         return results
 
@@ -723,12 +763,14 @@ class EmbeddedMultiModelProvider:
         )
 
         for vr in vector_results:
-            results.append({
-                "type": "vector",
-                "score": vr.score,
-                "content": vr.metadata.get("content", "") if vr.metadata else "",
-                "metadata": vr.metadata,
-            })
+            results.append(
+                {
+                    "type": "vector",
+                    "score": vr.score,
+                    "content": vr.metadata.get("content", "") if vr.metadata else "",
+                    "metadata": vr.metadata,
+                }
+            )
 
         # 2. Graph search (if query provided)
         if graph_query:
@@ -738,12 +780,14 @@ class EmbeddedMultiModelProvider:
                     query=graph_query,
                 )
                 for gr in graph_results.get("results", []):
-                    results.append({
-                        "type": "graph",
-                        "score": gr.get("score", 0.0),
-                        "content": gr.get("content", ""),
-                        "metadata": gr.get("metadata", {}),
-                    })
+                    results.append(
+                        {
+                            "type": "graph",
+                            "score": gr.get("score", 0.0),
+                            "content": gr.get("content", ""),
+                            "metadata": gr.get("metadata", {}),
+                        }
+                    )
             except Exception:
                 pass  # Graph search failed, continue with other results
 
@@ -771,7 +815,9 @@ class EmbeddedMultiModelProvider:
                 filtered.append(result)
         return filtered
 
-    def _matches_filter(self, metadata: Dict[str, Any], filter_dict: Dict[str, Any]) -> bool:
+    def _matches_filter(
+        self, metadata: Dict[str, Any], filter_dict: Dict[str, Any]
+    ) -> bool:
         """Check if metadata matches filter criteria."""
         for key, value in filter_dict.items():
             if key not in metadata:

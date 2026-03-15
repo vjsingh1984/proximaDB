@@ -33,7 +33,11 @@ import uuid
 from typing import Any, List, Optional
 
 from llama_index.core.base.base_retriever import BaseRetriever
-from llama_index.core.vector_stores import VectorStore, VectorStoreQuery, VectorStoreQueryResult
+from llama_index.core.vector_stores import (
+    VectorStore,
+    VectorStoreQuery,
+    VectorStoreQueryResult,
+)
 from llama_index.core.vector_stores.types import (
     BasePydanticVectorStore,
     MetadataFilter,
@@ -100,12 +104,18 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
 
             # Use the embedding from the node if available
             if node.embedding is None:
-                raise ValueError(f"Node {doc_id} has no embedding. Please embed before adding.")
+                raise ValueError(
+                    f"Node {doc_id} has no embedding. Please embed before adding."
+                )
 
             records.append(
                 VectorRecord(
                     id=doc_id,
-                    vector=node.embedding.tolist() if hasattr(node.embedding, 'tolist') else list(node.embedding),
+                    vector=(
+                        node.embedding.tolist()
+                        if hasattr(node.embedding, "tolist")
+                        else list(node.embedding)
+                    ),
                     source=node.content,
                     metadata=metadata,
                 )
@@ -145,7 +155,11 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
 
         search_results = self._client.search(
             self._collection_name,
-            vector=query.query_embedding.tolist() if hasattr(query.query_embedding, 'tolist') else list(query.query_embedding),
+            vector=(
+                query.query_embedding.tolist()
+                if hasattr(query.query_embedding, "tolist")
+                else list(query.query_embedding)
+            ),
             top_k=query.similarity_top_k,
             metadata_filter=metadata_filter,
         )

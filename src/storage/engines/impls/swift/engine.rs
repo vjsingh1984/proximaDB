@@ -111,7 +111,10 @@ pub fn get_collection_pca_model(
 /// - **Point Query**: ~0.1-1ms (mmap + hierarchical lookup)
 /// - **Batch Query**: ~5-20ms (SuperBlock scan)
 /// - **Compression**: 4-6x (Proxima encoding)
-#[deprecated(since = "0.3.0", note = "SWIFT is experimental. Use SST or NOVA instead.")]
+#[deprecated(
+    since = "0.3.0",
+    note = "SWIFT is experimental. Use SST or NOVA instead."
+)]
 pub struct SwiftEngine {
     /// **Optimized Operations Handler**
     ///

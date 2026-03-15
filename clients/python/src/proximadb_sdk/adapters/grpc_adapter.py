@@ -62,10 +62,12 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         kwargs.pop("base_url", None)
 
         if config is not None and server_address == "localhost:5678":
-            config_url = getattr(config, "url", None) or getattr(config, "base_url", None)
+            config_url = getattr(config, "url", None) or getattr(
+                config, "base_url", None
+            )
             if config_url:
-                server_address = str(config_url).replace("http://", "").replace(
-                    "https://", ""
+                server_address = (
+                    str(config_url).replace("http://", "").replace("https://", "")
                 )
 
         # Create the underlying gRPC client

@@ -698,6 +698,219 @@ impl FederatedExecutor {
         }
     }
 
+    fn resolve_query_vector_for_row(
+        &self,
+        source: &VectorSource,
+        outer_batch: &RecordBatch,
+        outer_row: usize,
+    ) -> Result<Vec<f32>> {
+        match source {
+            VectorSource::Literal(vector) => Ok(vector.clone()),
+            VectorSource::Expression(expr) => Self::parse_vector_literal(expr).ok_or_else(|| {
+                anyhow!(
+                    "Unsupported vector expression '{}' in federated executor; provide a literal vector for now",
+                    expr
+                )
+            }),
+            VectorSource::ColumnRef { table, column } => {
+                self.resolve_vector_from_outer_column(outer_batch, outer_row, table, column)
+            }
+            VectorSource::Subquery(_) => Err(anyhow!(
+                "Subquery-derived vector sources are not yet executable in the federated executor"
+            )),
+        }
+    }
+
+    fn resolve_vector_from_outer_column(
+        &self,
+        outer_batch: &RecordBatch,
+        outer_row: usize,
+        table: &str,
+        column_path: &str,
+    ) -> Result<Vec<f32>> {
+        let mut path_segments = column_path
+            .split('.')
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty());
+        let base_column = path_segments.next().ok_or_else(|| {
+            anyhow!(
+                "Correlated vector source '{}.{}' did not include a column name",
+                table,
+                column_path
+            )
+        })?;
+        let nested_path = path_segments.collect::<Vec<_>>();
+        let requested = format!("{}.{}", table, base_column);
+        let column_index = Self::resolve_column_index(outer_batch.schema().as_ref(), &requested)
+            .or_else(|| Self::resolve_column_index(outer_batch.schema().as_ref(), base_column))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Correlated column '{}' was not found in outer schema {:?}",
+                    requested,
+                    outer_batch
+                        .schema()
+                        .fields()
+                        .iter()
+                        .map(|field| field.name().clone())
+                        .collect::<Vec<_>>()
+                )
+            })?;
+
+        let array = outer_batch.column(column_index);
+        if array.is_null(outer_row) {
+            return Err(anyhow!(
+                "Correlated vector source '{}' was null for outer row {}",
+                requested,
+                outer_row
+            ));
+        }
+
+        match array.data_type() {
+            DataType::Utf8 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Utf8 correlated column"))?;
+                Self::parse_vector_from_serialized_value(
+                    values.value(outer_row),
+                    &requested,
+                    &nested_path,
+                )
+            }
+            other => Err(anyhow!(
+                "Correlated vector source '{}' uses unsupported outer column type {:?}",
+                requested,
+                other
+            )),
+        }
+    }
+
+    fn parse_vector_from_serialized_value(
+        raw: &str,
+        source: &str,
+        nested_path: &[&str],
+    ) -> Result<Vec<f32>> {
+        if nested_path.is_empty() {
+            return Self::parse_vector_literal(raw).ok_or_else(|| {
+                anyhow!(
+                    "Correlated vector source '{}' did not contain a vector literal",
+                    source
+                )
+            });
+        }
+
+        let json: serde_json::Value = serde_json::from_str(raw).map_err(|error| {
+            anyhow!(
+                "Correlated vector source '{}' is not valid JSON for nested path resolution: {}",
+                source,
+                error
+            )
+        })?;
+        let mut current = &json;
+        for segment in nested_path {
+            current = current.get(*segment).ok_or_else(|| {
+                anyhow!(
+                    "Nested path '{}.{}' was not found in correlated source",
+                    source,
+                    nested_path.join(".")
+                )
+            })?;
+        }
+
+        Self::parse_vector_from_json_value(current, source, nested_path)
+    }
+
+    fn parse_vector_from_json_value(
+        value: &serde_json::Value,
+        source: &str,
+        nested_path: &[&str],
+    ) -> Result<Vec<f32>> {
+        match value {
+            serde_json::Value::Array(values) => values
+                .iter()
+                .map(|value| Self::parse_vector_component(value, source, nested_path))
+                .collect(),
+            serde_json::Value::String(value) => {
+                Self::parse_vector_literal(value).ok_or_else(|| {
+                    anyhow!(
+                        "Nested vector source '{}.{}' did not contain a vector literal string",
+                        source,
+                        nested_path.join(".")
+                    )
+                })
+            }
+            serde_json::Value::Object(object) => {
+                for wrapper_key in ["array_value", "values", "object_value"] {
+                    if let Some(inner) = object.get(wrapper_key) {
+                        return Self::parse_vector_from_json_value(inner, source, nested_path);
+                    }
+                }
+                for scalar_key in ["number_value", "int64_value", "string_value"] {
+                    if let Some(inner) = object.get(scalar_key) {
+                        return Self::parse_vector_from_json_value(inner, source, nested_path);
+                    }
+                }
+                Err(anyhow!(
+                    "Nested vector source '{}.{}' resolved to an unsupported object {:?}",
+                    source,
+                    nested_path.join("."),
+                    object
+                ))
+            }
+            serde_json::Value::Number(number) => Ok(vec![number.as_f64().ok_or_else(|| {
+                anyhow!(
+                    "Nested vector source '{}.{}' contains a non-finite number",
+                    source,
+                    nested_path.join(".")
+                )
+            })? as f32]),
+            other => Err(anyhow!(
+                "Nested vector source '{}.{}' resolved to unsupported JSON value {:?}",
+                source,
+                nested_path.join("."),
+                other
+            )),
+        }
+    }
+
+    fn parse_vector_component(
+        value: &serde_json::Value,
+        source: &str,
+        nested_path: &[&str],
+    ) -> Result<f32> {
+        match value {
+            serde_json::Value::Number(number) => {
+                number.as_f64().map(|number| number as f32).ok_or_else(|| {
+                    anyhow!(
+                        "Nested vector source '{}.{}' contains a non-finite number",
+                        source,
+                        nested_path.join(".")
+                    )
+                })
+            }
+            serde_json::Value::Object(object) => {
+                if let Some(inner) = object
+                    .get("number_value")
+                    .or_else(|| object.get("int64_value"))
+                {
+                    return Self::parse_vector_component(inner, source, nested_path);
+                }
+                Err(anyhow!(
+                    "Nested vector source '{}.{}' contains a non-numeric element {:?}",
+                    source,
+                    nested_path.join("."),
+                    object
+                ))
+            }
+            other => Err(anyhow!(
+                "Nested vector source '{}.{}' contains a non-numeric element {:?}",
+                source,
+                nested_path.join("."),
+                other
+            )),
+        }
+    }
+
     fn parse_vector_literal(raw: &str) -> Option<Vec<f32>> {
         let trimmed = raw.trim();
         let without_cast = trimmed
@@ -1865,6 +2078,150 @@ impl FederatedExecutor {
         Arc::new(Schema::new(fields))
     }
 
+    fn plan_output_schema(&self, node: &PlanNode) -> Result<Arc<Schema>> {
+        match &node.node_type {
+            PlanNodeType::Scan { .. } => Ok(Arc::new(Schema::new(
+                node.output_columns
+                    .iter()
+                    .map(|column| Field::new(column, DataType::Utf8, true))
+                    .collect::<Vec<_>>(),
+            ))),
+            PlanNodeType::VectorSearch { .. } => Ok(Arc::new(Schema::new(vec![
+                Field::new("id", DataType::Utf8, false),
+                Field::new("score", DataType::Float32, false),
+            ]))),
+            PlanNodeType::GraphTraversal { .. } => Ok(Arc::new(Schema::new(vec![
+                Field::new("node_id", DataType::Utf8, false),
+                Field::new("label", DataType::Utf8, true),
+                Field::new("properties", DataType::Utf8, false),
+            ]))),
+            PlanNodeType::DocumentQuery { .. } => Ok(Arc::new(Schema::new(vec![
+                Field::new("id", DataType::Utf8, false),
+                Field::new("document", DataType::Utf8, false),
+            ]))),
+            PlanNodeType::ObservabilityQuery { query_type, .. } => Ok(match query_type {
+                ObservabilityQueryType::Logs => Arc::new(Schema::new(vec![
+                    Field::new("timestamp", DataType::Int64, false),
+                    Field::new("level", DataType::Utf8, false),
+                    Field::new("message", DataType::Utf8, false),
+                ])),
+                ObservabilityQueryType::Metrics => Arc::new(Schema::new(vec![
+                    Field::new("timestamp", DataType::Int64, false),
+                    Field::new("metric_name", DataType::Utf8, false),
+                    Field::new("value", DataType::Float32, false),
+                ])),
+                ObservabilityQueryType::Traces => Arc::new(Schema::new(vec![
+                    Field::new("trace_id", DataType::Utf8, false),
+                    Field::new("span_id", DataType::Utf8, false),
+                    Field::new("operation", DataType::Utf8, false),
+                    Field::new("duration_ns", DataType::Int64, false),
+                ])),
+            }),
+            PlanNodeType::HashJoin { left, right, .. }
+            | PlanNodeType::IndexJoin { left, right, .. } => {
+                let left_schema = self.plan_output_schema(left)?;
+                let right_schema = self.plan_output_schema(right)?;
+                Ok(self.build_join_schema(left_schema.as_ref(), right_schema.as_ref()))
+            }
+            PlanNodeType::NestedLoopJoin { outer, inner, .. } => {
+                let outer_schema = self.plan_output_schema(outer)?;
+                let inner_schema = self.plan_output_schema(inner)?;
+                Ok(self.build_join_schema(outer_schema.as_ref(), inner_schema.as_ref()))
+            }
+            PlanNodeType::Filter { input, .. }
+            | PlanNodeType::Project { input, .. }
+            | PlanNodeType::Distinct { input }
+            | PlanNodeType::Sort { input, .. }
+            | PlanNodeType::Limit { input, .. }
+            | PlanNodeType::Aggregate { input, .. } => self.plan_output_schema(input),
+            PlanNodeType::Union { inputs, .. } => inputs
+                .first()
+                .map(|input| self.plan_output_schema(input))
+                .transpose()?
+                .ok_or_else(|| anyhow!("Union plan has no inputs")),
+        }
+    }
+
+    fn resolve_correlations_in_node(
+        &self,
+        node: &mut PlanNode,
+        outer_batch: &RecordBatch,
+        outer_row: usize,
+    ) -> Result<()> {
+        match &mut node.node_type {
+            PlanNodeType::VectorSearch {
+                query_vector_source,
+                ..
+            } => {
+                let resolved =
+                    self.resolve_query_vector_for_row(query_vector_source, outer_batch, outer_row)?;
+                *query_vector_source = VectorSource::Literal(resolved);
+            }
+            PlanNodeType::HashJoin { left, right, .. }
+            | PlanNodeType::IndexJoin { left, right, .. } => {
+                self.resolve_correlations_in_node(left, outer_batch, outer_row)?;
+                self.resolve_correlations_in_node(right, outer_batch, outer_row)?;
+            }
+            PlanNodeType::NestedLoopJoin { outer, inner, .. } => {
+                self.resolve_correlations_in_node(outer, outer_batch, outer_row)?;
+                self.resolve_correlations_in_node(inner, outer_batch, outer_row)?;
+            }
+            PlanNodeType::Filter { input, .. }
+            | PlanNodeType::Project { input, .. }
+            | PlanNodeType::Distinct { input }
+            | PlanNodeType::Sort { input, .. }
+            | PlanNodeType::Limit { input, .. }
+            | PlanNodeType::Aggregate { input, .. } => {
+                self.resolve_correlations_in_node(input, outer_batch, outer_row)?;
+            }
+            PlanNodeType::Union { inputs, .. } => {
+                for input in inputs {
+                    self.resolve_correlations_in_node(input, outer_batch, outer_row)?;
+                }
+            }
+            PlanNodeType::Scan { .. }
+            | PlanNodeType::GraphTraversal { .. }
+            | PlanNodeType::DocumentQuery { .. }
+            | PlanNodeType::ObservabilityQuery { .. } => {}
+        }
+
+        Ok(())
+    }
+
+    fn join_batches(
+        &self,
+        left_batch: &RecordBatch,
+        right_batch: &RecordBatch,
+        left_indices: &[Option<usize>],
+        right_indices: &[Option<usize>],
+    ) -> Result<RecordBatch> {
+        let joined_schema =
+            self.build_join_schema(left_batch.schema().as_ref(), right_batch.schema().as_ref());
+        if left_indices.is_empty() && right_indices.is_empty() {
+            let arrays = joined_schema
+                .fields()
+                .iter()
+                .map(|field| new_null_array(field.data_type(), 0))
+                .collect();
+            return Ok(RecordBatch::try_new(joined_schema, arrays)?);
+        }
+
+        let left_take = Self::build_take_indices(left_indices);
+        let right_take = Self::build_take_indices(right_indices);
+        let mut columns = Vec::with_capacity(
+            left_batch.schema().fields().len() + right_batch.schema().fields().len(),
+        );
+
+        for column in left_batch.columns() {
+            columns.push(take(column.as_ref(), &left_take, None)?);
+        }
+        for column in right_batch.columns() {
+            columns.push(take(column.as_ref(), &right_take, None)?);
+        }
+
+        Ok(RecordBatch::try_new(joined_schema, columns)?)
+    }
+
     /// Execute hash join
     async fn execute_hash_join(
         &self,
@@ -2038,11 +2395,57 @@ impl FederatedExecutor {
         inner: &PlanNode,
         correlation: &[String],
     ) -> Result<ExecutionResult> {
-        let _ = (outer, inner);
-        Err(anyhow!(
-            "Nested-loop/lateral join execution is not implemented for correlations {:?}; correlated multi-model joins are still experimental",
-            correlation
-        ))
+        let outer_result = self.execute_node(outer).await?;
+        let outer_batch = self.merge_batches(&outer_result)?;
+        let inner_schema = self.plan_output_schema(inner)?;
+        let joined_schema =
+            self.build_join_schema(outer_batch.schema().as_ref(), inner_schema.as_ref());
+
+        if outer_batch.num_rows() == 0 {
+            return Ok(ExecutionResult::empty_with_schema(joined_schema));
+        }
+
+        let mut batches = Vec::new();
+        let mut rows_produced = 0usize;
+
+        for outer_row in 0..outer_batch.num_rows() {
+            let mut resolved_inner = inner.clone();
+            self.resolve_correlations_in_node(&mut resolved_inner, &outer_batch, outer_row)
+                .map_err(|error| {
+                    anyhow!(
+                        "Failed to resolve lateral join correlations {:?} for outer row {}: {}",
+                        correlation,
+                        outer_row,
+                        error
+                    )
+                })?;
+
+            let inner_result = self.execute_node(&resolved_inner).await?;
+            let inner_batch = self.merge_batches(&inner_result)?;
+            if inner_batch.num_rows() == 0 {
+                continue;
+            }
+
+            let left_indices = vec![Some(outer_row); inner_batch.num_rows()];
+            let right_indices = (0..inner_batch.num_rows()).map(Some).collect::<Vec<_>>();
+            let batch =
+                self.join_batches(&outer_batch, &inner_batch, &left_indices, &right_indices)?;
+            rows_produced += batch.num_rows();
+            batches.push(batch);
+        }
+
+        if batches.is_empty() {
+            return Ok(ExecutionResult::empty_with_schema(joined_schema));
+        }
+
+        Ok(ExecutionResult {
+            batches,
+            schema: joined_schema,
+            stats: ExecutionStats {
+                rows_produced,
+                ..Default::default()
+            },
+        })
     }
 
     /// Execute index join

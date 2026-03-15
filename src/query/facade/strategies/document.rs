@@ -32,12 +32,17 @@ use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use regex::Regex;
 use tracing::{debug, info, instrument};
 
+use crate::proto::proximadb_v1::{
+    DocFilterCondition, DocFilterOperator, DocumentFilter, SqlValue, sql_value,
+};
 use crate::query::facade::{
     ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
     QueryStrategy, QueryType,
 };
+use crate::query::parsers::{MongoDBParser, ToDocumentFilter};
 use crate::storage::document::DocumentService;
 
 /// Document Strategy - Real implementation wrapping DocumentService
@@ -159,6 +164,100 @@ impl DocumentStrategy {
         None
     }
 
+    fn parse_document_filter(
+        &self,
+        request: &QueryRequest,
+        filter_str: &str,
+    ) -> Result<Option<DocumentFilter>> {
+        if let Some(filter) = request.params.document_filter.clone() {
+            return Ok(Some(filter));
+        }
+
+        let trimmed = filter_str.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+
+        if trimmed.starts_with('{') {
+            let parser = MongoDBParser::new();
+            let expression = parser.parse_query(trimmed)?;
+            return Ok(Some(expression.to_document_filter()?));
+        }
+
+        Ok(Some(Self::parse_simple_filter_expression(trimmed)?))
+    }
+
+    fn parse_simple_filter_expression(filter: &str) -> Result<DocumentFilter> {
+        let re = Regex::new(r#"^\s*([A-Za-z0-9_.$]+)\s*(=|!=|>=|<=|>|<)\s*(.+?)\s*$"#)
+            .map_err(|e| anyhow!("Failed to compile document filter regex: {}", e))?;
+        let captures = re
+            .captures(filter)
+            .ok_or_else(|| anyhow!("Unsupported document filter syntax: {}", filter))?;
+
+        let field = captures
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .ok_or_else(|| anyhow!("Missing document filter field"))?;
+        let operator = captures
+            .get(2)
+            .map(|m| m.as_str())
+            .ok_or_else(|| anyhow!("Missing document filter operator"))?;
+        let raw_value = captures
+            .get(3)
+            .map(|m| m.as_str())
+            .ok_or_else(|| anyhow!("Missing document filter value"))?;
+
+        let operator = match operator {
+            "=" => DocFilterOperator::Eq,
+            "!=" => DocFilterOperator::Ne,
+            ">" => DocFilterOperator::Gt,
+            ">=" => DocFilterOperator::Gte,
+            "<" => DocFilterOperator::Lt,
+            "<=" => DocFilterOperator::Lte,
+            _ => {
+                return Err(anyhow!(
+                    "Unsupported document filter operator: {}",
+                    operator
+                ));
+            }
+        };
+
+        Ok(DocumentFilter {
+            conditions: vec![DocFilterCondition {
+                path: field,
+                operator: operator as i32,
+                value: Some(Self::parse_sql_value(raw_value)?),
+                values: Vec::new(),
+            }],
+            or_filters: Vec::new(),
+            and_filters: Vec::new(),
+        })
+    }
+
+    fn parse_sql_value(raw: &str) -> Result<SqlValue> {
+        let trimmed = raw.trim();
+
+        let value = if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+            || (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        {
+            sql_value::Value::StringValue(trimmed[1..trimmed.len() - 1].to_string())
+        } else if trimmed.eq_ignore_ascii_case("true") {
+            sql_value::Value::BoolValue(true)
+        } else if trimmed.eq_ignore_ascii_case("false") {
+            sql_value::Value::BoolValue(false)
+        } else if trimmed.eq_ignore_ascii_case("null") {
+            sql_value::Value::NullValue(0)
+        } else if let Ok(i) = trimmed.parse::<i64>() {
+            sql_value::Value::Int64Value(i)
+        } else if let Ok(f) = trimmed.parse::<f64>() {
+            sql_value::Value::NumberValue(f)
+        } else {
+            sql_value::Value::StringValue(trimmed.to_string())
+        };
+
+        Ok(SqlValue { value: Some(value) })
+    }
+
     /// Convert document query result to facade QueryResult
     fn to_facade_result(
         &self,
@@ -223,8 +322,8 @@ impl QueryStrategy for DocumentStrategy {
 
         // Extract collection and filter
         let collection = self.extract_collection(&request);
-        #[allow(unused_variables)]
         let filter_str = self.extract_query(&request)?;
+        let filter = self.parse_document_filter(&request, &filter_str)?;
 
         debug!(
             collection = %collection,
@@ -232,11 +331,8 @@ impl QueryStrategy for DocumentStrategy {
             "Executing document query"
         );
 
-        // Build query params - using default for now
-        // Note: Full filter parsing would require converting the filter string
-        // to a DocumentFilter proto message
         let params = DocumentQueryParams {
-            filter: None, // TODO: Parse filter_str to DocumentFilter
+            filter,
             projection: vec![],
             sort: vec![],
             limit: 100, // Default limit
@@ -271,6 +367,7 @@ impl QueryStrategy for DocumentStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::sql_value::Value as SqlValueValue;
 
     #[test]
     fn test_parse_document_query_function() {
@@ -286,5 +383,19 @@ mod tests {
         };
 
         assert_eq!(request.query_type, QueryType::Document);
+    }
+
+    #[test]
+    fn test_parse_simple_filter_expression() {
+        let filter = DocumentStrategy::parse_simple_filter_expression("status = 'active'")
+            .expect("simple document filter should parse");
+
+        assert_eq!(filter.conditions.len(), 1);
+        assert_eq!(filter.conditions[0].path, "status");
+        assert_eq!(filter.conditions[0].operator, DocFilterOperator::Eq as i32);
+        assert!(matches!(
+            filter.conditions[0].value.as_ref().and_then(|v| v.value.clone()),
+            Some(SqlValueValue::StringValue(value)) if value == "active"
+        ));
     }
 }

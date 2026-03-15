@@ -1390,9 +1390,17 @@ impl DocumentService {
         };
 
         // Execute query
+        let documents: Vec<DocumentRecord> = {
+            let docs = self.documents.read().await;
+            match docs.get(collection) {
+                Some(collection_docs) => collection_docs.values().cloned().collect(),
+                None => Vec::new(),
+            }
+        };
+
         let (documents, total_count) = match self
             .query_executor
-            .execute(collection, &params, &self.index_manager)
+            .execute(collection, &documents, &params, &self.index_manager)
             .await
         {
             Ok(result) => result,

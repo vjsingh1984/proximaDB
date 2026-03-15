@@ -187,9 +187,7 @@ impl UnifiedAuthService {
             if let Some(ref ca_path) = config.mtls.ca_cert_path {
                 Some(Self::load_ca_certificate(ca_path)?)
             } else {
-                return Err(anyhow!(
-                    "mTLS is enabled but no ca_cert_path is configured"
-                ));
+                return Err(anyhow!("mTLS is enabled but no ca_cert_path is configured"));
             }
         } else {
             None
@@ -475,7 +473,9 @@ impl UnifiedAuthService {
                         user_context: UnifiedUserContext::anonymous(),
                         auth_method: AuthMethod::ClientCertificate,
                         success: false,
-                        error_message: Some("Client certificate has expired or is not yet valid".to_string()),
+                        error_message: Some(
+                            "Client certificate has expired or is not yet valid".to_string(),
+                        ),
                         requires_mfa: false,
                     });
                 }
@@ -608,7 +608,10 @@ impl UnifiedAuthService {
             .tbs_certificate
             .extensions_map()
             .ok()
-            .and_then(|map| map.get(&x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER).cloned())
+            .and_then(|map| {
+                map.get(&x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER)
+                    .cloned()
+            })
             .and_then(|ext| {
                 x509_parser::extensions::AuthorityKeyIdentifier::from_der(ext.value)
                     .ok()
@@ -618,7 +621,10 @@ impl UnifiedAuthService {
             .tbs_certificate
             .extensions_map()
             .ok()
-            .and_then(|map| map.get(&x509_parser::oid_registry::OID_X509_EXT_SUBJECT_KEY_IDENTIFIER).cloned())
+            .and_then(|map| {
+                map.get(&x509_parser::oid_registry::OID_X509_EXT_SUBJECT_KEY_IDENTIFIER)
+                    .cloned()
+            })
             .and_then(|ext| Some(ext.value.to_vec()));
 
         if let (Some(aki), Some(ski)) = (&client_aki, &ca_ski) {
@@ -1277,10 +1283,12 @@ mod tests {
             .await
             .unwrap_or_else(|_| unreachable!());
         assert!(!result.success);
-        assert!(result
-            .error_message
-            .as_deref()
-            .unwrap_or("")
-            .contains("not enabled"));
+        assert!(
+            result
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("not enabled")
+        );
     }
 }

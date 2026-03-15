@@ -383,7 +383,10 @@ impl TimeSeriesEngine {
     ///
     /// Should be called during startup before serving any requests.
     /// This replays all WAL entries to rebuild in-memory partitions.
-    pub async fn recover_from_wal(&mut self, wal_path: &std::path::Path) -> Result<TstRecoveryStats> {
+    pub async fn recover_from_wal(
+        &mut self,
+        wal_path: &std::path::Path,
+    ) -> Result<TstRecoveryStats> {
         let recovery = TstWalRecovery::new(wal_path.to_path_buf());
         recovery.recover(self).await
     }
@@ -474,8 +477,17 @@ impl TimeSeriesEngine {
     ) -> Result<()> {
         // Write to WAL before applying to in-memory state
         if let Some(ref wal) = self.wal_writer {
-            wal.log_insert_ohlc(collection_id, symbol, timestamp, open, high, low, close, volume)
-                .await?;
+            wal.log_insert_ohlc(
+                collection_id,
+                symbol,
+                timestamp,
+                open,
+                high,
+                low,
+                close,
+                volume,
+            )
+            .await?;
         }
 
         let bar = OHLCBar {

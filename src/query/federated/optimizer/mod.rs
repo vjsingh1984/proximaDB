@@ -12,7 +12,9 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
-use super::parser::{FederatedQuery, QueryType, SqlExtension, TargetModelType, VectorQuery};
+use super::parser::{
+    FederatedQuery, QueryTarget, QueryType, SqlExtension, TargetModelType, VectorQuery,
+};
 use crate::core::error::VectorDBError;
 use crate::storage::multimodel::ModelType;
 
@@ -248,6 +250,12 @@ struct PredicatePushResult {
 struct SelectItem {
     expression: String,
     alias: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+enum QuerySourceRef<'a> {
+    Extension(&'a SqlExtension),
+    Target(&'a QueryTarget),
 }
 
 /// Cost model for different data models
@@ -1357,11 +1365,125 @@ impl CrossModelOptimizer {
         self
     }
 
+    fn ordered_query_sources<'a>(query: &'a FederatedQuery) -> Vec<QuerySourceRef<'a>> {
+        let sql_upper = query.sql.to_uppercase();
+        let mut sources = Vec::new();
+
+        for (ordinal, extension) in query.extensions.iter().enumerate() {
+            sources.push((
+                Self::query_source_position(&sql_upper, QuerySourceRef::Extension(extension)),
+                ordinal,
+                QuerySourceRef::Extension(extension),
+            ));
+        }
+
+        for (ordinal, target) in query.targets.iter().enumerate() {
+            if !matches!(
+                target.model_type,
+                TargetModelType::Table | TargetModelType::Unknown
+            ) {
+                continue;
+            }
+
+            sources.push((
+                Self::query_source_position(&sql_upper, QuerySourceRef::Target(target)),
+                query.extensions.len() + ordinal,
+                QuerySourceRef::Target(target),
+            ));
+        }
+
+        sources.sort_by_key(|(position, ordinal, _)| (*position, *ordinal));
+        sources
+            .into_iter()
+            .map(|(_, _, source)| source)
+            .collect::<Vec<_>>()
+    }
+
+    fn query_source_position(sql_upper: &str, source: QuerySourceRef<'_>) -> usize {
+        match source {
+            QuerySourceRef::Extension(extension) => match extension {
+                SqlExtension::VectorSearch { .. } => sql_upper.find("VECTOR_SEARCH("),
+                SqlExtension::GraphQuery { .. } => sql_upper.find("GRAPH_QUERY("),
+                SqlExtension::DocumentQuery { .. } => sql_upper.find("DOCUMENT_QUERY("),
+                SqlExtension::Logs { .. } => sql_upper.find("LOGS("),
+                SqlExtension::Metrics { .. } => sql_upper.find("METRICS("),
+                SqlExtension::VectorDistance { .. } => sql_upper.find("<->"),
+            }
+            .unwrap_or(usize::MAX),
+            QuerySourceRef::Target(target) => Self::target_position(sql_upper, target),
+        }
+    }
+
+    fn target_position(sql_upper: &str, target: &QueryTarget) -> usize {
+        let target_upper = target.name.to_uppercase();
+        [
+            format!("FROM {}", target_upper),
+            format!("JOIN {}", target_upper),
+            format!(", {}", target_upper),
+        ]
+        .into_iter()
+        .filter_map(|needle| sql_upper.find(&needle))
+        .min()
+        .or_else(|| sql_upper.find(&target_upper))
+        .unwrap_or(usize::MAX)
+    }
+
+    fn collect_correlations(plan: &PlanNode) -> Vec<String> {
+        let mut correlations = Vec::new();
+        Self::collect_correlations_into(plan, &mut correlations);
+        correlations
+    }
+
+    fn collect_correlations_into(plan: &PlanNode, correlations: &mut Vec<String>) {
+        match &plan.node_type {
+            PlanNodeType::VectorSearch {
+                query_vector_source,
+                ..
+            } => Self::collect_vector_source_correlations(query_vector_source, correlations),
+            PlanNodeType::HashJoin { left, right, .. }
+            | PlanNodeType::IndexJoin { left, right, .. } => {
+                Self::collect_correlations_into(left, correlations);
+                Self::collect_correlations_into(right, correlations);
+            }
+            PlanNodeType::NestedLoopJoin { outer, inner, .. } => {
+                Self::collect_correlations_into(outer, correlations);
+                Self::collect_correlations_into(inner, correlations);
+            }
+            PlanNodeType::Filter { input, .. }
+            | PlanNodeType::Project { input, .. }
+            | PlanNodeType::Distinct { input }
+            | PlanNodeType::Sort { input, .. }
+            | PlanNodeType::Limit { input, .. }
+            | PlanNodeType::Aggregate { input, .. } => {
+                Self::collect_correlations_into(input, correlations);
+            }
+            PlanNodeType::Union { inputs, .. } => {
+                for input in inputs {
+                    Self::collect_correlations_into(input, correlations);
+                }
+            }
+            PlanNodeType::Scan { .. }
+            | PlanNodeType::GraphTraversal { .. }
+            | PlanNodeType::DocumentQuery { .. }
+            | PlanNodeType::ObservabilityQuery { .. } => {}
+        }
+    }
+
+    fn collect_vector_source_correlations(source: &VectorSource, correlations: &mut Vec<String>) {
+        match source {
+            VectorSource::ColumnRef { table, column } => {
+                let reference = format!("{}.{}", table, column);
+                if !correlations.iter().any(|existing| existing == &reference) {
+                    correlations.push(reference);
+                }
+            }
+            VectorSource::Subquery(plan) => Self::collect_correlations_into(plan, correlations),
+            VectorSource::Literal(_) | VectorSource::Expression(_) => {}
+        }
+    }
+
     /// Set statistics provider on an existing optimizer instance
-    pub fn set_statistics_provider(
-        &mut self,
-        provider: std::sync::Arc<dyn StatisticsProvider>,
-    ) {
+    pub fn set_statistics_provider(&mut self, provider: std::sync::Arc<dyn StatisticsProvider>) {
         self.statistics_provider = Some(provider);
     }
 
@@ -1664,13 +1786,13 @@ impl CrossModelOptimizer {
         // Build sub-plans for each extension/target
         let mut sub_plans = Vec::new();
 
-        for ext in &query.extensions {
-            let sub_plan = match ext {
-                SqlExtension::VectorSearch {
+        for source in Self::ordered_query_sources(query) {
+            let sub_plan = match source {
+                QuerySourceRef::Extension(SqlExtension::VectorSearch {
                     collection,
                     query_vector,
                     top_k,
-                } => {
+                }) => {
                     let vec_stats = stats.get(collection).and_then(|s| {
                         if let ModelStatistics::Vector(vs) = s {
                             Some(vs)
@@ -1700,7 +1822,7 @@ impl CrossModelOptimizer {
                         output_columns: vec!["id".to_string(), "score".to_string()],
                     }
                 }
-                SqlExtension::GraphQuery { cypher } => {
+                QuerySourceRef::Extension(SqlExtension::GraphQuery { cypher }) => {
                     let max_depth = cypher.matches("->").count().max(1);
                     // Use default stats for graph
                     let default_stats = GraphStats::default();
@@ -1723,7 +1845,7 @@ impl CrossModelOptimizer {
                         ],
                     }
                 }
-                SqlExtension::DocumentQuery { collection, filter } => {
+                QuerySourceRef::Extension(SqlExtension::DocumentQuery { collection, filter }) => {
                     let doc_stats = stats.get(collection).and_then(|s| {
                         if let ModelStatistics::Document(ds) = s {
                             Some(ds)
@@ -1751,29 +1873,77 @@ impl CrossModelOptimizer {
                         output_columns: vec!["id".to_string(), "document".to_string()],
                     }
                 }
-                _ => continue,
+                QuerySourceRef::Extension(SqlExtension::Logs { namespace }) => PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::ObservabilityQuery {
+                        namespace: namespace.clone(),
+                        query_type: ObservabilityQueryType::Logs,
+                        time_range: None,
+                    },
+                    estimated_cost: 20.0,
+                    estimated_rows: 1000,
+                    output_columns: vec![
+                        "timestamp".to_string(),
+                        "level".to_string(),
+                        "message".to_string(),
+                    ],
+                },
+                QuerySourceRef::Extension(SqlExtension::Metrics { namespace }) => PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::ObservabilityQuery {
+                        namespace: namespace.clone(),
+                        query_type: ObservabilityQueryType::Metrics,
+                        time_range: None,
+                    },
+                    estimated_cost: 20.0,
+                    estimated_rows: 500,
+                    output_columns: vec![
+                        "timestamp".to_string(),
+                        "metric_name".to_string(),
+                        "value".to_string(),
+                    ],
+                },
+                QuerySourceRef::Extension(SqlExtension::VectorDistance {
+                    left_column,
+                    right_literal,
+                }) => {
+                    let target = query
+                        .targets
+                        .first()
+                        .map(|t| t.name.clone())
+                        .unwrap_or("default".to_string());
+                    PlanNode {
+                        id: self.next_id(),
+                        node_type: PlanNodeType::VectorSearch {
+                            collection: target,
+                            top_k: 10,
+                            query_vector_source: Self::vector_source_from_literal(right_literal),
+                        },
+                        estimated_cost: 10.0,
+                        estimated_rows: 10,
+                        output_columns: vec!["id".to_string(), left_column.clone()],
+                    }
+                }
+                QuerySourceRef::Target(target) => {
+                    let rows = stats
+                        .get(&target.name)
+                        .map(|s| s.estimated_count())
+                        .unwrap_or(1000);
+
+                    PlanNode {
+                        id: self.next_id(),
+                        node_type: PlanNodeType::Scan {
+                            target: target.name.clone(),
+                            model_type: ModelType::Relational,
+                            predicates: vec![],
+                        },
+                        estimated_cost: rows as f64 * 0.1,
+                        estimated_rows: rows,
+                        output_columns: vec!["*".to_string()],
+                    }
+                }
             };
             sub_plans.push(sub_plan);
-        }
-
-        // Add table scans
-        for target in &query.targets {
-            let rows = stats
-                .get(&target.name)
-                .map(|s| s.estimated_count())
-                .unwrap_or(1000);
-
-            sub_plans.push(PlanNode {
-                id: self.next_id(),
-                node_type: PlanNodeType::Scan {
-                    target: target.name.clone(),
-                    model_type: ModelType::Relational,
-                    predicates: vec![],
-                },
-                estimated_cost: rows as f64 * 0.1,
-                estimated_rows: rows,
-                output_columns: vec!["*".to_string()],
-            });
         }
 
         if sub_plans.is_empty() {
@@ -1782,6 +1952,29 @@ impl CrossModelOptimizer {
 
         if sub_plans.len() == 1 {
             return Ok(sub_plans.remove(0));
+        }
+
+        if query.sql.to_uppercase().contains("LATERAL") {
+            let mut result = sub_plans.remove(0);
+            for right in sub_plans {
+                let correlation = Self::collect_correlations(&right);
+                let estimated_cost = result.estimated_cost + right.estimated_cost + 200.0;
+                let estimated_rows = result
+                    .estimated_rows
+                    .saturating_mul(right.estimated_rows.max(1));
+                result = PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::NestedLoopJoin {
+                        outer: Box::new(result),
+                        inner: Box::new(right),
+                        correlation,
+                    },
+                    estimated_cost,
+                    estimated_rows,
+                    output_columns: vec!["*".to_string()],
+                };
+            }
+            return Ok(result);
         }
 
         // Use DP-based join order optimization
@@ -2619,13 +2812,13 @@ impl CrossModelOptimizer {
         // Build sub-plans for each extension
         let mut sub_plans: Vec<PlanNode> = Vec::new();
 
-        for ext in &query.extensions {
-            let sub_plan = match ext {
-                SqlExtension::VectorSearch {
+        for source in Self::ordered_query_sources(query) {
+            let sub_plan = match source {
+                QuerySourceRef::Extension(SqlExtension::VectorSearch {
                     collection,
                     query_vector,
                     top_k,
-                } => PlanNode {
+                }) => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::VectorSearch {
                         collection: collection.clone(),
@@ -2636,7 +2829,7 @@ impl CrossModelOptimizer {
                     estimated_rows: *top_k as u64,
                     output_columns: vec!["id".to_string(), "score".to_string()],
                 },
-                SqlExtension::GraphQuery { cypher } => PlanNode {
+                QuerySourceRef::Extension(SqlExtension::GraphQuery { cypher }) => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::GraphTraversal {
                         cypher: cypher.clone(),
@@ -2650,17 +2843,19 @@ impl CrossModelOptimizer {
                         "properties".to_string(),
                     ],
                 },
-                SqlExtension::DocumentQuery { collection, filter } => PlanNode {
-                    id: self.next_id(),
-                    node_type: PlanNodeType::DocumentQuery {
-                        collection: collection.clone(),
-                        filter: filter.clone(),
-                    },
-                    estimated_cost: 30.0,
-                    estimated_rows: 500,
-                    output_columns: vec!["id".to_string(), "document".to_string()],
-                },
-                SqlExtension::Logs { namespace } => PlanNode {
+                QuerySourceRef::Extension(SqlExtension::DocumentQuery { collection, filter }) => {
+                    PlanNode {
+                        id: self.next_id(),
+                        node_type: PlanNodeType::DocumentQuery {
+                            collection: collection.clone(),
+                            filter: filter.clone(),
+                        },
+                        estimated_cost: 30.0,
+                        estimated_rows: 500,
+                        output_columns: vec!["id".to_string(), "document".to_string()],
+                    }
+                }
+                QuerySourceRef::Extension(SqlExtension::Logs { namespace }) => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -2675,7 +2870,7 @@ impl CrossModelOptimizer {
                         "message".to_string(),
                     ],
                 },
-                SqlExtension::Metrics { namespace } => PlanNode {
+                QuerySourceRef::Extension(SqlExtension::Metrics { namespace }) => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -2690,10 +2885,10 @@ impl CrossModelOptimizer {
                         "value".to_string(),
                     ],
                 },
-                SqlExtension::VectorDistance {
+                QuerySourceRef::Extension(SqlExtension::VectorDistance {
                     left_column,
                     right_literal,
-                } => {
+                }) => {
                     let target = query
                         .targets
                         .first()
@@ -2711,16 +2906,7 @@ impl CrossModelOptimizer {
                         output_columns: vec!["id".to_string(), left_column.clone()],
                     }
                 }
-            };
-            sub_plans.push(sub_plan);
-        }
-
-        // Add scans for regular tables
-        for target in &query.targets {
-            if target.model_type == TargetModelType::Table
-                || target.model_type == TargetModelType::Unknown
-            {
-                sub_plans.push(PlanNode {
+                QuerySourceRef::Target(target) => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::Scan {
                         target: target.name.clone(),
@@ -2730,21 +2916,23 @@ impl CrossModelOptimizer {
                     estimated_cost: 100.0,
                     estimated_rows: 1000,
                     output_columns: vec!["*".to_string()],
-                });
-            }
+                },
+            };
+            sub_plans.push(sub_plan);
         }
 
         // If we have multiple sub-plans, join them
         if sub_plans.len() >= 2 {
             let mut result = sub_plans.remove(0);
             for right in sub_plans {
+                let correlation = Self::collect_correlations(&right);
                 result = PlanNode {
                     id: self.next_id(),
                     node_type: if query.sql.to_uppercase().contains("LATERAL") {
                         PlanNodeType::NestedLoopJoin {
                             outer: Box::new(result),
                             inner: Box::new(right),
-                            correlation: vec![],
+                            correlation,
                         }
                     } else {
                         PlanNodeType::HashJoin {
@@ -4355,6 +4543,37 @@ mod tests {
             .optimize(&query)
             .expect("optimize should succeed for vector search query");
         assert!(plan.metadata.involved_models.contains(&ModelType::Vector));
+    }
+
+    #[test]
+    fn test_lateral_plan_preserves_sql_source_order_and_correlation() {
+        let parser = super::super::parser::FederatedParser::new();
+        let query = parser
+            .parse(
+                "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.embedding, 1) v ON true",
+            )
+            .expect("parser should accept function-backed lateral query");
+        let optimizer = CrossModelOptimizer::new();
+
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimizer should preserve lateral source ordering");
+
+        match &plan.root.node_type {
+            PlanNodeType::NestedLoopJoin {
+                outer,
+                inner,
+                correlation,
+            } => {
+                assert!(matches!(
+                    outer.node_type,
+                    PlanNodeType::DocumentQuery { .. }
+                ));
+                assert!(matches!(inner.node_type, PlanNodeType::VectorSearch { .. }));
+                assert_eq!(correlation, &vec!["p.document.embedding".to_string()]);
+            }
+            other => panic!("expected nested-loop join, got {:?}", other),
+        }
     }
 
     #[test]

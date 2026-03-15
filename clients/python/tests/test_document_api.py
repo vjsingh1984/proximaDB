@@ -13,7 +13,7 @@ import sys
 import os
 
 # Add the src directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.document import (
@@ -80,9 +80,7 @@ class TestDocumentAPI:
 
         # Insert document
         result = document_api.insert_document(
-            collection_id=test_collection_name,
-            document=document,
-            id="doc:main.py"
+            collection_id=test_collection_name, document=document, id="doc:main.py"
         )
 
         # Verify result
@@ -94,8 +92,7 @@ class TestDocumentAPI:
         """Test retrieving a document by ID."""
         # Get document
         doc = document_api.get_document(
-            collection_id=test_collection_name,
-            doc_id="doc:main.py"
+            collection_id=test_collection_name, doc_id="doc:main.py"
         )
 
         # Verify result
@@ -110,9 +107,7 @@ class TestDocumentAPI:
 
         # Query documents
         results = document_api.query(
-            collection_id=test_collection_name,
-            filter=filter_obj,
-            limit=10
+            collection_id=test_collection_name, filter=filter_obj, limit=10
         )
 
         # Verify results
@@ -132,7 +127,7 @@ class TestDocumentAPI:
         results = document_api.query(
             collection_id=test_collection_name,
             projection=["file_path", "language"],
-            limit=10
+            limit=10,
         )
 
         # Verify results
@@ -154,7 +149,7 @@ class TestDocumentAPI:
             updates=[
                 {"operation": "SET", "path": "$.lines_of_code", "value": 5},
                 {"operation": "PUSH", "path": "$.tags", "value": "updated"},
-            ]
+            ],
         )
 
         # Verify result
@@ -164,8 +159,7 @@ class TestDocumentAPI:
 
         # Verify the update
         doc = document_api.get_document(
-            collection_id=test_collection_name,
-            doc_id="doc:main.py"
+            collection_id=test_collection_name, doc_id="doc:main.py"
         )
         doc_data = doc.get("document", {})
         assert doc_data.get("lines_of_code") == 5
@@ -177,13 +171,12 @@ class TestDocumentAPI:
         document_api.insert_document(
             collection_id=test_collection_name,
             document={"temp": True, "data": "test"},
-            id="doc:temp"
+            id="doc:temp",
         )
 
         # Delete document
         result = document_api.delete(
-            collection_id=test_collection_name,
-            doc_id="doc:temp"
+            collection_id=test_collection_name, doc_id="doc:temp"
         )
 
         # Verify result
@@ -191,8 +184,7 @@ class TestDocumentAPI:
 
         # Verify document is gone
         doc = document_api.get_document(
-            collection_id=test_collection_name,
-            doc_id="doc:temp"
+            collection_id=test_collection_name, doc_id="doc:temp"
         )
         assert doc is None or doc.get("found") is False
 
@@ -222,9 +214,7 @@ class TestDocumentAPI:
         filter_obj = DocumentFilter().fulltext("content", "hello")
 
         results = document_api.query(
-            collection_id=test_collection_name,
-            filter=filter_obj,
-            limit=10
+            collection_id=test_collection_name, filter=filter_obj, limit=10
         )
 
         # Verify results
@@ -250,7 +240,7 @@ class TestDocumentAPI:
                     "lines_of_code": 10 + i * 5,
                     "category": f"category_{i % 3}",
                 },
-                id=f"doc:agg_{i}"
+                id=f"doc:agg_{i}",
             )
 
         # Perform aggregation
@@ -259,17 +249,17 @@ class TestDocumentAPI:
             pipeline=[
                 {
                     "stage": "match",
-                    "filter": DocumentFilter().eq("language", "python").to_dict()
+                    "filter": DocumentFilter().eq("language", "python").to_dict(),
                 },
                 {
                     "stage": "group",
                     "key": "$.category",
                     "aggregations": [
                         {"field": "avg_loc", "type": "avg", "path": "$.lines_of_code"},
-                        {"field": "count", "type": "count", "path": "$.category"}
-                    ]
-                }
-            ]
+                        {"field": "count", "type": "count", "path": "$.category"},
+                    ],
+                },
+            ],
         )
 
         # Verify results
@@ -302,11 +292,7 @@ class TestDocumentAdapterMethods:
         # Create via adapter
         result = client.create_document_collection(
             name="test_adapter_docs",
-            config={
-                "indexes": [
-                    {"path": "$.category", "type": "hash"}
-                ]
-            }
+            config={"indexes": [{"path": "$.category", "type": "hash"}]},
         )
 
         # Verify
@@ -322,7 +308,7 @@ class TestDocumentAdapterMethods:
         doc = client.insert_document(
             collection_name="test_adapter_docs",
             document={"category": "test", "value": 42},
-            id="adapter_test"
+            id="adapter_test",
         )
 
         assert doc is not None
@@ -330,9 +316,7 @@ class TestDocumentAdapterMethods:
 
         # Query documents
         results = client.query_documents(
-            collection_name="test_adapter_docs",
-            filter={"category": "test"},
-            limit=10
+            collection_name="test_adapter_docs", filter={"category": "test"}, limit=10
         )
 
         assert results is not None
@@ -341,8 +325,7 @@ class TestDocumentAdapterMethods:
     def test_adapter_get_document(self, client):
         """Test getting a document via adapter."""
         doc = client.get_document(
-            collection_name="test_adapter_docs",
-            doc_id="adapter_test"
+            collection_name="test_adapter_docs", doc_id="adapter_test"
         )
 
         assert doc is not None
@@ -353,9 +336,7 @@ class TestDocumentAdapterMethods:
         result = client.update_document(
             collection_name="test_adapter_docs",
             doc_id="adapter_test",
-            updates=[
-                {"operation": "SET", "path": "$.value", "value": 100}
-            ]
+            updates=[{"operation": "SET", "path": "$.value", "value": 100}],
         )
 
         assert result is not None
@@ -363,16 +344,14 @@ class TestDocumentAdapterMethods:
 
         # Verify update
         doc = client.get_document(
-            collection_name="test_adapter_docs",
-            doc_id="adapter_test"
+            collection_name="test_adapter_docs", doc_id="adapter_test"
         )
         assert doc.get("document", {}).get("value") == 100
 
     def test_adapter_delete_document(self, client):
         """Test deleting a document via adapter."""
         result = client.delete_document(
-            collection_name="test_adapter_docs",
-            doc_id="adapter_test"
+            collection_name="test_adapter_docs", doc_id="adapter_test"
         )
 
         assert result is True

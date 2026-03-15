@@ -15,7 +15,7 @@ import os
 from datetime import datetime, timedelta
 
 # Add the src directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.timeseries import (
@@ -59,17 +59,17 @@ class TestTimeSeriesAPI:
                 ValueColumn(
                     name="cpu_usage",
                     data_type=ValueType.FLOAT,
-                    aggregation=AggregationType.AVG
+                    aggregation=AggregationType.AVG,
                 ),
                 ValueColumn(
                     name="memory_usage",
                     data_type=ValueType.FLOAT,
-                    aggregation=AggregationType.MAX
+                    aggregation=AggregationType.MAX,
                 ),
                 ValueColumn(
                     name="request_count",
                     data_type=ValueType.INT,
-                    aggregation=AggregationType.SUM
+                    aggregation=AggregationType.SUM,
                 ),
             ],
             tag_columns=["host", "region", "service"],
@@ -90,24 +90,25 @@ class TestTimeSeriesAPI:
         points = []
         for i in range(100):
             timestamp = now + timedelta(seconds=i)
-            points.append({
-                "timestamp": timestamp.isoformat() + "Z",
-                "values": {
-                    "cpu_usage": 50.0 + i % 50,
-                    "memory_usage": 40.0 + i % 30,
-                    "request_count": 100 + i * 10,
-                },
-                "tags": {
-                    "host": f"server-{i % 5}",
-                    "region": "us-west" if i % 2 == 0 else "us-east",
-                    "service": "api"
+            points.append(
+                {
+                    "timestamp": timestamp.isoformat() + "Z",
+                    "values": {
+                        "cpu_usage": 50.0 + i % 50,
+                        "memory_usage": 40.0 + i % 30,
+                        "request_count": 100 + i * 10,
+                    },
+                    "tags": {
+                        "host": f"server-{i % 5}",
+                        "region": "us-west" if i % 2 == 0 else "us-east",
+                        "service": "api",
+                    },
                 }
-            })
+            )
 
         # Ingest data
         result = timeseries_api.ingest(
-            collection_id=test_collection_name,
-            points=points
+            collection_id=test_collection_name, points=points
         )
 
         # Verify result
@@ -133,7 +134,9 @@ class TestTimeSeriesAPI:
         points = results.get("raw_points", results.get("metrics", []))
         assert len(points) > 0
 
-    def test_query_timeseries_with_aggregation(self, timeseries_api, test_collection_name):
+    def test_query_timeseries_with_aggregation(
+        self, timeseries_api, test_collection_name
+    ):
         """Test querying time-series data with aggregation."""
         now = datetime.utcnow()
         start_time = (now - timedelta(hours=1)).isoformat() + "Z"
@@ -159,7 +162,9 @@ class TestTimeSeriesAPI:
             assert metric.get("value") is not None
             assert metric.get("count", 0) > 0
 
-    def test_query_timeseries_with_tag_filters(self, timeseries_api, test_collection_name):
+    def test_query_timeseries_with_tag_filters(
+        self, timeseries_api, test_collection_name
+    ):
         """Test querying time-series data with tag filters."""
         now = datetime.utcnow()
         start_time = (now - timedelta(hours=1)).isoformat() + "Z"
@@ -171,7 +176,7 @@ class TestTimeSeriesAPI:
             start_time=start_time,
             end_time=end_time,
             aggregation="AVG",
-            tag_filters={"region": "us-west"}
+            tag_filters={"region": "us-west"},
         )
 
         # Verify results
@@ -184,7 +189,9 @@ class TestTimeSeriesAPI:
             if isinstance(metric, dict) and "tags" in metric:
                 assert metric["tags"].get("region") == "us-west"
 
-    def test_query_timeseries_ohlc_aggregation(self, timeseries_api, test_collection_name):
+    def test_query_timeseries_ohlc_aggregation(
+        self, timeseries_api, test_collection_name
+    ):
         """Test OHLC (Open-High-Low-Close) aggregation for financial data."""
         # Create a financial data collection
         financial_collection = "test_financial_ts"
@@ -197,12 +204,12 @@ class TestTimeSeriesAPI:
                 ValueColumn(
                     name="price",
                     data_type=ValueType.FLOAT,
-                    aggregation=AggregationType.OHLC
+                    aggregation=AggregationType.OHLC,
                 ),
                 ValueColumn(
                     name="volume",
                     data_type=ValueType.INT,
-                    aggregation=AggregationType.SUM
+                    aggregation=AggregationType.SUM,
                 ),
             ],
             tag_columns=["symbol"],
@@ -217,14 +224,16 @@ class TestTimeSeriesAPI:
         for i in range(50):
             timestamp = now + timedelta(minutes=i)
             price = base_price + (i % 10) - 5 + (i % 3) * 0.1
-            points.append({
-                "timestamp": timestamp.isoformat() + "Z",
-                "values": {
-                    "price": price,
-                    "volume": 1000 + i * 100,
-                },
-                "tags": {"symbol": "AAPL"}
-            })
+            points.append(
+                {
+                    "timestamp": timestamp.isoformat() + "Z",
+                    "values": {
+                        "price": price,
+                        "volume": 1000 + i * 100,
+                    },
+                    "tags": {"symbol": "AAPL"},
+                }
+            )
 
         timeseries_api.ingest(collection_id=financial_collection, points=points)
 
@@ -287,14 +296,14 @@ class TestTimeSeriesAPI:
                 "stage": "downsample",
                 "bucket_ms": 60000,  # 1 minute
                 "aggregation": "AVG",
-                "value_columns": ["cpu_usage", "memory_usage"]
+                "value_columns": ["cpu_usage", "memory_usage"],
             },
             {
                 "stage": "group_by",
                 "tag_columns": ["region"],
                 "aggregation": "AVG",
                 "bucket_ms": 300000,  # 5 minutes
-            }
+            },
         ]
 
         # Execute aggregation
@@ -302,7 +311,7 @@ class TestTimeSeriesAPI:
             collection_id=test_collection_name,
             start_time=start_time,
             end_time=end_time,
-            pipeline=pipeline
+            pipeline=pipeline,
         )
 
         # Verify results
@@ -337,7 +346,11 @@ class TestTimeSeriesAPI:
             name=collection,
             timestamp_column="timestamp",
             value_columns=[
-                ValueColumn(name="value", data_type=ValueType.FLOAT, aggregation=AggregationType.AVG)
+                ValueColumn(
+                    name="value",
+                    data_type=ValueType.FLOAT,
+                    aggregation=AggregationType.AVG,
+                )
             ],
             tag_columns=["source"],
         )
@@ -349,11 +362,13 @@ class TestTimeSeriesAPI:
         points = []
         for i in range(batch_size):
             timestamp = now + timedelta(microseconds=i * 100)  # 0.1ms intervals
-            points.append({
-                "timestamp": timestamp.isoformat() + "Z",
-                "values": {"value": float(i)},
-                "tags": {"source": f"src-{i % 10}"}
-            })
+            points.append(
+                {
+                    "timestamp": timestamp.isoformat() + "Z",
+                    "values": {"value": float(i)},
+                    "tags": {"source": f"src-{i % 10}"},
+                }
+            )
 
         # Measure ingestion time
         start_time = time.time()
@@ -361,7 +376,7 @@ class TestTimeSeriesAPI:
         end_time = time.time()
 
         elapsed = end_time - start_time
-        throughput = batch_size / elapsed if elapsed > 0 else float('inf')
+        throughput = batch_size / elapsed if elapsed > 0 else float("inf")
 
         # Verify
         assert result.get("ingested_count", 0) > 0
@@ -390,8 +405,8 @@ class TestTimeSeriesAdapterMethods:
                     "value_columns": [
                         {"name": "metric", "data_type": "float", "aggregation": "avg"}
                     ],
-                    "tag_columns": ["host"]
-                }
+                    "tag_columns": ["host"],
+                },
             )
         except Exception:
             pass  # Collection might already exist
@@ -413,7 +428,7 @@ class TestTimeSeriesAdapterMethods:
                 "value_columns": [
                     {"name": "value", "data_type": "float", "aggregation": "avg"}
                 ],
-            }
+            },
         )
 
         assert result is not None
@@ -430,16 +445,17 @@ class TestTimeSeriesAdapterMethods:
         points = []
         for i in range(10):
             timestamp = now + timedelta(seconds=i)
-            points.append({
-                "timestamp": timestamp.isoformat() + "Z",
-                "values": {"metric": 10.0 + i},
-                "tags": {"host": "server1"}
-            })
+            points.append(
+                {
+                    "timestamp": timestamp.isoformat() + "Z",
+                    "values": {"metric": 10.0 + i},
+                    "tags": {"host": "server1"},
+                }
+            )
 
         # Ingest
         result = client.ingest_timeseries(
-            collection_name=setup_collection,
-            points=points
+            collection_name=setup_collection, points=points
         )
 
         assert result is not None
@@ -450,9 +466,7 @@ class TestTimeSeriesAdapterMethods:
         end_time = (now + timedelta(minutes=1)).isoformat() + "Z"
 
         results = client.query_timeseries(
-            collection_name=setup_collection,
-            start_time=start_time,
-            end_time=end_time
+            collection_name=setup_collection, start_time=start_time, end_time=end_time
         )
 
         assert results is not None
@@ -471,7 +485,7 @@ class TestTimeSeriesAdapterMethods:
             start_time=start_time,
             end_time=end_time,
             aggregation="AVG",
-            bucket_ms=60000  # 1 minute
+            bucket_ms=60000,  # 1 minute
         )
 
         assert results is not None
@@ -486,7 +500,7 @@ class TestTimeSeriesAdapterMethods:
                 "value_columns": [
                     {"name": "value", "data_type": "float", "aggregation": "avg"}
                 ],
-            }
+            },
         )
 
         # List collections
@@ -508,7 +522,7 @@ class TestTimeSeriesAdapterMethods:
                 "value_columns": [
                     {"name": "value", "data_type": "float", "aggregation": "avg"}
                 ],
-            }
+            },
         )
 
         # Delete

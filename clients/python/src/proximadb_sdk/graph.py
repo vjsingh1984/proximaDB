@@ -361,13 +361,17 @@ class ProximaDBGraph:
         }
 
         # Check for MATCH clause
-        match_match = re.search(r"MATCH\s+(.+?)(?:\s+WHERE|\s+RETURN|$)", query, re.IGNORECASE)
+        match_match = re.search(
+            r"MATCH\s+(.+?)(?:\s+WHERE|\s+RETURN|$)", query, re.IGNORECASE
+        )
         if match_match:
             result["match"] = True
             match_pattern = match_match.group(1)
 
             # Parse node pattern: (variable:Label {property: value})
-            node_pattern = re.search(r"\((\w+)(?::(\w+))?(?:\s*\{(.+)\})?\)", match_pattern)
+            node_pattern = re.search(
+                r"\((\w+)(?::(\w+))?(?:\s*\{(.+)\})?\)", match_pattern
+            )
             if node_pattern:
                 if node_pattern.group(2):  # Label
                     result["start_labels"] = [node_pattern.group(2)]
@@ -376,7 +380,9 @@ class ProximaDBGraph:
                     # Parse properties: key: value, key2: value2
                     props_str = node_pattern.group(3)
                     for prop_match in re.finditer(r'(\w+)\s*:\s*"?(\w+)"?', props_str):
-                        result["start_properties"][prop_match.group(1)] = prop_match.group(2)
+                        result["start_properties"][prop_match.group(1)] = (
+                            prop_match.group(2)
+                        )
 
             # Parse relationship pattern: -[r:TYPE]->
             rel_pattern = re.search(r"-?\[(\w+)(?::(\w+))?\]->", match_pattern)
@@ -412,7 +418,11 @@ class ProximaDBGraph:
                     graph_id=self._graph_id,
                     start_node_id=start_id,
                     max_depth=1,  # Default depth
-                    edge_types=[parsed_query["traversal"]["type"]] if parsed_query.get("traversal") else None,
+                    edge_types=(
+                        [parsed_query["traversal"]["type"]]
+                        if parsed_query.get("traversal")
+                        else None
+                    ),
                 )
 
                 if traversal_result.get("nodes"):
@@ -591,10 +601,12 @@ class ProximaDBGraph:
         # Find relationship patterns: -[r:TYPE]->
         rel_matches = re.finditer(r"-?\[(\w+)(?::(\w+))?\]->", pattern)
         for match in rel_matches:
-            relationships.append({
-                "variable": match.group(1),
-                "type": match.group(2),
-            })
+            relationships.append(
+                {
+                    "variable": match.group(1),
+                    "type": match.group(2),
+                }
+            )
 
         # If no relationships, just return matching nodes
         if not relationships:
@@ -610,11 +622,13 @@ class ProximaDBGraph:
                 )
 
                 return [
-                    {first_var: GraphNode(
-                        id=n["id"],
-                        labels=n.get("labels", []),
-                        properties=n.get("properties", {}),
-                    )}
+                    {
+                        first_var: GraphNode(
+                            id=n["id"],
+                            labels=n.get("labels", []),
+                            properties=n.get("properties", {}),
+                        )
+                    }
                     for n in node_results.get("nodes", [])
                 ]
 

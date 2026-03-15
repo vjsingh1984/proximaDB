@@ -175,7 +175,11 @@ class BaseProtocolAdapter(ABC):
         )
 
     def insert_document(
-        self, collection_name: str, document: Dict[str, Any], id: Optional[str] = None, **kwargs
+        self,
+        collection_name: str,
+        document: Dict[str, Any],
+        id: Optional[str] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Insert a document."""
         raise NotImplementedError(
@@ -183,7 +187,11 @@ class BaseProtocolAdapter(ABC):
         )
 
     def get_document(
-        self, collection_name: str, doc_id: str, projection: Optional[List[str]] = None, **kwargs
+        self,
+        collection_name: str,
+        doc_id: str,
+        projection: Optional[List[str]] = None,
+        **kwargs,
     ) -> Optional[Dict[str, Any]]:
         """Get a document by ID."""
         raise NotImplementedError(

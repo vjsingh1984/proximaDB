@@ -29,8 +29,7 @@ use std::sync::Arc;
 
 // CDC connectors - MongoDB
 use proximadb::cdc::connectors::mongodb::change_event::{
-    ChangeStreamOperation, DocumentKey, MongoChangeEvent, Namespace, ResumeToken,
-    UpdateDescription,
+    ChangeStreamOperation, DocumentKey, MongoChangeEvent, Namespace, ResumeToken, UpdateDescription,
 };
 use proximadb::cdc::connectors::mongodb::config::{MongoCollectionConfig, MongoDbConfig};
 use proximadb::cdc::connectors::mongodb::connector::MongoDbConnector;
@@ -65,9 +64,8 @@ fn test_change_event_json_roundtrip() {
         .add_metadata("name", serde_json::json!("test_user"))
         .add_metadata("age", serde_json::json!(30));
 
-    let event =
-        ChangeEvent::new_insert(source, "users".to_string(), "user_1".to_string(), state)
-            .with_lsn(12345);
+    let event = ChangeEvent::new_insert(source, "users".to_string(), "user_1".to_string(), state)
+        .with_lsn(12345);
 
     // Serialize to JSON bytes
     let bytes = event
@@ -114,8 +112,8 @@ fn test_change_event_all_operations_serialize() {
         let bytes = event
             .to_json_bytes()
             .expect("Should serialize any operation");
-        let parsed = ChangeEvent::from_json_bytes(&bytes)
-            .expect("Should deserialize any operation");
+        let parsed =
+            ChangeEvent::from_json_bytes(&bytes).expect("Should deserialize any operation");
         assert_eq!(parsed.operation, op);
     }
 }
@@ -131,7 +129,9 @@ fn test_change_event_with_transaction_info() {
         .with_transaction(tx)
         .with_header("trace_id", "abc-123");
 
-    let bytes = event.to_json_bytes().expect("Should serialize with tx info");
+    let bytes = event
+        .to_json_bytes()
+        .expect("Should serialize with tx info");
     let parsed = ChangeEvent::from_json_bytes(&bytes).expect("Should deserialize with tx info");
 
     assert!(parsed.transaction.is_some());
@@ -488,10 +488,7 @@ fn test_mongo_change_event_update_with_description() {
     };
 
     assert!(event.is_update());
-    assert_eq!(
-        event.get_id(),
-        Some("507f1f77bcf86cd799439011".to_string())
-    );
+    assert_eq!(event.get_id(), Some("507f1f77bcf86cd799439011".to_string()));
 
     let desc = event
         .update_description
@@ -667,8 +664,8 @@ async fn test_kafka_sink_simulated_batch() {
 
 #[tokio::test]
 async fn test_kafka_sink_topic_resolution() {
-    let config = KafkaConfig::new(vec!["localhost:9092"])
-        .with_topic_pattern("cdc.{database}.{collection}");
+    let config =
+        KafkaConfig::new(vec!["localhost:9092"]).with_topic_pattern("cdc.{database}.{collection}");
 
     let event = ChangeEvent::new(
         SourceInfo::postgres("mydb", "public", "srv"),
@@ -683,8 +680,7 @@ async fn test_kafka_sink_topic_resolution() {
 
 #[tokio::test]
 async fn test_kafka_sink_key_resolution() {
-    let config =
-        KafkaConfig::new(vec!["localhost:9092"]).with_key_pattern("{collection}.{key}");
+    let config = KafkaConfig::new(vec!["localhost:9092"]).with_key_pattern("{collection}.{key}");
 
     let event = ChangeEvent::new(
         SourceInfo::postgres("db", "public", "srv"),
@@ -724,8 +720,7 @@ fn test_message_format_json_serialization() {
     let format = MessageFormat::Json;
     let bytes = format.serialize(&event).expect("JSON serialize ok");
 
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).expect("Valid JSON output");
+    let json: serde_json::Value = serde_json::from_slice(&bytes).expect("Valid JSON output");
     assert_eq!(json["operation"], "insert");
     assert_eq!(json["collection"], "test");
     assert_eq!(json["key"], "k1");
@@ -743,10 +738,7 @@ async fn test_offset_store_roundtrip() {
         .with_metadata("filename", "mysql-bin.000003")
         .with_metadata("gtid", "abc-def:42");
 
-    store
-        .store(&offset)
-        .await
-        .expect("Should store offset");
+    store.store(&offset).await.expect("Should store offset");
 
     let retrieved = store
         .get("mysql_12345")
@@ -864,7 +856,10 @@ async fn test_mysql_connector_to_change_event() {
     };
     let change = connector.to_change_event(rotate_event).await;
     assert!(change.is_none());
-    let pos = connector.current_position().await.expect("position updated");
+    let pos = connector
+        .current_position()
+        .await
+        .expect("position updated");
     assert_eq!(pos.filename, "mysql-bin.000002");
 }
 
@@ -907,10 +902,7 @@ async fn test_mysql_connector_current_offset_gtid() {
         .expect("Connector created");
 
     // No offset initially
-    let offset = connector
-        .current_offset()
-        .await
-        .expect("No error");
+    let offset = connector.current_offset().await.expect("No error");
     assert!(offset.is_none());
 
     // Set GTID
@@ -920,10 +912,7 @@ async fn test_mysql_connector_current_offset_gtid() {
         .await
         .expect("No error")
         .expect("Offset exists");
-    assert_eq!(
-        offset.metadata.get("gtid"),
-        Some(&"my-gtid:10".to_string())
-    );
+    assert_eq!(offset.metadata.get("gtid"), Some(&"my-gtid:10".to_string()));
 }
 
 #[tokio::test]
@@ -1137,9 +1126,7 @@ async fn test_mongodb_connector_process_event() {
 async fn test_mongodb_connector_vector_parsing() {
     let config = MongoDbConfig::new("mongodb://localhost:27017")
         .with_database("testdb")
-        .with_collection(
-            MongoCollectionConfig::new("vectors").with_vector_field("embedding"),
-        );
+        .with_collection(MongoCollectionConfig::new("vectors").with_vector_field("embedding"));
     let offset_store = Arc::new(MemoryOffsetStore::new());
 
     let connector = MongoDbConnector::new(config, offset_store)
@@ -1174,7 +1161,10 @@ async fn test_mongodb_connector_vector_parsing() {
 
     // The vector field should be extracted
     assert!(after.vector.is_some());
-    assert_eq!(after.vector.as_ref().expect("vec"), &vec![1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(
+        after.vector.as_ref().expect("vec"),
+        &vec![1.0, 2.0, 3.0, 4.0]
+    );
     // The label should be in metadata
     assert!(after.metadata.contains_key("label"));
 }
@@ -1265,8 +1255,7 @@ async fn test_full_pipeline_mongodb_to_kafka() {
     assert_eq!(change_event.collection, "analytics.metrics");
 
     // 4. Send through Kafka sink (simulated)
-    let kafka_config = KafkaConfig::new(vec!["broker:9092"])
-        .with_topic_pattern("cdc.{collection}");
+    let kafka_config = KafkaConfig::new(vec!["broker:9092"]).with_topic_pattern("cdc.{collection}");
     let kafka_sink = KafkaSink::new(kafka_config);
     kafka_sink.connect().await.expect("Kafka connect ok");
 
@@ -1313,10 +1302,7 @@ async fn test_full_pipeline_batch_through_sinks() {
     let kafka = KafkaSink::new(kafka_config);
     kafka.connect().await.expect("Kafka connect ok");
 
-    kafka
-        .send_batch(events)
-        .await
-        .expect("Kafka batch ok");
+    kafka.send_batch(events).await.expect("Kafka batch ok");
     assert_eq!(kafka.stats().events_sent, 20);
 
     kafka.close().await.expect("Kafka close ok");

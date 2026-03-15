@@ -732,7 +732,12 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_node(
-        self, graph: str, node_id: str, labels: List[str], properties: Dict[str, Any], **kwargs
+        self,
+        graph: str,
+        node_id: str,
+        labels: List[str],
+        properties: Dict[str, Any],
+        **kwargs,
     ) -> Dict[str, Any]:
         """Create a graph node via embedded API."""
         try:
@@ -758,7 +763,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         to_node: str,
         edge_type: str,
         properties: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """Create a graph edge via embedded API."""
         try:
@@ -778,9 +783,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to create edge: {e}")
             raise
 
-    def execute_graph_query(
-        self, graph: str, query: str, **kwargs
-    ) -> Dict[str, Any]:
+    def execute_graph_query(self, graph: str, query: str, **kwargs) -> Dict[str, Any]:
         """Execute a graph query via embedded API."""
         try:
             if hasattr(self._db, "execute_graph_query"):
@@ -790,6 +793,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                 # Fall back to multi-modal query execution
                 if hasattr(self._db, "execute_multi_modal_query"):
                     from ..models import MultiModalQuery, QueryComponent
+
                     component = QueryComponent(
                         type="graph",
                         collection=graph,
@@ -799,7 +803,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                     result = self._db.execute_multi_modal_query(mm_query)
                     return {"results": result}
                 else:
-                    raise NotImplementedError("Graph query not implemented in embedded API")
+                    raise NotImplementedError(
+                        "Graph query not implemented in embedded API"
+                    )
         except Exception as e:
             logger.error(f"Failed to execute graph query: {e}")
             raise
@@ -814,7 +820,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         """Create a document collection via embedded API."""
         try:
             if hasattr(self._db, "create_document_collection"):
-                result = self._db.create_document_collection(name=name, config=config or {})
+                result = self._db.create_document_collection(
+                    name=name, config=config or {}
+                )
                 return {"success": True, "collection_id": name, "result": result}
             else:
                 # Fall back to creating a vector collection with document metadata
@@ -842,7 +850,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         }
 
     def insert_document(
-        self, collection_name: str, document: Dict[str, Any], id: Optional[str] = None, **kwargs
+        self,
+        collection_name: str,
+        document: Dict[str, Any],
+        id: Optional[str] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Insert a document via embedded API."""
         try:
@@ -868,7 +880,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
 
         # Create a vector record from the document
         # Use a dummy vector for now (could be improved with embedding)
-        doc_id = id or document.get("id") or f"doc_{hash(json.dumps(document, sort_keys=True))}"
+        doc_id = (
+            id
+            or document.get("id")
+            or f"doc_{hash(json.dumps(document, sort_keys=True))}"
+        )
 
         # Store document content in the source field
         vector_record = VectorRecord(
@@ -878,7 +894,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             metadata={
                 "document_type": "document",
                 "collection": collection_name,
-                **document.get("metadata", {})
+                **document.get("metadata", {}),
             },
         )
 
@@ -891,7 +907,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         }
 
     def get_document(
-        self, collection_name: str, doc_id: str, projection: Optional[List[str]] = None, **kwargs
+        self,
+        collection_name: str,
+        doc_id: str,
+        projection: Optional[List[str]] = None,
+        **kwargs,
     ) -> Optional[Dict[str, Any]]:
         """Get a document by ID via embedded API."""
         try:
@@ -1019,7 +1039,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                     collection=collection_name,
                     doc_id=doc_id,
                 )
-                return result.get("deleted", False) if isinstance(result, dict) else result
+                return (
+                    result.get("deleted", False) if isinstance(result, dict) else result
+                )
             else:
                 # Fall back to vector storage
                 result = self.delete_vectors(collection_name, [doc_id])
@@ -1054,7 +1076,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         try:
             if hasattr(self._db, "delete_document_collection"):
                 result = self._db.delete_document_collection(collection=collection_name)
-                return result.get("success", False) if isinstance(result, dict) else result
+                return (
+                    result.get("success", False) if isinstance(result, dict) else result
+                )
             else:
                 # Fall back to deleting vector collection
                 return self.delete_collection(collection_name)
@@ -1127,7 +1151,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         """Create a time-series collection via embedded API."""
         try:
             if hasattr(self._db, "create_timeseries_collection"):
-                result = self._db.create_timeseries_collection(name=name, config=config or {})
+                result = self._db.create_timeseries_collection(
+                    name=name, config=config or {}
+                )
                 return {"success": True, "collection_id": name, "result": result}
             else:
                 # Fall back to creating a vector collection
@@ -1240,7 +1266,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def _query_timeseries_as_vector(
-        self, collection_name: str, start_time: str, end_time: str, tag_filters: Optional[Dict[str, str]]
+        self,
+        collection_name: str,
+        start_time: str,
+        end_time: str,
+        tag_filters: Optional[Dict[str, str]],
     ) -> Dict[str, Any]:
         """Query time-series data using vector storage as fallback."""
         import json
@@ -1278,11 +1308,13 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                 except json.JSONDecodeError:
                     point_data = {"raw": v.source}
 
-            filtered_points.append({
-                "timestamp": timestamp,
-                "values": point_data.get("values", {}),
-                "tags": metadata.get("tags", {}),
-            })
+            filtered_points.append(
+                {
+                    "timestamp": timestamp,
+                    "values": point_data.get("values", {}),
+                    "tags": metadata.get("tags", {}),
+                }
+            )
 
         return {
             "raw_points": filtered_points,
@@ -1315,8 +1347,12 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         """Delete a time-series collection via embedded API."""
         try:
             if hasattr(self._db, "delete_timeseries_collection"):
-                result = self._db.delete_timeseries_collection(collection=collection_name)
-                return result.get("success", False) if isinstance(result, dict) else result
+                result = self._db.delete_timeseries_collection(
+                    collection=collection_name
+                )
+                return (
+                    result.get("success", False) if isinstance(result, dict) else result
+                )
             else:
                 # Fall back to deleting vector collection
                 return self.delete_collection(collection_name)
