@@ -4,12 +4,13 @@
 //! and ensuring consistency with the gRPC API.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     response::Json,
 };
 use tracing::error;
 
 use crate::errors::{ApiError, ApiResult};
+use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1 as v1;
 
@@ -22,6 +23,7 @@ use crate::proto::proximadb_v1 as v1;
 pub async fn progressive_search_handler(
     Path(collection_id): Path<String>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<Json<v1::VectorOperationResponse>> {
     // Parse the JSON value into VectorSearchRequest
@@ -40,7 +42,7 @@ pub async fn progressive_search_handler(
     // Delegate directly to unified v1 handler
     let resp = state
         .unified_handlers
-        .handle_vector_search_v1(request)
+        .handle_vector_search_v1_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
             error!(

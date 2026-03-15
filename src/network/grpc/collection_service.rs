@@ -18,6 +18,14 @@ impl CollectionServiceImpl {
     pub fn into_server(self) -> CollectionServiceServer<Self> {
         CollectionServiceServer::new(self)
     }
+
+    fn extract_tenant_id<T>(request: &Request<T>) -> Option<String> {
+        request
+            .metadata()
+            .get("x-tenant-id")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string())
+    }
 }
 
 #[tonic::async_trait]
@@ -26,6 +34,7 @@ impl CollectionService for CollectionServiceImpl {
         &self,
         request: Request<proximadb_v1::CollectionConfig>,
     ) -> Result<Response<proximadb_v1::Collection>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let cfg = request.into_inner();
         // Create v1 CollectionRequest
         let request = crate::proto::proximadb_v1::CollectionRequest {
@@ -58,7 +67,7 @@ impl CollectionService for CollectionServiceImpl {
         };
         let resp = self
             .unified_handlers
-            .handle_collection_operation(request)
+            .handle_collection_operation_for_tenant(request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("CreateCollection failed: {}", e)))?;
 
@@ -83,6 +92,7 @@ impl CollectionService for CollectionServiceImpl {
         &self,
         request: Request<proximadb_v1::GetCollectionRequest>,
     ) -> Result<Response<proximadb_v1::Collection>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         let request = crate::proto::proximadb_v1::CollectionRequest {
             operation: crate::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
@@ -94,7 +104,7 @@ impl CollectionService for CollectionServiceImpl {
         };
         let resp = self
             .unified_handlers
-            .handle_collection_operation(request)
+            .handle_collection_operation_for_tenant(request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("GetCollection failed: {}", e)))?;
         if let Some(collection) = resp.collection {
@@ -106,8 +116,9 @@ impl CollectionService for CollectionServiceImpl {
 
     async fn list_collections(
         &self,
-        _request: Request<proximadb_v1::ListCollectionsRequest>,
+        request: Request<proximadb_v1::ListCollectionsRequest>,
     ) -> Result<Response<proximadb_v1::ListCollectionsResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let request = crate::proto::proximadb_v1::CollectionRequest {
             operation: crate::proto::proximadb_v1::CollectionOperation::CollectionList as i32,
             collection_id: None,
@@ -118,7 +129,7 @@ impl CollectionService for CollectionServiceImpl {
         };
         let resp = self
             .unified_handlers
-            .handle_collection_operation(request)
+            .handle_collection_operation_for_tenant(request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("ListCollections failed: {}", e)))?;
         let collections = resp.collections;
@@ -131,6 +142,7 @@ impl CollectionService for CollectionServiceImpl {
         &self,
         request: Request<proximadb_v1::DeleteCollectionRequest>,
     ) -> Result<Response<proximadb_v1::DeleteCollectionResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         let request = crate::proto::proximadb_v1::CollectionRequest {
             operation: crate::proto::proximadb_v1::CollectionOperation::CollectionDelete as i32,
@@ -142,7 +154,7 @@ impl CollectionService for CollectionServiceImpl {
         };
         let _ = self
             .unified_handlers
-            .handle_collection_operation(request)
+            .handle_collection_operation_for_tenant(request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("DeleteCollection failed: {}", e)))?;
         Ok(Response::new(proximadb_v1::DeleteCollectionResponse {

@@ -32,12 +32,13 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::errors::{ApiError, ApiResult};
+use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{CollectionConfig, CollectionOperation, CollectionRequest};
 
@@ -202,6 +203,7 @@ pub struct CreateCollectionV2Response {
 /// - `409 Conflict`: Collection already exists
 /// - `500 Internal Server Error`: Creation failed
 pub async fn create_collection_v2(
+    Extension(tenant): Extension<TenantContext>,
     State(state): State<AppState>,
     Json(request): Json<CreateCollectionV2Request>,
 ) -> ApiResult<Json<CreateCollectionV2Response>> {
@@ -385,7 +387,7 @@ pub async fn create_collection_v2(
     // Create collection via unified handlers
     match state
         .unified_handlers
-        .handle_collection_operation(collection_request)
+        .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(_resp) => {
@@ -478,6 +480,7 @@ pub struct CollectionStatsV2 {
 /// - `500 Internal Server Error`: Retrieval failed
 pub async fn get_collection_v2(
     Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
     State(state): State<AppState>,
 ) -> ApiResult<Json<CollectionV2Response>> {
     debug!("V2 API: Getting collection '{}'", collection_id);
@@ -500,7 +503,7 @@ pub async fn get_collection_v2(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {
@@ -622,6 +625,7 @@ pub struct CollectionV2Summary {
 /// - `500 Internal Server Error`: List operation failed
 pub async fn list_collections_v2(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Query(params): Query<ListCollectionsV2Query>,
 ) -> ApiResult<Json<ListCollectionsV2Response>> {
     let limit = params.limit.unwrap_or(100);
@@ -651,7 +655,7 @@ pub async fn list_collections_v2(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {

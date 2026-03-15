@@ -33,13 +33,14 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
 use crate::errors::{ApiError, ApiResult};
+use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{
     SearchQuery, VectorBatchRequest, VectorRecord, VectorSearchRequest,
@@ -459,6 +460,7 @@ pub struct InsertError {
 pub async fn insert_records(
     Path(collection): Path<String>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(request): Json<InsertRecordsRequest>,
 ) -> ApiResult<Json<InsertRecordsResponse>> {
     info!(
@@ -582,7 +584,7 @@ pub async fn insert_records(
 
     match state
         .unified_handlers
-        .handle_vector_batch_v1(batch_request)
+        .handle_vector_batch_v1_for_tenant(batch_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {
@@ -736,6 +738,7 @@ pub struct TypedSearchResponse {
 pub async fn search_with_typed_filters(
     Path(collection): Path<String>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(request): Json<TypedSearchRequest>,
 ) -> ApiResult<Json<TypedSearchResponse>> {
     let start_time = std::time::Instant::now();
@@ -861,7 +864,7 @@ pub async fn search_with_typed_filters(
     // Execute search via unified handlers
     match state
         .unified_handlers
-        .handle_vector_search_v1(search_request)
+        .handle_vector_search_v1_for_tenant(search_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {
@@ -988,6 +991,7 @@ pub struct RecordV2Response {
 pub async fn get_record_v2(
     Path((collection_id, record_id)): Path<(String, String)>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Query(params): Query<GetRecordV2Query>,
 ) -> ApiResult<Json<RecordV2Response>> {
     debug!(
@@ -1019,7 +1023,13 @@ pub async fn get_record_v2(
     // Get vector via unified handlers
     match state
         .unified_handlers
-        .handle_vector_v1(&collection_id, &record_id, include_vector, true)
+        .handle_vector_v1_for_tenant(
+            &collection_id,
+            &record_id,
+            include_vector,
+            true,
+            Some(&tenant.tenant_id),
+        )
         .await
     {
         Ok(resp) => {

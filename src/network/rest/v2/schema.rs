@@ -34,12 +34,13 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::errors::{ApiError, ApiResult};
+use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 
 use super::collections::{ColumnDefinition, SchemaDefinition};
@@ -81,6 +82,7 @@ pub struct SchemaResponse {
 /// - `500 Internal Server Error`: Retrieval failed
 pub async fn get_schema(
     Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
     State(state): State<AppState>,
 ) -> ApiResult<Json<SchemaResponse>> {
     debug!("V2 API: Getting schema for collection '{}'", collection_id);
@@ -103,7 +105,7 @@ pub async fn get_schema(
 
     let collection_response = state
         .unified_handlers
-        .handle_collection_operation(collection_request)
+        .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
             if e.to_string().contains("not found") {
@@ -347,6 +349,7 @@ pub struct SchemaChange {
 /// - `500 Internal Server Error`: Update failed
 pub async fn update_schema(
     Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
     State(state): State<AppState>,
     Json(request): Json<UpdateSchemaRequest>,
 ) -> ApiResult<Json<UpdateSchemaResponse>> {
@@ -450,7 +453,7 @@ pub async fn update_schema(
 
     let collection_response = state
         .unified_handlers
-        .handle_collection_operation(collection_request)
+        .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
             if e.to_string().contains("not found") {
@@ -677,7 +680,7 @@ pub async fn update_schema(
 
     state
         .unified_handlers
-        .handle_collection_operation(update_request)
+        .handle_collection_operation_for_tenant(update_request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to update collection schema: {}", e)))?;
 

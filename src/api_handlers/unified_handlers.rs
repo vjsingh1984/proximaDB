@@ -390,6 +390,26 @@ impl UnifiedHandlers {
         &self,
         request: CollectionRequest,
     ) -> Result<CollectionResponse> {
+        self.handle_collection_operation_internal(request, None)
+            .await
+    }
+
+    /// Handle collection operations with tenant-scoped access control.
+    pub async fn handle_collection_operation_for_tenant(
+        &self,
+        request: CollectionRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<CollectionResponse> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.handle_collection_operation_internal(request, tenant_context.as_ref())
+            .await
+    }
+
+    async fn handle_collection_operation_internal(
+        &self,
+        request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<CollectionResponse> {
         let request_id = generate_request_id();
         let start_time = std::time::Instant::now();
 
@@ -407,17 +427,23 @@ impl UnifiedHandlers {
         let (success, collection, collections_opt, affected_count, _error_msg, error_code) =
             match operation {
                 CollectionOperation::CollectionCreate => {
-                    self.handle_create_collection(request).await?
+                    self.handle_create_collection(request, tenant_context)
+                        .await?
                 }
-                CollectionOperation::CollectionGet => self.handle_collection(request).await?,
+                CollectionOperation::CollectionGet => {
+                    self.handle_collection(request, tenant_context).await?
+                }
                 CollectionOperation::CollectionList => {
-                    self.handle_list_collections(request).await?
+                    self.handle_list_collections(request, tenant_context)
+                        .await?
                 }
                 CollectionOperation::CollectionUpdate => {
-                    self.handle_update_collection(request).await?
+                    self.handle_update_collection(request, tenant_context)
+                        .await?
                 }
                 CollectionOperation::CollectionDelete => {
-                    self.handle_delete_collection(request).await?
+                    self.handle_delete_collection(request, tenant_context)
+                        .await?
                 }
                 _ => {
                     return Ok(CollectionResponse {
@@ -463,10 +489,55 @@ impl UnifiedHandlers {
     // /// Handle vector search operations with unified logic
     // Note: Non-v1 search handler removed. Use handle_vector_search_v1 directly.
 
+    pub async fn resolve_collection_id_for_tenant(
+        &self,
+        collection_identifier: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<Option<String>> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.resolve_collection_id_internal(collection_identifier, tenant_context.as_ref())
+            .await
+    }
+
+    async fn resolve_collection_id_internal(
+        &self,
+        collection_identifier: &str,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<Option<String>> {
+        if let Some(tenant_ctx) = tenant_context {
+            Ok(self
+                .collection_service
+                .get_collection_with_tenant_context(collection_identifier, Some(tenant_ctx))
+                .await?
+                .map(|collection| collection.id))
+        } else {
+            self.resolve_collection_id_cached(collection_identifier)
+                .await
+        }
+    }
+
     /// v1 wrapper: accept v1::VectorSearchRequest and return v1 response using v1 builders
+    pub async fn handle_vector_search_v1_for_tenant(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.handle_vector_search_v1_internal(request, tenant_context.as_ref())
+            .await
+    }
+
     pub async fn handle_vector_search_v1(
         &self,
         request: crate::proto::proximadb_v1::VectorSearchRequest,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        self.handle_vector_search_v1_internal(request, None).await
+    }
+
+    async fn handle_vector_search_v1_internal(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let request_id = generate_request_id();
         let start_time = std::time::Instant::now();
@@ -484,7 +555,7 @@ impl UnifiedHandlers {
         // Resolve collection name/ID to canonical ID (with caching)
         let collection_identifier = &request.collection_id;
         let collection_id: String = match self
-            .resolve_collection_id_cached(collection_identifier)
+            .resolve_collection_id_internal(collection_identifier, tenant_context)
             .await?
         {
             Some(id) => id,
@@ -508,7 +579,7 @@ impl UnifiedHandlers {
 
         let mut response = self
             .vector_operations_service
-            .search_v1(canonical_request)
+            .search_v1_with_tenant_context(canonical_request, tenant_context)
             .await?;
 
         if let Some(metrics) = response.metrics.as_mut() {
@@ -582,9 +653,27 @@ impl UnifiedHandlers {
     /// v1 native: accept v1::VectorBatchRequest, delegate to v1 services, and return v1 response
     ///
     /// REFACTORED: Now uses clean typed insert_batch() instead of JSON serialization
+    pub async fn handle_vector_batch_v1_for_tenant(
+        &self,
+        request: crate::proto::proximadb_v1::VectorBatchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.handle_vector_batch_v1_internal(request, tenant_context.as_ref())
+            .await
+    }
+
     pub async fn handle_vector_batch_v1(
         &self,
         request: crate::proto::proximadb_v1::VectorBatchRequest,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        self.handle_vector_batch_v1_internal(request, None).await
+    }
+
+    async fn handle_vector_batch_v1_internal(
+        &self,
+        request: crate::proto::proximadb_v1::VectorBatchRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let request_id = generate_request_id();
         let vector_count = request.vectors.len();
@@ -602,7 +691,7 @@ impl UnifiedHandlers {
 
         // Resolve to canonical collection ID (with caching)
         let collection_id: String = match self
-            .resolve_collection_id_cached(collection_identifier)
+            .resolve_collection_id_internal(collection_identifier, tenant_context)
             .await?
         {
             Some(id) => id,
@@ -644,7 +733,7 @@ impl UnifiedHandlers {
         // Call the clean typed service method
         match self
             .vector_operations_service
-            .insert_batch(&collection_id, vectors)
+            .insert_batch_with_tenant_context(&collection_id, vectors, tenant_context)
             .await
         {
             Ok(result) => {
@@ -695,6 +784,25 @@ impl UnifiedHandlers {
     }
 
     /// v1 wrapper for VectorGet → returns v1 response
+    pub async fn handle_vector_v1_for_tenant(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+        include_vector: bool,
+        include_metadata: bool,
+        tenant_id: Option<&str>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.handle_vector_v1_internal(
+            collection_id,
+            vector_id,
+            include_vector,
+            include_metadata,
+            tenant_context.as_ref(),
+        )
+        .await
+    }
+
     pub async fn handle_vector_v1(
         &self,
         collection_id: &str,
@@ -702,12 +810,29 @@ impl UnifiedHandlers {
         include_vector: bool,
         include_metadata: bool,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        self.handle_vector_v1_internal(
+            collection_id,
+            vector_id,
+            include_vector,
+            include_metadata,
+            None,
+        )
+        .await
+    }
+
+    async fn handle_vector_v1_internal(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+        include_vector: bool,
+        include_metadata: bool,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let start_time = std::time::Instant::now();
 
         // Resolve canonical collection ID
         let resolved_collection_id: String = match self
-            .collection_service
-            .resolve_collection_id(collection_id)
+            .resolve_collection_id_internal(collection_id, tenant_context)
             .await?
         {
             Some(id) => id,
@@ -1063,6 +1188,7 @@ impl UnifiedHandlers {
     async fn handle_create_collection(
         &self,
         request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1078,7 +1204,16 @@ impl UnifiedHandlers {
         // Apply smart defaults at API boundary
         crate::proto::defaults::apply_collection_config_defaults(&mut config);
 
-        match self.collection_service.create_collection(&config).await {
+        let response = match tenant_context {
+            Some(tenant_ctx) => {
+                self.collection_service
+                    .create_collection_with_tenant_context(&config, Some(tenant_ctx))
+                    .await
+            }
+            None => self.collection_service.create_collection(&config).await,
+        };
+
+        match response {
             Ok(response) => {
                 if response.success {
                     Ok((true, response.collection, None, 1, None, None))
@@ -1111,6 +1246,7 @@ impl UnifiedHandlers {
     async fn handle_collection(
         &self,
         request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1120,6 +1256,35 @@ impl UnifiedHandlers {
         Option<String>,
     )> {
         let collection_identifier = request.collection_id.context("Missing collection ID")?;
+
+        if let Some(tenant_ctx) = tenant_context {
+            return match self
+                .collection_service
+                .get_collection_with_tenant_context(&collection_identifier, Some(tenant_ctx))
+                .await
+            {
+                Ok(Some(collection)) => Ok((true, Some(collection), None, 1, None, None)),
+                Ok(None) => Ok((
+                    false,
+                    None,
+                    None,
+                    0,
+                    Some("Collection not found".to_string()),
+                    Some("NOT_FOUND".to_string()),
+                )),
+                Err(e) => {
+                    error!("Failed to get tenant-scoped collection: {:?}", e);
+                    Ok((
+                        false,
+                        None,
+                        None,
+                        0,
+                        Some(e.to_string()),
+                        Some("GET_FAILED".to_string()),
+                    ))
+                }
+            };
+        }
 
         // Resolve collection name/ID to collection ID
         let collection_id = match self
@@ -1173,6 +1338,7 @@ impl UnifiedHandlers {
     async fn handle_list_collections(
         &self,
         _request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1181,7 +1347,11 @@ impl UnifiedHandlers {
         Option<String>,
         Option<String>,
     )> {
-        match self.collection_service.list_collections().await {
+        match self
+            .collection_service
+            .list_collections_with_tenant_context(tenant_context)
+            .await
+        {
             Ok(collections) => {
                 let count = collections.len() as i64;
                 Ok((true, None, Some(collections), count, None, None))
@@ -1204,6 +1374,7 @@ impl UnifiedHandlers {
     async fn handle_update_collection(
         &self,
         request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1217,22 +1388,41 @@ impl UnifiedHandlers {
             .collection_config
             .context("Missing collection config")?;
 
-        // Resolve collection name/ID to collection ID
-        let collection_id = match self
-            .collection_service
-            .resolve_collection_id(&collection_identifier)
-            .await?
-        {
-            Some(id) => id,
-            None => {
-                return Ok((
-                    false,
-                    None,
-                    None,
-                    0,
-                    Some("Collection not found".to_string()),
-                    Some("NOT_FOUND".to_string()),
-                ));
+        let collection_id = if let Some(tenant_ctx) = tenant_context {
+            match self
+                .collection_service
+                .get_collection_with_tenant_context(&collection_identifier, Some(tenant_ctx))
+                .await?
+            {
+                Some(collection) => collection.id,
+                None => {
+                    return Ok((
+                        false,
+                        None,
+                        None,
+                        0,
+                        Some("Collection not found".to_string()),
+                        Some("NOT_FOUND".to_string()),
+                    ));
+                }
+            }
+        } else {
+            match self
+                .collection_service
+                .resolve_collection_id(&collection_identifier)
+                .await?
+            {
+                Some(id) => id,
+                None => {
+                    return Ok((
+                        false,
+                        None,
+                        None,
+                        0,
+                        Some("Collection not found".to_string()),
+                        Some("NOT_FOUND".to_string()),
+                    ));
+                }
             }
         };
 
@@ -1282,6 +1472,7 @@ impl UnifiedHandlers {
     async fn handle_delete_collection(
         &self,
         request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1291,6 +1482,53 @@ impl UnifiedHandlers {
         Option<String>,
     )> {
         let collection_identifier = request.collection_id.context("Missing collection ID")?;
+
+        if let Some(tenant_ctx) = tenant_context {
+            return match self
+                .collection_service
+                .delete_collection_with_tenant_context(&collection_identifier, Some(tenant_ctx))
+                .await
+            {
+                Ok(response) => {
+                    if response.success {
+                        self.invalidate_collection_cache(&collection_identifier);
+                        if let Some(collection) = &response.collection {
+                            self.invalidate_collection_cache(&collection.id);
+                        }
+                        Ok((true, None, None, 1, None, None))
+                    } else if response.error_code.as_deref() == Some("NOT_FOUND") {
+                        Ok((
+                            false,
+                            None,
+                            None,
+                            0,
+                            Some("Collection not found".to_string()),
+                            Some("NOT_FOUND".to_string()),
+                        ))
+                    } else {
+                        Ok((
+                            false,
+                            None,
+                            None,
+                            0,
+                            response.error_code.clone(),
+                            response.error_code,
+                        ))
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to delete tenant-scoped collection: {:?}", e);
+                    Ok((
+                        false,
+                        None,
+                        None,
+                        0,
+                        Some(e.to_string()),
+                        Some("DELETE_FAILED".to_string()),
+                    ))
+                }
+            };
+        }
 
         // Resolve collection name/ID to collection ID
         let collection_id = match self

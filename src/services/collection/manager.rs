@@ -157,6 +157,117 @@ impl CollectionService {
         &self.storage_config
     }
 
+    pub fn multi_tenant_enabled(&self) -> bool {
+        self.tenant_manager.is_some()
+    }
+
+    pub fn load_tenant_context(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Option<crate::storage::tenant::TenantContext>> {
+        match &self.tenant_manager {
+            Some(tenant_manager) => {
+                let tenant_id = tenant_id
+                    .map(str::trim)
+                    .filter(|tenant_id| !tenant_id.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Tenant context is required for this operation")
+                    })?;
+                let tenant_ctx = tenant_manager
+                    .get_tenant(tenant_id)
+                    .with_context(|| format!("Tenant '{}' not found", tenant_id))?;
+                Ok(Some(tenant_ctx))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn collection_tenant_id(collection: &Collection) -> Option<String> {
+        let config = collection.config.as_ref()?;
+
+        if let Some(tag_tenant) = config
+            .tags
+            .iter()
+            .find_map(|tag| tag.strip_prefix("tenant:"))
+            .filter(|tenant_id| !tenant_id.is_empty())
+        {
+            return Some(tag_tenant.to_string());
+        }
+
+        let tenant_isolated = config.tags.iter().any(|tag| tag == "tenant_isolated:true");
+        if tenant_isolated {
+            return config
+                .owner
+                .as_ref()
+                .filter(|owner| !owner.is_empty())
+                .cloned();
+        }
+
+        None
+    }
+
+    async fn count_tenant_collections(&self, tenant_id: &str) -> Result<usize> {
+        Ok(self
+            .metadata_backend
+            .list_collections()
+            .await?
+            .into_iter()
+            .filter(|collection| {
+                Self::collection_tenant_id(collection).as_deref() == Some(tenant_id)
+            })
+            .count())
+    }
+
+    async fn validate_tenant_collection_access(
+        &self,
+        collection_identifier: &str,
+        tenant_ctx: &crate::storage::tenant::TenantContext,
+    ) -> Result<Option<Collection>> {
+        if let Some(ref tenant_manager) = self.tenant_manager {
+            if !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id) {
+                warn!(
+                    "🚨 Tenant '{}' is not active; denying access to collection '{}'",
+                    tenant_ctx.tenant_id, collection_identifier
+                );
+                return Ok(None);
+            }
+        }
+
+        let collection = self
+            .metadata_backend
+            .get_collection(collection_identifier)
+            .await?;
+
+        let Some(collection) = collection else {
+            return Ok(None);
+        };
+
+        let Some(collection_tenant) = Self::collection_tenant_id(&collection) else {
+            warn!(
+                "🚨 Collection '{}' is missing tenant metadata; denying tenant-scoped access",
+                collection_identifier
+            );
+            return Ok(None);
+        };
+
+        if collection_tenant != tenant_ctx.tenant_id {
+            warn!(
+                "🚨 Cross-tenant access attempt blocked: user tenant {} tried to access collection owned by tenant {}",
+                tenant_ctx.tenant_id, collection_tenant
+            );
+            return Ok(None);
+        }
+
+        if self.rbac_enforcer.is_some() {
+            debug!(
+                "RBAC enforcer configured for tenant '{}', but collection service access checks still need user context wiring",
+                tenant_ctx.tenant_id
+            );
+        }
+
+        Ok(Some(collection))
+    }
+
     /// Create collection - single method for all handlers (REST, gRPC, etc)
     /// Takes native types directly, no proto/avro conversions needed
     /// NOW WITH MULTI-TENANT SUPPORT
@@ -174,47 +285,52 @@ impl CollectionService {
         collection_name: &str,
         tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
-        // NEW: Tenant validation for get operations
-        if let Some(ref _tenant_manager) = self.tenant_manager {
-            if let Some(tenant_ctx) = tenant_context {
-                // Validate tenant ownership of collection
-                // TODO: Implement get_collection_tenant method
-                let collection_tenant = tenant_ctx.tenant_id.clone(); // Placeholder
+        if let Some(tenant_ctx) = tenant_context.filter(|_| self.tenant_manager.is_some()) {
+            let collection = self
+                .validate_tenant_collection_access(collection_name, tenant_ctx)
+                .await?;
 
-                if collection_tenant != tenant_ctx.tenant_id {
-                    warn!(
-                        "🚨 Cross-tenant access attempt blocked: user tenant {} tried to access collection owned by tenant {}",
-                        tenant_ctx.tenant_id, collection_tenant
-                    );
-                    return Ok(None); // Return None instead of error for get operations
-                }
-
-                // RBAC permission validation
-                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
-                    // TODO: Implement check_permission method
-                    let permission_result = crate::storage::tenant::rbac::PermissionResult {
-                        allowed: true,
-                        reason: "Placeholder".to_string(),
-                    };
-
-                    if !permission_result.allowed {
-                        warn!(
-                            "🚨 RBAC access denied for tenant {} to collection {}",
-                            tenant_ctx.tenant_id, collection_name
-                        );
-                        return Ok(None);
-                    }
-                }
-
+            if collection.is_some() {
                 debug!(
-                    "✅ Tenant validation passed for collection access: tenant={}, collection={}",
+                    "✅ Tenant ownership validation passed for collection access: tenant={}, collection={}",
                     tenant_ctx.tenant_id, collection_name
                 );
             }
+
+            return Ok(collection);
         }
 
         // Proceed with normal collection retrieval
         self.metadata_backend.get_collection(collection_name).await
+    }
+
+    pub async fn list_collections_with_tenant_context(
+        &self,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<Vec<Collection>> {
+        let collections = self.metadata_backend.list_collections().await?;
+
+        if let Some(tenant_ctx) = tenant_context.filter(|_| self.tenant_manager.is_some()) {
+            if let Some(ref tenant_manager) = self.tenant_manager {
+                if !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id) {
+                    warn!(
+                        "🚨 Tenant '{}' is not active; returning empty collection list",
+                        tenant_ctx.tenant_id
+                    );
+                    return Ok(Vec::new());
+                }
+            }
+
+            let filtered = collections
+                .into_iter()
+                .filter(|collection| {
+                    Self::collection_tenant_id(collection).as_deref() == Some(&tenant_ctx.tenant_id)
+                })
+                .collect();
+            return Ok(filtered);
+        }
+
+        Ok(collections)
     }
 
     /// Delete collection with tenant validation
@@ -225,56 +341,28 @@ impl CollectionService {
     ) -> Result<CollectionServiceResponse> {
         debug!("🗑️ Deleting collection: {}", collection_name);
 
-        // NEW: Tenant validation for delete operations
-        if let Some(ref _tenant_manager) = self.tenant_manager {
-            if let Some(tenant_ctx) = tenant_context {
-                // Validate tenant ownership
-                // TODO: Implement get_collection_tenant method
-                let collection_tenant = tenant_ctx.tenant_id.clone(); // Placeholder
+        if let Some(tenant_ctx) = tenant_context.filter(|_| self.tenant_manager.is_some()) {
+            let collection = self
+                .validate_tenant_collection_access(collection_name, tenant_ctx)
+                .await?;
 
-                if collection_tenant != tenant_ctx.tenant_id {
-                    return Ok(CollectionServiceResponse::error(
-                        format!(
-                            "Cross-tenant delete attempt denied: collection {} not owned by tenant {}",
-                            collection_name, tenant_ctx.tenant_id
-                        ),
-                        0, // processing_time_us
-                    ));
-                }
-
-                // RBAC permission validation (delete requires admin or owner permissions)
-                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
-                    // TODO: Implement check_permission method
-                    let permission_result = crate::storage::tenant::rbac::PermissionResult {
-                        allowed: true,
-                        reason: "Placeholder".to_string(),
-                    };
-
-                    if !permission_result.allowed {
-                        return Ok(CollectionServiceResponse::error(
-                            format!(
-                                "Permission denied: tenant {} cannot delete collections",
-                                tenant_ctx.tenant_id
-                            ),
-                            0, // processing_time_us
-                        ));
-                    }
-                }
-
-                debug!(
-                    "✅ Tenant validation passed for collection deletion: tenant={}, collection={}",
-                    tenant_ctx.tenant_id, collection_name
-                );
+            if collection.is_none() {
+                return Ok(CollectionServiceResponse::error(
+                    format!(
+                        "TENANT_ACCESS_DENIED: collection {} is not accessible to tenant {}",
+                        collection_name, tenant_ctx.tenant_id
+                    ),
+                    0,
+                ));
             }
+
+            debug!(
+                "✅ Tenant ownership validation passed for collection deletion: tenant={}, collection={}",
+                tenant_ctx.tenant_id, collection_name
+            );
         }
 
-        // Proceed with deletion (existing logic)
-        // For now, return success response - full deletion logic would be implemented here
-        Ok(CollectionServiceResponse::success(
-            "deleted".to_string(), // collection_uuid
-            "deleted".to_string(), // storage_path
-            0,                     // processing_time_us
-        ))
+        self.delete_collection(collection_name).await
     }
 
     /// Create collection with tenant context validation
@@ -289,44 +377,49 @@ impl CollectionService {
         );
         let start_time = std::time::Instant::now();
 
-        // NEW: Multi-tenant validation if tenant manager is available
-        if let Some(ref _tenant_manager) = self.tenant_manager {
-            if let Some(tenant_ctx) = tenant_context {
-                // Step 1: Validate tenant access and resource limits
-                // TODO: Implement check_collection_creation_limits method
-                let resource_check = crate::storage::tenant::rbac::PermissionResult {
-                    allowed: true,
-                    reason: "Placeholder".to_string(),
-                };
+        if let Some(ref tenant_manager) = self.tenant_manager {
+            let Some(tenant_ctx) = tenant_context else {
+                return Ok(CollectionServiceResponse::error(
+                    "TENANT_CONTEXT_REQUIRED: tenant context is required when multi-tenant mode is enabled".to_string(),
+                    start_time.elapsed().as_micros() as i64,
+                ));
+            };
 
-                if !resource_check.allowed {
-                    return Ok(CollectionServiceResponse::error(
-                        format!("Tenant resource limit exceeded: {}", resource_check.reason),
-                        0, // processing_time_us
-                    ));
-                }
+            if !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id) {
+                return Ok(CollectionServiceResponse::error(
+                    format!(
+                        "TENANT_INACTIVE: tenant {} is not active",
+                        tenant_ctx.tenant_id
+                    ),
+                    start_time.elapsed().as_micros() as i64,
+                ));
+            }
 
-                // Step 2: RBAC permission validation if enforcer is available
-                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
-                    // TODO: Implement check_permission method
-                    let permission_result = crate::storage::tenant::rbac::PermissionResult {
-                        allowed: true,
-                        reason: "Placeholder".to_string(),
-                    };
+            let tenant_collection_count =
+                self.count_tenant_collections(&tenant_ctx.tenant_id).await?;
+            let tenant_limit = tenant_ctx.resource_limits.max_collections as usize;
 
-                    if !permission_result.allowed {
-                        return Ok(CollectionServiceResponse::error(
-                            format!("Permission denied: {}", permission_result.reason),
-                            0, // processing_time_us
-                        ));
-                    }
-                }
+            if tenant_collection_count >= tenant_limit {
+                return Ok(CollectionServiceResponse::error(
+                    format!(
+                        "TENANT_COLLECTION_LIMIT_EXCEEDED: tenant {} has reached its collection limit ({})",
+                        tenant_ctx.tenant_id, tenant_limit
+                    ),
+                    start_time.elapsed().as_micros() as i64,
+                ));
+            }
 
+            if self.rbac_enforcer.is_some() {
                 debug!(
-                    "✅ Tenant validation passed for collection creation: tenant={}",
+                    "RBAC enforcer configured for tenant '{}', but collection creation checks still need user context wiring",
                     tenant_ctx.tenant_id
                 );
             }
+
+            debug!(
+                "✅ Tenant validation passed for collection creation: tenant={}, existing_collections={}, limit={}",
+                tenant_ctx.tenant_id, tenant_collection_count, tenant_limit
+            );
         }
 
         // Resolve compression and storage configuration
@@ -334,6 +427,10 @@ impl CollectionService {
 
         // NEW: Add tenant metadata to collection if tenant context is provided
         if let Some(tenant_ctx) = tenant_context {
+            enriched_config
+                .tags
+                .retain(|tag| !tag.starts_with("tenant:") && tag != "tenant_isolated:true");
+
             // Add tenant ID to collection tags for tenant isolation (metadata field doesn't exist)
             enriched_config
                 .tags

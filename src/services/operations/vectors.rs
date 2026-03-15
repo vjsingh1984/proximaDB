@@ -219,6 +219,100 @@ impl VectorOperationsService {
         self.collection_cache.remove(collection_id);
         tracing::debug!("🗑️ Invalidated collection cache for '{}'", collection_id);
     }
+
+    async fn validate_tenant_collection_access(
+        &self,
+        collection_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<()> {
+        if self.tenant_manager.is_none() {
+            return Ok(());
+        }
+
+        let tenant_ctx = tenant_context.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Tenant context is required for collection '{}' in multi-tenant mode",
+                collection_id
+            )
+        })?;
+
+        let collection = self
+            .collection_service
+            .get_collection_with_tenant_context(collection_id, Some(tenant_ctx))
+            .await?;
+
+        if collection.is_none() {
+            warn!(
+                "🚨 Tenant '{}' attempted to access collection '{}' without authorization",
+                tenant_ctx.tenant_id, collection_id
+            );
+            return Err(anyhow::anyhow!(
+                "Collection '{}' is not accessible for tenant '{}'",
+                collection_id,
+                tenant_ctx.tenant_id
+            ));
+        }
+
+        if self.rbac_enforcer.is_some() {
+            debug!(
+                "RBAC enforcer configured for tenant '{}', but vector operations still need user context wiring for collection-level authorization",
+                tenant_ctx.tenant_id
+            );
+        }
+
+        Ok(())
+    }
+
+    fn ensure_tenant_metadata(vectors: &mut [VectorRecord], tenant_id: &str) -> Result<()> {
+        use crate::proto::proximadb_v1::sql_value::Value as SqlValueVariant;
+
+        for vector in vectors.iter_mut() {
+            match vector
+                .metadata
+                .get("tenant_id")
+                .and_then(|value| value.value.as_ref())
+            {
+                Some(SqlValueVariant::StringValue(existing_tenant))
+                    if existing_tenant == tenant_id => {}
+                Some(SqlValueVariant::StringValue(existing_tenant)) => {
+                    return Err(anyhow::anyhow!(
+                        "Vector '{}' has tenant_id '{}' but request is scoped to tenant '{}'",
+                        vector.id,
+                        existing_tenant,
+                        tenant_id
+                    ));
+                }
+                Some(other) => {
+                    return Err(anyhow::anyhow!(
+                        "Vector '{}' has non-string tenant_id metadata: {:?}",
+                        vector.id,
+                        other
+                    ));
+                }
+                None => {
+                    vector.metadata.insert(
+                        "tenant_id".to_string(),
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(SqlValueVariant::StringValue(tenant_id.to_string())),
+                        },
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn search_v1_with_tenant_context(
+        &self,
+        req: crate::proto::proximadb_v1::VectorSearchRequest,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        self.validate_tenant_collection_access(&req.collection_id, tenant_context)
+            .await?;
+        self.search_v1(req).await
+    }
+
     /// Public v1 boundary: execute vector search and return v1 response
     pub async fn search_v1(
         &self,
@@ -767,6 +861,30 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<VectorRecord>,
     ) -> Result<BatchOperationResult> {
+        self.insert_batch_internal(collection_id, vectors).await
+    }
+
+    pub async fn insert_batch_with_tenant_context(
+        &self,
+        collection_id: &str,
+        mut vectors: Vec<VectorRecord>,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<BatchOperationResult> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+
+        if let Some(tenant_ctx) = tenant_context {
+            Self::ensure_tenant_metadata(&mut vectors, &tenant_ctx.tenant_id)?;
+        }
+
+        self.insert_batch_internal(collection_id, vectors).await
+    }
+
+    async fn insert_batch_internal(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<BatchOperationResult> {
         let decision = self.bulk_write_router.should_use_direct_write(&vectors);
 
         debug!(
@@ -880,48 +998,18 @@ impl VectorOperationsService {
             collection_id, k
         );
 
-        // NEW: Multi-tenant validation and security
-        if let Some(ref _tenant_manager) = self.tenant_manager {
-            if let Some(tenant_ctx) = tenant_context {
-                // STEP 1: Validate tenant ownership of collection
-                // TODO: Implement get_collection_tenant method
-                let collection_tenant = tenant_ctx.tenant_id.clone(); // Temporary stub
-
-                if collection_tenant != tenant_ctx.tenant_id {
-                    warn!(
-                        "🚨 CRITICAL: Cross-tenant search attempt blocked - user tenant {} tried to search collection owned by tenant {}",
-                        tenant_ctx.tenant_id, collection_tenant
-                    );
-                    return Ok(vec![]); // Return empty results for security
-                }
-
-                // STEP 2: RBAC permission validation
-                if let Some(_rbac_enforcer) = &self.rbac_enforcer {
-                    // TODO: Implement check_permission method
-                    let _permission_result = true; // Temporary stub
-
-                    if !_permission_result {
-                        warn!(
-                            "🚨 RBAC: Search permission denied for user {} on collection {}",
-                            "system_user", collection_id
-                        ); // TODO: Get user from context
-                        return Ok(vec![]);
-                    }
-                }
-
-                // STEP 3: Rate limiting and SLA enforcement
-                // TODO: Implement check_search_rate_limit method
-                let _sla_allowed = true; // Temporary stub
-                if !_sla_allowed {
-                    warn!("🚨 Rate limit exceeded for tenant {}", tenant_ctx.tenant_id);
-                    return Err(anyhow::anyhow!("Tenant rate limit exceeded"));
-                }
-
-                debug!(
-                    "✅ Tenant validation passed for search: tenant={}, collection={}",
-                    tenant_ctx.tenant_id, collection_id
-                );
-            }
+        if let Some(tenant_ctx) = tenant_context {
+            self.validate_tenant_collection_access(collection_id, Some(tenant_ctx))
+                .await?;
+            debug!(
+                "✅ Tenant validation passed for search: tenant={}, collection={}",
+                tenant_ctx.tenant_id, collection_id
+            );
+        } else if self.tenant_manager.is_some() {
+            debug!(
+                "Vector search executed without tenant context for collection '{}'; caller must provide explicit tenant scoping in multi-tenant deployments",
+                collection_id
+            );
         }
 
         let config = config.clone();
@@ -3204,6 +3292,65 @@ impl VectorOperationsService {
                 .unwrap_or_default()
                 .as_secs()
         }))
+    }
+}
+
+#[cfg(test)]
+mod tenant_tests {
+    use super::*;
+
+    fn make_vector(id: &str) -> VectorRecord {
+        VectorRecord {
+            id: id.to_string(),
+            vector: vec![1.0, 2.0, 3.0],
+            metadata: HashMap::new(),
+            timestamp: None,
+            updated_at: None,
+            expires_at: None,
+            version: None,
+            source: None,
+        }
+    }
+
+    #[test]
+    fn ensure_tenant_metadata_adds_missing_tenant_id() {
+        let mut vectors = vec![make_vector("vec-1")];
+
+        VectorOperationsService::ensure_tenant_metadata(&mut vectors, "tenant_a").unwrap();
+
+        let tenant_value = vectors[0]
+            .metadata
+            .get("tenant_id")
+            .and_then(|value| value.value.as_ref());
+        assert!(matches!(
+            tenant_value,
+            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value))
+                if value == "tenant_a"
+        ));
+    }
+
+    #[test]
+    fn ensure_tenant_metadata_rejects_mismatched_tenant_id() {
+        let mut vector = make_vector("vec-1");
+        vector.metadata.insert(
+            "tenant_id".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "tenant_b".to_string(),
+                )),
+            },
+        );
+
+        let err = VectorOperationsService::ensure_tenant_metadata(
+            std::slice::from_mut(&mut vector),
+            "tenant_a",
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("request is scoped to tenant 'tenant_a'")
+        );
     }
 }
 
