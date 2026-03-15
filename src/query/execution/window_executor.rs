@@ -63,12 +63,12 @@ impl WindowFunction {
     }
 
     /// Returns true if the function is a ranking function.
-    fn is_ranking(&self) -> bool {
+    pub fn is_ranking(&self) -> bool {
         matches!(self, Self::RowNumber | Self::Rank | Self::DenseRank)
     }
 
     /// Returns true if the function is a navigation function.
-    fn is_navigation(&self) -> bool {
+    pub fn is_navigation(&self) -> bool {
         matches!(self, Self::Lag | Self::Lead | Self::FirstValue | Self::LastValue)
     }
 }

@@ -19,10 +19,10 @@ use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::write_ahead_log::unified_operations::{
-    TimeSeriesOperation, UnifiedWALEntry, UnifiedWALOperation, UnifiedWALReader, UnifiedWALWriter,
+    TimeSeriesOperation, UnifiedWALOperation, UnifiedWALReader, UnifiedWALWriter,
 };
 
-use super::{OHLCBar, TimeSeriesEngine};
+use super::TimeSeriesEngine;
 
 /// WAL recovery handler for the TST engine.
 ///
