@@ -166,25 +166,9 @@ pub async fn vector_search(
         request.collection_id, tenant.tenant_id, tenant.source
     );
 
-    // Route through unified facade when adapter is available
-    if let Some(ref adapter) = state.query_adapter {
-        debug!("Using unified facade routing for vector search");
-        return match adapter.vector_search(request.clone()).await {
-            Ok(response) => Ok(JsonResponse(response)),
-            Err(e) => {
-                error!(
-                    "Vector search (facade) failed for collection '{}': {:?}",
-                    request.collection_id, e
-                );
-                Err(ApiError::Internal(format!("Search failed: {}", e)))
-            }
-        };
-    }
-
-    // Legacy path: route through unified_handlers directly
     match state
         .unified_handlers
-        .handle_vector_search_v1(request.clone())
+        .handle_vector_search_v1_for_tenant(request.clone(), Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => Ok(JsonResponse(response)),
@@ -248,7 +232,11 @@ pub async fn vector_batch(
     }
 
     // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
-    match state.unified_handlers.handle_vector_batch_v1(request).await {
+    match state
+        .unified_handlers
+        .handle_vector_batch_v1_for_tenant(request, Some(&tenant.tenant_id))
+        .await
+    {
         Ok(v1_resp) => Ok(JsonResponse(v1_resp)),
         Err(e) => {
             error!("Vector batch operation failed: {}", e);
@@ -260,6 +248,7 @@ pub async fn vector_batch(
 /// Get a single vector by ID
 pub async fn get_vector(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Path((collection_id, vector_id)): Path<(String, String)>,
     Query(params): Query<GetVectorParams>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
@@ -278,7 +267,13 @@ pub async fn get_vector(
     // Delegate to UnifiedHandlers
     match state
         .unified_handlers
-        .handle_vector_v1(&collection_id, &vector_id, include_vector, include_metadata)
+        .handle_vector_v1_for_tenant(
+            &collection_id,
+            &vector_id,
+            include_vector,
+            include_metadata,
+            Some(&tenant.tenant_id),
+        )
         .await
     {
         Ok(response) => Ok(JsonResponse(response)),
@@ -295,6 +290,7 @@ pub async fn get_vector(
 /// Delete a single vector by ID
 pub async fn delete_vector(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Path((collection_id, vector_id)): Path<(String, String)>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
     info!(
@@ -327,7 +323,7 @@ pub async fn delete_vector(
     // Delegate to vector batch handler (which supports deletions)
     match state
         .unified_handlers
-        .handle_vector_batch_v1(delete_request)
+        .handle_vector_batch_v1_for_tenant(delete_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => {
@@ -389,7 +385,7 @@ pub async fn collection_operation(
     // Direct delegation to UnifiedHandlers
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => Ok(JsonResponse(response)),
@@ -445,7 +441,7 @@ pub async fn get_collection(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => JsonResponse(response).into_response(),
@@ -503,7 +499,7 @@ pub async fn list_collections(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => JsonResponse(response).into_response(),
@@ -537,7 +533,7 @@ pub async fn delete_collection(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => JsonResponse(response).into_response(),
@@ -576,7 +572,7 @@ pub async fn vector_search_with_metadata(
     // Execute search
     match state
         .unified_handlers
-        .handle_vector_search_v1(request)
+        .handle_vector_search_v1_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => {
@@ -1043,6 +1039,7 @@ pub async fn hybrid_index(
 /// Body: { "collection": "...", "vector": [...], "text_query": "...", "top_k": 10 }
 pub async fn hybrid_search(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(request): Json<HybridSearchRequest>,
 ) -> ApiResult<JsonResponse<HybridSearchResponse>> {
     let start_time = std::time::Instant::now();
@@ -1093,18 +1090,11 @@ pub async fn hybrid_search(
         };
 
         // Use query adapter if available, else legacy handlers
-        let response = if let Some(ref adapter) = state.query_adapter {
-            adapter
-                .vector_search(search_request)
-                .await
-                .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?
-        } else {
-            state
-                .unified_handlers
-                .handle_vector_search_v1(search_request)
-                .await
-                .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?
-        };
+        let response = state
+            .unified_handlers
+            .handle_vector_search_v1_for_tenant(search_request, Some(&tenant.tenant_id))
+            .await
+            .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?;
 
         // Return the raw results - will be converted to VectorResult later
         // NOTE: Old VectorSearchInput code removed (type doesn't exist)
@@ -1459,8 +1449,12 @@ pub fn create_router(state: AppState) -> axum::Router {
     router = router.nest("/api/v1/experimental/hybrid", hybrid_router);
     info!("✅ Experimental Hybrid API endpoints enabled at /api/v1/experimental/hybrid");
 
-    // Convert to Router<()> by providing state
-    let router = router.with_state(state);
+    // Convert to Router<()> by providing state, with default tenant context for all routes
+    let default_tenant = TenantContext::new(
+        "default",
+        crate::network::middleware::tenant::TenantIdSource::Default,
+    );
+    let router = router.with_state(state).layer(Extension(default_tenant));
 
     // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
     #[cfg(feature = "ai_endpoints")]
