@@ -5400,3 +5400,92 @@ impl RaptorWriter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[cfg(feature = "experimental-engines")]
+mod tests {
+    use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlVal, SqlArray, SqlObject};
+
+    #[test]
+    fn test_array_value_serialization_roundtrip() {
+        use prost::Message;
+
+        let array = SqlArray {
+            values: vec![
+                SqlValue { value: Some(SqlVal::StringValue("hello".to_string())) },
+                SqlValue { value: Some(SqlVal::NumberValue(42.0)) },
+                SqlValue { value: Some(SqlVal::BoolValue(true)) },
+            ],
+        };
+
+        // Encode
+        let mut buf = Vec::new();
+        array.encode(&mut buf).expect("ArrayValue encoding should succeed");
+        assert!(!buf.is_empty(), "Encoded array should not be empty");
+
+        // Decode
+        let decoded = SqlArray::decode(buf.as_slice()).expect("ArrayValue decoding should succeed");
+        assert_eq!(decoded.values.len(), 3);
+        assert_eq!(
+            decoded.values[0].value,
+            Some(SqlVal::StringValue("hello".to_string()))
+        );
+        assert_eq!(decoded.values[1].value, Some(SqlVal::NumberValue(42.0)));
+        assert_eq!(decoded.values[2].value, Some(SqlVal::BoolValue(true)));
+    }
+
+    #[test]
+    fn test_object_value_serialization_roundtrip() {
+        use prost::Message;
+
+        let object = SqlObject {
+            fields: vec![
+                ("name".to_string(), SqlValue { value: Some(SqlVal::StringValue("test".to_string())) }),
+                ("count".to_string(), SqlValue { value: Some(SqlVal::Int64Value(99)) }),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        // Encode
+        let mut buf = Vec::new();
+        object.encode(&mut buf).expect("ObjectValue encoding should succeed");
+        assert!(!buf.is_empty(), "Encoded object should not be empty");
+
+        // Decode
+        let decoded = SqlObject::decode(buf.as_slice()).expect("ObjectValue decoding should succeed");
+        assert_eq!(decoded.fields.len(), 2);
+        assert_eq!(
+            decoded.fields.get("name").and_then(|v| v.value.as_ref()),
+            Some(&SqlVal::StringValue("test".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_metadata_bytes_to_base64() {
+        use base64::Engine;
+
+        let bytes = vec![0x48, 0x65, 0x6c, 0x6c, 0x6f]; // "Hello"
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        assert_eq!(encoded, "SGVsbG8=");
+
+        // Verify roundtrip
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&encoded)
+            .expect("base64 decode should succeed");
+        assert_eq!(decoded, bytes);
+    }
+
+    #[test]
+    fn test_metadata_array_to_json() {
+        let array = SqlArray {
+            values: vec![
+                SqlValue { value: Some(SqlVal::StringValue("a".to_string())) },
+                SqlValue { value: Some(SqlVal::NumberValue(1.0)) },
+            ],
+        };
+
+        let json_val = serde_json::to_value(&array).expect("Array should serialize to JSON");
+        assert!(json_val.is_object()); // SqlArray serializes as an object with "values" key
+    }
+}

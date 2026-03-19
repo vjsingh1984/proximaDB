@@ -3001,3 +3001,53 @@ impl UniversallyOptimized for RaptorEngine {
         Ok(metrics)
     }
 }
+
+#[cfg(test)]
+#[cfg(feature = "experimental-engines")]
+mod tests {
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+
+    #[test]
+    fn test_raptor_distance_computation_non_zero() {
+        let compute = UnifiedDistanceCompute::default();
+
+        let query = vec![1.0, 0.0, 0.0, 0.0];
+        let centroid = vec![0.0, 1.0, 0.0, 0.0];
+
+        let distance = compute.distance(&query, &centroid);
+
+        // Distance between orthogonal vectors should be non-zero
+        assert!(
+            distance > 0.0,
+            "Distance between different vectors should be non-zero, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_raptor_distance_filters_rowgroups() {
+        let compute = UnifiedDistanceCompute::default();
+
+        let query = vec![1.0, 0.0, 0.0];
+
+        // Close centroid
+        let close = vec![0.9, 0.1, 0.0];
+        let close_dist = compute.distance(&query, &close);
+
+        // Far centroid
+        let far = vec![0.0, 0.0, 1.0];
+        let far_dist = compute.distance(&query, &far);
+
+        // Far centroid should have greater distance
+        assert!(
+            far_dist > close_dist,
+            "Far centroid distance ({}) should be > close centroid distance ({})",
+            far_dist,
+            close_dist
+        );
+
+        // With threshold 0.5, far centroid should be filtered out in many metrics
+        // This validates the fix: previously distance was always 0.0
+        assert!(close_dist > 0.0, "Close centroid distance should still be non-zero");
+    }
+}

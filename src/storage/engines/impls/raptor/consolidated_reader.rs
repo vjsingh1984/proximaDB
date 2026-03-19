@@ -4123,3 +4123,109 @@ impl RaptorReader {
 // Reason: Unnecessary wrapper adding stack overhead
 // Solution: Direct calls to unified cache modules (vector_store, metadata_store, etc.)
 // Benefit: Reduced stack depth, less function call overhead, cleaner code
+
+#[cfg(test)]
+#[cfg(feature = "experimental-engines")]
+mod tests {
+    use super::*;
+    use super::compare_sql_values;
+    use crate::proto::proximadb_v1::SqlValue;
+    use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+
+    #[test]
+    fn test_compare_sql_values_numbers() {
+        let a = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
+        let b = SqlValue { value: Some(SqlVal::NumberValue(2.0)) };
+        assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Less);
+        assert_eq!(compare_sql_values(&b, &a), std::cmp::Ordering::Greater);
+        assert_eq!(compare_sql_values(&a, &a), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_sql_values_int64() {
+        let a = SqlValue { value: Some(SqlVal::Int64Value(10)) };
+        let b = SqlValue { value: Some(SqlVal::Int64Value(20)) };
+        assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Less);
+        assert_eq!(compare_sql_values(&b, &a), std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn test_compare_sql_values_strings() {
+        let a = SqlValue { value: Some(SqlVal::StringValue("apple".to_string())) };
+        let b = SqlValue { value: Some(SqlVal::StringValue("banana".to_string())) };
+        assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn test_compare_sql_values_cross_numeric_types() {
+        let int_val = SqlValue { value: Some(SqlVal::Int64Value(5)) };
+        let float_val = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        assert_eq!(compare_sql_values(&int_val, &float_val), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn test_predicate_eq_within_range() {
+        use super::super::common::{ColumnStats, ColumnEncoding};
+
+        let min = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
+        let max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        let value = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+
+        // Value 5.0 is within [1.0, 10.0] — Eq should pass
+        assert!(
+            compare_sql_values(&value, &min) != std::cmp::Ordering::Less
+                && compare_sql_values(&value, &max) != std::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn test_predicate_eq_outside_range() {
+        let min = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
+        let max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        let value = SqlValue { value: Some(SqlVal::NumberValue(15.0)) };
+
+        // Value 15.0 is outside [1.0, 10.0] — Eq should fail
+        assert!(
+            !(compare_sql_values(&value, &min) != std::cmp::Ordering::Less
+                && compare_sql_values(&value, &max) != std::cmp::Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn test_predicate_lt_pruning() {
+        let min = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        let value = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+
+        // Lt: min < value should be false (min=10 is NOT < value=5)
+        assert_ne!(
+            compare_sql_values(&min, &value),
+            std::cmp::Ordering::Less
+        );
+
+        // Lt: min < value should be true (min=1 IS < value=5)
+        let low_min = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
+        assert_eq!(
+            compare_sql_values(&low_min, &value),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn test_predicate_gt_pruning() {
+        let max = SqlValue { value: Some(SqlVal::NumberValue(3.0)) };
+        let value = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+
+        // Gt: max > value should be false (max=3 is NOT > value=5)
+        assert_ne!(
+            compare_sql_values(&max, &value),
+            std::cmp::Ordering::Greater
+        );
+
+        // Gt: max > value should be true (max=10 IS > value=5)
+        let high_max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        assert_eq!(
+            compare_sql_values(&high_max, &value),
+            std::cmp::Ordering::Greater
+        );
+    }
+}

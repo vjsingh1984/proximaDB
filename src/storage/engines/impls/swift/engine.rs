@@ -1962,4 +1962,91 @@ mod tests {
         assert!(engine.supports_feature("quantization"));
         assert!(!engine.supports_feature("unknown_feature"));
     }
+
+    #[cfg(feature = "experimental-engines")]
+    #[tokio::test]
+    async fn test_swift_vector_by_id_miss() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let engine = SwiftEngine::new().await.unwrap();
+
+        // Lookup in non-existent path should return None (not error)
+        let result = engine
+            .vector_by_id("test_collection", "/tmp/proximadb_test_nonexistent", "vec_123")
+            .await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[cfg(feature = "experimental-engines")]
+    #[test]
+    fn test_swift_filter_evaluation() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlVal};
+
+        // Create test records with metadata
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert(
+            "category".to_string(),
+            SqlValue {
+                value: Some(SqlVal::StringValue("electronics".to_string())),
+            },
+        );
+        metadata.insert(
+            "price".to_string(),
+            SqlValue {
+                value: Some(SqlVal::NumberValue(29.99)),
+            },
+        );
+
+        let record = VectorRecord {
+            id: "vec_1".to_string(),
+            vector: vec![1.0, 2.0, 3.0],
+            metadata,
+            ..Default::default()
+        };
+
+        // Test Equals filter
+        let eq_filter = FilterExpression::Comparison {
+            field: "category".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::Value::String("electronics".to_string()),
+        };
+        assert!(crate::core::search::sql_value_filter::evaluate_filter(
+            &eq_filter,
+            &record.metadata
+        ));
+
+        // Test not-matching Equals filter
+        let neq_filter = FilterExpression::Comparison {
+            field: "category".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::Value::String("clothing".to_string()),
+        };
+        assert!(!crate::core::search::sql_value_filter::evaluate_filter(
+            &neq_filter,
+            &record.metadata
+        ));
+
+        // Test LessThan filter on numeric field
+        let lt_filter = FilterExpression::Comparison {
+            field: "price".to_string(),
+            operator: ComparisonOperator::LessThan,
+            value: serde_json::json!(50.0),
+        };
+        assert!(crate::core::search::sql_value_filter::evaluate_filter(
+            &lt_filter,
+            &record.metadata
+        ));
+
+        // Test GreaterThan filter on numeric field
+        let gt_filter = FilterExpression::Comparison {
+            field: "price".to_string(),
+            operator: ComparisonOperator::GreaterThan,
+            value: serde_json::json!(50.0),
+        };
+        assert!(!crate::core::search::sql_value_filter::evaluate_filter(
+            &gt_filter,
+            &record.metadata
+        ));
+    }
 }
