@@ -262,23 +262,56 @@ impl UnifiedSWIFTReader {
     /// Check bloom filter for potential matches
     fn check_bloom_filter(
         &self,
-        _bloom: &crate::core::bloom::SstableBloomFilter,
-        _filter: &Option<crate::core::search::FilterExpression>,
+        bloom: &crate::core::bloom::SstableBloomFilter,
+        filter: &Option<crate::core::search::FilterExpression>,
     ) -> bool {
-        // TODO: Implement bloom filter check based on filter expression
-        // For now, conservatively return true (check the block)
-        true
+        // Extract field name from filter for bloom filter check
+        if let Some(crate::core::search::FilterExpression::Comparison { field, value, .. }) = filter
+        {
+            // Build a MetadataItem from the filter value for bloom lookup
+            let item = crate::proto::proximadb_v1::MetadataItem {
+                key: field.clone(),
+                value: match value {
+                    serde_json::Value::String(s) => Some(
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()),
+                    ),
+                    serde_json::Value::Number(n) => n.as_f64().map(
+                        crate::proto::proximadb_v1::metadata_item::Value::NumberValue,
+                    ),
+                    _ => None,
+                },
+            };
+            // might_match_metadata returns Result<bool>; on error, conservatively return true
+            bloom.might_match_metadata(field, &item).unwrap_or(true)
+        } else {
+            true // No simple comparison filter, must check block
+        }
     }
 
     /// Apply filter to block records (predicate pushdown)
     fn apply_filter_to_block(
         &self,
         records: &[VectorRecord],
-        _filter: &Option<crate::core::search::FilterExpression>,
+        filter: &Option<crate::core::search::FilterExpression>,
     ) -> Result<Vec<VectorRecord>> {
-        // TODO: Implement actual filter evaluation
-        // For now, return all records
-        Ok(records.to_vec())
+        let filter_expr = match filter {
+            Some(expr) => expr,
+            None => return Ok(records.to_vec()),
+        };
+
+        let filtered = records
+            .iter()
+            .filter(|record| {
+                // VectorRecord.metadata is HashMap<String, SqlValue> — use directly
+                crate::core::search::sql_value_filter::evaluate_filter(
+                    filter_expr,
+                    &record.metadata,
+                )
+            })
+            .cloned()
+            .collect();
+
+        Ok(filtered)
     }
 }
 

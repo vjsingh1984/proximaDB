@@ -909,11 +909,11 @@ impl RaptorEngine {
         // Use Matrix Trinity for candidate selection
         let candidates: Vec<OptimizedSearchRecord> = if self.config.enable_clustering {
             // Use clustered search with Matrix Trinity
-            self.clustered_search(query, k * 2, selected_rowgroups.clone(), distance_metric)
+            self.clustered_search(query, k * 2, selected_rowgroups.clone(), distance_metric, storage_path, collection_id)
                 .await?
         } else {
             // Clustered search with pruning
-            self.clustered_search(query, k * 2, selected_rowgroups.clone(), distance_metric)
+            self.clustered_search(query, k * 2, selected_rowgroups.clone(), distance_metric, storage_path, collection_id)
                 .await?
         };
 
@@ -1245,9 +1245,10 @@ impl RaptorEngine {
             debug!("SELECT_ROWGROUPS: No clusters found, using centroid-based selection");
             for rg_id in rowgroup_manager.row_group_ids() {
                 if let Some(rowgroup) = rowgroup_manager.row_group(&rg_id) {
-                    if let Some(_centroid) = &rowgroup.centroid {
+                    if let Some(centroid) = &rowgroup.centroid {
                         // Calculate distance using distance computation engine
-                        let distance = 0.0; // TODO: Use distance computation engine
+                        let compute = UnifiedDistanceCompute::default();
+                        let distance = compute.distance(query, centroid);
                         if distance < 0.5 {
                             // Threshold for similarity
                             selected.push(rowgroup.id as u32);
@@ -1270,6 +1271,8 @@ impl RaptorEngine {
         k: usize,
         selected_rowgroups: Vec<u32>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        storage_path: &str,
+        collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!(
             "CLUSTERED_SEARCH: Starting with {} selected rowgroups",
@@ -1281,9 +1284,16 @@ impl RaptorEngine {
             debug!(
                 "CLUSTERED_SEARCH: STATELESS MODE - No rowgroups, will scan disk for .raptor files"
             );
-            // TODO: Implement disk scanning and direct file search
-            // For now, return empty results to demonstrate the issue
-            return Ok(Vec::new());
+            return self
+                .scan_disk_files_for_search(
+                    query,
+                    k,
+                    None,
+                    distance_metric,
+                    storage_path,
+                    collection_id,
+                )
+                .await;
         }
 
         // Use bounded priority queue to maintain only top-k results
@@ -2495,10 +2505,26 @@ impl UnifiedStorageEngine for RaptorEngine {
                         file_path_str,
                         metadata.row_groups.len()
                     );
-                    // For now, use a simple approach - read all row groups and search for the ID
-                    // TODO: Implement efficient bloom filter lookup
-                    let rowgroup_indices: Vec<u16> =
-                        (0..metadata.row_groups.len() as u16).collect();
+                    // Use bloom filters from rowgroup_manager to prune rowgroups
+                    let rowgroup_manager = self.rowgroup_manager.read().await;
+                    let rowgroup_indices: Vec<u16> = metadata
+                        .row_groups
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, rg)| {
+                            // Check in-memory bloom filter from rowgroup manager
+                            if let Some(managed_rg) = rowgroup_manager.row_group(&rg.id) {
+                                match &managed_rg.bloom_filter {
+                                    Some(bloom) => bloom.contains(vector_id),
+                                    None => true, // No bloom filter, must scan
+                                }
+                            } else {
+                                true // Rowgroup not in manager, must scan
+                            }
+                        })
+                        .map(|(i, _)| i as u16)
+                        .collect();
+                    drop(rowgroup_manager);
 
                     tracing::debug!(
                         "RAPTOR vector_by_id: Will read {} row groups",

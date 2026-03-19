@@ -306,22 +306,25 @@ impl RowGroups {
                                     b,
                                 )) => serde_json::Value::Bool(*b),
                                 Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(
-                                    _,
+                                    b,
                                 )) => {
-                                    serde_json::Value::Null // TODO: handle bytes properly
+                                    use base64::Engine;
+                                    serde_json::Value::String(
+                                        base64::engine::general_purpose::STANDARD.encode(b),
+                                    )
                                 }
                                 Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(
                                     _,
                                 )) => serde_json::Value::Null,
                                 Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                                    _,
+                                    arr,
                                 )) => {
-                                    serde_json::Value::Null // TODO: handle arrays properly
+                                    serde_json::to_value(arr).unwrap_or(serde_json::Value::Null)
                                 }
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_),
+                                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(obj),
                                 ) => {
-                                    serde_json::Value::Null // TODO: handle objects properly
+                                    serde_json::to_value(obj).unwrap_or(serde_json::Value::Null)
                                 }
                                 None => serde_json::Value::Null,
                             },

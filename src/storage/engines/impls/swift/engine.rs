@@ -1186,9 +1186,19 @@ impl UnifiedStorageEngine for SwiftEngine {
         let collection_id = self.get_collection_id_from_compaction_params(params)?;
         info!("SWIFT compaction: collection={}", collection_id);
 
+        // Get storage path from collection config
+        let storage_path = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.storage_assignment.as_ref())
+            .map(|s| s.base_location.clone())
+            .ok_or_else(|| anyhow!("No storage assignment for collection {}", collection_id))?;
+
         // Load files from storage for compaction
-        // TODO: Implement actual file loading from storage
-        let files = Vec::<SwiftFile>::new();
+        let collection_ref = params.collection_config.as_ref();
+        let files = self
+            .load_collection_files(&collection_id, &storage_path, collection_ref)
+            .await?;
 
         if files.len() < 2 {
             let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -1207,35 +1217,68 @@ impl UnifiedStorageEngine for SwiftEngine {
             });
         }
 
-        // Simulate compaction
+        // Merge all records from loaded files, dedup by ID (latest wins)
         let input_count = files.len() as u64;
-        let output_count = ((files.len() + 1) / 2) as u64;
-        let duration_ms = start_time.elapsed().as_millis() as u64;
+        let mut merged: HashMap<String, VectorRecord> = HashMap::new();
+        let mut total_entries: u64 = 0;
+        let mut bytes_read: u64 = 0;
+
+        for file in &files {
+            for superblock in &file.superblocks {
+                for block in &superblock.blocks {
+                    for record in &block.records {
+                        total_entries += 1;
+                        merged.insert(record.id.clone(), record.clone());
+                    }
+                }
+            }
+            bytes_read += file.header.superblock_offset; // Approximate file size from offset
+        }
+
+        // Filter tombstones (records marked as deleted have empty vectors)
+        let live_records: Vec<VectorRecord> = merged
+            .into_values()
+            .filter(|r| !r.vector.is_empty())
+            .collect();
+
+        let entries_removed = total_entries.saturating_sub(live_records.len() as u64);
+
+        // Build merged output file
+        let dimension = files
+            .first()
+            .map(|f| f.header.dimension as usize)
+            .unwrap_or(0);
+        let mut merged_file = SwiftFile::new(
+            collection_id.to_string(),
+            dimension,
+            files
+                .first()
+                .map(|f| f.header.distance_metric.clone())
+                .unwrap_or_else(|| "euclidean".to_string()),
+        );
+        merged_file.build_blocks_from_records(live_records)?;
+
+        // Write merged file to disk
+        let data_dir = StoragePath::collection_data_path(&storage_path, &collection_id);
+        use crate::storage::common::compaction_orchestrator::FilenameCodec;
+        let codec = FilenameCodec::new();
+        let compacted_filename = codec.generate(1, "swift"); // Level 1 for compaction
+        let output_path = format!("{}/{}", data_dir, compacted_filename);
+        let bytes_written = merged_file
+            .write_to_disk(&self.filesystem, &output_path)
+            .await?;
 
         // Notify EventLog about compaction (fire-and-forget)
         if let Some(event_log) = crate::services::events::log::event_log_service() {
-            // Create compacted file paths using collection's storage path
-            let storage_path = params
-                .collection_config
-                .as_ref()
-                .and_then(|c| c.storage_assignment.as_ref())
-                .map(|s| StoragePath::collection_data_path(&s.base_location, &collection_id))
-                .ok_or_else(|| anyhow!("No storage assignment for collection {}", collection_id))?;
-
-            let output_files_paths = vec![format!(
-                "{}/swift_compacted_{}.dat",
-                storage_path,
-                chrono::Utc::now().timestamp()
-            )];
-
-            // Fire-and-forget notification - compaction is already complete
             event_log.notify_compaction(
                 &collection_id,
-                output_files_paths,
-                0, // TODO: actual vector count
+                vec![output_path],
+                merged_file.header.total_records as usize,
                 crate::index::axis::eventlog::StorageEngineType::SWIFT,
             );
         }
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
 
         // Update statistics
         let mut stats = self.statistics.write().await;
@@ -1245,12 +1288,12 @@ impl UnifiedStorageEngine for SwiftEngine {
         Ok(CompactionResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_processed: Some(0), // TODO: Count actual entries
-            entries_removed: Some(0),
-            bytes_read: Some(params.estimated_input_size as u64),
-            bytes_written: Some((params.estimated_input_size * 80 / 100) as u64), // 20% reduction
+            entries_processed: Some(total_entries),
+            entries_removed: Some(entries_removed),
+            bytes_read: Some(bytes_read),
+            bytes_written: Some(bytes_written),
             input_files: Some(input_count),
-            output_files: Some(output_count),
+            output_files: Some(1),
             duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
@@ -1326,14 +1369,37 @@ impl UnifiedStorageEngine for SwiftEngine {
             collection_id, base_path, vector_id
         );
 
-        // Construct data directory from base_path and collection_id
-        let _data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        // Load files and search through ID indexes
+        let files = self
+            .load_collection_files(collection_id, base_path, None)
+            .await?;
 
-        // TODO: Load actual SST files from data_dir
-        // For now, return None as placeholder
-        // In production, would:
-        // 1. Load SST files from data_dir
-        // 2. Search through ID indexes
+        for file in &files {
+            if let Some(location) = file.id_index.lookup(vector_id) {
+                // Navigate to the record using the block location
+                if let Some(superblock) = file
+                    .superblocks
+                    .get(location.superblock_idx as usize)
+                {
+                    if let Some(block) = superblock.blocks.get(location.block_idx as usize) {
+                        if let Some(record) =
+                            block.records.get(location.offset_in_block as usize)
+                        {
+                            // Cache the result for future lookups
+                            if let Some(orchestrator) =
+                                crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+                            {
+                                if let Some(vector_cache) = orchestrator.get_vector_cache() {
+                                    vector_cache.put(cache_key, record.clone()).await;
+                                }
+                            }
+                            return Ok(Some(record.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(None)
     }
 

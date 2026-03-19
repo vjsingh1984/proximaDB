@@ -2745,10 +2745,26 @@ impl RaptorWriter {
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => b.clone(),
                     Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => Vec::new(),
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => Vec::new(), // TODO: serialize arrays
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
-                        Vec::new()
-                    } // TODO: serialize objects
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(arr)) => {
+                        use prost::Message;
+                        let mut buf = Vec::new();
+                        if let Err(e) = arr.encode(&mut buf) {
+                            tracing::warn!("ArrayValue encoding failed: {}, using empty bytes", e);
+                            Vec::new()
+                        } else {
+                            buf
+                        }
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(obj)) => {
+                        use prost::Message;
+                        let mut buf = Vec::new();
+                        if let Err(e) = obj.encode(&mut buf) {
+                            tracing::warn!("ObjectValue encoding failed: {}, using empty bytes", e);
+                            Vec::new()
+                        } else {
+                            buf
+                        }
+                    }
                     None => Vec::new(),
                 };
                 (key.clone(), value_bytes)

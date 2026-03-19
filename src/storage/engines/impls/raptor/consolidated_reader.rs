@@ -43,6 +43,23 @@ use crate::core::compression::{CompressionAlgorithm, CompressionContext};
 // Additional imports for component boosting and hierarchical search
 use std::collections::HashSet;
 
+/// Compare two SqlValue instances for ordering (used in predicate pushdown)
+fn compare_sql_values(
+    a: &crate::proto::proximadb_v1::SqlValue,
+    b: &crate::proto::proximadb_v1::SqlValue,
+) -> std::cmp::Ordering {
+    use crate::proto::proximadb_v1::sql_value::Value as V;
+    match (a.value.as_ref(), b.value.as_ref()) {
+        (Some(V::NumberValue(a)), Some(V::NumberValue(b))) => a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(V::Int64Value(a)), Some(V::Int64Value(b))) => a.cmp(b),
+        (Some(V::Int64Value(a)), Some(V::NumberValue(b))) => (*a as f64).partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(V::NumberValue(a)), Some(V::Int64Value(b))) => a.partial_cmp(&(*b as f64)).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(V::StringValue(a)), Some(V::StringValue(b))) => a.cmp(b),
+        (Some(V::BoolValue(a)), Some(V::BoolValue(b))) => a.cmp(b),
+        _ => std::cmp::Ordering::Equal, // Incomparable types treated as equal (conservative)
+    }
+}
+
 /// Wrapper for f32 to make it orderable for priority queues
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
@@ -772,31 +789,50 @@ impl RaptorReader {
         if let Some(column_stats) = rowgroup.metadata_stats.get(&predicate.field) {
             match &predicate.op {
                 super::common::PredicateOp::Eq => {
-                    // For equality, check if value is within min/max range
-                    if let (Some(_min), Some(_max)) =
+                    // For equality, value must be within [min, max] range
+                    if let (Some(min), Some(max)) =
                         (&column_stats.min_value, &column_stats.max_value)
                     {
-                        true // TODO: Implement SqlValue comparison
+                        // Value must be >= min AND <= max for it to possibly exist
+                        compare_sql_values(&predicate.value, min) != std::cmp::Ordering::Less
+                            && compare_sql_values(&predicate.value, max)
+                                != std::cmp::Ordering::Greater
                     } else {
                         true // No statistics available, include rowgroup
                     }
                 }
                 super::common::PredicateOp::Lt => {
-                    if let Some(_min) = &column_stats.min_value {
-                        true // TODO: Implement SqlValue comparison
+                    // For Lt, we need min < value (at least one row could be less)
+                    if let Some(min) = &column_stats.min_value {
+                        compare_sql_values(min, &predicate.value) == std::cmp::Ordering::Less
+                    } else {
+                        true
+                    }
+                }
+                super::common::PredicateOp::Lte => {
+                    if let Some(min) = &column_stats.min_value {
+                        compare_sql_values(min, &predicate.value) != std::cmp::Ordering::Greater
                     } else {
                         true
                     }
                 }
                 super::common::PredicateOp::Gt => {
-                    if let Some(_max) = &column_stats.max_value {
-                        true // TODO: Implement SqlValue comparison
+                    // For Gt, we need max > value
+                    if let Some(max) = &column_stats.max_value {
+                        compare_sql_values(max, &predicate.value) == std::cmp::Ordering::Greater
                     } else {
                         true
                     }
                 }
-                // Add more operators as needed
-                _ => true, // Conservative: include rowgroup if unsure
+                super::common::PredicateOp::Gte => {
+                    if let Some(max) = &column_stats.max_value {
+                        compare_sql_values(max, &predicate.value) != std::cmp::Ordering::Less
+                    } else {
+                        true
+                    }
+                }
+                // Conservative: include rowgroup if unsure
+                _ => true,
             }
         } else {
             true // No statistics for this field, include rowgroup
