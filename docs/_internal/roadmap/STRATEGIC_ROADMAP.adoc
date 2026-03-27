@@ -2,12 +2,21 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: February 2026
+:last-updated: March 26, 2026
 
 [.lead]
-**Strategic roadmap aligned with the Vision document phases. This is the authoritative source for feature status and prioritization.**
+**Strategic roadmap aligned with the Vision document phases. This file is authoritative for sequencing and prioritization, not for support tier by itself.**
 
 Execution tracking across sessions: link:./BEST_IN_CLASS_EXECUTION_TRACKER.adoc[Best-in-Class Foundation Execution Tracker]
+
+[IMPORTANT]
+====
+Use link:../../SUPPORTED_SURFACE.adoc[Supported Surface Matrix] for the current support contract.
+
+The roadmap below includes implemented foundations, beta surfaces, and experimental workstreams.
+Do not read `Complete` as "marketed as production-safe everywhere" unless the supported-surface
+matrix also marks that capability as supported.
+====
 
 == Vision Alignment
 
@@ -15,6 +24,7 @@ This roadmap implements the three-phase approach from link:../../concepts/vision
 
 * **Phase 1**: Format and Catalog Contract (Foundation)
 * **Phase 2**: Cross-Model Query and Indexing (Differentiation)
+* **Phase 2.5**: Foundational Performance Alignment (Execution Layer) -- _added March 2026_
 * **Phase 3**: Deployment and Ecosystem Integration (Scale)
 * **Phase 4**: Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search)
 
@@ -31,6 +41,7 @@ This roadmap implements the three-phase approach from link:../../concepts/vision
 | 💡 Nice to Have | Useful but not critical | Opportunistic
 | 🚫 Out of Scope | Not aligned with vision | Do not pursue
 | ⚠️ Obsolete | Superseded or deprecated | Archive/remove
+| ⚠️ Partial | Implemented but not yet canonical or production-complete | Narrow claims and finish the gap
 |===
 
 == Phase 1: Format and Catalog Contract (MVP)
@@ -66,7 +77,7 @@ _Foundation: Storage formats and metadata define the contract, not the compute e
 | PostgreSQL Wire Protocol | ✅ Complete | Port 5433, pgvector compatible
 |===
 
-=== Catalog System [🔄 In Progress]
+=== Catalog System [✅ Complete]
 
 |===
 | Feature | Status | Phase | Notes
@@ -74,11 +85,11 @@ _Foundation: Storage formats and metadata define the contract, not the compute e
 | Native Catalog | ✅ Complete | P1 | Internal schema/collection management
 | Information Schema | ✅ Complete | P1 | SQL queryable metadata
 | Schema Evolution | ✅ Complete | P1 | ADD/DROP/RENAME columns
-| External Catalog - Glue | 🔄 In Progress | P3 | AWS Glue integration
-| External Catalog - Iceberg | 🔄 In Progress | P3 | Apache Iceberg tables
-| External Catalog - Delta Lake | 🔄 In Progress | P3 | Delta Lake tables
-| External Catalog - Unity | 📅 Phase 3 | P3 | Databricks Unity Catalog
-| External Catalog - Polaris | 📅 Phase 3 | P3 | Snowflake Polaris
+| External Catalog - Glue | ✅ Complete | P3 | AWS Glue integration (TD-002 resolved Mar 2026)
+| External Catalog - Iceberg | ✅ Complete | P3 | Apache Iceberg tables (TD-002 resolved Mar 2026)
+| External Catalog - Delta Lake | ✅ Complete | P3 | Delta Lake tables (TD-002 resolved Mar 2026)
+| External Catalog - Unity | ✅ Complete | P3 | Databricks Unity Catalog (TD-002 resolved Mar 2026)
+| External Catalog - Polaris | ✅ Complete | P3 | Apache Polaris REST catalog (TD-002 resolved Mar 2026)
 |===
 
 === Index & Search [✅ Complete]
@@ -121,67 +132,67 @@ _Foundation: Storage formats and metadata define the contract, not the compute e
 | Smart I/O Layer | ✅ Complete | ParallelReader, IoMetrics
 |===
 
-== Phase 2: Cross-Model Query and Indexing
+== Phase 2: Cross-Model Query and Indexing [🔄 In Progress]
 
 [.lead]
 _Differentiation: Unified query planner for graph + vector + document + relational operators._
 
-=== Graph Database [✅ Complete]
+=== Graph Database [🔄 In Progress]
 
 |===
 | Feature | Status | Notes
 
 | ORION Graph Engine | ✅ Complete | In-memory CSR, WAL persistence
 | Graph Traversal | ✅ Complete | BFS, DFS, shortest path
-| Graph Algorithms | ✅ Complete | PageRank, community detection
-| PULSAR Engine | 🔄 In Progress | Distributed graph (wiring pending)
-| QUASAR Engine | 🔄 In Progress | Hybrid vector+graph (wiring pending)
+| Graph Algorithms | ⚠️ Partial | Core algorithms exist; graph product surface still centers ORION
+| PULSAR Engine | ⚠️ Partial | Experimental distributed graph foundation
+| QUASAR Engine | ⚠️ Partial | Experimental hybrid vector+graph foundation
 |===
 
-=== Document Store [✅ Complete]
+=== Document Store [🔄 In Progress]
 
 |===
 | Feature | Status | Notes
 
 | Document Service | ✅ Complete | WAL-backed JSON storage
-| JSON Path Queries | ✅ Complete | Structured filtering
-| Full-Text Search | ✅ Complete | Inverted index integration
+| JSON Path Queries | ⚠️ Partial | Structured filtering exists; deeper path-filter evaluation is still incomplete
+| Full-Text Search | ⚠️ Partial | Indexing exists; document product depth is still in progress
 |===
 
-=== Observability Store [✅ Complete]
-
-|===
-| Feature | Status | Notes
-
-| Log Ingestion | ✅ Complete | WAL-backed, partitioned
-| Metrics Aggregation | ✅ Complete | Time-series storage
-| SIEM Adapters | ✅ Complete | 6 adapters (Splunk, Elastic, etc.)
-|===
-
-=== Unified Query Engine [✅ Complete]
+=== Observability Store [🔄 In Progress]
 
 |===
 | Feature | Status | Notes
 
-| FederatedQueryContext | ✅ Complete | SQL parser with extensions
-| UnifiedQueryEngine | ✅ Complete | Query decomposition, fusion
+| Log Ingestion | ✅ Complete | WAL-backed ingestion plus OTLP/adapter coverage
+| Metrics Aggregation | ✅ Complete | Time-series storage and aggregation exist
+| SIEM Adapters | ⚠️ Partial | Adapter breadth exists; operator-grade product depth is still maturing
+|===
+
+=== Unified Query Engine [🔄 In Progress]
+
+|===
+| Feature | Status | Notes
+
+| FederatedQueryContext | ✅ Complete | SQL parser with extensions and cache support
+| UnifiedQueryEngine | ⚠️ Partial | Query consolidation is still in progress across parallel execution paths
 | VECTOR_SEARCH function | ✅ Complete | SQL-embedded vector search
-| GRAPH_QUERY function | ✅ Complete | SQL-embedded Cypher
-| DOCUMENT_QUERY function | ✅ Complete | SQL-embedded JSON query
-| LOGS/METRICS functions | ✅ Complete | Observability queries
-| Cross-Model Joins | ✅ Complete | LATERAL joins across models
+| GRAPH_QUERY function | ⚠️ Partial | Strongest on function-backed execution; declarative graph query path remains incomplete
+| DOCUMENT_QUERY function | ⚠️ Partial | Available, but document filter depth still has known gaps
+| LOGS/METRICS functions | ⚠️ Partial | Available on the federated path; some API mappings still need completion
+| Cross-Model Joins | ⚠️ Partial | Function-backed correlated `LATERAL` joins are strongest today
 | pgvector <-> operator | ✅ Complete | Distance operator
 |===
 
-=== Multi-Modal Search [✅ Complete]
+=== Multi-Modal Search [🔄 In Progress]
 
 |===
 | Feature | Status | Notes
 
 | UQL Parser | ✅ Complete | Unified Query Language
-| Cross-Modal Reranking | ✅ Complete | MMR, context-aware
-| Learned Fusion | ✅ Complete | Weight optimization
-| Result Fusion Strategies | ✅ Complete | RRF, intersection, union
+| Cross-Modal Reranking | ⚠️ Partial | Fusion primitives exist; canonical product routing still converging
+| Learned Fusion | ⚠️ Partial | Foundation exists, but the hybrid product path is not complete
+| Result Fusion Strategies | ⚠️ Partial | Fusion logic exists; production backend integration is still in progress
 |===
 
 == Phase 3: Deployment and Ecosystem Integration
@@ -194,10 +205,10 @@ _Scale: External catalog integration, compute adapters, and deployment flexibili
 |===
 | Feature | Status | Phase | Notes
 
-| Cluster Routing | ✅ Complete | P3 | Shard-aware routing
-| Raft Consensus | 🔄 In Progress | P3 | Metadata replication
-| Sharding | 🔄 In Progress | P3 | Collection partitioning
-| Multi-Region | 📅 Phase 3 | P3 | Geo-distributed deployment
+| Cluster Routing | ✅ Complete | P3 | Shard-aware, geo-aware routing (Mar 2026)
+| Raft Consensus | ⚠️ Partial | P3 | Election, heartbeat, state machine, snapshots; transport productization still incomplete
+| Sharding | ⚠️ Partial | P3 | Rebalancing/planning exists; distributed write/read execution still in progress
+| Multi-Region | 🔄 In Progress | P3 | LocalQuorum + geo-aware routing done; full multi-region pending
 |===
 
 === Compute Engine Adapters [📅 Phase 3]
@@ -211,16 +222,17 @@ _Scale: External catalog integration, compute adapters, and deployment flexibili
 | DuckDB Integration | 📅 Phase 3 | P3 | Embedded analytics
 |===
 
-=== Streaming & CDC [📅 Phase 3]
+=== Streaming & CDC [✅ Complete]
 
 |===
 | Feature | Status | Phase | Notes
 
-| Real-time Streaming | 📅 Phase 3 | P3 | Ring buffers, backpressure
-| Kafka Integration | 📅 Phase 3 | P3 | Producer/consumer
-| PostgreSQL CDC | 🔄 In Progress | P3 | Outbound CDC (Debezium recommended)
-| MySQL CDC | 📅 Phase 3 | P3 | Outbound CDC
-| WebSocket Streaming | 📅 Phase 3 | P3 | Real-time subscriptions
+| Real-time Streaming | ✅ Complete | P3 | Ring buffers, gRPC bidirectional (TD-003 resolved Mar 2026)
+| Kafka Integration | ✅ Complete | P3 | Producer/consumer + CDC sinks
+| PostgreSQL CDC | ✅ Complete | P3 | Logical replication, WAL streaming (TD-004 resolved Mar 2026)
+| MySQL CDC | ✅ Complete | P3 | Binlog decoder, live polling (TD-004 resolved Mar 2026)
+| MongoDB CDC | ✅ Complete | P3 | Change streams (TD-004 resolved Mar 2026)
+| WebSocket Streaming | 📅 Phase 3 | P3 | Real-time subscriptions (not yet implemented)
 |===
 
 === Enterprise Security [🔄 In Progress]
@@ -233,8 +245,9 @@ _Scale: External catalog integration, compute adapters, and deployment flexibili
 | RBAC | ✅ Complete | P1 | Role-based access control
 | Rate Limiting | ✅ Complete | P1 | Request throttling
 | CORS Middleware | ✅ Complete | P1 | Cross-origin support
-| mTLS | 📅 Phase 2 | P2 | Mutual TLS
-| Row-Level Security | 📅 Phase 2 | P2 | Fine-grained access
+| mTLS | ✅ Complete | P2 | Mutual TLS (TD-006 resolved Mar 2026)
+| Row-Level Security | ✅ Complete | P2 | Policy-based RLS implemented
+| Encryption at Rest | ✅ Complete | P3 | AES-256-GCM (TD-016 resolved Mar 2026)
 | Field-Level Encryption | 📅 Phase 3 | P3 | Column encryption
 | Enterprise SSO | 📅 Phase 3 | P3 | SAML/OIDC
 | Audit Logging | 🔄 In Progress | P2 | Compliance logging
@@ -256,54 +269,268 @@ _Scale: External catalog integration, compute adapters, and deployment flexibili
 | Swift SDK | 💡 Nice to Have | - | Apple ecosystem
 |===
 
+== Phase 2.5: Foundational Performance Alignment [📅 NEW]
+
+[.lead]
+_Performance Credibility: Align the execution layer between storage and API with single-node analytical system patterns (DuckDB, Polars). Without this, columnar analytics and cross-model query performance claims are not substantiable._
+
+[IMPORTANT]
+====
+Added March 21, 2026 based on architectural review (`ARCHITECTURAL_REVIEW_2026_03_21.adoc`).
+The storage layer (ProximaCodec, Parquet integration, WAL) is production-grade.
+The gap is in the *query execution layer above storage* -- the layer that turns columnar storage into fast analytical queries and eliminates format conversion at model boundaries.
+====
+
+=== Vectorized Execution Engine [📅 Phase 2.5 -- CRITICAL]
+
+|===
+| Feature | Status | Priority | Notes
+
+| DataChunk-based physical operators
+| 📅 Phase 2.5
+| P0
+| 2048-value chunks fitting L2 cache. Pull-based pipeline with `next_chunk()`. Selection vector (bitmap) pattern instead of row copying. (TD-031)
+
+| Selection vector filtering
+| 📅 Phase 2.5
+| P0
+| Evaluate predicates on entire arrays (SIMD auto-vectorizable). Maintain bitmap through pipeline. Late materialization -- read column values only after filtering.
+
+| Pipeline-based execution
+| 📅 Phase 2.5
+| P0
+| Decompose query plan into pipelines separated by breakers (sort, aggregate, hash-build). Each pipeline processes morsels through full operator chain.
+
+| Re-enable adaptive filter executor
+| 📅 Phase 2.5
+| P1
+| `adaptive_filter_executor.rs` disabled due to API changes. Re-implement against current Arrow/Parquet API.
+|===
+
+=== Row Group Statistics Pruning [📅 Phase 2.5 -- HIGH]
+
+|===
+| Feature | Status | Priority | Notes
+
+| Numeric statistics pruning
+| 📅 Phase 2.5
+| P0
+| Use Parquet typed statistics API (`Statistics::Int64`, `Statistics::Float`, etc.) for proper comparison. Currently returns `true` for all row groups on numeric filters. (TD-033)
+
+| Page-level statistics
+| 📅 Phase 2.5
+| P1
+| Within pruned row groups, skip individual data pages using page-level statistics (Parquet v2).
+
+| Bloom filter predicate resolution
+| 📅 Phase 2.5
+| P2
+| For dictionary-encoded columns, resolve predicates against dictionary before decoding data.
+|===
+
+=== Arrow Native Cross-Model Format [📅 Phase 2.5 -- HIGH]
+
+|===
+| Feature | Status | Priority | Notes
+
+| Arrow RecordBatch as cross-model lingua franca
+| 📅 Phase 2.5
+| P1
+| All model-specific engines return Arrow RecordBatch. Eliminates serialization tax at model boundaries. (TD-032)
+
+| Document embeddings in Arrow columns
+| 📅 Phase 2.5
+| P1
+| Store embeddings as `FixedSizeList<Float32>`, not inside JSON metadata. Eliminates per-row `serde_json::from_str()` in LATERAL joins.
+
+| Graph results as Arrow RecordBatch
+| 📅 Phase 2.5
+| P2
+| Graph traversal results returned as Arrow columns. Enables vectorized processing in federated queries.
+|===
+
+=== Graph Query Executor Completion [📅 Phase 2.5]
+
+|===
+| Feature | Status | Priority | Notes
+
+| Traverse, Filter, Project operators
+| 📅 Phase 2.5
+| P1
+| Complete stubbed `executor.rs`. Execute plans from query planner instead of bypassing to direct engine calls. (TD-035)
+
+| Arrow-native graph results
+| 📅 Phase 2.5
+| P2
+| Return `RecordBatch` from graph queries for integration with federated execution.
+|===
+
+=== Spill-to-Disk [📅 Phase 2.5]
+
+|===
+| Feature | Status | Priority | Notes
+
+| L2 NVMe cache backend
+| 📅 Phase 2.5
+| P1
+| Implement the TODO stub in `backend/mod.rs`. Automatic spillover from L1 memory when budget exceeded. (TD-034)
+
+| External merge sort
+| 📅 Phase 2.5
+| P2
+| Spill ORDER BY intermediate results to temp files for larger-than-memory sorts.
+
+| Hash join spill
+| 📅 Phase 2.5
+| P2
+| Partition hash join build tables and spill partitions when memory exceeded.
+|===
+
+=== Morsel-Driven Query Parallelism [📅 Phase 2.5 -- HIGH]
+
+_Added March 26, 2026 from comprehensive architectural review._
+
+|===
+| Feature | Status | Priority | Notes
+
+| Morsel-based row group distribution
+| 📅 Phase 2.5
+| P1
+| Divide row groups into 4096-element morsels distributed to thread pool with work-stealing. Currently row groups processed sequentially. (TD-039)
+
+| Intra-operator parallelism
+| 📅 Phase 2.5
+| P2
+| Parallel sort, parallel aggregation within query operators. Currently only `tokio::spawn` for I/O.
+|===
+
+=== Wire Vectorized Executor into Query Path [📅 Phase 2.5 -- CRITICAL]
+
+_Added March 26, 2026. Single highest-ROI item._
+
+|===
+| Feature | Status | Priority | Notes
+
+| Plumb `vectorized_executor.rs` into `UnifiedParquetReader`
+| 📅 Phase 2.5
+| P0
+| `DataChunk`, `evaluate_predicate_vectorized()`, and `materialize()` already exist. Primary query path in `unified_reader.rs` uses scalar loops instead. Primarily a plumbing task. (TD-041)
+
+| Batch SIMD distance through vectorized path
+| 📅 Phase 2.5
+| P0
+| Replace per-record `compute_cosine_similarity()` in `unified_reader.rs` with batch call to the SIMD distance engine.
+|===
+
+=== Cross-Modal Transaction Isolation [📅 Phase 2.5]
+
+_Added March 26, 2026._
+
+|===
+| Feature | Status | Priority | Notes
+
+| 2PC participant implementations per store
+| 📅 Phase 2.5
+| P2
+| 2PC protocol defined in `src/storage/multimodel/transaction/` but no participants wired. Each modality handles transactions independently. (TD-038)
+
+| Federated executor transaction context
+| 📅 Phase 2.5
+| P2
+| Pass transaction context through federated query execution so cross-modal queries have consistency guarantees.
+|===
+
+=== Target Timeline
+
+_Updated March 26, 2026._
+
+[source]
+----
+Sprint 1 (April):
+  TD-041: Wire vectorized executor into query path -- 2-3 weeks, HIGHEST ROI
+  TD-033: Row group numeric statistics pruning -- 1 week
+
+Sprint 2 (May):
+  TD-031: Full pipeline-based execution (DataChunks) -- 4-6 weeks
+  TD-039: Morsel-driven parallelism -- 3-4 weeks (parallel with TD-031)
+
+Sprint 3 (June):
+  TD-032: Arrow as cross-model format -- 3-4 weeks
+  TD-035: Graph executor completion -- 3-4 weeks
+
+Sprint 4 (July):
+  TD-034: Spill-to-disk (L2 backend) -- 3-4 weeks
+  TD-038: Cross-modal 2PC -- 4-6 weeks (start)
+
+Benchmark validation gates:
+  After Sprint 1: 10x improvement on analytical benchmarks
+  After Sprint 2: Multi-core scaling demonstrated
+  After Sprint 3: <5ms cross-modal queries
+----
+
 == Phase 4: Context Database Evolution
 
 [.lead]
 _Category Leadership: Time-series, event sourcing, hybrid search, and framework integrations transform ProximaDB into "The Context Database"._
 
-=== Hybrid Search (BM25 + Vector) [Planned]
+=== Hybrid Search (BM25 + Vector) [✅ Complete]
 
 |===
 | Feature | Status | Phase | Notes
 
-| tantivy BM25 Integration | Planned | P4 | Full-text indexing via tantivy crate
-| Reciprocal Rank Fusion (RRF) | Planned | P4 | Default fusion strategy for hybrid results
-| Weighted Linear Fusion | Planned | P4 | User-specified BM25/vector weights
-| Hybrid Search API | Planned | P4 | search_mode: vector_only, keyword_only, hybrid
+| tantivy BM25 Integration | ✅ Complete | P4 | Full-text indexing via tantivy crate (TD-008 resolved Feb 2025)
+| Reciprocal Rank Fusion (RRF) | ✅ Complete | P4 | Default fusion strategy, 14 tests passing
+| Weighted Linear Fusion | ✅ Complete | P4 | User-specified BM25/vector weights
+| Hybrid Search API | ✅ Complete | P4 | `/api/v1/hybrid/search` with `text_query` + `vector` + `hybrid_mode`
 |===
 
-=== Time-Series Engine (TST) [Planned]
-
-|===
-| Feature | Status | Phase | Notes
-
-| Columnar Time-Partitioned Storage | Planned | P4 | 7th storage engine for time-series data
-| ASOF Joins | Planned | P4 | Point-in-time lookups across time-series
-| Time-Bucketing and Downsampling | Planned | P4 | 5s, 5m, 1h, 1d granularities
-| OHLC Aggregation | Planned | P4 | Native open-high-low-close computation
-| Grafana-Compatible Query API | Planned | P4 | Direct Grafana datasource integration
-|===
-
-=== Event Sourcing Engine [Planned]
+=== Time-Series Engine (TST) [✅ Complete]
 
 |===
 | Feature | Status | Phase | Notes
 
-| Append-Only WAL Store | Planned | P4 | Immutable event log with indexed queries
-| Event Stream Projections | Planned | P4 | Materialized views from event streams
-| Temporal Queries | Planned | P4 | Query state at any historical timestamp
-| MiFID II / SEC Compliance | Planned | P4 | Immutable audit trails for financial compliance
+| Columnar Time-Partitioned Storage | ✅ Complete | P4 | Arrow IPC I/O (TD-009 resolved Feb 2025)
+| ASOF Joins | ✅ Complete | P4 | <1ms latency
+| Time-Bucketing and Downsampling | ✅ Complete | P4 | Gorilla compression, 5s/5m/1h/1d
+| OHLC Aggregation | ✅ Complete | P4 | Native open-high-low-close computation
+| Query Optimizer | ✅ Complete | P4 | Partition pruning, symbol filter, index decision (Mar 2026)
 |===
 
-=== Framework Integrations [Planned]
+=== Event Sourcing Engine [✅ Complete]
 
 |===
 | Feature | Status | Phase | Notes
 
-| LangChain VectorStore | ✅ Complete | P4 | VectorStore adapter + LangGraph retriever tool
-| LlamaIndex Integration | Planned | P4 | VectorStoreIndex, StorageContext
-| Haystack Integration | Planned | P4 | DocumentStore adapter
-| CrewAI Integration | ✅ Complete | P4 | SearchTool + KnowledgeSource + DSPy RM + AutoGen VectorDB
+| Append-Only WAL Store | ✅ Complete | P4 | Immutable event log (TD-010 resolved Feb 2025)
+| Event Stream Projections | ✅ Complete | P4 | Indexed queries by entity ID, event type, timestamp
+| Temporal Queries | ✅ Complete | P4 | Point-in-time reconstruction, temporal replay
+| MiFID II / SEC Compliance | ✅ Complete | P4 | Monotonic sequence numbers, immutable audit trail
+|===
+
+=== Framework Integrations [✅ Complete]
+
+|===
+| Feature | Status | Phase | Notes
+
+| LangChain VectorStore | ✅ Complete | P4 | VectorStore + LangGraph retriever (TD-011 resolved Mar 2026)
+| LlamaIndex Integration | ✅ Complete | P4 | VectorStore, Retriever, Node with embeddings
+| Haystack Integration | ✅ Complete | P4 | DocumentStore, Retriever, write_documents
+| CrewAI Integration | ✅ Complete | P4 | SearchTool + KnowledgeSource
+| DSPy Integration | ✅ Complete | P4 | RM (Retrieval Model)
+| AutoGen Integration | ✅ Complete | P4 | VectorDB adapter
+|===
+
+=== Cluster Infrastructure [🔄 In Progress]
+
+|===
+| Feature | Status | Phase | Notes
+
+| Raft State Machine Application | ✅ Complete | P3 | Log entries applied to state machine (Mar 2026)
+| Raft Snapshot/Restore | ✅ Complete | P3 | Full snapshot lifecycle with log compaction (Mar 2026)
+| Shard Rebalancing | ✅ Complete | P3 | Load-based algorithm with replica/primary awareness (Mar 2026)
+| LocalQuorum Consistency | ✅ Complete | P3 | Datacenter-aware quorum (Mar 2026)
+| Geo-Aware Routing | ✅ Complete | P3 | Local DC preference with RTT tracking (Mar 2026)
+| Distributed Write Replication | 🔄 In Progress | P3 | Coordinator fans out via RPC; local writes via service layer
 |===
 
 === ibkrtrading Dogfood Milestones [Cross-Cutting]

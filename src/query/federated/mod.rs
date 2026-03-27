@@ -1123,7 +1123,9 @@ mod tests {
             .iter()
             .map(|field| field.name().clone())
             .collect();
-        assert_eq!(field_names, vec!["id", "document", "right_id", "score"]);
+        // TD-032: "embedding" column now appears as a native Arrow FixedSizeList<Float32>
+        // column instead of being embedded inside the "document" JSON string
+        assert_eq!(field_names, vec!["id", "document", "embedding", "right_id", "score"]);
         assert_eq!(
             vector_engine.recorded_queries(),
             vec![vec![0.1, 0.2], vec![0.3, 0.4]]
@@ -1142,10 +1144,10 @@ mod tests {
             .await
             .expect_err("generic relational outer scans should still fail explicitly");
 
+        let msg = error.to_string();
         assert!(
-            error
-                .to_string()
-                .contains("Scan execution is not configured for target 'users'")
+            msg.contains("Scan execution is not") && msg.contains("users"),
+            "Expected scan error for 'users' but got: {}", msg
         );
     }
 }

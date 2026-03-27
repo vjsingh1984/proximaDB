@@ -121,6 +121,15 @@ impl BoundedPriorityQueue {
     pub fn would_accept(&self, score: f32) -> bool {
         self.heap.len() < self.capacity || score > self.min_score
     }
+
+    /// Merge another priority queue into this one.
+    /// Takes the top-k across both queues. Used for combining thread-local
+    /// results from parallel morsel-driven search.
+    pub fn merge(&mut self, other: BoundedPriorityQueue) {
+        for entry in other.heap {
+            self.try_insert(entry.record);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -177,6 +186,28 @@ mod tests {
         assert_eq!(results[0].score, 0.8);
         assert_eq!(results[1].score, 0.75);
         assert_eq!(results[2].score, 0.6);
+    }
+
+    #[test]
+    fn test_merge_queues() {
+        let mut queue_a = BoundedPriorityQueue::new(3);
+        queue_a.try_insert(create_test_record("a1", 0.9));
+        queue_a.try_insert(create_test_record("a2", 0.7));
+        queue_a.try_insert(create_test_record("a3", 0.5));
+
+        let mut queue_b = BoundedPriorityQueue::new(3);
+        queue_b.try_insert(create_test_record("b1", 0.85));
+        queue_b.try_insert(create_test_record("b2", 0.6));
+        queue_b.try_insert(create_test_record("b3", 0.4));
+
+        // Merge b into a (capacity 3), should keep top-3 across both
+        queue_a.merge(queue_b);
+        assert_eq!(queue_a.len(), 3);
+
+        let results = queue_a.into_sorted_vec();
+        assert_eq!(results[0].score, 0.9);
+        assert_eq!(results[1].score, 0.85);
+        assert_eq!(results[2].score, 0.7);
     }
 
     #[test]

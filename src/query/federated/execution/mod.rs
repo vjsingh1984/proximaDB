@@ -11,8 +11,8 @@
 
 use anyhow::{Result, anyhow};
 use arrow::array::{
-    Array, ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Builder,
-    new_null_array,
+    Array, ArrayRef, FixedSizeListArray, Float32Array, Int64Array, ListArray, RecordBatch,
+    StringArray, UInt32Builder, new_null_array,
 };
 use arrow::compute::{concat, take};
 use arrow::datatypes::{DataType, Field, Schema};
@@ -20,7 +20,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::optimizer::{
-    JoinType, ObservabilityQueryType, PlanNode, PlanNodeType, QueryPlan, VectorSource,
+    JoinType, ObservabilityQueryType, PlanNode, PlanNodeType, PredicateOp, PredicateValue,
+    QueryPlan, VectorSource,
 };
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::{
@@ -319,13 +320,152 @@ impl FederatedExecutor {
         &self,
         target: &str,
         model_type: &ModelType,
-        _predicates: &[super::optimizer::Predicate],
+        predicates: &[super::optimizer::Predicate],
     ) -> Result<ExecutionResult> {
-        Err(anyhow!(
-            "Scan execution is not configured for target '{}' ({:?}); live federated execution currently supports function-backed vector/graph/document/observability sources, not generic relational scans",
-            target,
-            model_type
-        ))
+        match model_type {
+            ModelType::Document => {
+                // Convert optimizer predicates to a DocumentFilter
+                let doc_filter = if predicates.is_empty() {
+                    None
+                } else {
+                    let conditions: Vec<DocFilterCondition> = predicates
+                        .iter()
+                        .filter_map(|p| {
+                            let op = match p.op {
+                                PredicateOp::Eq => DocFilterOperator::Eq,
+                                PredicateOp::Ne => DocFilterOperator::Ne,
+                                PredicateOp::Lt => DocFilterOperator::Lt,
+                                PredicateOp::Le => DocFilterOperator::Lte,
+                                PredicateOp::Gt => DocFilterOperator::Gt,
+                                PredicateOp::Ge => DocFilterOperator::Gte,
+                                PredicateOp::Like => DocFilterOperator::Contains,
+                                // IsNull / IsNotNull / In / Between not yet mapped
+                                _ => return None,
+                            };
+                            let sql_val = match &p.value {
+                                PredicateValue::String(s) => Some(SqlValue {
+                                    value: Some(sql_value::Value::StringValue(s.clone())),
+                                }),
+                                PredicateValue::Int(i) => Some(SqlValue {
+                                    value: Some(sql_value::Value::Int64Value(*i)),
+                                }),
+                                PredicateValue::Float(f) => Some(SqlValue {
+                                    value: Some(sql_value::Value::NumberValue(*f)),
+                                }),
+                                PredicateValue::Bool(b) => Some(SqlValue {
+                                    value: Some(sql_value::Value::BoolValue(*b)),
+                                }),
+                                PredicateValue::Null => None,
+                                PredicateValue::List(_) => None,
+                            };
+                            Some(DocFilterCondition {
+                                path: p.column.clone(),
+                                operator: op as i32,
+                                value: sql_val,
+                                values: vec![],
+                            })
+                        })
+                        .collect();
+
+                    if conditions.is_empty() {
+                        None
+                    } else {
+                        Some(DocumentFilter {
+                            conditions,
+                            or_filters: vec![],
+                            and_filters: vec![],
+                        })
+                    }
+                };
+
+                let doc_store = self
+                    .storage
+                    .get_document_store()
+                    .ok_or_else(|| anyhow!("Document store is not configured for collection '{}'", target))?;
+
+                let documents = doc_store
+                    .query_documents(target, doc_filter, self.config.batch_size, 0)
+                    .await?;
+
+                if documents.is_empty() {
+                    let schema = Arc::new(Schema::new(vec![
+                        Field::new("id", DataType::Utf8, false),
+                        Field::new("document", DataType::Utf8, true),
+                    ]));
+                    return Ok(ExecutionResult::empty_with_schema(schema));
+                }
+
+                let schema = Arc::new(Schema::new(vec![
+                    Field::new("id", DataType::Utf8, false),
+                    Field::new("document", DataType::Utf8, true),
+                ]));
+                let ids: Vec<String> = documents.iter().map(|d| d.id.clone()).collect();
+                let docs: Vec<String> = documents
+                    .iter()
+                    .map(|d| {
+                        serde_json::to_string(&d.document).unwrap_or_else(|_| "{}".to_string())
+                    })
+                    .collect();
+                let batch = RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(StringArray::from(ids)) as ArrayRef,
+                        Arc::new(StringArray::from(docs)) as ArrayRef,
+                    ],
+                )?;
+                Ok(ExecutionResult::from_batch(batch))
+            }
+
+            ModelType::Graph => {
+                // For graph scans, fetch all nodes from the graph store
+                let graph_store = self
+                    .storage
+                    .get_graph_store()
+                    .ok_or_else(|| anyhow!("Graph store is not configured for target '{}'", target))?;
+
+                let schema = Arc::new(Schema::new(vec![
+                    Field::new("node_id", DataType::Utf8, false),
+                    Field::new("label", DataType::Utf8, true),
+                    Field::new("properties", DataType::Utf8, true),
+                ]));
+
+                let nodes = graph_store.fetch_all_nodes().await?;
+                if nodes.is_empty() {
+                    return Ok(ExecutionResult::empty_with_schema(schema));
+                }
+
+                let node_ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+                let labels: Vec<Option<String>> =
+                    nodes.iter().map(|n| n.labels.first().cloned()).collect();
+                let props: Vec<String> = nodes
+                    .iter()
+                    .map(|n| {
+                        serde_json::to_string(&n.properties)
+                            .unwrap_or_else(|_| "{}".to_string())
+                    })
+                    .collect();
+                let batch = RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(StringArray::from(node_ids)) as ArrayRef,
+                        Arc::new(StringArray::from(labels)) as ArrayRef,
+                        Arc::new(StringArray::from(props)) as ArrayRef,
+                    ],
+                )?;
+                Ok(ExecutionResult::from_batch(batch))
+            }
+
+            ModelType::Vector => Err(anyhow!(
+                "Full vector collection scans are not supported for '{}'; use VECTOR_SEARCH('{}', <query_vector>, <top_k>) to search by similarity or apply metadata filters via DOCUMENT_QUERY",
+                target, target
+            )),
+
+            _ => Err(anyhow!(
+                "Scan execution is not supported for model type '{:?}' on target '{}'; use the appropriate SQL extension (VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, or METRICS)",
+                model_type,
+                target
+            )),
+        }
     }
 
     /// Execute vector similarity search
@@ -467,11 +607,6 @@ impl FederatedExecutor {
         collection: &str,
         filter: Option<&String>,
     ) -> Result<ExecutionResult> {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Utf8, false),
-            Field::new("document", DataType::Utf8, false),
-        ]));
-
         let doc_store = self
             .storage
             .get_document_store()
@@ -508,22 +643,124 @@ impl FederatedExecutor {
             .await?;
 
         if documents.is_empty() {
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("id", DataType::Utf8, false),
+                Field::new("document", DataType::Utf8, false),
+            ]));
             return Ok(ExecutionResult::empty_with_schema(schema));
         }
 
+        // ── Arrow-native document conversion (TD-032) ───────────────────────
+        // Detect vector-like fields in documents (SqlArray of numbers) and
+        // store them as native Arrow FixedSizeList<Float32> columns instead
+        // of JSON strings. This eliminates the serde_json round-trip in
+        // LATERAL joins (previously: SqlObject → JSON string → parse → extract).
+        //
+        // Non-vector fields are still stored as a JSON string column for
+        // backward compatibility.
+
+        // Scan first document to detect vector fields and their dimensions
+        let mut vector_fields: Vec<(String, usize)> = Vec::new(); // (field_name, dimension)
+        if let Some(first_doc) = documents.first() {
+
+            for (field_name, sql_value) in &first_doc.document.fields {
+                if let Some(sql_value::Value::ArrayValue(arr)) = sql_value.value.as_ref() {
+                    // Check if this array contains only numbers (likely a vector)
+                    let all_numeric = arr.values.iter().all(|v| {
+                        matches!(
+                            v.value.as_ref(),
+                            Some(sql_value::Value::NumberValue(_))
+                                | Some(sql_value::Value::Int64Value(_))
+                        )
+                    });
+                    if all_numeric && !arr.values.is_empty() {
+                        vector_fields.push((field_name.clone(), arr.values.len()));
+                    }
+                }
+            }
+        }
+
+        // Build schema with native Arrow columns for detected vector fields
+        let mut fields = vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("document", DataType::Utf8, true), // remaining non-vector fields
+        ];
+        for (field_name, dim) in &vector_fields {
+            fields.push(Field::new(
+                field_name,
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, false)),
+                    *dim as i32,
+                ),
+                true,
+            ));
+        }
+        let schema = Arc::new(Schema::new(fields));
+
+        // Build column arrays
         let ids: Vec<String> = documents.iter().map(|d| d.id.clone()).collect();
+        let num_docs = documents.len();
+
+        // For the document column, serialize only non-vector fields
         let docs: Vec<String> = documents
             .iter()
-            .map(|d| serde_json::to_string(&d.document).unwrap_or_else(|_| "{}".to_string()))
+            .map(|d| {
+                if vector_fields.is_empty() {
+                    // No vector fields detected — serialize entire document (original behavior)
+                    serde_json::to_string(&d.document).unwrap_or_else(|_| "{}".to_string())
+                } else {
+                    // Filter out vector fields from the JSON string
+                    let mut filtered = d.document.clone();
+                    for (vf, _) in &vector_fields {
+                        filtered.fields.remove(vf);
+                    }
+                    serde_json::to_string(&filtered).unwrap_or_else(|_| "{}".to_string())
+                }
+            })
             .collect();
 
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(StringArray::from(ids)) as ArrayRef,
-                Arc::new(StringArray::from(docs)) as ArrayRef,
-            ],
-        )?;
+        let mut columns: Vec<ArrayRef> = vec![
+            Arc::new(StringArray::from(ids)) as ArrayRef,
+            Arc::new(StringArray::from(docs)) as ArrayRef,
+        ];
+
+        // Build FixedSizeList<Float32> columns for each vector field
+        for (field_name, dim) in &vector_fields {
+            let mut all_values: Vec<f32> = Vec::with_capacity(num_docs * dim);
+
+            for doc in &documents {
+                if let Some(sql_val) = doc.document.fields.get(field_name) {
+                    if let Some(sql_value::Value::ArrayValue(arr)) = sql_val.value.as_ref() {
+                        for v in &arr.values {
+                            let f = match v.value.as_ref() {
+                                Some(sql_value::Value::NumberValue(n)) => *n as f32,
+                                Some(sql_value::Value::Int64Value(n)) => *n as f32,
+                                _ => 0.0,
+                            };
+                            all_values.push(f);
+                        }
+                    } else {
+                        // Field missing or wrong type — fill with zeros
+                        all_values.extend(std::iter::repeat(0.0f32).take(*dim));
+                    }
+                } else {
+                    all_values.extend(std::iter::repeat(0.0f32).take(*dim));
+                }
+            }
+
+            let values_array = Float32Array::from(all_values);
+            let fixed_list = FixedSizeListArray::try_new(
+                Arc::new(Field::new("item", DataType::Float32, false)),
+                *dim as i32,
+                Arc::new(values_array),
+                None,
+            )
+            .map_err(|e| anyhow!("Failed to create FixedSizeList for {}: {}", field_name, e))?;
+
+            columns.push(Arc::new(fixed_list) as ArrayRef);
+        }
+
+        let batch = RecordBatch::try_new(schema.clone(), columns)?;
 
         Ok(ExecutionResult::from_batch(batch))
     }
@@ -740,6 +977,55 @@ impl FederatedExecutor {
             )
         })?;
         let nested_path = path_segments.collect::<Vec<_>>();
+
+        // ── Arrow-native fast path (TD-032) ─────────────────────────────────
+        // When documents contain vector fields, execute_document_query now
+        // stores them as top-level FixedSizeList<Float32> Arrow columns.
+        // For path "document.embedding", check if "embedding" exists as a
+        // direct column in the batch before falling into JSON parsing.
+        if !nested_path.is_empty() {
+            let leaf_column = nested_path.last().unwrap_or(&base_column);
+            // Try the leaf name directly, then with table prefix
+            let leaf_idx = Self::resolve_column_index(outer_batch.schema().as_ref(), leaf_column)
+                .or_else(|| {
+                    let prefixed = format!("{}.{}", table, leaf_column);
+                    Self::resolve_column_index(outer_batch.schema().as_ref(), &prefixed)
+                });
+
+            if let Some(idx) = leaf_idx {
+                let array = outer_batch.column(idx);
+                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
+                    return Ok(vector);
+                }
+            }
+
+            // Also try joining all path segments as a column name
+            // e.g., for path "document.embedding", try "document.embedding" as column name
+            let full_nested = format!("{}.{}", base_column, nested_path.join("."));
+            let full_idx = Self::resolve_column_index(outer_batch.schema().as_ref(), &full_nested);
+            if let Some(idx) = full_idx {
+                let array = outer_batch.column(idx);
+                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
+                    return Ok(vector);
+                }
+            }
+        }
+
+        // Also try the full column_path as a direct column name (before base_column split)
+        {
+            let full_path_idx = Self::resolve_column_index(outer_batch.schema().as_ref(), column_path)
+                .or_else(|| {
+                    let prefixed = format!("{}.{}", table, column_path);
+                    Self::resolve_column_index(outer_batch.schema().as_ref(), &prefixed)
+                });
+            if let Some(idx) = full_path_idx {
+                let array = outer_batch.column(idx);
+                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
+                    return Ok(vector);
+                }
+            }
+        }
+
         let requested = format!("{}.{}", table, base_column);
         let column_index = Self::resolve_column_index(outer_batch.schema().as_ref(), &requested)
             .or_else(|| Self::resolve_column_index(outer_batch.schema().as_ref(), base_column))
@@ -765,6 +1051,13 @@ impl FederatedExecutor {
             ));
         }
 
+        // Fast path: try direct Arrow extraction (no JSON parsing needed)
+        if nested_path.is_empty() {
+            if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
+                return Ok(vector);
+            }
+        }
+
         match array.data_type() {
             DataType::Utf8 => {
                 let values = array
@@ -777,12 +1070,58 @@ impl FederatedExecutor {
                     &nested_path,
                 )
             }
+            DataType::FixedSizeList(_, _) | DataType::List(_) => {
+                // Arrow extraction was already attempted above; if it didn't work then error
+                Err(anyhow!(
+                    "Correlated vector source '{}' has Arrow list type but could not extract Float32 values",
+                    requested
+                ))
+            }
             other => Err(anyhow!(
                 "Correlated vector source '{}' uses unsupported outer column type {:?}",
                 requested,
                 other
             )),
         }
+    }
+
+    /// Try to extract a vector directly from Arrow array types without JSON parsing.
+    /// Returns Some(Vec<f32>) if the column contains native Arrow list/fixed-size-list data,
+    /// or None if it needs to fall through to the JSON parsing path.
+    fn try_extract_vector_from_arrow(array: &dyn Array, row: usize) -> Option<Vec<f32>> {
+        // Try FixedSizeList<Float32> first (most common for embeddings)
+        if let Some(fsl) = array.as_any().downcast_ref::<FixedSizeListArray>() {
+            if !fsl.is_null(row) {
+                let values = fsl.value(row);
+                if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
+                    return Some(float_array.values().to_vec());
+                }
+                // Try Float64 list and convert to f32
+                if let Some(f64_array) =
+                    values.as_any().downcast_ref::<arrow::array::Float64Array>()
+                {
+                    return Some(f64_array.values().iter().map(|&v| v as f32).collect());
+                }
+            }
+        }
+
+        // Try List<Float32>
+        if let Some(list) = array.as_any().downcast_ref::<ListArray>() {
+            if !list.is_null(row) {
+                let values = list.value(row);
+                if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
+                    return Some(float_array.values().to_vec());
+                }
+                // Try Float64 list and convert to f32
+                if let Some(f64_array) =
+                    values.as_any().downcast_ref::<arrow::array::Float64Array>()
+                {
+                    return Some(f64_array.values().iter().map(|&v| v as f32).collect());
+                }
+            }
+        }
+
+        None
     }
 
     fn parse_vector_from_serialized_value(
@@ -2586,7 +2925,7 @@ impl FederatedExecutor {
         }
 
         let batch = self.merge_batches(&result)?;
-        let projected_indices = output_columns
+        let mut projected_indices = output_columns
             .iter()
             .map(|column| {
                 Self::resolve_column_index(batch.schema().as_ref(), column)
@@ -2594,12 +2933,31 @@ impl FederatedExecutor {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        // TD-032: Preserve any FixedSizeList/List columns (vector data) that were
+        // dynamically added by execute_document_query but aren't in the optimizer's
+        // output_columns. This allows Arrow-native vector columns to pass through
+        // to LATERAL join resolution without JSON parsing.
+        {
+            let bs = batch.schema();
+            for (idx, field) in bs.fields().iter().enumerate() {
+                if !projected_indices.contains(&idx)
+                    && matches!(
+                        field.data_type(),
+                        DataType::FixedSizeList(_, _) | DataType::List(_)
+                    )
+                {
+                    projected_indices.push(idx);
+                }
+            }
+        }
+
         let batch_schema = batch.schema();
         let projected_fields = projected_indices
             .iter()
             .enumerate()
             .map(|(position, index)| {
                 let field = batch_schema.field(*index);
+                // For dynamically added columns (beyond output_columns), use the field's own name
                 let requested_name = output_columns
                     .get(position)
                     .map(String::as_str)

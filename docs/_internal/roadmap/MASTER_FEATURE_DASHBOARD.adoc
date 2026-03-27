@@ -3,15 +3,23 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
-:last-updated: February 2026
+:last-updated: March 26, 2026
 :verified: true
 
 [.lead]
-**Central index of all 143 features with accurate implementation status based on codebase verification**
+**Central inventory of feature claims under re-baseline. This file tracks implementation breadth, not the customer support contract by itself.**
 
 [TIP]
 ====
 For strategic context and phase alignment, see link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap] which maps all features to Vision phases.
+====
+
+[IMPORTANT]
+====
+Use link:../../SUPPORTED_SURFACE.adoc[Supported Surface Matrix] for the current support contract and link:../../TECHNICAL_DEBT.md[Technical Debt Register] for the live backlog.
+
+This dashboard remains useful as an implementation inventory, but several surfaces are still beta
+or experimental even when code exists. Treat the maturity summary below as the current truth layer.
 ====
 
 == Vision Phase Alignment
@@ -23,34 +31,60 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 
 | **Phase 1** | Format & Catalog Contract (Foundation) | ✅ Complete
 | **Phase 2** | Cross-Model Query & Indexing (Differentiation) | ✅ Complete
+| **Phase 2.5** | Foundational Performance Alignment (Execution Layer) | 📅 Planned (April-July 2026)
 | **Phase 3** | Deployment & Ecosystem Integration (Scale) | 🔄 In Progress
-| **Phase 4** | Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search) | Planned
+| **Phase 4** | Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search) | ✅ Complete (code); ⚠️ Partial (productization)
 |===
 
-== 🎯 Executive Summary
+== 🎯 Current Maturity Summary
 
-[cols="2,1,1,1,1", options="header"]
+[cols="2,1,3", options="header"]
 |===
-| Category | Phase | Total | Complete | %
+| Category | Maturity | Notes
 
-| Core Infrastructure | P1 | 15 | 15 | 100%
-| Storage Engines | P1 | 6 | 6 | 100%
-| Index & Search | P1 | 9 | 9 | 100%
-| Quantization & Performance | P1 | 10 | 10 | 100%
-| Graph Database | P2 | 4 | 3 | 75%
-| Document & Observability | P2 | 6 | 6 | 100%
-| Unified Query Engine | P2 | 8 | 8 | 100%
-| Enterprise Security | P2-P3 | 15 | 8 | 53%
-| AI & Intelligence | 🚫 OOS | 10 | 0 | 0%
-| Platform Features | P3 | 8 | 4 | 50%
-| Developer SDKs | P3 | 9 | 1 | 11%
-| Documentation | P1-P2 | 35 | 35 | 100%
-| Time-Series Engine | P4 | 5 | 0 | 0%
-| Event Sourcing | P4 | 4 | 0 | 0%
-| Hybrid Search (BM25) | P4 | 4 | 0 | 0%
-| Framework Integrations | P4 | 4 | 2 | 50%
-| **MVP (P1+P2)** | | **83** | **80** | **96%**
-| **TOTAL** | | **152** | **107** | **70%**
+| Core vector path
+| Supported
+| Strongest current surface: vector CRUD/search/get plus filtering and single-node APIs.
+
+| Documents
+| Beta
+| CRUD/query/aggregation exist, but path-filter depth and deep storage/index features remain incomplete.
+
+| Graph
+| Beta / Experimental
+| ORION operations are useful today; declarative graph query and PULSAR/QUASAR remain incomplete or experimental.
+
+| Observability
+| Beta
+| Ingestion/query primitives are real, but operator-grade alerting and some protocol mappings remain incomplete.
+
+| Unified query
+| Beta
+| Function-backed multimodel queries are strongest; generic relational and distributed paths still need completion.
+
+| Hybrid retrieval
+| Beta
+| tantivy BM25 + RRF/weighted fusion implemented. API at `/api/v1/hybrid/search`. Canonical backend integration improved (TD-008 resolved).
+
+| Time-series (TST)
+| Beta
+| Engine complete (TD-009 resolved). ASOF joins, downsampling, OHLC implemented. Not yet production-validated at scale.
+
+| Event sourcing
+| Beta
+| Engine complete (TD-010 resolved). Append-only WAL, temporal queries, MiFID II audit trail. Not yet production-validated at scale.
+
+| Query execution layer
+| Experimental
+| **Key gap**: Vectorized executor exists but is not wired into primary query path (TD-041). Scalar row-at-a-time processing. Phase 2.5 addresses this.
+
+| Security
+| Beta
+| Runtime auth and mTLS are materially improved; admin/status APIs are still incomplete.
+
+| Distributed cluster
+| Experimental
+| Consensus and routing foundations improved, but RPC transport and remote execution are not fully productized.
 |===
 
 [NOTE]
@@ -121,7 +155,7 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 038 | QUASAR Graph Engine | Graph | ⚠️ Partial | Hybrid engine; `src/graph/engines/quasar/` (experimental, not wired to service layer)
 | 039 | GraphMemoryPool | Graph | ✅ | Zero-copy sharing
 
-| 040 | UnifiedAuthService | Security | ⚠️ Partial | SSO, JWT, API Key support. mTLS pending.
+| 040 | UnifiedAuthService | Security | ⚠️ Partial | SSO/JWT/API key plus mTLS identity and CRL support; admin/status plane still incomplete.
 | 041 | ConsolidatedRBACManager | Security | ✅ | RBAC exists
 | 042 | Multi-Factor Authentication | Security | ❌ | Not implemented
 | 043 | Enterprise SSO | Security | ❌ | Not implemented
@@ -162,8 +196,8 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 074 | API Reference | Docs | ✅ | Basic API docs
 | 075 | Docker Guide | Docs | ✅ | Deployment guide
 
-| 076 | Multi-Modal Search | Platform | ✅ | Complete - UQL, Reranking, Learned Fusion
-| 077 | Distributed Operations Assessment | Platform | ✅ | Complete - Raft, Sharding, PULSAR/QUASAR
+| 076 | Multi-Modal Search | Platform | ⚠️ Partial | UQL and fusion foundations exist; canonical hybrid execution still in progress
+| 077 | Distributed Operations Assessment | Platform | ⚠️ Partial | Raft/sharding foundations exist; transport and distributed execution remain incomplete
 | 078 | Documentation Migration | Docs | 🔄 | AsciiDoc conversion
 
 | 079 | SST Engine Deep Dive | Docs | ✅ | Technical guide - LSM-tree, three-stage filtering
@@ -222,9 +256,9 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 125 | Retry with Backoff | Enterprise | ✅ | `src/core/resilience/retry.rs`
 | 126 | Health Aggregator | Enterprise | ✅ | `src/core/resilience/health_aggregator.rs`
 
-| 127 | BM25 Full-Text Index (tantivy) | Hybrid Search | Planned | P4 requirement
-| 128 | Reciprocal Rank Fusion | Hybrid Search | Planned | P4 requirement
-| 129 | Hybrid Search API | Hybrid Search | Planned | P4 requirement
+| 127 | BM25 Full-Text Index (tantivy) | Hybrid Search | ⚠️ Partial | Full-text foundations exist, but not yet wired as the canonical hybrid product path
+| 128 | Reciprocal Rank Fusion | Hybrid Search | ⚠️ Partial | Fusion logic exists; production backend integration remains incomplete
+| 129 | Hybrid Search API | Hybrid Search | ⚠️ Partial | API surface exists, but gRPC backend integration is still mocked
 | 130 | Search Mode Selection | Hybrid Search | Planned | vector_only/keyword_only/hybrid
 
 | 131 | TST Time-Partitioned Storage | Time-Series | Planned | 7th storage engine

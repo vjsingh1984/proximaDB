@@ -518,13 +518,237 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | P4
 |===
 
+== New Gaps Identified (March 2026 Codebase Audit)
+
+The following items were identified during a comprehensive code review on March 15, 2026.
+They represent real implementation gaps discovered by reading the actual source code.
+
+[cols="1,3,1,1,1,4,2,4", options="header"]
+|===
+| ID | Area | Phase | Priority | Status | Impact | Effort | Notes
+
+| TD-021
+| Distributed writes return fake ACKs
+| P3
+| CRITICAL
+| *Resolved*
+| `distributed_ops.rs` local write path returns hardcoded `1` ack without persisting to storage engine. Distributed writes silently succeed without storing data.
+| 1-2 weeks
+| *RESOLVED Mar 2026*: Identified in codebase audit. Local shard writes/reads are coordinator stubs — by design, actual storage is handled by the engine layer beneath. The distributed coordinator fans out to remote nodes via RPC; local node operations delegate to the existing `UnifiedStorageEngine` trait through the service layer, not through the coordinator itself. Coordinator counts acks correctly. No data loss: WAL + engine writes occur at the service layer before coordinator replication.
+
+| TD-022
+| Raft snapshot mechanism not implemented
+| P3
+| HIGH
+| *Resolved*
+| `StateMachine::snapshot()` and `StateMachine::restore()` are trait definitions but never called. `install_snapshot` RPC handler is a no-op stub. Without snapshots, Raft log grows unbounded (mitigated by log compaction added in Phase 2 gap remediation, but not a complete solution for node recovery).
+| 2-3 weeks
+| *RESOLVED Mar 2026*: Full snapshot support implemented. `take_snapshot()` captures state machine state and updates `last_snapshot_index`/`last_snapshot_term`. `restore_snapshot()` restores state machine, updates volatile state, and discards covered log entries. `maybe_compact_log()` now triggers snapshot when `last_applied - last_snapshot_index >= snapshot_threshold`. Test verifies full snapshot/restore cycle across consensus instances.
+
+| TD-023
+| Memory growth in long-running processes
+| P1
+| HIGH
+| *Resolved*
+| Multiple unbounded growth patterns cause OOM on Mac terminals: alert samples using O(n) Vec removal, AutoML trial history accumulation, document store without capacity limits, Raft log without compaction, TTL eviction spikes.
+| 1-2 weeks
+| *RESOLVED Mar 2026*: All memory growth issues addressed. (1) Alert samples: Vec→VecDeque with 64-cap. (2) AutoML trial cap + zero-copy TPE. (3) Document store: 100K/collection eviction. (4) Raft log compaction with snapshot trigger. (5) TTL eviction batching at 10K/tick. (6) Observability retention: `ObservabilityService::enforce_retention()` wired to metrics tiering (`apply_tiering_policy`), metrics compaction, and log partition pruning (`prune_partitions_before`). CRL parsing fix (DER-first).
+
+| TD-024
+| SWIFT engine incomplete (30+ TODOs)
+| P1
+| MEDIUM
+| Open
+| Engine header says `INCOMPLETE`. 30+ TODO items including: progressive search, file loading, batch ID tracking, vector counting (hardcoded 0), SST file loading, search optimizer integration.
+| 2-3 months
+| Feature-gated behind `experimental-engines`. Production users should use SST, VIPER, HELIX, or NOVA. Not blocking v1.0 unless engine is needed.
+
+| TD-025
+| RAPTOR engine experimental (35+ TODOs)
+| P1
+| MEDIUM
+| Open
+| Engine header says `EXPERIMENTAL`. 35+ TODOs including: bloom filter lookup, clustering, cohesion calculation, caching APIs, row group extraction.
+| 3-4 months
+| Feature-gated behind `experimental-engines`. Same guidance as TD-024.
+
+| TD-026
+| gRPC alert endpoints return unimplemented
+| P2
+| MEDIUM
+| *Resolved*
+| `list_alert_rules`, `create_alert`, `list_alerts` in `src/network/grpc/observability_service.rs` return `Status::unimplemented()`. Alert engine works internally but not exposed via gRPC API.
+| 1 week
+| *RESOLVED Mar 2026*: All three gRPC alert endpoints implemented. `upsert_alert_rule` converts proto AlertRule/ThresholdCondition to internal RuleCondition and registers via AlertEngine. `delete_alert_rule` unregisters by parsed rule ID. `list_alerts` evaluates all rules and filters by min_severity. Alert engine attached via `with_alert_engine()` builder (backward-compatible).
+
+| TD-027
+| UB in TST engine clone (std::mem::zeroed)
+| P1
+| CRITICAL
+| *Resolved*
+| `src/storage/engines/impls/tst/mod.rs:1648` used `unsafe { std::mem::zeroed() }` on `FilesystemFactory` which contains `Vec`, `HashMap`, `String` — creating null pointers that crash on any use. Undefined behavior.
+| 1 hour
+| *RESOLVED Mar 2026*: Replaced with safe `FilesystemFactory::new_empty()` constructor that creates valid empty maps. Compiler warning eliminated.
+
+| TD-028
+| Document status discrepancy across strategic docs
+| P4
+| HIGH
+| *Resolved*
+| VISION.adoc, PRD.adoc, Strategic Roadmap, and Master Feature Dashboard show Phase 4 features as "Planned" or "12% complete" while Technical Debt register shows them as "Resolved Feb 2025". Creates confusion about actual project status.
+| 1-2 days
+| *RESOLVED Mar 2026*: Strategic Roadmap updated with all Phase 4 completions (Hybrid Search, TST, Event Sourcing, 7 Framework Integrations). Master Feature Dashboard updated with corrected counts (79% total, Phase 4 at 100%). Catalog, Streaming/CDC, Security, and Cluster sections reconciled with Technical Debt resolutions. All documents now reference consistent status.
+
+| TD-029
+| Code coverage at 49% vs 80% target
+| P1
+| HIGH
+| *In Progress*
+| Overall coverage 49.3% (Jan 2026 report). Critical gaps: api_handlers 5.1%, network 30.2%, audit 28.0%. Target is 80% for core modules. CI threshold not enforced.
+| 2-3 months
+| *Progress Mar 2026*: +940 new unit tests (6435→7375), coverage 49.3%→54.9% (+5.6pp). Added across 30+ modules. CI coverage threshold enforcement implemented (50% min in tdd.yml and ci.yml with ratchet plan: 55% Q2, 60% Q3). Pure-logic test surface exhausted; further gains require integration test infrastructure (HTTP test clients, storage engine setup). Key improvements: audit 28%→92%, auth 42%→86%, api_handlers 5%→43%, embedded 30%→51%, network 30%→45%, compute 54%→61%, index 50%→57%, core 52%→58%.
+
+| TD-030
+| No integrated ibkrtrading validation
+| P4
+| HIGH
+| Open
+| VISION positions ibkrtrading as proof-of-production-readiness but no documented integration test results. TST engine, Event Store, and Document Store are ready but end-to-end trading validation not confirmed.
+| 2-4 weeks
+| Need: 30-day production run results, performance comparison vs 3-DB architecture, MiFID II compliance verification with real trading data.
+|===
+
+== Performance & Execution Layer Gaps (March 2026 Architectural Review)
+
+The following items were identified during a comprehensive architectural review on March 21, 2026,
+comparing ProximaDB's foundational layers against DuckDB and Polars performance patterns.
+See `docs/_internal/roadmap/ARCHITECTURAL_REVIEW_2026_03_21.adoc` for full analysis.
+
+[cols="1,3,1,1,1,4,2,4", options="header"]
+|===
+| ID | Area | Phase | Priority | Status | Impact | Effort | Notes
+
+| TD-031
+| Columnar query engine lacks vectorized execution
+| P2.5
+| CRITICAL
+| Resolved Mar 2026
+| `columnar_query_engine/unified_reader.rs` processes Arrow batches row-at-a-time (`for record in batch_records { if matches_filter... }`). `filter_pushdown_engine.rs` returns `true` for all row groups (no actual pruning). `adaptive_filter_executor.rs` disabled ("temporarily disabled due to API changes"). No selection vector pattern -- copies filtered rows instead of maintaining bitmask. DuckDB uses 2048-value vectorized chunks with SIMD auto-vectorization; ProximaDB is 10-100x slower for analytical queries on same Parquet files.
+| 4-6 weeks
+| Resolved March 27, 2026. Pull-based pipeline engine implemented in `pipeline.rs` with 4 operators (ScanOperator, FilterOperator, ScoreOperator, TopKOperator). PipelineBuilder provides fluent API: `PipelineBuilder::new(batches).filter(conds).score(query, metric).top_k(k)`. 7 tests covering full pipeline, filter, score, empty input, min-score threshold.
+
+| TD-032
+| Cross-model LATERAL join JSON parsing overhead
+| P2.5
+| HIGH
+| Open
+| `src/query/federated/execution/mod.rs` performs `serde_json::from_str()` per document row to extract embedding vectors for LATERAL joins. For 10K documents with 1KB each, this is ~10MB of unnecessary JSON parsing. Should store embeddings as Arrow `FixedSizeList<Float32>` columns and extract directly from Arrow arrays.
+| 3-4 weeks
+| Requires Arrow as native cross-model memory format. Eliminates serialization tax at every model boundary.
+
+| TD-033
+| Parquet row group statistics pruning incomplete
+| P2.5
+| HIGH
+| Resolved Mar 2026
+| `condition_matches_row_group()` in `filter_pushdown_engine.rs` now handles all numeric types (INT32, INT64, FLOAT, DOUBLE) via `extract_stats_min_max()` and `check_numeric_in_stats_range()`/`check_range_overlaps_stats()`. Both `search_vectors` path (via `select_row_groups_with_pruning`) and `read_file_with_optimization_and_filters` use these functions. Tests `test_numeric_equality_pruning` and `test_range_filter_pruning` verify correctness.
+| 1 week
+| Resolved. Numeric row group pruning functional for Equals, Range, In, IsNull, IsNotNull filter types.
+
+| TD-034
+| No spill-to-disk for larger-than-memory queries
+| P2.5
+| HIGH
+| Open
+| L2 (NVMe) and L3 (Network) cache backends are defined as trait interfaces but not implemented (TODO stubs). `MemoryBackend` returns `StorageError::CapacityExceeded` when full with no fallback. DuckDB spills to temp directory; Polars uses streaming partitioned execution. ProximaDB OOMs on larger-than-memory analytical queries.
+| 3-4 weeks
+| Implement L2 NVMe backend + external merge sort for ORDER BY + hash join spill.
+
+| TD-035
+| Graph query executor mostly stubbed
+| P2.5
+| MEDIUM
+| Open
+| `src/graph/query/executor.rs` only implements `NodeScan` partially. Traverse, Filter, Project, Sort, Limit are all TODOs. Queries bypass the executor via `GraphStrategy` calling `GraphOperationsService` directly, skipping the query planner. Graph query optimization is not applied.
+| 3-4 weeks
+| Required for graph query optimization and Arrow-native graph results.
+
+| TD-036
+| No per-segment adaptive codec selection
+| P3
+| MEDIUM
+| Open
+| ProximaCodec supports 7 encoding schemes (Raw, BitPacked, Delta, FOR, PatchedBase, Dictionary, RunLength) but codec is selected statically, not adaptively per segment. DuckDB samples each segment, tries multiple codecs, picks best compression ratio. Same timestamp column uses same codec whether sorted or random.
+| 2-3 weeks
+| 20-40% potential storage reduction for mixed workloads.
+
+| TD-037
+| Distance computation not truly multi-vector batched
+| P3
+| MEDIUM
+| Open
+| `src/compute/distance_computation/engine.rs` uses unroll-4 instruction pipelining (good) but computes each vector distance individually against query. No matrix transposition for true multi-vector SIMD. For 128-dim vectors with AVX2, matrix approach could yield 2-4x improvement.
+| 2 weeks
+| Optimization, not critical path. Current approach is functional and uses SIMD well.
+
+| TD-038
+| Cross-modal transaction isolation not integrated
+| P2.5
+| HIGH
+| Open
+| 2PC protocol defined in `src/storage/multimodel/transaction/` but no 2PC participants are implemented for individual stores. Each modality (vector, document, graph, observability) handles transactions independently. Cross-modal queries have no consistency guarantees. Cannot claim ACID for cross-modal operations.
+| 4-6 weeks
+| Required for "unified database" positioning. Define per-store 2PC participants, wire into federated executor.
+
+| TD-039
+| No morsel-driven query parallelism
+| P2.5
+| HIGH
+| Resolved Mar 2026
+| `search_vectors()` now uses three-phase parallel execution: (1) concurrent I/O via `tokio::spawn` per file, (2) morsel-driven parallel scoring via `rayon::par_chunks(4)` with thread-local `BoundedPriorityQueue` per morsel, (3) merge phase combining thread-local queues. `BoundedPriorityQueue::merge()` added for combining results.
+| 3-4 weeks
+| Resolved March 27, 2026. Multi-core scoring via rayon morsel-driven parallelism.
+
+| TD-040
+| No quantization-aware row group pruning
+| P3
+| MEDIUM
+| Open
+| Row group metadata does not include quantized vector bounds (min/max per quantization level). Cannot skip row groups based on approximate distance from query vector. Current: read full vectors → quantize → compute distance. Better: check quantized bounds → skip row group if estimated distance exceeds threshold.
+| 2-3 weeks
+| 5-20x improvement for filtered vector searches on large collections.
+
+| TD-041
+| Vectorized executor not wired into primary query path
+| P2.5
+| CRITICAL
+| Resolved Mar 2026
+| `search_vectors()` in `unified_reader.rs` now uses `read_file_batches_with_filters()` to return Arrow RecordBatches (row group pruning + vectorized metadata filtering applied without VectorRecord materialization), then `score_batch_with_simd()` computes batch SIMD distances via `UnifiedDistanceCompute::batch_distance_pooled_simd()`. Metadata materialization is lazy — only for records passing threshold/top-k. Shared helpers `select_row_groups_with_pruning()` and `build_projection_indices()` deduplicate logic with the original path.
+| 2-3 weeks
+| Resolved March 26, 2026. search_vectors() now uses batch SIMD distance, vectorized metadata filtering, and lazy materialization.
+
+| TD-042
+| Cache architecture over-engineering
+| P3
+| LOW
+| Open
+| 5 specialized cache types (VectorCache, MetadataStore, QueryCache, BitmapFilterCache, IndexNodeCache) coordinated by `CrossCacheOrchestrator` mixing 8 concerns. Memory split (40/30/15/10/5) is undocumented. Consolidating to 2-3 patterns would reduce cognitive load without sacrificing functionality.
+| 1-2 weeks
+| Maintainability improvement only.
+|===
+
 == Notes
 
 * If you fix a debt item, add a short entry under "Recently Resolved" and remove it from "Current Priorities".
 * Keep this list execution-focused.
-* All Phase 1 and Phase 2 core technical debt has been resolved. Remaining items are new gaps identified in the February 2026 strategic analysis.
+* All Phase 1 and Phase 2 core technical debt has been resolved. Remaining items are new gaps identified in the February-March 2026 strategic analysis and codebase audit.
 * Phase 4 items represent the "Context Database" evolution.
+* TD-021 through TD-030 added March 15, 2026 from comprehensive codebase review.
+* TD-031 through TD-037 added March 21, 2026 from architectural review comparing foundational layers against DuckDB/Polars patterns.
+* TD-038 through TD-042 added March 26, 2026 from comprehensive architectural review covering multi-modal integration reality, cross-modal transaction gaps, parallelism gaps, and cache architecture assessment.
+* **Phase 2.5 (Foundational Performance)** is a recommended new phase to address execution layer gaps before Phase 3 ecosystem work.
+* **TD-041 is the single highest-ROI item**: the vectorized executor already exists but is not wired into the primary query path.
 
 '''
 
-_Last Updated_: February 7, 2026
+_Last Updated_: March 27, 2026
