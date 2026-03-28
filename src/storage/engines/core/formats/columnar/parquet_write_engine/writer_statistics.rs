@@ -106,6 +106,22 @@ pub struct StreamingParquetWriterStats {
 
     /// Average metadata fields per record
     pub avg_metadata_fields: f32,
+
+    // === Vector Bounds Statistics (TD-040) ===
+    /// Minimum L2 norm across all vectors in this write batch
+    pub vector_norm_min: Option<f32>,
+
+    /// Maximum L2 norm across all vectors in this write batch
+    pub vector_norm_max: Option<f32>,
+
+    /// Mean L2 norm across all vectors in this write batch
+    pub vector_norm_mean: Option<f32>,
+
+    /// Per-dimension minimum values (for distance bound estimation)
+    pub vector_component_min: Option<Vec<f32>>,
+
+    /// Per-dimension maximum values (for distance bound estimation)
+    pub vector_component_max: Option<Vec<f32>>,
 }
 
 impl StreamingParquetWriterStats {
@@ -134,6 +150,55 @@ impl StreamingParquetWriterStats {
             self.throughput_mb_per_sec =
                 (self.uncompressed_size as f64 / (1024.0 * 1024.0)) / duration_secs;
         }
+    }
+
+    /// Update vector norm bounds from a batch of vectors (TD-040).
+    ///
+    /// Computes L2 norms and per-dimension min/max for distance bound estimation.
+    /// Called during write to track statistics that enable row group pruning
+    /// based on approximate distance from query vector.
+    pub fn update_vector_bounds(&mut self, vectors: &[Vec<f32>]) {
+        if vectors.is_empty() {
+            return;
+        }
+
+        let dim = vectors[0].len();
+
+        let mut norm_min = self.vector_norm_min.unwrap_or(f32::MAX);
+        let mut norm_max = self.vector_norm_max.unwrap_or(f32::MIN);
+        let mut norm_sum = self.vector_norm_mean.unwrap_or(0.0)
+            * self.total_records as f32;
+        let mut comp_min = self.vector_component_min.clone().unwrap_or_else(|| vec![f32::MAX; dim]);
+        let mut comp_max = self.vector_component_max.clone().unwrap_or_else(|| vec![f32::MIN; dim]);
+
+        // Ensure dimension matches
+        if comp_min.len() != dim {
+            comp_min = vec![f32::MAX; dim];
+            comp_max = vec![f32::MIN; dim];
+        }
+
+        for vec in vectors {
+            // Compute L2 norm
+            let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm < norm_min { norm_min = norm; }
+            if norm > norm_max { norm_max = norm; }
+            norm_sum += norm;
+
+            // Update per-dimension bounds
+            for (i, &v) in vec.iter().enumerate() {
+                if i < dim {
+                    if v < comp_min[i] { comp_min[i] = v; }
+                    if v > comp_max[i] { comp_max[i] = v; }
+                }
+            }
+        }
+
+        let total = self.total_records + vectors.len();
+        self.vector_norm_min = Some(norm_min);
+        self.vector_norm_max = Some(norm_max);
+        self.vector_norm_mean = if total > 0 { Some(norm_sum / total as f32) } else { None };
+        self.vector_component_min = Some(comp_min);
+        self.vector_component_max = Some(comp_max);
     }
 
     /// Merge statistics from another instance
@@ -269,5 +334,243 @@ impl AggregatedBatchStats {
             return 0.0;
         }
         (self.successful_batches as f64 / self.total_batches as f64) * 100.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === StreamingParquetWriterStats tests ===
+
+    #[test]
+    fn test_writer_stats_default() {
+        let stats = StreamingParquetWriterStats::default();
+        assert_eq!(stats.total_records, 0);
+        assert_eq!(stats.file_size, 0);
+        assert_eq!(stats.uncompressed_size, 0);
+        assert_eq!(stats.compressed_size, 0);
+        assert!((stats.compression_ratio - 0.0).abs() < f64::EPSILON);
+        assert!(!stats.quantization_enabled);
+        assert!(stats.quantization_levels.is_empty());
+        assert_eq!(stats.write_duration, Duration::default());
+    }
+
+    #[test]
+    fn test_writer_stats_new_equals_default() {
+        let a = StreamingParquetWriterStats::new();
+        let b = StreamingParquetWriterStats::default();
+        assert_eq!(a.total_records, b.total_records);
+        assert_eq!(a.file_size, b.file_size);
+    }
+
+    #[test]
+    fn test_update_compression_ratio_no_data() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.update_compression_ratio();
+        assert!((stats.compression_ratio - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_update_compression_ratio_50_percent() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.uncompressed_size = 1000;
+        stats.compressed_size = 500;
+        stats.update_compression_ratio();
+        assert!((stats.compression_ratio - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_update_compression_ratio_no_compression() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.uncompressed_size = 1000;
+        stats.compressed_size = 1000;
+        stats.update_compression_ratio();
+        assert!((stats.compression_ratio - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_update_compression_ratio_90_percent() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.uncompressed_size = 1000;
+        stats.compressed_size = 100;
+        stats.update_compression_ratio();
+        assert!((stats.compression_ratio - 0.9).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_update_throughput_zero_duration() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.total_records = 100;
+        stats.update_throughput();
+        assert!((stats.throughput_records_per_sec - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_update_throughput() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.total_records = 1000;
+        stats.uncompressed_size = 2 * 1024 * 1024; // 2 MB
+        stats.write_duration = Duration::from_secs(2);
+        stats.update_throughput();
+        assert!((stats.throughput_records_per_sec - 500.0).abs() < 1e-10);
+        assert!((stats.throughput_mb_per_sec - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_writer_stats_merge() {
+        let mut a = StreamingParquetWriterStats::new();
+        a.total_records = 100;
+        a.unique_ids = 90;
+        a.duplicate_ids = 10;
+        a.uncompressed_size = 5000;
+        a.compressed_size = 2500;
+        a.row_groups_written = 2;
+        a.write_duration = Duration::from_millis(100);
+
+        let b = StreamingParquetWriterStats {
+            total_records: 200,
+            unique_ids: 180,
+            duplicate_ids: 20,
+            uncompressed_size: 10000,
+            compressed_size: 4000,
+            row_groups_written: 3,
+            write_duration: Duration::from_millis(200),
+            ..Default::default()
+        };
+
+        a.merge(&b);
+
+        assert_eq!(a.total_records, 300);
+        assert_eq!(a.unique_ids, 270);
+        assert_eq!(a.duplicate_ids, 30);
+        assert_eq!(a.uncompressed_size, 15000);
+        assert_eq!(a.compressed_size, 6500);
+        assert_eq!(a.row_groups_written, 5);
+        assert_eq!(a.write_duration, Duration::from_millis(300));
+        // Compression ratio should be updated after merge
+        let expected_ratio = 1.0 - (6500.0 / 15000.0);
+        assert!((a.compression_ratio - expected_ratio).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_writer_stats_summary_contains_info() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.total_records = 500;
+        stats.row_groups_written = 3;
+        stats.bloom_filter_count = 2;
+        let summary = stats.summary();
+        assert!(summary.contains("500 records"));
+        assert!(summary.contains("3"));
+        assert!(summary.contains("Bloom filters: 2"));
+    }
+
+    // === BatchWriteStats tests ===
+
+    #[test]
+    fn test_batch_write_stats_default() {
+        let stats = BatchWriteStats::default();
+        assert_eq!(stats.batch_size, 0);
+        assert!(!stats.success);
+        assert!(stats.error_message.is_none());
+        assert_eq!(stats.processing_time, Duration::default());
+    }
+
+    // === AggregatedBatchStats tests ===
+
+    #[test]
+    fn test_aggregated_batch_stats_default() {
+        let stats = AggregatedBatchStats::default();
+        assert_eq!(stats.total_batches, 0);
+        assert_eq!(stats.successful_batches, 0);
+        assert_eq!(stats.failed_batches, 0);
+        assert_eq!(stats.total_records, 0);
+    }
+
+    #[test]
+    fn test_success_rate_no_batches() {
+        let stats = AggregatedBatchStats::default();
+        assert!((stats.success_rate() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_success_rate_all_successful() {
+        let mut agg = AggregatedBatchStats::default();
+        let batch = BatchWriteStats {
+            batch_size: 100,
+            processing_time: Duration::from_millis(10),
+            success: true,
+            ..Default::default()
+        };
+        agg.add_batch(&batch);
+        agg.add_batch(&batch);
+        assert!((agg.success_rate() - 100.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_success_rate_mixed() {
+        let mut agg = AggregatedBatchStats::default();
+        let success_batch = BatchWriteStats {
+            batch_size: 50,
+            processing_time: Duration::from_millis(5),
+            success: true,
+            ..Default::default()
+        };
+        let fail_batch = BatchWriteStats {
+            batch_size: 30,
+            processing_time: Duration::from_millis(3),
+            success: false,
+            error_message: Some("test error".to_string()),
+            ..Default::default()
+        };
+        agg.add_batch(&success_batch);
+        agg.add_batch(&fail_batch);
+
+        assert_eq!(agg.total_batches, 2);
+        assert_eq!(agg.successful_batches, 1);
+        assert_eq!(agg.failed_batches, 1);
+        assert!((agg.success_rate() - 50.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_add_batch_updates_averages() {
+        let mut agg = AggregatedBatchStats::default();
+
+        let batch1 = BatchWriteStats {
+            batch_size: 100,
+            processing_time: Duration::from_millis(10),
+            success: true,
+            ..Default::default()
+        };
+        agg.add_batch(&batch1);
+        assert!((agg.avg_batch_size - 100.0).abs() < 1e-10);
+        assert_eq!(agg.max_batch_size, 100);
+        assert_eq!(agg.min_batch_size, 100);
+
+        let batch2 = BatchWriteStats {
+            batch_size: 200,
+            processing_time: Duration::from_millis(20),
+            success: true,
+            ..Default::default()
+        };
+        agg.add_batch(&batch2);
+        assert!((agg.avg_batch_size - 150.0).abs() < 1e-10);
+        assert_eq!(agg.max_batch_size, 200);
+        assert_eq!(agg.min_batch_size, 100);
+        assert_eq!(agg.total_records, 300);
+    }
+
+    #[test]
+    fn test_add_batch_min_batch_size_first_batch() {
+        let mut agg = AggregatedBatchStats::default();
+        // min_batch_size starts at 0, first batch should set it
+        let batch = BatchWriteStats {
+            batch_size: 50,
+            processing_time: Duration::from_millis(5),
+            success: true,
+            ..Default::default()
+        };
+        agg.add_batch(&batch);
+        assert_eq!(agg.min_batch_size, 50);
     }
 }

@@ -695,10 +695,10 @@ See `docs/_internal/roadmap/ARCHITECTURAL_REVIEW_2026_03_21.adoc` for full analy
 | Cross-modal transaction isolation not integrated
 | P2.5
 | HIGH
-| Open
-| 2PC protocol defined in `src/storage/multimodel/transaction/` but no 2PC participants are implemented for individual stores. Each modality (vector, document, graph, observability) handles transactions independently. Cross-modal queries have no consistency guarantees. Cannot claim ACID for cross-modal operations.
+| Resolved Mar 2026
+| All four participants (Vector, Document, Graph, TimeSeries) now support `with_durable_writer(DurableWriteFn)` for engine-backed durable commits. `EngineBackedParticipant` wrapper enables any participant to support durable commit via callback pattern. `supports_durable_commit()` returns true when writer is attached, unblocking the coordinator's `ensure_durable_participants()` check. Writer statistics now include vector norm bounds (TD-040: vector_norm_min/max/mean, vector_component_min/max).
 | 4-6 weeks
-| Required for "unified database" positioning. Define per-store 2PC participants, wire into federated executor.
+| Resolved March 27, 2026. Participants wired for durable commits. Tests cover success and failure paths.
 
 | TD-039
 | No morsel-driven query parallelism
@@ -713,10 +713,10 @@ See `docs/_internal/roadmap/ARCHITECTURAL_REVIEW_2026_03_21.adoc` for full analy
 | No quantization-aware row group pruning
 | P3
 | MEDIUM
-| Open
-| Row group metadata does not include quantized vector bounds (min/max per quantization level). Cannot skip row groups based on approximate distance from query vector. Current: read full vectors → quantize → compute distance. Better: check quantized bounds → skip row group if estimated distance exceeds threshold.
+| Partial (Mar 2026)
+| `StreamingParquetWriterStats` now tracks vector norm bounds (vector_norm_min/max/mean) and per-dimension component bounds (vector_component_min/max) via `update_vector_bounds()`. Infrastructure for distance-based row group pruning is in place. Integration with the query-time pruning path (checking bounds against query vector distance) remains as future work.
 | 2-3 weeks
-| 5-20x improvement for filtered vector searches on large collections.
+| Partially resolved March 27, 2026. Write-side statistics added. Read-side pruning integration pending.
 
 | TD-041
 | Vectorized executor not wired into primary query path

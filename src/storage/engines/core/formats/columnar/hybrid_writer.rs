@@ -802,6 +802,11 @@ impl HybridParquetWriter {
                 filterable_columns_count: 0,
                 records_with_metadata: 0,
                 avg_metadata_fields: 0.0,
+                vector_norm_min: None,
+                vector_norm_max: None,
+                vector_norm_mean: None,
+                vector_component_min: None,
+                vector_component_max: None,
             };
             // Get metadata collector if not passed to streaming writer
             let mut metadata_lock = self.metadata_collector.lock().await;

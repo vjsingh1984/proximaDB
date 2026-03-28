@@ -33,6 +33,12 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+/// Callback that applies a buffered operation to a live storage engine.
+/// Each participant type provides its own implementation.
+/// Returns Ok(()) on success or an error if the write fails.
+pub type DurableWriteFn =
+    Arc<dyn Fn(&BufferedOperation) -> std::result::Result<(), String> + Send + Sync>;
+
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Buffered operations for a transaction
@@ -90,7 +96,10 @@ impl Default for TransactionBuffer {
     }
 }
 
-/// Vector storage engine transaction participant
+/// Vector storage engine transaction participant.
+///
+/// When constructed with `with_durable_writer()`, commit operations are applied
+/// to the live storage engine via the provided callback (TD-038).
 pub struct VectorEngineParticipant {
     /// Participant ID (e.g., "vector:default")
     id: String,
@@ -100,16 +109,28 @@ pub struct VectorEngineParticipant {
 
     /// Health flag
     healthy: Arc<RwLock<bool>>,
+
+    /// Optional durable write callback for live engine commits (TD-038)
+    durable_writer: Option<DurableWriteFn>,
 }
 
 impl VectorEngineParticipant {
-    /// Create a new vector engine participant
+    /// Create a new vector engine participant (buffer-only mode)
     pub fn new(collection_id: &str) -> Self {
         Self {
             id: format!("vector:{}", collection_id),
             buffer: TransactionBuffer::new(),
             healthy: Arc::new(RwLock::new(true)),
+            durable_writer: None,
         }
+    }
+
+    /// Attach a durable write callback for live engine commits.
+    /// When set, `supports_durable_commit()` returns true and commit
+    /// operations are applied to the storage engine.
+    pub fn with_durable_writer(mut self, writer: DurableWriteFn) -> Self {
+        self.durable_writer = Some(writer);
+        self
     }
 
     /// Set health status
@@ -155,81 +176,89 @@ impl TransactionParticipant for VectorEngineParticipant {
         Ok(Vote::Yes)
     }
 
-    /// Commit phase: apply buffered operations
+    /// Commit phase: apply buffered operations to live storage engine
     async fn commit(&self, tx_id: TransactionId) -> Result<()> {
         info!("Vector engine {} committing tx {}", self.id, tx_id);
 
         let operations = self.buffer.get_operations(tx_id).await;
 
-        // Apply operations (in production, write to storage engine)
-        for op in &operations {
-            match op {
-                BufferedOperation::Insert { id, .. } => {
-                    debug!("Committing insert for {}", id);
+        // Apply operations via durable writer if available (TD-038)
+        if let Some(ref writer) = self.durable_writer {
+            for op in &operations {
+                writer(op).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                        format!("durable commit failed for {}: {}", self.id, e),
+                    ))
+                })?;
+                match op {
+                    BufferedOperation::Insert { id, .. } => {
+                        debug!("Durably committed vector insert for {}", id);
+                    }
+                    BufferedOperation::Update { id, .. } => {
+                        debug!("Durably committed vector update for {}", id);
+                    }
+                    BufferedOperation::Delete { id } => {
+                        debug!("Durably committed vector delete for {}", id);
+                    }
                 }
-                BufferedOperation::Update { id, .. } => {
-                    debug!("Committing update for {}", id);
-                }
-                BufferedOperation::Delete { id } => {
-                    debug!("Committing delete for {}", id);
+            }
+        } else {
+            // Buffer-only mode: log operations without writing
+            for op in &operations {
+                match op {
+                    BufferedOperation::Insert { id, .. } => debug!("Buffered insert for {}", id),
+                    BufferedOperation::Update { id, .. } => debug!("Buffered update for {}", id),
+                    BufferedOperation::Delete { id } => debug!("Buffered delete for {}", id),
                 }
             }
         }
 
-        // Clear buffer
         self.buffer.clear_operations(tx_id).await;
-
         Ok(())
     }
 
-    /// Rollback: discard buffered operations
     async fn rollback(&self, tx_id: TransactionId) -> Result<()> {
         warn!("Vector engine {} rolling back tx {}", self.id, tx_id);
-
-        // Just clear the buffer (operations were never applied)
         self.buffer.clear_operations(tx_id).await;
-
         Ok(())
     }
 
-    /// Get participant ID
     fn participant_id(&self) -> &str {
         &self.id
     }
 
-    /// Check if participant is healthy
     async fn is_healthy(&self) -> bool {
         *self.healthy.read().await
     }
 
     fn supports_durable_commit(&self) -> bool {
-        false
+        self.durable_writer.is_some()
     }
 }
 
 /// Document storage engine transaction participant
 pub struct DocumentEngineParticipant {
-    /// Participant ID (e.g., "document:default")
     id: String,
-
-    /// Transaction buffer
     buffer: TransactionBuffer,
-
-    /// Health flag
     healthy: Arc<RwLock<bool>>,
+    durable_writer: Option<DurableWriteFn>,
 }
 
 impl DocumentEngineParticipant {
-    /// Create a new document engine participant
     pub fn new(collection_id: &str) -> Self {
         Self {
             id: format!("document:{}", collection_id),
             buffer: TransactionBuffer::new(),
             healthy: Arc::new(RwLock::new(true)),
+            durable_writer: None,
         }
     }
 
-    /// Set health status
+    pub fn with_durable_writer(mut self, writer: DurableWriteFn) -> Self {
+        self.durable_writer = Some(writer);
+        self
+    }
+
     pub async fn set_healthy(&self, healthy: bool) {
         let mut h = self.healthy.write().await;
         *h = healthy;
@@ -240,36 +269,24 @@ impl DocumentEngineParticipant {
 impl TransactionParticipant for DocumentEngineParticipant {
     async fn prepare(&self, tx_id: TransactionId) -> Result<Vote> {
         debug!("Document engine {} preparing tx {}", self.id, tx_id);
-
         let healthy = *self.healthy.read().await;
-        if !healthy {
-            return Ok(Vote::No);
-        }
-
+        if !healthy { return Ok(Vote::No); }
         let _operations = self.buffer.get_operations(tx_id).await;
-        // Validate operations...
-
         Ok(Vote::Yes)
     }
 
     async fn commit(&self, tx_id: TransactionId) -> Result<()> {
         info!("Document engine {} committing tx {}", self.id, tx_id);
-
         let operations = self.buffer.get_operations(tx_id).await;
-        for op in &operations {
-            match op {
-                BufferedOperation::Insert { id, .. } => {
-                    debug!("Committing document insert for {}", id);
-                }
-                BufferedOperation::Update { id, .. } => {
-                    debug!("Committing document update for {}", id);
-                }
-                BufferedOperation::Delete { id } => {
-                    debug!("Committing document delete for {}", id);
-                }
+        if let Some(ref writer) = self.durable_writer {
+            for op in &operations {
+                writer(op).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                        format!("durable commit failed for {}: {}", self.id, e),
+                    ))
+                })?;
             }
         }
-
         self.buffer.clear_operations(tx_id).await;
         Ok(())
     }
@@ -280,42 +297,34 @@ impl TransactionParticipant for DocumentEngineParticipant {
         Ok(())
     }
 
-    fn participant_id(&self) -> &str {
-        &self.id
-    }
-
-    async fn is_healthy(&self) -> bool {
-        *self.healthy.read().await
-    }
-
-    fn supports_durable_commit(&self) -> bool {
-        false
-    }
+    fn participant_id(&self) -> &str { &self.id }
+    async fn is_healthy(&self) -> bool { *self.healthy.read().await }
+    fn supports_durable_commit(&self) -> bool { self.durable_writer.is_some() }
 }
 
 /// Graph storage engine transaction participant
 pub struct GraphEngineParticipant {
-    /// Participant ID (e.g., "graph:default")
     id: String,
-
-    /// Transaction buffer
     buffer: TransactionBuffer,
-
-    /// Health flag
     healthy: Arc<RwLock<bool>>,
+    durable_writer: Option<DurableWriteFn>,
 }
 
 impl GraphEngineParticipant {
-    /// Create a new graph engine participant
     pub fn new(graph_id: &str) -> Self {
         Self {
             id: format!("graph:{}", graph_id),
             buffer: TransactionBuffer::new(),
             healthy: Arc::new(RwLock::new(true)),
+            durable_writer: None,
         }
     }
 
-    /// Set health status
+    pub fn with_durable_writer(mut self, writer: DurableWriteFn) -> Self {
+        self.durable_writer = Some(writer);
+        self
+    }
+
     pub async fn set_healthy(&self, healthy: bool) {
         let mut h = self.healthy.write().await;
         *h = healthy;
@@ -326,36 +335,24 @@ impl GraphEngineParticipant {
 impl TransactionParticipant for GraphEngineParticipant {
     async fn prepare(&self, tx_id: TransactionId) -> Result<Vote> {
         debug!("Graph engine {} preparing tx {}", self.id, tx_id);
-
         let healthy = *self.healthy.read().await;
-        if !healthy {
-            return Ok(Vote::No);
-        }
-
+        if !healthy { return Ok(Vote::No); }
         let _operations = self.buffer.get_operations(tx_id).await;
-        // Validate graph operations...
-
         Ok(Vote::Yes)
     }
 
     async fn commit(&self, tx_id: TransactionId) -> Result<()> {
         info!("Graph engine {} committing tx {}", self.id, tx_id);
-
         let operations = self.buffer.get_operations(tx_id).await;
-        for op in &operations {
-            match op {
-                BufferedOperation::Insert { id, .. } => {
-                    debug!("Committing node/edge insert for {}", id);
-                }
-                BufferedOperation::Update { id, .. } => {
-                    debug!("Committing node/edge update for {}", id);
-                }
-                BufferedOperation::Delete { id } => {
-                    debug!("Committing node/edge delete for {}", id);
-                }
+        if let Some(ref writer) = self.durable_writer {
+            for op in &operations {
+                writer(op).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                        format!("durable commit failed for {}: {}", self.id, e),
+                    ))
+                })?;
             }
         }
-
         self.buffer.clear_operations(tx_id).await;
         Ok(())
     }
@@ -366,42 +363,34 @@ impl TransactionParticipant for GraphEngineParticipant {
         Ok(())
     }
 
-    fn participant_id(&self) -> &str {
-        &self.id
-    }
-
-    async fn is_healthy(&self) -> bool {
-        *self.healthy.read().await
-    }
-
-    fn supports_durable_commit(&self) -> bool {
-        false
-    }
+    fn participant_id(&self) -> &str { &self.id }
+    async fn is_healthy(&self) -> bool { *self.healthy.read().await }
+    fn supports_durable_commit(&self) -> bool { self.durable_writer.is_some() }
 }
 
 /// Time-series storage engine transaction participant
 pub struct TimeSeriesEngineParticipant {
-    /// Participant ID (e.g., "tst:default")
     id: String,
-
-    /// Transaction buffer
     buffer: TransactionBuffer,
-
-    /// Health flag
     healthy: Arc<RwLock<bool>>,
+    durable_writer: Option<DurableWriteFn>,
 }
 
 impl TimeSeriesEngineParticipant {
-    /// Create a new time-series engine participant
     pub fn new(collection_id: &str) -> Self {
         Self {
             id: format!("tst:{}", collection_id),
             buffer: TransactionBuffer::new(),
             healthy: Arc::new(RwLock::new(true)),
+            durable_writer: None,
         }
     }
 
-    /// Set health status
+    pub fn with_durable_writer(mut self, writer: DurableWriteFn) -> Self {
+        self.durable_writer = Some(writer);
+        self
+    }
+
     pub async fn set_healthy(&self, healthy: bool) {
         let mut h = self.healthy.write().await;
         *h = healthy;
@@ -412,36 +401,24 @@ impl TimeSeriesEngineParticipant {
 impl TransactionParticipant for TimeSeriesEngineParticipant {
     async fn prepare(&self, tx_id: TransactionId) -> Result<Vote> {
         debug!("Time-series engine {} preparing tx {}", self.id, tx_id);
-
         let healthy = *self.healthy.read().await;
-        if !healthy {
-            return Ok(Vote::No);
-        }
-
+        if !healthy { return Ok(Vote::No); }
         let _operations = self.buffer.get_operations(tx_id).await;
-        // Validate time-series operations...
-
         Ok(Vote::Yes)
     }
 
     async fn commit(&self, tx_id: TransactionId) -> Result<()> {
         info!("Time-series engine {} committing tx {}", self.id, tx_id);
-
         let operations = self.buffer.get_operations(tx_id).await;
-        for op in &operations {
-            match op {
-                BufferedOperation::Insert { id, .. } => {
-                    debug!("Committing time-series insert for {}", id);
-                }
-                BufferedOperation::Update { id, .. } => {
-                    debug!("Committing time-series update for {}", id);
-                }
-                BufferedOperation::Delete { id } => {
-                    debug!("Committing time-series delete for {}", id);
-                }
+        if let Some(ref writer) = self.durable_writer {
+            for op in &operations {
+                writer(op).map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                        format!("durable commit failed for {}: {}", self.id, e),
+                    ))
+                })?;
             }
         }
-
         self.buffer.clear_operations(tx_id).await;
         Ok(())
     }
@@ -452,17 +429,9 @@ impl TransactionParticipant for TimeSeriesEngineParticipant {
         Ok(())
     }
 
-    fn participant_id(&self) -> &str {
-        &self.id
-    }
-
-    async fn is_healthy(&self) -> bool {
-        *self.healthy.read().await
-    }
-
-    fn supports_durable_commit(&self) -> bool {
-        false
-    }
+    fn participant_id(&self) -> &str { &self.id }
+    async fn is_healthy(&self) -> bool { *self.healthy.read().await }
+    fn supports_durable_commit(&self) -> bool { self.durable_writer.is_some() }
 }
 
 #[cfg(test)]

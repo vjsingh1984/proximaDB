@@ -835,6 +835,12 @@ impl StreamingParquetWriter {
             filterable_columns_count: self.filterable_columns.len(),
             records_with_metadata: 0,
             avg_metadata_fields: 0.0,
+            // TD-040: Vector bounds computed during write (populated by caller)
+            vector_norm_min: None,
+            vector_norm_max: None,
+            vector_norm_mean: None,
+            vector_component_min: None,
+            vector_component_max: None,
         };
 
         Ok((stats, written_data, self.metadata_collector))
