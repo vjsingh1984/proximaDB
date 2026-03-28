@@ -1,0 +1,111 @@
+= ProximaDB Supported Surface Matrix
+:toc: left
+:toclevels: 2
+:icons: font
+:last-updated: March 2026
+
+[.lead]
+Current support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
+
+[IMPORTANT]
+====
+This matrix is the support contract.
+
+* Use link:./TECHNICAL_DEBT.md[Technical Debt Register] for the active backlog.
+* Use link:./_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap] for sequencing and investment direction.
+* Do not infer support level from code presence alone.
+====
+
+== Status Tiers
+
+|===
+| Tier | Meaning | Guidance
+
+| Supported
+| Primary product path with coherent API behavior on the canonical single-node surface.
+| Safe default for adoption, examples, and positioning.
+
+| Beta
+| Implemented and useful, but still has known execution or operator gaps.
+| Use with review and explicit scope control.
+
+| Experimental
+| Foundations exist, but behavior, transport, or support expectations are still in flux.
+| Feature-gate and avoid broad product claims.
+
+| Planned
+| Roadmap item without a coherent product surface yet.
+| Do not market as implemented.
+|===
+
+== Current Matrix
+
+|===
+| Capability | Tier | Current Scope | Main Constraints
+
+| Vector CRUD and search
+| Supported
+| REST and gRPC vector batch/search/get flows, tenant-aware routing, filters, and streaming search on the canonical single-node path.
+| Keep hybrid retrieval and distributed search claims separate from the supported vector surface.
+
+| Federated SQL over function-backed sources
+| Beta
+| `VECTOR_SEARCH(...)`, `GRAPH_QUERY(...)`, `DOCUMENT_QUERY(...)`, `LOGS(...)`, and `METRICS(...)` run through the federated engine with cache support. Phase 2.5: pipeline-based execution, morsel-driven parallelism, Arrow-native cross-model format for LATERAL joins, batch SIMD distance.
+| Strongest on function-backed sources; generic relational scans and remote distributed execution are still incomplete.
+
+| Document CRUD, query, and aggregation
+| Beta
+| WAL-backed collections, CRUD, aggregation, change events, and in-memory query execution are implemented.
+| Path-filter depth, geo indexes, and deeper block-level pruning/compression are incomplete.
+
+| ORION graph operations
+| Beta
+| Node/edge CRUD, traversal, neighbors, and shortest-path APIs are usable.
+| Declarative graph query execution is still incomplete on the canonical gRPC path.
+
+| Observability ingestion and query
+| Beta
+| Logs, metrics, and traces ingestion exist alongside full-text log search and PromQL execution.
+| Alerting, operator workflow depth, and some gRPC query mappings remain incomplete.
+
+| Security runtime
+| Beta
+| JWT, API key, SSO hooks, mTLS identity, and CRL-backed revocation reload/freshness checks are present.
+| Security admin/status APIs and stronger online revocation policy are incomplete.
+
+| Hybrid retrieval
+| Beta
+| tantivy BM25 integration, RRF/weighted fusion, `/api/v1/hybrid/search` API (TD-008 resolved).
+| Backend integration improved; gRPC path parity still in progress.
+
+| PULSAR and QUASAR graph engines
+| Experimental
+| Distributed and hybrid graph foundations exist in code.
+| They are not the canonical product graph path and are not fully wired end-to-end.
+
+| Distributed cluster execution
+| Experimental
+| Raft internals, shard planning, and routing foundations exist.
+| RPC transport and remote execution still contain placeholder or partial implementations.
+
+| Time-series and event foundations
+| Beta
+| TST engine complete (ASOF joins, downsampling, OHLC; TD-009). Event sourcing engine complete (append-only WAL, temporal queries; TD-010).
+| Product packaging, API parity, and production validation at scale still in progress.
+|===
+
+== Positioning Guidance
+
+ProximaDB should currently be positioned as a developer-first context database:
+
+* One system for vectors, operational documents, graph context, and telemetry on the single-node developer path.
+* Best fit for integrated semantic + graph + telemetry workflows.
+* Not yet a like-for-like replacement for best-in-class distributed vector, graph, document, or observability platforms.
+
+== Near-Term Exit Criteria
+
+The next maturity step is to move from "broad but uneven" to "narrow but reliable":
+
+* One canonical execution path for vector, hybrid, graph, document, and observability queries.
+* No roadmap or README claims that exceed the supported surface defined here.
+* Distributed claims backed by real transport and failover verification.
