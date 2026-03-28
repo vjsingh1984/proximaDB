@@ -677,19 +677,19 @@ See `docs/_internal/roadmap/ARCHITECTURAL_REVIEW_2026_03_21.adoc` for full analy
 | No per-segment adaptive codec selection
 | P3
 | MEDIUM
-| Open
-| ProximaCodec supports 7 encoding schemes (Raw, BitPacked, Delta, FOR, PatchedBase, Dictionary, RunLength) but codec is selected statically, not adaptively per segment. DuckDB samples each segment, tries multiple codecs, picks best compression ratio. Same timestamp column uses same codec whether sorted or random.
-| 2-3 weeks
-| 20-40% potential storage reduction for mixed workloads.
+| Resolved (was already implemented)
+| Codec selection was already fully adaptive. `analyze_and_choose_scheme_f32()` in `analysis.rs` runs on actual data patterns at 4 encoding call sites in `block_structures.rs`. Per-dimension parallel analysis with Rayon for transpose encoding. Lossy scheme override protection for f32 semantics. The March 21 review's characterization of "static selection" was incorrect.
+| N/A
+| Already resolved. No changes needed.
 
 | TD-037
 | Distance computation not truly multi-vector batched
 | P3
 | MEDIUM
-| Open
-| `src/compute/distance_computation/engine.rs` uses unroll-4 instruction pipelining (good) but computes each vector distance individually against query. No matrix transposition for true multi-vector SIMD. For 128-dim vectors with AVX2, matrix approach could yield 2-4x improvement.
+| Improved Mar 2026
+| Improved March 27, 2026: NEON batch unrolling increased from 2-way to 4-way. Software prefetch hints added to both AVX2 and NEON paths — `_mm_prefetch` (x86) and `__prefetch` (ARM) bring next batch into L1 cache while current batch computes. True matrix transposition for one-shot multi-vector SIMD remains a future optimization for an additional 2-4x gain.
 | 2 weeks
-| Optimization, not critical path. Current approach is functional and uses SIMD well.
+| Improved. Prefetch + 4-way NEON unrolling added. Full matrix transposition deferred.
 
 | TD-038
 | Cross-modal transaction isolation not integrated

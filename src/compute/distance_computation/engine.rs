@@ -1527,7 +1527,11 @@ impl UnifiedDistanceCompute {
         }
     }
 
-    /// AVX2 batch processing - processes multiple vectors with SIMD
+    /// AVX2 batch processing with 4-way unrolling and software prefetch (TD-037).
+    ///
+    /// Processes 4 vectors per loop iteration for instruction pipelining.
+    /// Software prefetch hints bring the next batch into L1 cache while
+    /// the current batch is being computed.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn simd_batch_avx2(
@@ -1537,16 +1541,25 @@ impl UnifiedDistanceCompute {
         metric: &DistanceMetric,
         distances: &mut Vec<f32>,
     ) {
-        // For true multi-vector SIMD, we'd need to transpose data
-        // For now, use optimized per-vector SIMD with better batching
-        const UNROLL_FACTOR: usize = 4; // Process 4 vectors per loop iteration
+        const UNROLL_FACTOR: usize = 4;
 
         let chunks = vectors.chunks_exact(UNROLL_FACTOR);
         let remainder = chunks.remainder();
 
-        // Unrolled loop for better instruction pipelining
-        for chunk in chunks {
-            // Calculate distances for 4 vectors, allowing CPU to pipeline better
+        let chunk_vec: Vec<&[&[f32]]> = chunks.collect();
+        for (i, chunk) in chunk_vec.iter().enumerate() {
+            // Prefetch next batch into L1 cache (locality hint 3 = L1, read intent 0)
+            if i + 1 < chunk_vec.len() {
+                let next = chunk_vec[i + 1];
+                for v in next.iter() {
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        use std::arch::x86_64::*;
+                        _mm_prefetch(v.as_ptr() as *const i8, _MM_HINT_T0);
+                    }
+                }
+            }
+
             let d0 = self.compute_distance_simd(query, chunk[0], metric);
             let d1 = self.compute_distance_simd(query, chunk[1], metric);
             let d2 = self.compute_distance_simd(query, chunk[2], metric);
@@ -1558,13 +1571,16 @@ impl UnifiedDistanceCompute {
             distances.push(d3);
         }
 
-        // Process remainder
         for vector in remainder {
             distances.push(self.compute_distance_simd(query, vector, metric));
         }
     }
 
-    /// NEON batch processing - processes multiple vectors with SIMD
+    /// NEON batch processing with 4-way unrolling and software prefetch (TD-037).
+    ///
+    /// Apple M-series cores have deep pipelines that benefit from 4-way unrolling.
+    /// Software prefetch hints bring the next batch of vectors into L1 cache
+    /// while the current batch is being processed, reducing cache miss stalls.
     #[cfg(target_arch = "aarch64")]
     unsafe fn simd_batch_neon(
         &self,
@@ -1573,22 +1589,36 @@ impl UnifiedDistanceCompute {
         metric: &DistanceMetric,
         distances: &mut Vec<f32>,
     ) {
-        // For NEON, use 2-way unrolling for better pipeline usage
-        const UNROLL_FACTOR: usize = 2;
+        const UNROLL_FACTOR: usize = 4;
 
         let chunks = vectors.chunks_exact(UNROLL_FACTOR);
         let remainder = chunks.remainder();
 
-        // Unrolled loop for better instruction pipelining
-        for chunk in chunks {
+        let chunk_vec: Vec<&[&[f32]]> = chunks.collect();
+        for (i, chunk) in chunk_vec.iter().enumerate() {
+            // Prefetch next batch into L1 cache while processing current batch
+            if i + 1 < chunk_vec.len() {
+                let next = chunk_vec[i + 1];
+                for v in next.iter() {
+                    // Hint to the compiler that we'll access this data soon.
+                    // std::arch::aarch64::_prefetch is unstable on stable Rust,
+                    // so we use a volatile read of the first byte as a portable
+                    // prefetch hint that prevents the access from being optimized away.
+                    let _ = unsafe { std::ptr::read_volatile(v.as_ptr()) };
+                }
+            }
+
             let d0 = self.compute_distance_simd(query, chunk[0], metric);
             let d1 = self.compute_distance_simd(query, chunk[1], metric);
+            let d2 = self.compute_distance_simd(query, chunk[2], metric);
+            let d3 = self.compute_distance_simd(query, chunk[3], metric);
 
             distances.push(d0);
             distances.push(d1);
+            distances.push(d2);
+            distances.push(d3);
         }
 
-        // Process remainder
         for vector in remainder {
             distances.push(self.compute_distance_simd(query, vector, metric));
         }
@@ -1607,6 +1637,113 @@ impl UnifiedDistanceCompute {
             .iter()
             .map(|v| self.compute_distance_simd(query, v, &metric))
             .collect()
+    }
+
+    /// Compute distances for multiple candidate vectors against a single query
+    /// using dimension-major iteration for better cache utilization.
+    ///
+    /// For small batch sizes (<= 8), falls back to the standard per-vector approach.
+    /// For larger batches, iterates dimension-by-dimension accumulating partial distances
+    /// for all candidates simultaneously, which improves SIMD utilization.
+    pub fn distance_batch_transposed(
+        &self,
+        query: &[f32],
+        candidates: &[&[f32]],
+        metric: Option<DistanceMetric>,
+    ) -> Vec<f32> {
+        let metric = metric.unwrap_or(self.system_default);
+        let n = candidates.len();
+
+        // Fall back to standard approach for small batches
+        if n <= 8 || query.is_empty() {
+            return self.distance_batch(query, candidates, Some(metric));
+        }
+
+        // Verify all candidates have same dimension as query
+        let d = query.len();
+        for c in candidates {
+            if c.len() != d {
+                return self.distance_batch(query, candidates, Some(metric));
+            }
+        }
+
+        match metric {
+            DistanceMetric::Euclidean => self.batch_l2_transposed(query, candidates),
+            DistanceMetric::Cosine => self.batch_cosine_transposed(query, candidates),
+            DistanceMetric::DotProduct => self.batch_dot_transposed(query, candidates),
+            _ => self.distance_batch(query, candidates, Some(metric)),
+        }
+    }
+
+    /// L2 distance using dimension-major (transposed) iteration
+    fn batch_l2_transposed(&self, query: &[f32], candidates: &[&[f32]]) -> Vec<f32> {
+        let n = candidates.len();
+        let d = query.len();
+        let mut accum = vec![0.0f32; n];
+
+        for dim in 0..d {
+            let q = query[dim];
+            for (i, candidate) in candidates.iter().enumerate() {
+                let diff = q - candidate[dim];
+                accum[i] += diff * diff;
+            }
+        }
+
+        // L2 distance is sqrt of sum of squared differences
+        for val in &mut accum {
+            *val = val.sqrt();
+        }
+        accum
+    }
+
+    /// Cosine distance using dimension-major (transposed) iteration
+    fn batch_cosine_transposed(&self, query: &[f32], candidates: &[&[f32]]) -> Vec<f32> {
+        let n = candidates.len();
+        let d = query.len();
+        let mut dot_products = vec![0.0f32; n];
+        let mut norms_b = vec![0.0f32; n];
+        let mut norm_a = 0.0f32;
+
+        for dim in 0..d {
+            let q = query[dim];
+            norm_a += q * q;
+            for (i, candidate) in candidates.iter().enumerate() {
+                let c = candidate[dim];
+                dot_products[i] += q * c;
+                norms_b[i] += c * c;
+            }
+        }
+
+        let norm_a = norm_a.sqrt();
+        let mut results = vec![0.0f32; n];
+        for i in 0..n {
+            let norm_b = norms_b[i].sqrt();
+            let denom = norm_a * norm_b;
+            if denom > 0.0 {
+                // Cosine distance = 1 - similarity (lower = more similar)
+                results[i] = 1.0 - (dot_products[i] / denom);
+            } else {
+                results[i] = f32::INFINITY;
+            }
+        }
+        results
+    }
+
+    /// Dot product distance using dimension-major (transposed) iteration
+    fn batch_dot_transposed(&self, query: &[f32], candidates: &[&[f32]]) -> Vec<f32> {
+        let n = candidates.len();
+        let d = query.len();
+        let mut dot_products = vec![0.0f32; n];
+
+        for dim in 0..d {
+            let q = query[dim];
+            for (i, candidate) in candidates.iter().enumerate() {
+                dot_products[i] += q * candidate[dim];
+            }
+        }
+
+        // Return raw dot products (consistent with compute_dot_product_simd which returns raw value)
+        dot_products
     }
 
     /// Compute similarity results with semantic meaning
@@ -1877,5 +2014,316 @@ mod tests {
         assert!((distances[0] - 1.0).abs() < 1e-6);
         assert!((distances[1] - 1.0).abs() < 1e-6);
         assert!((distances[2] - 1.414).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cosine_distance_identical_vectors() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![1.0, 2.0, 3.0];
+        let distance = compute.distance(&a, &b);
+        // Identical vectors: cosine similarity = 1, distance = 1 - 1 = 0
+        assert!(
+            distance.abs() < 1e-5,
+            "Identical vectors should have cosine distance ~0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_cosine_distance_orthogonal_vectors() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let distance = compute.distance(&a, &b);
+        // Orthogonal vectors: cosine similarity = 0, distance = 1 - 0 = 1
+        assert!(
+            (distance - 1.0).abs() < 1e-5,
+            "Orthogonal vectors should have cosine distance ~1.0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_cosine_distance_opposite_vectors() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let a = vec![1.0, 0.0];
+        let b = vec![-1.0, 0.0];
+        let distance = compute.distance(&a, &b);
+        // Opposite vectors: cosine similarity = -1, distance = 1 - (-1) = 2
+        assert!(
+            (distance - 2.0).abs() < 1e-5,
+            "Opposite vectors should have cosine distance ~2.0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_euclidean_distance_known_values() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+
+        // 3-4-5 right triangle
+        let a = vec![0.0, 0.0];
+        let b = vec![3.0, 4.0];
+        let distance = compute.distance(&a, &b);
+        assert!(
+            (distance - 5.0).abs() < 1e-5,
+            "Expected distance 5.0 (3-4-5 triangle), got {}",
+            distance
+        );
+
+        // Same point = distance 0
+        let c = vec![1.0, 2.0, 3.0];
+        let d = vec![1.0, 2.0, 3.0];
+        let distance = compute.distance(&c, &d);
+        assert!(
+            distance.abs() < 1e-5,
+            "Same point should have distance 0, got {}",
+            distance
+        );
+
+        // Unit distance along each axis in 3D: sqrt(3)
+        let e = vec![0.0, 0.0, 0.0];
+        let f = vec![1.0, 1.0, 1.0];
+        let distance = compute.distance(&e, &f);
+        assert!(
+            (distance - 3.0_f32.sqrt()).abs() < 1e-5,
+            "Expected sqrt(3), got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_dot_product_known_values() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::DotProduct);
+
+        // Known dot product: 1*4 + 2*5 + 3*6 = 32
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, 5.0, 6.0];
+        let distance = compute.distance(&a, &b);
+        assert!(
+            (distance - 32.0).abs() < 1e-5,
+            "Expected dot product 32.0, got {}",
+            distance
+        );
+
+        // Orthogonal vectors: dot product = 0
+        let c = vec![1.0, 0.0];
+        let d = vec![0.0, 1.0];
+        let distance = compute.distance(&c, &d);
+        assert!(
+            distance.abs() < 1e-5,
+            "Orthogonal vectors should have dot product 0, got {}",
+            distance
+        );
+
+        // Unit vector dot with itself = 1
+        let e = vec![1.0, 0.0, 0.0];
+        let distance = compute.distance(&e, &e);
+        assert!(
+            (distance - 1.0).abs() < 1e-5,
+            "Unit vector dot with itself should be 1.0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_distance_with_explicit_metric() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+
+        // Use explicit cosine metric even though default is Euclidean
+        let cosine_dist = compute.distance_with_metric(&a, &b, &DistanceMetric::Cosine);
+        assert!(
+            (cosine_dist - 1.0).abs() < 1e-5,
+            "Expected cosine distance 1.0 for orthogonal, got {}",
+            cosine_dist
+        );
+
+        // Use default (Euclidean)
+        let euclidean_dist = compute.distance(&a, &b);
+        let expected = 2.0_f32.sqrt();
+        assert!(
+            (euclidean_dist - expected).abs() < 1e-5,
+            "Expected euclidean distance sqrt(2), got {}",
+            euclidean_dist
+        );
+    }
+
+    #[test]
+    fn test_batch_cosine_distances() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let query = vec![1.0, 0.0, 0.0];
+        let vectors: Vec<&[f32]> = vec![
+            &[1.0, 0.0, 0.0],  // identical: distance 0
+            &[0.0, 1.0, 0.0],  // orthogonal: distance 1
+            &[-1.0, 0.0, 0.0], // opposite: distance 2
+        ];
+        let distances = compute.distance_batch(&query, &vectors, None);
+        assert_eq!(distances.len(), 3);
+        assert!(distances[0].abs() < 1e-5, "identical should be ~0");
+        assert!((distances[1] - 1.0).abs() < 1e-5, "orthogonal should be ~1");
+        assert!((distances[2] - 2.0).abs() < 1e-5, "opposite should be ~2");
+    }
+
+    #[test]
+    fn test_distance_metric_ext_is_similarity() {
+        assert!(DistanceMetric::DotProduct.is_similarity());
+        assert!(!DistanceMetric::Cosine.is_similarity());
+        assert!(!DistanceMetric::Euclidean.is_similarity());
+    }
+
+    #[test]
+    fn test_default_unified_distance_compute() {
+        let compute = UnifiedDistanceCompute::default();
+        // Default is Euclidean
+        let a = vec![0.0, 0.0];
+        let b = vec![3.0, 4.0];
+        let distance = compute.distance(&a, &b);
+        assert!(
+            (distance - 5.0).abs() < 1e-5,
+            "Default should be Euclidean, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_euclidean_distance_higher_dimensions() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+        // 4D vector: sqrt(1 + 1 + 1 + 1) = 2
+        let a = vec![0.0, 0.0, 0.0, 0.0];
+        let b = vec![1.0, 1.0, 1.0, 1.0];
+        let distance = compute.distance(&a, &b);
+        assert!(
+            (distance - 2.0).abs() < 1e-5,
+            "Expected 2.0 for 4D unit diagonal, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_batch_transposed_l2_correctness() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+        let query = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+
+        // Create >8 candidates to trigger transposed path
+        let candidates_owned: Vec<Vec<f32>> = (0..20)
+            .map(|i| {
+                (0..10)
+                    .map(|j| (i as f32) * 0.1 + (j as f32) * 0.5)
+                    .collect()
+            })
+            .collect();
+        let candidates: Vec<&[f32]> = candidates_owned.iter().map(|v| v.as_slice()).collect();
+
+        let standard = compute.distance_batch(&query, &candidates, Some(DistanceMetric::Euclidean));
+        let transposed =
+            compute.distance_batch_transposed(&query, &candidates, Some(DistanceMetric::Euclidean));
+
+        assert_eq!(standard.len(), transposed.len());
+        for (i, (s, t)) in standard.iter().zip(transposed.iter()).enumerate() {
+            assert!(
+                (s - t).abs() < 1e-4,
+                "L2 mismatch at index {}: standard={}, transposed={}",
+                i,
+                s,
+                t
+            );
+        }
+    }
+
+    #[test]
+    fn test_batch_transposed_cosine_correctness() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let query = vec![1.0, 0.5, 0.3, 0.8, 0.2, 0.9, 0.1, 0.7, 0.4, 0.6];
+
+        let candidates_owned: Vec<Vec<f32>> = (0..15)
+            .map(|i| {
+                (0..10)
+                    .map(|j| ((i + j) as f32 * 0.3).sin().abs() + 0.01)
+                    .collect()
+            })
+            .collect();
+        let candidates: Vec<&[f32]> = candidates_owned.iter().map(|v| v.as_slice()).collect();
+
+        let standard = compute.distance_batch(&query, &candidates, Some(DistanceMetric::Cosine));
+        let transposed =
+            compute.distance_batch_transposed(&query, &candidates, Some(DistanceMetric::Cosine));
+
+        assert_eq!(standard.len(), transposed.len());
+        for (i, (s, t)) in standard.iter().zip(transposed.iter()).enumerate() {
+            assert!(
+                (s - t).abs() < 1e-4,
+                "Cosine mismatch at index {}: standard={}, transposed={}",
+                i,
+                s,
+                t
+            );
+        }
+    }
+
+    #[test]
+    fn test_batch_transposed_dot_correctness() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::DotProduct);
+        let query = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+
+        let candidates_owned: Vec<Vec<f32>> = (0..12)
+            .map(|i| {
+                (0..10)
+                    .map(|j| (i as f32) * 0.2 + (j as f32) * 0.1)
+                    .collect()
+            })
+            .collect();
+        let candidates: Vec<&[f32]> = candidates_owned.iter().map(|v| v.as_slice()).collect();
+
+        let standard =
+            compute.distance_batch(&query, &candidates, Some(DistanceMetric::DotProduct));
+        let transposed = compute.distance_batch_transposed(
+            &query,
+            &candidates,
+            Some(DistanceMetric::DotProduct),
+        );
+
+        assert_eq!(standard.len(), transposed.len());
+        for (i, (s, t)) in standard.iter().zip(transposed.iter()).enumerate() {
+            assert!(
+                (s - t).abs() < 1e-3,
+                "DotProduct mismatch at index {}: standard={}, transposed={}",
+                i,
+                s,
+                t
+            );
+        }
+    }
+
+    #[test]
+    fn test_batch_transposed_small_fallback() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+        let query = vec![1.0, 2.0, 3.0];
+
+        // Only 4 candidates (<= 8) should use standard path
+        let candidates_owned: Vec<Vec<f32>> = vec![
+            vec![1.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 1.0],
+            vec![1.0, 1.0, 1.0],
+        ];
+        let candidates: Vec<&[f32]> = candidates_owned.iter().map(|v| v.as_slice()).collect();
+
+        let standard = compute.distance_batch(&query, &candidates, Some(DistanceMetric::Euclidean));
+        let transposed =
+            compute.distance_batch_transposed(&query, &candidates, Some(DistanceMetric::Euclidean));
+
+        assert_eq!(standard.len(), transposed.len());
+        for (i, (s, t)) in standard.iter().zip(transposed.iter()).enumerate() {
+            assert!(
+                (s - t).abs() < 1e-6,
+                "Small batch mismatch at index {}: standard={}, transposed={}",
+                i,
+                s,
+                t
+            );
+        }
     }
 }
