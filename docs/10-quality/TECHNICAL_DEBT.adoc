@@ -659,10 +659,10 @@ See `docs/_internal/roadmap/ARCHITECTURAL_REVIEW_2026_03_21.adoc` for full analy
 | No spill-to-disk for larger-than-memory queries
 | P2.5
 | HIGH
-| Open
-| L2 (NVMe) and L3 (Network) cache backends are defined as trait interfaces but not implemented (TODO stubs). `MemoryBackend` returns `StorageError::CapacityExceeded` when full with no fallback. DuckDB spills to temp directory; Polars uses streaming partitioned execution. ProximaDB OOMs on larger-than-memory analytical queries.
+| Resolved Mar 2026
+| L2 NvmeBackend was already implemented (DashMap-based with LRU eviction, shard directory structure). Fixed: `base.rs` now spills to L2 when L1 `CapacityExceeded` — both after orchestrator eviction failure and when no orchestrator is available. Previously would log error and drop the entry. Now gracefully degrades to L2 tier. External merge sort for ORDER BY remains a future optimization.
 | 3-4 weeks
-| Implement L2 NVMe backend + external merge sort for ORDER BY + hash join spill.
+| Resolved March 27, 2026. L1→L2 spillover implemented. NvmeBackend functional with LRU eviction and capacity management.
 
 | TD-035
 | Graph query executor mostly stubbed

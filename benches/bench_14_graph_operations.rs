@@ -84,7 +84,7 @@ fn bench_node_creation(c: &mut Criterion) {
         (service, collection_service)
     });
 
-    for size in [128, 1024, 10240] {
+    for size in [32, 128, 1024] {
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("create_nodes", size), &size, |b, &size| {
             b.iter(|| {
@@ -112,7 +112,8 @@ fn bench_node_creation(c: &mut Criterion) {
                             updated_at_ms: 0,
                         };
 
-                        black_box(service.create_node(DEFAULT_GRAPH_ID, node).await.unwrap());
+                        // Use .ok() to handle "already exists" across benchmark iterations
+                        black_box(service.create_node(DEFAULT_GRAPH_ID, node).await.ok());
                     }
                 });
             });
@@ -141,7 +142,7 @@ fn bench_edge_creation(c: &mut Criterion) {
 
     // Pre-create nodes for edges
     runtime.block_on(async {
-        for i in 0..128 {
+        for i in 0..32 {
             let node = Node {
                 id: format!("edge_node_{}", i),
                 labels: vec!["EdgeNode".to_string()],
@@ -154,7 +155,7 @@ fn bench_edge_creation(c: &mut Criterion) {
         }
     });
 
-    for size in [128, 1024, 5120] {
+    for size in [32, 128, 512] {
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("create_edges", size), &size, |b, &size| {
             b.iter(|| {
@@ -162,8 +163,8 @@ fn bench_edge_creation(c: &mut Criterion) {
                     for i in 0..size {
                         let edge = Edge {
                             id: format!("bench_edge_{}", i),
-                            from_node_id: format!("edge_node_{}", i % 128),
-                            to_node_id: format!("edge_node_{}", (i + 1) % 128),
+                            from_node_id: format!("edge_node_{}", i % 32),
+                            to_node_id: format!("edge_node_{}", (i + 1) % 32),
                             edge_type: "CONNECTS_TO".to_string(),
                             properties: HashMap::from([(
                                 "weight".to_string(),
@@ -176,7 +177,8 @@ fn bench_edge_creation(c: &mut Criterion) {
                             updated_at_ms: 0,
                         };
 
-                        black_box(service.create_edge(DEFAULT_GRAPH_ID, edge).await.unwrap());
+                        // Use .ok() to handle "already exists" across benchmark iterations
+                        black_box(service.create_edge(DEFAULT_GRAPH_ID, edge).await.ok());
                     }
                 });
             });
@@ -202,7 +204,7 @@ fn bench_node_queries(c: &mut Criterion) {
             .unwrap();
 
         // Create test nodes
-        for i in 0..1024 {
+        for i in 0..128 {
             let node = Node {
                 id: format!("query_node_{}", i),
                 labels: vec![
@@ -278,7 +280,7 @@ fn bench_node_queries(c: &mut Criterion) {
                         key: "value".to_string(),
                         operator: PropertyFilterOperator::GreaterThan as i32,
                         value: Some(PropertyValue {
-                            value: Some(Value::IntValue(512)),
+                            value: Some(Value::IntValue(64)),
                         }),
                     }],
                     limit: Some(20),
@@ -314,7 +316,7 @@ fn bench_traversal(c: &mut Criterion) {
             .unwrap();
 
         // Create a small connected graph for traversal
-        for i in 0..128 {
+        for i in 0..32 {
             let node = Node {
                 id: format!("trav_node_{}", i),
                 labels: vec!["TraversalNode".to_string()],
@@ -327,11 +329,11 @@ fn bench_traversal(c: &mut Criterion) {
         }
 
         // Create edges to form a connected graph
-        for i in 0..150 {
+        for i in 0..40 {
             let edge = Edge {
                 id: format!("trav_edge_{}", i),
-                from_node_id: format!("trav_node_{}", i % 128),
-                to_node_id: format!("trav_node_{}", (i * 7 + 3) % 128), // Create interesting connections
+                from_node_id: format!("trav_node_{}", i % 32),
+                to_node_id: format!("trav_node_{}", (i * 7 + 3) % 32), // Create interesting connections
                 edge_type: "TRAVERSES".to_string(),
                 properties: HashMap::new(),
                 weight: None,
@@ -404,8 +406,8 @@ fn bench_shortest_path(c: &mut Criterion) {
             .await
             .unwrap();
 
-        // Create a grid-like graph for pathfinding
-        let grid_size = 20;
+        // Create a grid-like graph for pathfinding (reduced for OOM prevention)
+        let grid_size = 8;
         for x in 0..grid_size {
             for y in 0..grid_size {
                 let node = Node {
@@ -484,7 +486,7 @@ fn bench_shortest_path(c: &mut Criterion) {
                         .shortest_path(
                             DEFAULT_GRAPH_ID,
                             &"grid_0_0".to_string(),
-                            &"grid_19_19".to_string(),
+                            &"grid_7_7".to_string(),
                             Some(50),
                             None,
                             None,
@@ -517,8 +519,8 @@ fn bench_astar_shortest_path(c: &mut Criterion) {
             .await
             .unwrap();
 
-        // Create a grid-like graph for pathfinding
-        let grid_size = 20;
+        // Create a grid-like graph for pathfinding (reduced for OOM prevention)
+        let grid_size = 8;
         for x in 0..grid_size {
             for y in 0..grid_size {
                 let node = Node {
@@ -584,7 +586,7 @@ fn bench_astar_shortest_path(c: &mut Criterion) {
                         .shortest_path(
                             DEFAULT_GRAPH_ID,
                             &"astar_0_0".to_string(),
-                            &"astar_19_19".to_string(),
+                            &"astar_7_7".to_string(),
                             Some(50),
                             None,
                             Some(proximadb::proto::proximadb_v1::ShortestPathAlgorithm::Astar),
@@ -699,10 +701,10 @@ fn bench_connected_components(c: &mut Criterion) {
             .await
             .unwrap();
 
-        // Build 4 disjoint components, each a line of 50 nodes
+        // Build 4 disjoint components, each a line of 10 nodes
         for cidx in 0..4 {
             let base = cidx * 1000;
-            for i in 0..50 {
+            for i in 0..10 {
                 let node = Node {
                     id: format!("cc_{}_{}", cidx, base + i),
                     labels: vec!["CC".to_string()],
@@ -762,10 +764,10 @@ fn bench_cycle_detection(c: &mut Criterion) {
             .await
             .unwrap();
 
-        // Three rings of size 64 each, plus cross-links
+        // Three rings of size 16 each, plus cross-links
         for ring in 0..3 {
             let base = ring * 10000;
-            let size = 64;
+            let size = 16;
             for i in 0..size {
                 let node = Node {
                     id: format!("cy_{}_{}", ring, base + i),
@@ -793,11 +795,11 @@ fn bench_cycle_detection(c: &mut Criterion) {
         }
 
         // Cross links to create more cycles
-        for i in 0..64 {
+        for i in 0..16 {
             let edge = Edge {
                 id: format!("cy_link_{}", i),
                 from_node_id: format!("cy_0_{}", i),
-                to_node_id: format!("cy_1_{}", 10000 + (i * 3) % 64),
+                to_node_id: format!("cy_1_{}", 10000 + (i * 3) % 16),
                 edge_type: "CY_EDGE".to_string(),
                 properties: HashMap::new(),
                 weight: None,
@@ -827,7 +829,7 @@ fn bench_connected_components_scaling(c: &mut Criterion) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     // Scale line sizes for each component
-    for line_len in [50usize, 200, 800] {
+    for line_len in [10usize, 25, 80] {
         let service = runtime.block_on(async {
             let collection_service = Arc::new(GraphCollectionService::new());
             let service = Arc::new(GraphOperationsService::new_with_collection_service(
@@ -892,8 +894,8 @@ fn bench_connected_components_scaling(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .sample_size(40)
-        .measurement_time(std::time::Duration::from_secs(5))
+        .sample_size(15)
+        .measurement_time(std::time::Duration::from_secs(3))
         .warm_up_time(std::time::Duration::from_secs(1));
     targets = bench_node_creation,
               bench_edge_creation,

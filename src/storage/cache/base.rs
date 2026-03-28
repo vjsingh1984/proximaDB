@@ -208,16 +208,41 @@ where
                             });
                         }
                         Err(_) => {
-                            // Still fails after eviction - cache is critically full
-                            tracing::error!("Cache capacity exceeded even after eviction attempt");
+                            // L1 still full after eviction — spill to L2 (NVMe/SSD)
+                            // instead of dropping the entry (TD-034: graceful degradation)
+                            if let Some(ref l2) = self.l2_backend {
+                                if let Err(e) = l2.put(key, entry).await {
+                                    tracing::warn!(
+                                        "L2 spill failed after L1 capacity exceeded: {:?}",
+                                        e
+                                    );
+                                } else {
+                                    tracing::debug!("Spilled entry to L2 after L1 capacity exceeded");
+                                }
+                            } else {
+                                tracing::error!(
+                                    "Cache capacity exceeded after eviction, no L2 backend for spillover"
+                                );
+                            }
                             return;
                         }
                     }
                 } else {
-                    // No global orchestrator available
-                    tracing::error!(
-                        "Cache capacity exceeded and no orchestrator available for eviction"
-                    );
+                    // No global orchestrator — try L2 spillover directly (TD-034)
+                    if let Some(ref l2) = self.l2_backend {
+                        if let Err(e) = l2.put(key, entry).await {
+                            tracing::warn!(
+                                "L2 spill failed (no orchestrator): {:?}",
+                                e
+                            );
+                        } else {
+                            tracing::debug!("Spilled entry to L2 (no orchestrator available)");
+                        }
+                    } else {
+                        tracing::error!(
+                            "Cache capacity exceeded: no orchestrator and no L2 backend for spillover"
+                        );
+                    }
                     return;
                 }
             }

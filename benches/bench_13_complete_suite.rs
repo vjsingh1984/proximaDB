@@ -73,7 +73,7 @@ fn bench_distance_metrics(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("distance_computation");
     group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(5));
+    group.measurement_time(Duration::from_secs(3));
 
     // Use standard dimensions
     let dimensions = STANDARD_DIMENSIONS.to_vec();
@@ -114,27 +114,29 @@ fn bench_vector_operations(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("vector_operations");
     group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(5));
+    group.measurement_time(Duration::from_secs(3));
 
     // Use subset of standard dimensions and batch sizes
-    let dimensions = vec![384, 768, 1536]; // MiniLM, BERT, OpenAI
-    let vector_counts = STANDARD_BATCH_SIZES.to_vec(); // [250, 1000, 5000]
+    let dimensions = vec![384, 768]; // MiniLM, BERT
+    let vector_counts = STANDARD_BATCH_SIZES.to_vec(); // [128, 512, 1024]
 
     for dimension in dimensions {
         for &count in &vector_counts {
             group.throughput(Throughput::Elements(count as u64));
 
-            // Benchmark VectorRecord creation
-            group.bench_with_input(
-                BenchmarkId::new("create", format!("dim_{}_count_{}", dimension, count)),
-                &(dimension, count),
-                |bencher, &(dim, cnt)| {
-                    bencher.iter(|| {
-                        let records = generate_vector_records(cnt, dim);
-                        black_box(records)
-                    });
-                },
-            );
+            // Benchmark VectorRecord creation — cap at 1000 to avoid 30+ MB/iter for large counts
+            if count <= 1000 {
+                group.bench_with_input(
+                    BenchmarkId::new("create", format!("dim_{}_count_{}", dimension, count)),
+                    &(dimension, count),
+                    |bencher, &(dim, cnt)| {
+                        bencher.iter(|| {
+                            let records = generate_vector_records(cnt, dim);
+                            black_box(records)
+                        });
+                    },
+                );
+            }
 
             // Benchmark vector normalization
             let vectors = generate_test_vectors(count, dimension);
@@ -163,6 +165,8 @@ fn bench_vector_operations(c: &mut Criterion) {
             if count <= 1024 {
                 // Limit for larger operations
                 let query = vec![0.5f32; dimension];
+                // Create compute engine once outside iter() — avoids re-allocating per sample
+                let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
                 group.bench_with_input(
                     BenchmarkId::new(
                         "batch_distance",
@@ -171,7 +175,6 @@ fn bench_vector_operations(c: &mut Criterion) {
                     &(&query, &vectors),
                     |bencher, (q, vecs)| {
                         bencher.iter(|| {
-                            let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
                             let distances: Vec<_> = vecs
                                 .iter()
                                 .map(|v| compute.calculate_distance(q, v, &DistanceMetric::Cosine))
@@ -193,13 +196,13 @@ fn bench_hnsw_index(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("hnsw_index");
     group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(5));
+    group.measurement_time(Duration::from_secs(3));
     group.sample_size(10);
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
     // Use subset of standard dimensions for index tests
     let dimensions = vec![384, 768]; // MiniLM, BERT (smaller for index tests)
-    let vector_counts = vec![256, 1024]; // Smaller batch sizes for index operations (power of 2)
+    let vector_counts = vec![64, 256]; // Reduced batch sizes for index operations
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -274,13 +277,13 @@ fn bench_lsh_index(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("lsh_index");
     group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(5));
+    group.measurement_time(Duration::from_secs(3));
     group.sample_size(10);
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
     // Use subset of standard dimensions for index tests
     let dimensions = vec![384, 768]; // MiniLM, BERT (smaller for index tests)
-    let vector_counts = vec![256, 1024]; // Smaller batch sizes for index operations (power of 2)
+    let vector_counts = vec![64, 256]; // Reduced batch sizes for index operations
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -357,11 +360,12 @@ fn bench_concurrent_operations(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("concurrent_operations");
     group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(5));
+    group.measurement_time(Duration::from_secs(3));
 
     let dimension = 768; // BERT dimension
-    let num_threads = vec![1, 2, 4, 8];
-    let operations_per_thread = 128;
+    // Cap at 4 threads to avoid excessive thread spawning pressure on macOS
+    let num_threads = vec![1, 2, 4];
+    let operations_per_thread = 32;
 
     for &threads in &num_threads {
         group.throughput(Throughput::Elements(
@@ -406,8 +410,8 @@ fn bench_concurrent_operations(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .sample_size(40)
-        .measurement_time(std::time::Duration::from_secs(5))
+        .sample_size(15)
+        .measurement_time(std::time::Duration::from_secs(3))
         .warm_up_time(std::time::Duration::from_secs(1));
     targets = bench_distance_metrics,
               bench_vector_operations,

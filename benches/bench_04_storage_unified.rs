@@ -242,7 +242,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
     init_hardware();
 
     let dimension = 768;
-    let count = 1024;
+    let count = 128;
 
     eprintln!("\n📊 UNIFIED COMPRESSION + SEARCH BENCHMARK");
     eprintln!("   Organized by compression level → Compare all engines per compression");
@@ -294,19 +294,27 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
         // Test each engine with this compression (INNER LOOP)
         // Create fresh engines for each compression to avoid state contamination
-        let engine_names = vec!["sst", "viper", "nova", "swift", "raptor", "helix"];
+        let mut engine_names = vec!["sst", "viper", "nova", "helix"];
+        #[cfg(feature = "experimental-engines")]
+        {
+            engine_names.push("swift");
+            engine_names.push("raptor");
+        }
 
         for engine_name in engine_names {
             // Create fresh engine for each test to avoid state contamination between compressions
-            let engine = match engine_name {
-                "sst" => StorageEngineFactory::create_sst().unwrap(),
-                "viper" => StorageEngineFactory::create_viper().unwrap(),
-                "nova" => StorageEngineFactory::create_nova().unwrap(),
-                "swift" => StorageEngineFactory::create_swift().unwrap(),
-                "raptor" => StorageEngineFactory::create_raptor().unwrap(),
-                "helix" => StorageEngineFactory::create_helix().unwrap(),
-                _ => unreachable!(),
-            };
+            let engine: std::sync::Arc<dyn proximadb::storage::traits::UnifiedStorageEngine> =
+                match engine_name {
+                    "sst" => StorageEngineFactory::create_sst().unwrap(),
+                    "viper" => StorageEngineFactory::create_viper().unwrap(),
+                    "nova" => StorageEngineFactory::create_nova().unwrap(),
+                    "helix" => StorageEngineFactory::create_helix().unwrap(),
+                    #[cfg(feature = "experimental-engines")]
+                    "swift" => StorageEngineFactory::create_swift().unwrap(),
+                    #[cfg(feature = "experimental-engines")]
+                    "raptor" => StorageEngineFactory::create_raptor().unwrap(),
+                    _ => continue,
+                };
             // Collection ID format: {engine}-{compression} (use hyphen for URL compatibility)
             let collection_id = format!("{}-{}", engine_name, compress_name);
             // Base path: engines will append collection_id to this
@@ -533,8 +541,8 @@ fn bench_compression_with_search(c: &mut Criterion) {
             // Step 2: Pure vector search benchmark
             let mut pure_group =
                 c.benchmark_group(format!("pure_{}-{}", engine_name, compress_name));
-            pure_group.measurement_time(Duration::from_secs(5));
-            pure_group.sample_size(40);
+            pure_group.measurement_time(Duration::from_secs(3));
+            pure_group.sample_size(15);
             pure_group.warm_up_time(Duration::from_secs(1));
 
             let mut pure_time_ms = 0u128;
@@ -648,8 +656,8 @@ fn bench_compression_with_search(c: &mut Criterion) {
             // Step 3: Metadata-filtered search benchmark
             let mut filtered_group =
                 c.benchmark_group(format!("filter_{}-{}", engine_name, compress_name));
-            filtered_group.measurement_time(Duration::from_secs(5));
-            filtered_group.sample_size(40);
+            filtered_group.measurement_time(Duration::from_secs(3));
+            filtered_group.sample_size(15);
             filtered_group.warm_up_time(Duration::from_secs(1));
 
             let mut filter_time_ms = 0u128;
@@ -842,8 +850,8 @@ fn bench_engine_lifecycle(c: &mut Criterion) {
     init_hardware();
 
     let mut group = c.benchmark_group("engine_lifecycle");
-    group.measurement_time(Duration::from_secs(5));
-    group.sample_size(40);
+    group.measurement_time(Duration::from_secs(3));
+    group.sample_size(15);
     group.warm_up_time(Duration::from_secs(1));
 
     let _runtime = tokio::runtime::Runtime::new().unwrap();
@@ -870,6 +878,7 @@ fn bench_engine_lifecycle(c: &mut Criterion) {
         })
     });
 
+    #[cfg(feature = "experimental-engines")]
     group.bench_function("swift_create", |b| {
         b.iter(|| {
             let engine = StorageEngineFactory::create_swift();
@@ -877,6 +886,7 @@ fn bench_engine_lifecycle(c: &mut Criterion) {
         })
     });
 
+    #[cfg(feature = "experimental-engines")]
     group.bench_function("raptor_create", |b| {
         b.iter(|| {
             let engine = StorageEngineFactory::create_raptor();
@@ -905,18 +915,18 @@ fn bench_large_scale_search(c: &mut Criterion) {
     eprintln!("   Collection ID Format: {{engine}}-{{compression}}-{{batchsize}}");
     eprintln!("   Engines: sst, viper, nova, swift, raptor, helix");
     eprintln!("   Compressions: none, zstd, lz4, snappy, gzip");
-    eprintln!("   Batch Sizes: 1024, 4096, 10240");
+    eprintln!("   Batch Sizes: 128, 512, 1024");
     eprintln!("   Total Combinations: 105 (7 engines × 5 compressions × 3 batch sizes)");
 
     let dimension = 768;
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Test different scales
+    // Test different scales (reduced ~10x for OOM prevention)
     // Use standard batch sizes for scales
     let scales = vec![
-        ("1024", STANDARD_BATCH_SIZES[0]),  // Small batch
-        ("4096", STANDARD_BATCH_SIZES[1]),  // Medium batch
-        ("10240", STANDARD_BATCH_SIZES[2]), // Large batch
+        ("128", STANDARD_BATCH_SIZES[0]),  // Small batch
+        ("512", STANDARD_BATCH_SIZES[1]),  // Medium batch
+        ("1024", STANDARD_BATCH_SIZES[2]), // Large batch
     ];
 
     // Test with different compression methods
@@ -938,14 +948,20 @@ fn bench_large_scale_search(c: &mut Criterion) {
         let query = generate_random_vector(dimension);
 
         // Test all storage engines - stateless engines get collection info from parameters
-        let engines = vec![
+        let mut engines: Vec<(
+            &str,
+            std::sync::Arc<dyn proximadb::storage::traits::UnifiedStorageEngine>,
+        )> = vec![
             ("sst", StorageEngineFactory::create_sst().unwrap()),
             ("viper", StorageEngineFactory::create_viper().unwrap()),
             ("nova", StorageEngineFactory::create_nova().unwrap()),
-            ("swift", StorageEngineFactory::create_swift().unwrap()),
-            ("raptor", StorageEngineFactory::create_raptor().unwrap()),
             ("helix", StorageEngineFactory::create_helix().unwrap()),
         ];
+        #[cfg(feature = "experimental-engines")]
+        {
+            engines.push(("swift", StorageEngineFactory::create_swift().unwrap()));
+            engines.push(("raptor", StorageEngineFactory::create_raptor().unwrap()));
+        }
 
         for (engine_name, engine) in engines {
             for (compress_name, compression) in &compressions {
@@ -1013,8 +1029,8 @@ fn bench_large_scale_search(c: &mut Criterion) {
                     "search_{}-{}-{}",
                     engine_name, compress_name, batch_size_name
                 ));
-                group.measurement_time(Duration::from_secs(10));
-                group.sample_size(40);
+                group.measurement_time(Duration::from_secs(5));
+                group.sample_size(15);
                 group.warm_up_time(Duration::from_secs(1));
 
                 let query_clone = query.clone();
@@ -1099,7 +1115,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
         // Clean up all {engine}-{compression}-{batchsize} directories
         for engine in ["sst", "viper", "nova", "swift", "raptor", "helix"] {
             for compression in ["none", "zstd", "lz4", "snappy", "gzip"] {
-                for batch_size in ["256", "1024", "5120"] {
+                for batch_size in ["128", "512", "1024"] {
                     let test_path =
                         format!("{}/{}-{}-{}", base_path, engine, compression, batch_size);
                     let _ = fs.remove_dir_all(&test_path).await;
@@ -1117,22 +1133,28 @@ fn bench_insertion_performance(c: &mut Criterion) {
     init_hardware();
 
     let mut group = c.benchmark_group("insertion_performance");
-    group.measurement_time(Duration::from_secs(5));
-    group.sample_size(40);
+    group.measurement_time(Duration::from_secs(3));
+    group.sample_size(15);
     group.warm_up_time(Duration::from_secs(1));
 
     let dimension = 768;
-    let count = 1024;
+    let count = 128;
     let vectors = generate_test_vectors(count, dimension);
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     // Test each engine - stateless engines get collection info from parameters
-    let engines = vec![
+    let mut engines: Vec<(
+        &str,
+        std::sync::Arc<dyn proximadb::storage::traits::UnifiedStorageEngine>,
+    )> = vec![
         ("sst", StorageEngineFactory::create_sst().unwrap()),
         ("viper", StorageEngineFactory::create_viper().unwrap()),
         ("nova", StorageEngineFactory::create_nova().unwrap()),
-        ("swift", StorageEngineFactory::create_swift().unwrap()),
     ];
+    #[cfg(feature = "experimental-engines")]
+    {
+        engines.push(("swift", StorageEngineFactory::create_swift().unwrap()));
+    }
 
     for (engine_name, engine) in engines {
         group.bench_function(engine_name, |b| {
@@ -1210,8 +1232,8 @@ fn bench_insertion_performance(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .sample_size(40)
-        .measurement_time(Duration::from_secs(5))
+        .sample_size(15)
+        .measurement_time(Duration::from_secs(3))
         .warm_up_time(Duration::from_secs(1));
     targets = bench_compression_with_search,
               bench_engine_lifecycle,

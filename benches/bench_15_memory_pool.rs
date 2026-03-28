@@ -53,11 +53,11 @@ impl PoolTestConfig {
 fn benchmark_pool_sizes(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("pool_sizes_basic");
-    group.sample_size(64);
+    group.sample_size(20);
 
-    let pool_sizes = vec![16, 64, 256, 1024];
+    let pool_sizes = vec![16, 64, 256];
     let dimension = 768;
-    let batch_size = 1024;
+    let batch_size = 128;
 
     // Create test data
     let query: Vec<f32> = (0..dimension).map(|i| (i as f32).sin()).collect();
@@ -111,10 +111,10 @@ fn benchmark_pool_sizes(c: &mut Criterion) {
 fn benchmark_pool_config_matrix(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("pool_config_matrix");
-    group.sample_size(64);
+    group.sample_size(20);
 
     // Workload parameters
-    let batch_size = 1024;
+    let batch_size = 128;
     let dimension = 768;
     let base_requirement = batch_size * dimension; // Number of f32 elements needed
 
@@ -170,7 +170,7 @@ fn benchmark_pool_config_matrix(c: &mut Criterion) {
         .collect();
     let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 
-    group.throughput(Throughput::Elements(1000)); // 1000 vectors
+    group.throughput(Throughput::Elements(128)); // 128 vectors
 
     for config in configs {
         group.bench_with_input(
@@ -207,7 +207,7 @@ fn benchmark_pool_config_matrix(c: &mut Criterion) {
 fn benchmark_stats_overhead(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("stats_overhead");
-    group.sample_size(100);
+    group.sample_size(30);
 
     // Test with and without stats at different pool sizes
     let pool_sizes = vec![16, 64, 256];
@@ -240,8 +240,8 @@ fn benchmark_stats_overhead(c: &mut Criterion) {
                     Pool::new(config_no_stats.clone(), || Vec::with_capacity(64 * 1024));
 
                 b.iter(|| {
-                    // Simulate 1000 acquisitions
-                    for _ in 0..1000 {
+                    // Simulate 100 acquisitions
+                    for _ in 0..100 {
                         let _item = pool.acquire();
                         black_box(_item);
                     }
@@ -258,8 +258,8 @@ fn benchmark_stats_overhead(c: &mut Criterion) {
                     Pool::new(config_with_stats.clone(), || Vec::with_capacity(64 * 1024));
 
                 b.iter(|| {
-                    // Simulate 1000 acquisitions
-                    for _ in 0..1000 {
+                    // Simulate 100 acquisitions
+                    for _ in 0..100 {
                         let _item = pool.acquire();
                         black_box(_item);
                     }
@@ -278,10 +278,11 @@ fn benchmark_stats_overhead(c: &mut Criterion) {
 fn benchmark_concurrent_access(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("concurrent_access");
-    group.sample_size(30); // Fewer samples for multi-threaded tests
+    group.sample_size(15); // Fewer samples for multi-threaded tests
 
     let pool_sizes = vec![16, 64, 256];
-    let thread_counts = vec![1, 4, 8, 16];
+    // Limit to 4 threads max to avoid excessive OS scheduler pressure
+    let thread_counts = vec![1, 2, 4];
 
     for &pool_size in &pool_sizes {
         for &num_threads in &thread_counts {
@@ -310,12 +311,11 @@ fn benchmark_concurrent_access(c: &mut Criterion) {
                             .map(|_| {
                                 let pool_clone = Arc::clone(&pool);
                                 std::thread::spawn(move || {
-                                    // Each thread does 100 acquisitions
-                                    for _ in 0..100 {
+                                    // Each thread does 20 acquisitions; no sleep to avoid
+                                    // inflating OS scheduler overhead in the measurement.
+                                    for _ in 0..20 {
                                         let _item = pool_clone.acquire();
                                         black_box(_item);
-                                        // Simulate some work
-                                        std::thread::sleep(Duration::from_nanos(100));
                                     }
                                 })
                             })
@@ -340,9 +340,9 @@ fn benchmark_concurrent_access(c: &mut Criterion) {
 fn benchmark_hit_rates(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("hit_rate_analysis");
-    group.sample_size(64);
+    group.sample_size(20);
 
-    let pool_sizes = vec![4, 8, 16, 32, 64, 128, 256];
+    let pool_sizes = vec![4, 16, 64, 256];
 
     for &pool_size in &pool_sizes {
         let config = PoolConfig {
@@ -440,7 +440,7 @@ fn benchmark_hit_rates(c: &mut Criterion) {
 fn benchmark_buffer_types(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("buffer_type_comparison");
-    group.sample_size(100);
+    group.sample_size(30);
 
     let config = PoolConfig {
         initial_size: 64,
@@ -454,10 +454,10 @@ fn benchmark_buffer_types(c: &mut Criterion) {
     let memory_pool = VectorMemoryPool::with_config(config);
 
     // Benchmark vector buffer (1K f32 = 4KB)
-    group.throughput(Throughput::Elements(1000));
+    group.throughput(Throughput::Elements(100));
     group.bench_function("vector_buffer", |b| {
         b.iter(|| {
-            for _ in 0..1000 {
+            for _ in 0..100 {
                 let mut buf = memory_pool.vector_buffers.acquire();
                 buf.extend_from_slice(&[1.0f32; 768]);
                 buf.clear();
@@ -467,10 +467,10 @@ fn benchmark_buffer_types(c: &mut Criterion) {
     });
 
     // Benchmark serialization buffer (64KB)
-    group.throughput(Throughput::Elements(1000));
+    group.throughput(Throughput::Elements(100));
     group.bench_function("serialization_buffer", |b| {
         b.iter(|| {
-            for _ in 0..1000 {
+            for _ in 0..100 {
                 let mut buf = memory_pool.serialization_buffers.acquire();
                 buf.extend_from_slice(&[42u8; 3072]); // 768 × 4 bytes
                 buf.clear();
@@ -480,10 +480,10 @@ fn benchmark_buffer_types(c: &mut Criterion) {
     });
 
     // Benchmark compression buffer (32KB)
-    group.throughput(Throughput::Elements(1000));
+    group.throughput(Throughput::Elements(100));
     group.bench_function("compression_buffer", |b| {
         b.iter(|| {
-            for _ in 0..1000 {
+            for _ in 0..100 {
                 let mut buf = memory_pool.compression_buffers.acquire();
                 buf.extend_from_slice(&[99u8; 1024]);
                 buf.clear();
@@ -493,10 +493,10 @@ fn benchmark_buffer_types(c: &mut Criterion) {
     });
 
     // Benchmark metadata buffer (4KB)
-    group.throughput(Throughput::Elements(1000));
+    group.throughput(Throughput::Elements(100));
     group.bench_function("metadata_buffer", |b| {
         b.iter(|| {
-            for _ in 0..1000 {
+            for _ in 0..100 {
                 let mut buf = memory_pool.metadata_buffers.acquire();
                 buf.extend_from_slice(&[1u8; 256]);
                 buf.clear();
@@ -515,7 +515,7 @@ fn benchmark_buffer_types(c: &mut Criterion) {
 fn benchmark_growth_strategies(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("growth_strategy");
-    group.sample_size(64);
+    group.sample_size(20);
 
     let growth_factors = vec![1.25, 1.5, 2.0, 3.0];
 
@@ -540,7 +540,7 @@ fn benchmark_growth_strategies(c: &mut Criterion) {
                     // Previous version released immediately due to RAII, preventing growth
 
                     // Phase 1: Gradual acquisition beyond initial pool size
-                    let items: Vec<_> = (0..200).map(|_| pool.acquire()).collect();
+                    let items: Vec<_> = (0..50).map(|_| pool.acquire()).collect();
 
                     // Phase 2: Verify items are held (prevents optimization)
                     black_box(&items);
@@ -577,9 +577,9 @@ fn benchmark_growth_strategies(c: &mut Criterion) {
 fn benchmark_memory_footprint(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("memory_footprint");
-    group.sample_size(20);
+    group.sample_size(10);
 
-    let pool_sizes = vec![16, 64, 256, 1024];
+    let pool_sizes = vec![16, 64, 256];
 
     println!("\n📊 Memory Footprint Analysis:");
     println!("  (Pool size × Buffer capacity = Total memory)");
@@ -627,8 +627,8 @@ fn benchmark_memory_footprint(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .sample_size(50)
-        .measurement_time(Duration::from_secs(5))
+        .sample_size(15)
+        .measurement_time(Duration::from_secs(3))
         .warm_up_time(Duration::from_secs(1));
     targets = benchmark_pool_sizes,
               benchmark_pool_config_matrix,

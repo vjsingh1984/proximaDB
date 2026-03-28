@@ -219,6 +219,8 @@ impl EmbeddingStats {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_bert_embedding_characteristics() {
         let mut generator = EmbeddingGenerator::new(EmbeddingModel::Bert);
