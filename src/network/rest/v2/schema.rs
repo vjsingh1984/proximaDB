@@ -1117,4 +1117,557 @@ mod tests {
         assert!(!result.valid);
         assert!(result.errors.iter().any(|e| e.contains("change type")));
     }
+
+    // =========================================================================
+    // Tests for increment_version
+    // =========================================================================
+
+    #[test]
+    fn test_increment_version_basic() {
+        assert_eq!(increment_version("1.0.0"), "1.0.1");
+        assert_eq!(increment_version("1.2.3"), "1.2.4");
+        assert_eq!(increment_version("0.0.0"), "0.0.1");
+    }
+
+    #[test]
+    fn test_increment_version_large_numbers() {
+        assert_eq!(increment_version("10.20.30"), "10.20.31");
+        assert_eq!(increment_version("99.99.99"), "99.99.100");
+    }
+
+    #[test]
+    fn test_increment_version_invalid_format() {
+        // Not three parts
+        assert_eq!(increment_version("1.0"), "1.0.0");
+        assert_eq!(increment_version("1"), "1.0.0");
+        assert_eq!(increment_version(""), "1.0.0");
+    }
+
+    #[test]
+    fn test_increment_version_non_numeric() {
+        assert_eq!(increment_version("a.b.c"), "1.0.0");
+        assert_eq!(increment_version("1.2.xyz"), "1.0.0");
+    }
+
+    // =========================================================================
+    // Tests for build_existing_schema
+    // =========================================================================
+
+    #[test]
+    fn test_build_existing_schema_no_proxima_record() {
+        let config = crate::proto::proximadb_v1::CollectionConfig {
+            enable_proxima_record: Some(false),
+            record_schema: None,
+            ..Default::default()
+        };
+        let result = build_existing_schema(&config);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_existing_schema_with_text_columns() {
+        let config = crate::proto::proximadb_v1::CollectionConfig {
+            enable_proxima_record: Some(true),
+            text_columns: vec!["title".to_string(), "body".to_string()],
+            record_schema: None,
+            ..Default::default()
+        };
+        let result = build_existing_schema(&config);
+        assert!(result.is_some());
+        let schema = result.expect("Should build schema");
+        assert_eq!(schema.columns.len(), 2);
+        assert_eq!(schema.columns[0].name, "title");
+        assert_eq!(schema.columns[0].data_type, "text");
+        assert_eq!(schema.columns[1].name, "body");
+    }
+
+    #[test]
+    fn test_build_existing_schema_with_record_schema_enforcement() {
+        let config = crate::proto::proximadb_v1::CollectionConfig {
+            enable_proxima_record: Some(true),
+            record_schema: Some(crate::proto::proximadb_v1::RecordSchemaConfig {
+                schema_id: "s1".to_string(),
+                schema_version: "1.0.0".to_string(),
+                enforcement: 1, // strict
+                auto_evolve: false,
+                columns: vec![],
+            }),
+            ..Default::default()
+        };
+        let result = build_existing_schema(&config);
+        assert!(result.is_some());
+        let schema = result.expect("Should build schema");
+        assert_eq!(schema.enforcement, Some("strict".to_string()));
+        assert_eq!(schema.allow_additional_fields, Some(false));
+    }
+
+    #[test]
+    fn test_build_existing_schema_enforcement_mapping() {
+        // Test all enforcement values
+        for (value, expected) in [(1, "strict"), (2, "flexible"), (3, "hybrid"), (0, "hybrid")] {
+            let config = crate::proto::proximadb_v1::CollectionConfig {
+                enable_proxima_record: Some(true),
+                record_schema: Some(crate::proto::proximadb_v1::RecordSchemaConfig {
+                    enforcement: value,
+                    auto_evolve: true,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let schema = build_existing_schema(&config).expect("Should build");
+            assert_eq!(
+                schema.enforcement,
+                Some(expected.to_string()),
+                "Failed for enforcement value {}",
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_existing_schema_text_storage_configs() {
+        let config = crate::proto::proximadb_v1::CollectionConfig {
+            enable_proxima_record: Some(true),
+            text_columns: vec!["summary".to_string()],
+            text_storage_configs: vec![crate::proto::proximadb_v1::TextStorageConfig {
+                column_name: "full_text".to_string(),
+                chunk_size: 1024,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let result = build_existing_schema(&config);
+        assert!(result.is_some());
+        let schema = result.expect("Should build schema");
+        assert_eq!(schema.columns.len(), 2);
+        // First from text_columns
+        assert_eq!(schema.columns[0].name, "summary");
+        assert_eq!(schema.columns[0].data_type, "text");
+        // Second from text_storage_configs
+        assert_eq!(schema.columns[1].name, "full_text");
+        assert_eq!(schema.columns[1].data_type, "text_large");
+        assert_eq!(schema.columns[1].max_length, Some(1024));
+    }
+
+    #[test]
+    fn test_build_existing_schema_deduplicates_columns() {
+        // If a column appears in both text_columns and text_storage_configs,
+        // it should not be duplicated
+        let config = crate::proto::proximadb_v1::CollectionConfig {
+            enable_proxima_record: Some(true),
+            text_columns: vec!["content".to_string()],
+            text_storage_configs: vec![crate::proto::proximadb_v1::TextStorageConfig {
+                column_name: "content".to_string(),
+                chunk_size: 512,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let result = build_existing_schema(&config);
+        assert!(result.is_some());
+        let schema = result.expect("Should build schema");
+        // Should only have one "content" column (from text_columns, since it comes first)
+        assert_eq!(schema.columns.len(), 1);
+        assert_eq!(schema.columns[0].name, "content");
+    }
+
+    // =========================================================================
+    // Tests for validate_schema - additional coverage
+    // =========================================================================
+
+    #[test]
+    fn test_validate_schema_invalid_column_name_chars() {
+        let schema = SchemaDefinition {
+            columns: vec![ColumnDefinition {
+                name: "my-column".to_string(), // hyphens not allowed
+                data_type: "text".to_string(),
+                nullable: None,
+                indexed: None,
+                filterable: None,
+                max_length: None,
+                precision: None,
+                scale: None,
+                vector_dimension: None,
+            }],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+
+        let result = validate_schema(&schema, None);
+        assert!(!result.valid);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("invalid characters"))
+        );
+    }
+
+    #[test]
+    fn test_validate_schema_all_reserved_names() {
+        for name in &["id", "vector", "_id", "_score", "_version"] {
+            let schema = SchemaDefinition {
+                columns: vec![ColumnDefinition {
+                    name: name.to_string(),
+                    data_type: "text".to_string(),
+                    nullable: None,
+                    indexed: None,
+                    filterable: None,
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                }],
+                enforcement: None,
+                allow_additional_fields: None,
+            };
+
+            let result = validate_schema(&schema, None);
+            assert!(!result.valid, "Column name '{}' should be reserved", name);
+        }
+    }
+
+    #[test]
+    fn test_validate_schema_large_max_length_with_index_warns() {
+        let schema = SchemaDefinition {
+            columns: vec![ColumnDefinition {
+                name: "big_text".to_string(),
+                data_type: "text".to_string(),
+                nullable: None,
+                indexed: Some(true),
+                filterable: None,
+                max_length: Some(10000),
+                precision: None,
+                scale: None,
+                vector_dimension: None,
+            }],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+
+        let result = validate_schema(&schema, None);
+        assert!(result.valid);
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("large max_length"))
+        );
+    }
+
+    #[test]
+    fn test_validate_schema_evolution_new_non_nullable_column_warns() {
+        let existing = SchemaDefinition {
+            columns: vec![ColumnDefinition {
+                name: "title".to_string(),
+                data_type: "text".to_string(),
+                nullable: None,
+                indexed: None,
+                filterable: None,
+                max_length: None,
+                precision: None,
+                scale: None,
+                vector_dimension: None,
+            }],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+
+        let new_schema = SchemaDefinition {
+            columns: vec![
+                ColumnDefinition {
+                    name: "title".to_string(),
+                    data_type: "text".to_string(),
+                    nullable: None,
+                    indexed: None,
+                    filterable: None,
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                },
+                ColumnDefinition {
+                    name: "required_field".to_string(),
+                    data_type: "integer".to_string(),
+                    nullable: Some(false), // not nullable!
+                    indexed: None,
+                    filterable: None,
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                },
+            ],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+
+        let result = validate_schema(&new_schema, Some(&existing));
+        // Should be valid but with warnings about non-nullable new column
+        assert!(result.valid);
+        assert!(result.warnings.iter().any(|w| w.contains("not nullable")));
+        assert!(!result.suggestions.is_empty());
+    }
+
+    #[test]
+    fn test_validate_schema_evolution_add_column_is_valid() {
+        let existing = SchemaDefinition {
+            columns: vec![ColumnDefinition {
+                name: "title".to_string(),
+                data_type: "text".to_string(),
+                nullable: None,
+                indexed: None,
+                filterable: None,
+                max_length: None,
+                precision: None,
+                scale: None,
+                vector_dimension: None,
+            }],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+
+        let new_schema = SchemaDefinition {
+            columns: vec![
+                ColumnDefinition {
+                    name: "title".to_string(),
+                    data_type: "text".to_string(),
+                    nullable: None,
+                    indexed: None,
+                    filterable: None,
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                },
+                ColumnDefinition {
+                    name: "tags".to_string(),
+                    data_type: "array_text".to_string(),
+                    nullable: Some(true),
+                    indexed: None,
+                    filterable: None,
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                },
+            ],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+
+        let result = validate_schema(&new_schema, Some(&existing));
+        assert!(result.valid);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_schema_empty_columns() {
+        let schema = SchemaDefinition {
+            columns: vec![],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+        let result = validate_schema(&schema, None);
+        assert!(result.valid);
+    }
+
+    #[test]
+    fn test_validate_schema_filterable_not_indexed_suggestion() {
+        let schema = SchemaDefinition {
+            columns: vec![ColumnDefinition {
+                name: "category".to_string(),
+                data_type: "text".to_string(),
+                nullable: None,
+                indexed: Some(false),
+                filterable: Some(true),
+                max_length: None,
+                precision: None,
+                scale: None,
+                vector_dimension: None,
+            }],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+
+        let result = validate_schema(&schema, None);
+        assert!(result.valid);
+        assert!(
+            result
+                .suggestions
+                .iter()
+                .any(|s| s.contains("indexed: true"))
+        );
+    }
+
+    // ============================================================
+    // increment_version tests
+    // ============================================================
+
+    #[test]
+    fn test_increment_version_rollover() {
+        assert_eq!(increment_version("1.0.0"), "1.0.1");
+        assert_eq!(increment_version("1.0.9"), "1.0.10");
+        assert_eq!(increment_version("2.3.5"), "2.3.6");
+    }
+
+    #[test]
+    fn test_increment_version_fallback_invalid() {
+        assert_eq!(increment_version(""), "1.0.0");
+        assert_eq!(increment_version("abc"), "1.0.0");
+        assert_eq!(increment_version("1.2"), "1.0.0");
+    }
+
+    // ============================================================
+    // Additional validate_schema edge case tests
+    // ============================================================
+
+    #[test]
+    fn test_schema_validation_empty_columns() {
+        let schema = SchemaDefinition {
+            columns: vec![],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+        let result = validate_schema(&schema, None);
+        // Empty schema should still be valid (no columns = no errors)
+        assert!(result.valid);
+    }
+
+    #[test]
+    fn test_schema_validation_reserved_column_name() {
+        let schema = SchemaDefinition {
+            columns: vec![ColumnDefinition {
+                name: "id".to_string(), // reserved
+                data_type: "text".to_string(),
+                nullable: None,
+                indexed: None,
+                filterable: None,
+                max_length: None,
+                precision: None,
+                scale: None,
+                vector_dimension: None,
+            }],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+        let result = validate_schema(&schema, None);
+        // "id" is a reserved column name — should produce warning or error
+        assert!(
+            !result.warnings.is_empty() || !result.errors.is_empty(),
+            "Reserved column name 'id' should trigger warning or error"
+        );
+    }
+
+    #[test]
+    fn test_schema_validation_vector_type_needs_dimension() {
+        let schema = SchemaDefinition {
+            columns: vec![ColumnDefinition {
+                name: "embedding".to_string(),
+                data_type: "vector".to_string(),
+                nullable: None,
+                indexed: None,
+                filterable: None,
+                max_length: None,
+                precision: None,
+                scale: None,
+                vector_dimension: None, // missing dimension for vector type
+            }],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+        let result = validate_schema(&schema, None);
+        // Vector type without dimension should produce warning/error
+        assert!(
+            !result.warnings.is_empty() || !result.errors.is_empty(),
+            "Vector column without dimension should trigger warning"
+        );
+    }
+
+    #[test]
+    fn test_schema_validation_multiple_errors() {
+        let schema = SchemaDefinition {
+            columns: vec![
+                ColumnDefinition {
+                    name: "dup".to_string(),
+                    data_type: "text".to_string(),
+                    nullable: None,
+                    indexed: None,
+                    filterable: None,
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                },
+                ColumnDefinition {
+                    name: "dup".to_string(), // duplicate
+                    data_type: "integer".to_string(),
+                    nullable: None,
+                    indexed: None,
+                    filterable: None,
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                },
+            ],
+            enforcement: None,
+            allow_additional_fields: None,
+        };
+        let result = validate_schema(&schema, None);
+        assert!(!result.valid);
+        assert!(
+            result.errors.iter().any(|e| e.contains("Duplicate")),
+            "Should report duplicate column error"
+        );
+    }
+
+    #[test]
+    fn test_schema_validation_valid_all_types() {
+        let schema = SchemaDefinition {
+            columns: vec![
+                ColumnDefinition {
+                    name: "col_text".to_string(),
+                    data_type: "text".to_string(),
+                    nullable: Some(true),
+                    indexed: Some(true),
+                    filterable: Some(true),
+                    max_length: Some(100),
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                },
+                ColumnDefinition {
+                    name: "col_int".to_string(),
+                    data_type: "integer".to_string(),
+                    nullable: Some(false),
+                    indexed: Some(true),
+                    filterable: Some(true),
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                },
+                ColumnDefinition {
+                    name: "col_float".to_string(),
+                    data_type: "float".to_string(),
+                    nullable: Some(true),
+                    indexed: Some(false),
+                    filterable: Some(false),
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                },
+            ],
+            enforcement: Some("strict".to_string()),
+            allow_additional_fields: Some(false),
+        };
+        let result = validate_schema(&schema, None);
+        assert!(
+            result.valid,
+            "Valid multi-type schema should pass: {:?}",
+            result.errors
+        );
+    }
 }
