@@ -499,6 +499,218 @@ pub struct QuantizationCacheStats {
     pub collections_count: usize,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === QuantizationCacheKey tests ===
+
+    #[test]
+    fn test_cache_key_pq() {
+        let key = QuantizationCacheKey::pq("my_collection", 8, 16);
+        assert_eq!(key.collection_id, "my_collection");
+        assert_eq!(key.quantization_type, "pq");
+        assert_eq!(key.level_params, "8_16");
+    }
+
+    #[test]
+    fn test_cache_key_binary() {
+        let key = QuantizationCacheKey::binary("coll_1");
+        assert_eq!(key.collection_id, "coll_1");
+        assert_eq!(key.quantization_type, "binary");
+        assert_eq!(key.level_params, "1");
+    }
+
+    #[test]
+    fn test_cache_key_int8() {
+        let key = QuantizationCacheKey::int8("coll_2");
+        assert_eq!(key.collection_id, "coll_2");
+        assert_eq!(key.quantization_type, "int8");
+        assert_eq!(key.level_params, "8");
+    }
+
+    #[test]
+    fn test_cache_key_to_string() {
+        let key = QuantizationCacheKey::pq("test", 4, 32);
+        assert_eq!(key.to_string(), "test#pq#4_32");
+    }
+
+    #[test]
+    fn test_cache_key_from_string_valid() {
+        let key = QuantizationCacheKey::from_string("my_coll#binary#1");
+        assert!(key.is_some());
+        let key = key.unwrap_or_else(|| panic!("Expected Some"));
+        assert_eq!(key.collection_id, "my_coll");
+        assert_eq!(key.quantization_type, "binary");
+        assert_eq!(key.level_params, "1");
+    }
+
+    #[test]
+    fn test_cache_key_from_string_invalid_too_few_parts() {
+        assert!(QuantizationCacheKey::from_string("only_one").is_none());
+    }
+
+    #[test]
+    fn test_cache_key_from_string_invalid_too_many_parts() {
+        assert!(QuantizationCacheKey::from_string("a#b#c#d").is_none());
+    }
+
+    #[test]
+    fn test_cache_key_from_string_empty() {
+        assert!(QuantizationCacheKey::from_string("").is_none());
+    }
+
+    #[test]
+    fn test_cache_key_roundtrip() {
+        let original = QuantizationCacheKey::pq("vectors", 8, 16);
+        let serialized = original.to_string();
+        let parsed = QuantizationCacheKey::from_string(&serialized);
+        assert!(parsed.is_some());
+        let parsed = parsed.unwrap_or_else(|| panic!("Expected Some"));
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn test_cache_key_equality() {
+        let a = QuantizationCacheKey::binary("coll");
+        let b = QuantizationCacheKey::binary("coll");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_cache_key_inequality_different_collection() {
+        let a = QuantizationCacheKey::binary("coll_a");
+        let b = QuantizationCacheKey::binary("coll_b");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_cache_key_inequality_different_type() {
+        let a = QuantizationCacheKey::binary("coll");
+        let b = QuantizationCacheKey::int8("coll");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_cache_key_hash_consistency() {
+        use std::collections::HashSet;
+        let key1 = QuantizationCacheKey::pq("test", 8, 16);
+        let key2 = QuantizationCacheKey::pq("test", 8, 16);
+        let mut set = HashSet::new();
+        set.insert(key1);
+        assert!(set.contains(&key2));
+    }
+
+    // === QuantizedVectorKey tests ===
+
+    #[test]
+    fn test_quantized_vector_key_new() {
+        let vector = vec![1.0f32, 2.0, 3.0];
+        let key = QuantizedVectorKey::new(&vector, "int8", "coll");
+        assert_eq!(key.level, "int8");
+        assert_eq!(key.collection_id, "coll");
+        // vector_hash should be deterministic
+        let key2 = QuantizedVectorKey::new(&vector, "int8", "coll");
+        assert_eq!(key.vector_hash, key2.vector_hash);
+    }
+
+    #[test]
+    fn test_quantized_vector_key_different_vectors() {
+        let v1 = vec![1.0f32, 2.0, 3.0];
+        let v2 = vec![4.0f32, 5.0, 6.0];
+        let k1 = QuantizedVectorKey::new(&v1, "pq", "c");
+        let k2 = QuantizedVectorKey::new(&v2, "pq", "c");
+        assert_ne!(k1.vector_hash, k2.vector_hash);
+    }
+
+    #[test]
+    fn test_quantized_vector_key_different_levels() {
+        let v = vec![1.0f32, 2.0];
+        let k1 = QuantizedVectorKey::new(&v, "int8", "c");
+        let k2 = QuantizedVectorKey::new(&v, "binary", "c");
+        // Same hash but different level
+        assert_eq!(k1.vector_hash, k2.vector_hash);
+        assert_ne!(k1, k2);
+    }
+
+    // === ExtendedCacheStats tests ===
+
+    #[test]
+    fn test_extended_cache_stats_clone() {
+        let stats = ExtendedCacheStats {
+            codebook_count: 5,
+            quantized_vector_count: 100,
+            allocated_bytes: 4096,
+            cache_hits: 80,
+            cache_misses: 20,
+            hit_rate: 0.8,
+        };
+        let cloned = stats.clone();
+        assert_eq!(cloned.codebook_count, 5);
+        assert_eq!(cloned.quantized_vector_count, 100);
+        assert_eq!(cloned.allocated_bytes, 4096);
+        assert_eq!(cloned.cache_hits, 80);
+        assert_eq!(cloned.cache_misses, 20);
+        assert!((cloned.hit_rate - 0.8).abs() < f64::EPSILON);
+    }
+
+    // === QuantizationCacheStats tests ===
+
+    #[test]
+    fn test_quantization_cache_stats_clone() {
+        let stats = QuantizationCacheStats {
+            codebook_count: 3,
+            allocated_bytes: 2048,
+            collections_count: 2,
+        };
+        let cloned = stats.clone();
+        assert_eq!(cloned.codebook_count, 3);
+        assert_eq!(cloned.allocated_bytes, 2048);
+        assert_eq!(cloned.collections_count, 2);
+    }
+
+    // === GlobalQuantizationCache basic tests ===
+
+    #[test]
+    fn test_cache_hit_rate_no_accesses() {
+        let cache = GlobalQuantizationCache::with_capacity(10);
+        assert!((cache.cache_hit_rate() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_has_codebook_empty_cache() {
+        let cache = GlobalQuantizationCache::with_capacity(10);
+        let key = QuantizationCacheKey::pq("test", 8, 16);
+        assert!(!cache.has_codebook(&key));
+    }
+
+    #[test]
+    fn test_get_memory_stats_empty() {
+        let cache = GlobalQuantizationCache::with_capacity(10);
+        let stats = cache.get_memory_stats();
+        assert_eq!(stats.codebook_count, 0);
+        assert_eq!(stats.allocated_bytes, 0);
+        assert_eq!(stats.collections_count, 0);
+    }
+
+    #[test]
+    fn test_get_extended_stats_empty() {
+        let cache = GlobalQuantizationCache::with_capacity(10);
+        let stats = cache.get_extended_stats();
+        assert_eq!(stats.codebook_count, 0);
+        assert_eq!(stats.quantized_vector_count, 0);
+        assert_eq!(stats.cache_hits, 0);
+        assert_eq!(stats.cache_misses, 0);
+        assert!((stats.hit_rate - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_should_use_hot_storage_default() {
+        let cache = GlobalQuantizationCache::with_capacity(10);
+        assert!(cache.should_use_hot_storage("any_collection"));
+    }
+}
+
 /// Implementation of CodebookStore trait for global cache
 #[async_trait::async_trait]
 impl CodebookStore for GlobalQuantizationCache {

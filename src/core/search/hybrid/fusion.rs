@@ -1757,4 +1757,168 @@ mod tests {
             assert_eq!(engine.default_top_k, 10);
         }
     }
+
+    // ============================================================
+    // Fusion strategy coverage tests
+    // ============================================================
+
+    fn make_bm25(id: &str, score: f64) -> BM25Result {
+        BM25Result {
+            doc_id: id.to_string(),
+            score,
+            highlights: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn make_vector(id: &str, score: f64) -> VectorResult {
+        VectorResult {
+            doc_id: id.to_string(),
+            score,
+            distance: 1.0 - score,
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_weighted_linear_fusion() {
+        let engine = HybridFusionEngine::new(FusionStrategy::WeightedLinear {
+            alpha: 0.7,
+            bm25_normalize: true,
+            vector_normalize: true,
+        });
+
+        let bm25 = vec![make_bm25("a", 2.0), make_bm25("b", 1.0)];
+        let vector = vec![make_vector("a", 0.9), make_vector("c", 0.8)];
+
+        let fused = engine.fuse(bm25, vector).expect("Fusion should succeed");
+        assert!(!fused.is_empty());
+        // "a" should be top result (present in both)
+        assert_eq!(fused[0].doc_id, "a");
+    }
+
+    #[test]
+    fn test_rank_biased_precision() {
+        let engine =
+            HybridFusionEngine::new(FusionStrategy::RankBiasedPrecision { persistence: 0.9 });
+
+        let bm25 = vec![make_bm25("x", 3.0), make_bm25("y", 2.0)];
+        let vector = vec![make_vector("y", 0.95), make_vector("z", 0.8)];
+
+        let fused = engine.fuse(bm25, vector).expect("RBP should succeed");
+        assert!(fused.len() >= 2);
+    }
+
+    #[test]
+    fn test_conditional_normalization() {
+        let engine = HybridFusionEngine::new(FusionStrategy::ConditionalNormalization);
+
+        let bm25 = vec![make_bm25("d1", 5.0), make_bm25("d2", 1.0)];
+        let vector = vec![make_vector("d1", 0.7), make_vector("d3", 0.5)];
+
+        let fused = engine
+            .fuse(bm25, vector)
+            .expect("ConditionalNorm should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_comb_sum() {
+        let engine = HybridFusionEngine::new(FusionStrategy::CombSum);
+
+        let bm25 = vec![make_bm25("a", 1.0), make_bm25("b", 0.5)];
+        let vector = vec![make_vector("a", 0.8), make_vector("c", 0.6)];
+
+        let fused = engine.fuse(bm25, vector).expect("CombSum should succeed");
+        assert!(fused.len() >= 2);
+        // "a" should rank highest (appears in both lists)
+        assert_eq!(fused[0].doc_id, "a");
+    }
+
+    #[test]
+    fn test_comb_min() {
+        let engine = HybridFusionEngine::new(FusionStrategy::CombMin);
+
+        let bm25 = vec![make_bm25("a", 2.0)];
+        let vector = vec![make_vector("a", 0.5), make_vector("b", 0.9)];
+
+        let fused = engine.fuse(bm25, vector).expect("CombMin should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_comb_max() {
+        let engine = HybridFusionEngine::new(FusionStrategy::CombMax);
+
+        let bm25 = vec![make_bm25("a", 0.3)];
+        let vector = vec![make_vector("a", 0.9), make_vector("b", 0.1)];
+
+        let fused = engine.fuse(bm25, vector).expect("CombMax should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_condorcet() {
+        let engine = HybridFusionEngine::new(FusionStrategy::Condorcet);
+
+        let bm25 = vec![
+            make_bm25("p", 3.0),
+            make_bm25("q", 2.0),
+            make_bm25("r", 1.0),
+        ];
+        let vector = vec![
+            make_vector("q", 0.9),
+            make_vector("p", 0.7),
+            make_vector("r", 0.5),
+        ];
+
+        let fused = engine.fuse(bm25, vector).expect("Condorcet should succeed");
+        assert_eq!(fused.len(), 3);
+    }
+
+    #[test]
+    fn test_dempster_shafer() {
+        let engine = HybridFusionEngine::new(FusionStrategy::DempsterShafer { alpha: 0.6 });
+
+        let bm25 = vec![make_bm25("x", 1.5), make_bm25("y", 0.8)];
+        let vector = vec![make_vector("x", 0.85), make_vector("z", 0.4)];
+
+        let fused = engine
+            .fuse(bm25, vector)
+            .expect("DempsterShafer should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_adaptive_fusion() {
+        let engine = HybridFusionEngine::new(FusionStrategy::Adaptive);
+
+        let bm25 = vec![make_bm25("a", 2.0), make_bm25("b", 1.0)];
+        let vector = vec![make_vector("a", 0.9), make_vector("c", 0.7)];
+
+        let fused = engine.fuse(bm25, vector).expect("Adaptive should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_fusion_empty_inputs() {
+        let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
+
+        let fused = engine
+            .fuse(vec![], vec![])
+            .expect("Empty fusion should succeed");
+        assert!(fused.is_empty());
+    }
+
+    #[test]
+    fn test_fusion_single_source_only() {
+        let engine = HybridFusionEngine::new(FusionStrategy::CombSum);
+
+        // Only BM25 results, no vector results
+        let bm25 = vec![make_bm25("solo", 1.0)];
+        let fused = engine
+            .fuse(bm25, vec![])
+            .expect("Single source should succeed");
+        assert!(!fused.is_empty());
+    }
 }
