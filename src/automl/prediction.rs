@@ -622,4 +622,89 @@ mod tests {
         assert_eq!(array[0], 10000.0); // vector_count
         assert_eq!(array[1], 256.0); // dimension
     }
+
+    // ============================================================
+    // Additional FeatureVector tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_feature_vector_all_fields() {
+        let fv = FeatureVector::from_characteristics(5000, 128, 0.5, 3.0);
+        let arr = fv.to_array();
+        assert_eq!(arr.len(), 13);
+        assert_eq!(arr[0], 5000.0); // vector_count
+        assert_eq!(arr[1], 128.0); // dimension
+        assert!((arr[2] - 0.5).abs() < 1e-6); // sparsity
+        // arr[3] = read_ratio = read_write_ratio / (1 + read_write_ratio) = 3.0/4.0 = 0.75
+        assert!(
+            (arr[3] - 0.75).abs() < 1e-6,
+            "read_ratio should be 0.75, got {}",
+            arr[3]
+        );
+    }
+
+    #[test]
+    fn test_feature_vector_zero_vectors() {
+        let fv = FeatureVector::from_characteristics(0, 1, 0.0, 0.0);
+        let arr = fv.to_array();
+        assert_eq!(arr[0], 0.0);
+    }
+
+    #[test]
+    fn test_feature_vector_large_dimension() {
+        let fv = FeatureVector::from_characteristics(100, 3072, 1.0, 100.0);
+        let arr = fv.to_array();
+        assert_eq!(arr[1], 3072.0); // OpenAI text-embedding-3-large
+    }
+
+    #[test]
+    fn test_linear_regression_zero_coefficients() {
+        let mut model = LinearRegressionModel::new();
+        model.coefficients = vec![0.0; 13];
+        model.intercept = 42.0;
+
+        let features = FeatureVector::from_characteristics(1000, 128, 0.5, 1.0);
+        let prediction = model.predict(&features);
+        assert!(
+            (prediction - 42.0).abs() < 1e-6,
+            "Zero coefficients should give intercept only"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_performance_predictor_creation() {
+        let predictor = PerformancePredictor::new().await;
+        assert!(predictor.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_performance_predictor_with_config() {
+        let config = PredictorConfig {
+            min_training_samples: 50,
+            max_training_samples: 5000,
+            update_interval_secs: 600,
+            enable_online_learning: true,
+        };
+        let predictor = PerformancePredictor::with_config(config).await;
+        assert!(predictor.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_performance_predictor_add_sample() {
+        let predictor = PerformancePredictor::new().await.unwrap();
+        let sample = TrainingSample {
+            features: FeatureVector::from_characteristics(100, 64, 0.5, 1.0),
+            target: TargetMetric::QueryLatency(5.0),
+            timestamp: chrono::Utc::now(),
+        };
+        let result = predictor.add_training_sample(sample).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_performance_predictor_get_metrics() {
+        let predictor = PerformancePredictor::new().await.unwrap();
+        let metrics = predictor.get_model_metrics("test").await;
+        assert!(metrics.is_ok());
+    }
 }
