@@ -212,6 +212,11 @@ pub(crate) async fn execute_supported_graph_query(
                         continue;
                     }
                     next_binding.insert(edge_var.clone(), edge_value);
+                } else {
+                    // No explicit edge variable — still track the edge under a
+                    // synthetic key so matched_edges stats count it correctly
+                    let synthetic_key = format!("_edge_{}", edge.id);
+                    next_binding.insert(synthetic_key, edge_value);
                 }
 
                 let next_node_value = BoundValue::Node(next_node.clone());

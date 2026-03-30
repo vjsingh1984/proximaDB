@@ -69,7 +69,17 @@ impl TransactionalMultiModelFacade {
     }
 
     pub async fn rollback(&self, transaction_id: &str) -> Result<()> {
-        self.coordinator.rollback(transaction_id).await
+        self.coordinator.rollback(transaction_id).await?;
+
+        // Clear staged operations from all participants
+        if let Some(ref participant) = self.document_participant {
+            participant.clear_staged(transaction_id).await;
+        }
+        if let Some(ref participant) = self.observability_participant {
+            participant.clear_staged(transaction_id).await;
+        }
+
+        Ok(())
     }
 
     pub async fn insert_document(

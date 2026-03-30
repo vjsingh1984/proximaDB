@@ -57,6 +57,59 @@ use super::retry::{CircuitBreaker, RetryExecutor, RetryPolicy};
 use super::traits::{ConsensusTransport, HealthChecker, ReplicationSink, SearchFanout};
 use super::types::*;
 
+use crate::proto::proximadb_cluster_v1 as proto;
+
+fn status_to_rpc_error(status: tonic::Status) -> RpcError {
+    let kind = match status.code() {
+        tonic::Code::Unavailable | tonic::Code::Aborted => RpcErrorKind::Connection,
+        tonic::Code::DeadlineExceeded => RpcErrorKind::Timeout,
+        tonic::Code::InvalidArgument | tonic::Code::FailedPrecondition => RpcErrorKind::InvalidRequest,
+        _ => RpcErrorKind::Internal,
+    };
+    RpcError::new(kind, status.message())
+}
+fn native_log_entry_type_to_proto(t: LogEntryType) -> i32 {
+    match t {
+        LogEntryType::Command => proto::LogEntryType::Command as i32,
+        LogEntryType::Noop => proto::LogEntryType::Noop as i32,
+        LogEntryType::Config => proto::LogEntryType::Config as i32,
+    }
+}
+fn native_consistency_to_proto(c: ConsistencyLevel) -> i32 {
+    match c {
+        ConsistencyLevel::One => proto::ConsistencyLevel::One as i32,
+        ConsistencyLevel::Quorum => proto::ConsistencyLevel::Quorum as i32,
+        ConsistencyLevel::All => proto::ConsistencyLevel::All as i32,
+        ConsistencyLevel::LocalQuorum => proto::ConsistencyLevel::LocalQuorum as i32,
+    }
+}
+fn native_repl_op_to_proto(op: ReplicationOperation) -> i32 {
+    match op {
+        ReplicationOperation::Insert => proto::ReplicationOperationType::Insert as i32,
+        ReplicationOperation::Update => proto::ReplicationOperationType::Update as i32,
+        ReplicationOperation::Delete => proto::ReplicationOperationType::Delete as i32,
+        ReplicationOperation::Flush => proto::ReplicationOperationType::Flush as i32,
+        ReplicationOperation::Compact => proto::ReplicationOperationType::Compact as i32,
+        ReplicationOperation::SchemaChange => proto::ReplicationOperationType::SchemaChange as i32,
+    }
+}
+fn native_serving_status(v: i32) -> ServingStatus {
+    match proto::ServingStatus::try_from(v) {
+        Ok(proto::ServingStatus::Serving) => ServingStatus::Serving,
+        Ok(proto::ServingStatus::NotServing) => ServingStatus::NotServing,
+        Ok(proto::ServingStatus::ServiceUnknown) => ServingStatus::ServiceUnknown,
+        _ => ServingStatus::NotServing,
+    }
+}
+fn native_node_role(v: i32) -> NodeRole {
+    match proto::NodeRole::try_from(v) {
+        Ok(proto::NodeRole::Leader) => NodeRole::Leader,
+        Ok(proto::NodeRole::Candidate) => NodeRole::Candidate,
+        Ok(proto::NodeRole::Observer) => NodeRole::Observer,
+        _ => NodeRole::Follower,
+    }
+}
+
 // ============================================================================
 // RESILIENT CLIENT WRAPPER
 // ============================================================================
@@ -260,19 +313,13 @@ impl ConsensusTransport for GrpcConsensusTransport {
         // Ok(response.into_inner().into())
         // ```
 
-        // TODO: Implement actual gRPC call when proto service is available
-        // For now, return a reasonable default for testing
-        tracing::debug!(
-            target = %target,
-            term = req.term,
-            candidate = %req.candidate_id,
-            "RequestVote RPC (stub)"
-        );
-
-        Ok(RequestVoteResponse {
-            term: req.term,
-            vote_granted: false, // Conservative default
-        })
+        let mut client = proto::consensus_service_client::ConsensusServiceClient::new(_channel);
+        let resp = client.request_vote(tonic::Request::new(proto::RequestVoteRequest {
+            term: req.term, candidate_id: req.candidate_id.clone(),
+            last_log_index: req.last_log_index, last_log_term: req.last_log_term,
+        })).await.map_err(status_to_rpc_error)?;
+        let inner = resp.into_inner();
+        Ok(RequestVoteResponse { term: inner.term, vote_granted: inner.vote_granted })
     }
 
     async fn append_entries(
@@ -282,21 +329,21 @@ impl ConsensusTransport for GrpcConsensusTransport {
     ) -> RpcResult<AppendEntriesResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC call
-        tracing::debug!(
-            target = %target,
-            term = req.term,
-            leader = %req.leader_id,
-            entries = req.entries.len(),
-            "AppendEntries RPC (stub)"
-        );
-
+        let mut client = proto::consensus_service_client::ConsensusServiceClient::new(_channel);
+        let resp = client.append_entries(tonic::Request::new(proto::AppendEntriesRequest {
+            term: req.term, leader_id: req.leader_id.clone(),
+            prev_log_index: req.prev_log_index, prev_log_term: req.prev_log_term,
+            entries: req.entries.iter().map(|e| proto::LogEntry {
+                term: e.term, index: e.index, command: e.command.clone(),
+                entry_type: native_log_entry_type_to_proto(e.entry_type),
+            }).collect(),
+            leader_commit: req.leader_commit,
+        })).await.map_err(status_to_rpc_error)?;
+        let inner = resp.into_inner();
         Ok(AppendEntriesResponse {
-            term: req.term,
-            success: true,
-            match_index: None,
-            conflict_term: None,
-            conflict_index: None,
+            term: inner.term, success: inner.success,
+            match_index: inner.match_index, conflict_term: inner.conflict_term,
+            conflict_index: inner.conflict_index,
         })
     }
 
@@ -307,19 +354,14 @@ impl ConsensusTransport for GrpcConsensusTransport {
     ) -> RpcResult<InstallSnapshotResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC call
-        tracing::debug!(
-            target = %target,
-            term = req.term,
-            last_included_index = req.last_included_index,
-            chunk_size = req.data.len(),
-            "InstallSnapshot RPC (stub)"
-        );
-
-        Ok(InstallSnapshotResponse {
-            term: req.term,
-            bytes_stored: req.data.len() as u64,
-        })
+        let mut client = proto::consensus_service_client::ConsensusServiceClient::new(_channel);
+        let resp = client.install_snapshot(tonic::Request::new(proto::InstallSnapshotRequest {
+            term: req.term, leader_id: req.leader_id.clone(),
+            last_included_index: req.last_included_index, last_included_term: req.last_included_term,
+            offset: req.offset, data: req.data.clone(), done: req.done,
+        })).await.map_err(status_to_rpc_error)?;
+        let inner = resp.into_inner();
+        Ok(InstallSnapshotResponse { term: inner.term, bytes_stored: inner.bytes_stored })
     }
 
     async fn pre_vote(
@@ -329,18 +371,13 @@ impl ConsensusTransport for GrpcConsensusTransport {
     ) -> RpcResult<RequestVoteResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC call
-        tracing::debug!(
-            target = %target,
-            term = req.term,
-            candidate = %req.candidate_id,
-            "PreVote RPC (stub)"
-        );
-
-        Ok(RequestVoteResponse {
-            term: req.term,
-            vote_granted: false,
-        })
+        let mut client = proto::consensus_service_client::ConsensusServiceClient::new(_channel);
+        let resp = client.pre_vote(tonic::Request::new(proto::PreVoteRequest {
+            term: req.term, candidate_id: req.candidate_id.clone(),
+            last_log_index: req.last_log_index, last_log_term: req.last_log_term,
+        })).await.map_err(status_to_rpc_error)?;
+        let inner = resp.into_inner();
+        Ok(RequestVoteResponse { term: inner.term, vote_granted: inner.vote_granted })
     }
 }
 
@@ -378,20 +415,20 @@ impl ReplicationSink for GrpcReplicationSink {
     ) -> RpcResult<ReplicateResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC call
-        tracing::debug!(
-            target = %target,
-            shard = %req.shard_id,
-            lsn = req.lsn,
-            "Replicate RPC (stub)"
-        );
-
+        let mut client = proto::replication_service_client::ReplicationServiceClient::new(_channel);
+        let resp = client.replicate(tonic::Request::new(proto::ReplicateRequest {
+            source_node_id: req.source_node_id.clone(), shard_id: req.shard_id.clone(),
+            lsn: req.lsn, timestamp: req.timestamp,
+            operation: native_repl_op_to_proto(req.operation),
+            data: req.data.clone(), checksum: req.checksum,
+            consistency: native_consistency_to_proto(req.consistency),
+            timeout_ms: req.timeout.as_millis() as u32,
+        })).await.map_err(status_to_rpc_error)?;
+        let inner = resp.into_inner();
         Ok(ReplicateResponse {
-            node_id: target.node_id.clone(),
-            acked_lsn: req.lsn,
-            success: true,
-            error: None,
-            latency: Duration::from_micros(100),
+            node_id: inner.node_id, acked_lsn: inner.acked_lsn,
+            success: inner.success, error: inner.error,
+            latency: Duration::from_micros(inner.latency_us),
         })
     }
 
@@ -468,18 +505,12 @@ impl ReplicationSink for GrpcReplicationSink {
     ) -> RpcResult<AckReplicationResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC call
-        tracing::debug!(
-            target = %target,
-            shard = %req.shard_id,
-            acked_lsn = req.acked_lsn,
-            "AckReplication RPC (stub)"
-        );
-
-        Ok(AckReplicationResponse {
-            success: true,
-            primary_lsn: req.acked_lsn + 10,
-        })
+        let mut client = proto::replication_service_client::ReplicationServiceClient::new(_channel);
+        let resp = client.ack_replication(tonic::Request::new(proto::AckReplicationRequest {
+            node_id: req.node_id.clone(), shard_id: req.shard_id.clone(), acked_lsn: req.acked_lsn,
+        })).await.map_err(status_to_rpc_error)?;
+        let inner = resp.into_inner();
+        Ok(AckReplicationResponse { success: inner.success, primary_lsn: inner.primary_lsn })
     }
 }
 
@@ -517,22 +548,26 @@ impl SearchFanout for GrpcSearchFanout {
     ) -> RpcResult<ShardSearchResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC call
-        tracing::debug!(
-            target = %target,
-            collection = %req.collection,
-            shard = %req.shard_id,
-            top_k = req.top_k,
-            "ShardSearch RPC (stub)"
-        );
-
+        let mut client = proto::search_fanout_service_client::SearchFanoutServiceClient::new(_channel);
+        let resp = client.shard_search(tonic::Request::new(proto::ShardSearchRequest {
+            request_id: req.request_id.clone(), collection: req.collection.clone(),
+            shard_id: req.shard_id.clone(), vector: req.vector.clone(), top_k: req.top_k,
+            filter: req.filter.clone(),
+            params: Some(proto::SearchParams { metric: 0, min_score: req.params.min_score,
+                ef_search: req.params.ef_search, n_probes: req.params.n_probes }),
+            timeout_ms: req.timeout.as_millis() as u32, include_vectors: req.include_vectors,
+            tenant_id: req.tenant_id.clone(), domain_id: req.domain_id.clone(),
+        })).await.map_err(status_to_rpc_error)?;
+        let inner = resp.into_inner();
         Ok(ShardSearchResponse {
-            request_id: req.request_id,
-            shard_id: req.shard_id,
-            results: vec![],
-            vectors_scanned: 0,
-            latency: Duration::from_micros(500),
-            truncated: false,
+            request_id: inner.request_id, shard_id: inner.shard_id,
+            results: inner.results.into_iter().map(|r| ShardSearchResult {
+                id: r.id, score: r.score,
+                vector: if r.vector.is_empty() { None } else { Some(r.vector) },
+                metadata: r.metadata,
+            }).collect(),
+            vectors_scanned: inner.vectors_scanned,
+            latency: Duration::from_micros(inner.latency_us), truncated: inner.truncated,
         })
     }
 
@@ -564,21 +599,27 @@ impl SearchFanout for GrpcSearchFanout {
     ) -> RpcResult<ForwardWriteResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC call
-        tracing::debug!(
-            target = %target,
-            collection = %req.collection,
-            shard = %req.shard_id,
-            records = req.records.len(),
-            "ForwardWrite RPC (stub)"
-        );
-
+        let mut client = proto::search_fanout_service_client::SearchFanoutServiceClient::new(_channel);
+        let resp = client.forward_write(tonic::Request::new(proto::ForwardWriteRequest {
+            request_id: req.request_id.clone(), collection: req.collection.clone(),
+            shard_id: req.shard_id.clone(),
+            records: req.records.iter().map(|r| crate::proto::proximadb_v1::VectorRecord {
+                id: r.id.clone(), vector: r.vector.clone(),
+                metadata: r.metadata.iter().filter_map(|(k, v)| {
+                    serde_json::from_value::<crate::proto::proximadb_v1::SqlValue>(v.clone())
+                        .ok().map(|sv| (k.clone(), sv))
+                }).collect(),
+                timestamp: None, updated_at: None, expires_at: None, version: None, source: None,
+            }).collect(),
+            consistency: native_consistency_to_proto(req.consistency),
+            timeout_ms: req.timeout.as_millis() as u32,
+            tenant_id: req.tenant_id.clone(), domain_id: req.domain_id.clone(),
+        })).await.map_err(status_to_rpc_error)?;
+        let inner = resp.into_inner();
         Ok(ForwardWriteResponse {
-            request_id: req.request_id,
-            records_written: req.records.len() as u32,
-            replicas_acked: 3,
-            latency: Duration::from_millis(5),
-            error: None,
+            request_id: inner.request_id, records_written: inner.records_written,
+            replicas_acked: inner.replicas_acked,
+            latency: Duration::from_micros(inner.latency_us), error: inner.error,
         })
     }
 
@@ -589,23 +630,32 @@ impl SearchFanout for GrpcSearchFanout {
     ) -> RpcResult<Vec<ForwardWriteResponse>> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC call
-        tracing::debug!(
-            target = %target,
-            batch_size = requests.len(),
-            "ForwardWriteBatch RPC (stub)"
-        );
-
-        Ok(requests
-            .into_iter()
-            .map(|req| ForwardWriteResponse {
-                request_id: req.request_id,
-                records_written: req.records.len() as u32,
-                replicas_acked: 3,
-                latency: Duration::from_millis(5),
-                error: None,
-            })
-            .collect())
+        let mut client = proto::search_fanout_service_client::SearchFanoutServiceClient::new(_channel);
+        let proto_reqs: Vec<proto::ForwardWriteRequest> = requests.iter().map(|req| {
+            proto::ForwardWriteRequest {
+                request_id: req.request_id.clone(), collection: req.collection.clone(),
+                shard_id: req.shard_id.clone(),
+                records: req.records.iter().map(|r| crate::proto::proximadb_v1::VectorRecord {
+                    id: r.id.clone(), vector: r.vector.clone(),
+                    metadata: r.metadata.iter().filter_map(|(k, v)| {
+                        serde_json::from_value::<crate::proto::proximadb_v1::SqlValue>(v.clone())
+                            .ok().map(|sv| (k.clone(), sv))
+                    }).collect(),
+                    timestamp: None, updated_at: None, expires_at: None, version: None, source: None,
+                }).collect(),
+                consistency: native_consistency_to_proto(req.consistency),
+                timeout_ms: req.timeout.as_millis() as u32,
+                tenant_id: req.tenant_id.clone(), domain_id: req.domain_id.clone(),
+            }
+        }).collect();
+        let resp = client.forward_write_batch(tonic::Request::new(proto::ForwardWriteBatchRequest {
+            request_id: String::new(), requests: proto_reqs,
+        })).await.map_err(status_to_rpc_error)?;
+        Ok(resp.into_inner().responses.into_iter().map(|r| ForwardWriteResponse {
+            request_id: r.request_id, records_written: r.records_written,
+            replicas_acked: r.replicas_acked,
+            latency: Duration::from_micros(r.latency_us), error: r.error,
+        }).collect())
     }
 }
 
@@ -641,31 +691,25 @@ impl HealthChecker for GrpcHealthChecker {
         target: &NodeEndpoint,
         _req: HealthCheckRequest,
     ) -> RpcResult<HealthCheckResponse> {
-        // Try to get a channel - if successful, node is reachable
         match self.connection_manager.get_channel(target).await {
-            Ok(_channel) => {
-                // TODO: Implement actual gRPC health check call
-                tracing::debug!(
-                    target = %target,
-                    "HealthCheck RPC (stub)"
-                );
-
-                // Mark healthy in connection manager
-                self.connection_manager.mark_healthy(target).await;
-
-                Ok(HealthCheckResponse {
-                    status: ServingStatus::Serving,
-                })
+            Ok(channel) => {
+                let mut client = proto::health_service_client::HealthServiceClient::new(channel);
+                match client.check(tonic::Request::new(proto::HealthCheckRequest {
+                    service: _req.service.clone(),
+                })).await {
+                    Ok(resp) => {
+                        self.connection_manager.mark_healthy(target).await;
+                        Ok(HealthCheckResponse { status: native_serving_status(resp.into_inner().status) })
+                    }
+                    Err(s) => {
+                        self.connection_manager.mark_unhealthy(target, s.message()).await;
+                        Ok(HealthCheckResponse { status: ServingStatus::NotServing })
+                    }
+                }
             }
             Err(e) => {
-                // Mark unhealthy
-                self.connection_manager
-                    .mark_unhealthy(target, e.message())
-                    .await;
-
-                Ok(HealthCheckResponse {
-                    status: ServingStatus::NotServing,
-                })
+                self.connection_manager.mark_unhealthy(target, e.message()).await;
+                Ok(HealthCheckResponse { status: ServingStatus::NotServing })
             }
         }
     }
@@ -677,23 +721,28 @@ impl HealthChecker for GrpcHealthChecker {
     ) -> RpcResult<StatusResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC status call
-        tracing::debug!(
-            target = %target,
-            "Status RPC (stub)"
-        );
-
+        let mut client = proto::health_service_client::HealthServiceClient::new(_channel);
+        let resp = client.status(tonic::Request::new(proto::StatusRequest {
+            include_metrics: _req.include_metrics, include_shards: _req.include_shards,
+        })).await.map_err(status_to_rpc_error)?;
+        let inner = resp.into_inner();
         Ok(StatusResponse {
-            node_id: target.node_id.clone(),
-            role: NodeRole::Follower,
-            current_term: 1,
-            leader_id: None,
-            uptime_seconds: 0,
-            active_connections: 0,
-            memory_bytes: 0,
-            cpu_percent: 0.0,
-            shards: vec![],
-            replication_lag_ms: None,
+            node_id: inner.node_id, role: native_node_role(inner.role),
+            current_term: inner.current_term, leader_id: inner.leader_id,
+            uptime_seconds: inner.uptime_seconds, active_connections: inner.active_connections,
+            memory_bytes: inner.memory_bytes, cpu_percent: inner.cpu_percent,
+            shards: inner.shards.into_iter().map(|s| ShardStatus {
+                shard_id: s.shard_id, collection: s.collection, is_primary: s.is_primary,
+                state: match proto::ShardState::try_from(s.state) {
+                    Ok(proto::ShardState::Active) => ShardState::Active,
+                    Ok(proto::ShardState::Initializing) => ShardState::Initializing,
+                    Ok(proto::ShardState::CatchingUp) => ShardState::CatchingUp,
+                    Ok(proto::ShardState::Relocating) => ShardState::Relocating,
+                    _ => ShardState::Inactive,
+                },
+                current_lsn: s.current_lsn, vector_count: s.vector_count, disk_bytes: s.disk_bytes,
+            }).collect(),
+            replication_lag_ms: inner.replication_lag_ms,
         })
     }
 
@@ -1108,10 +1157,8 @@ mod tests {
             last_log_term: 0,
         };
 
-        // This will fail because we can't actually connect, but it tests the code path
         let result = transport.request_vote(&target, req).await;
-        // The stub implementation returns a default response
-        assert!(result.is_ok());
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -1121,12 +1168,8 @@ mod tests {
 
         let target = NodeEndpoint::new("node-1", "127.0.0.1:5679");
 
-        // Check health - will return Serving because the stub succeeds
         let result = checker.check(&target, HealthCheckRequest::default()).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().status, ServingStatus::Serving);
-
-        // Verify the node is marked healthy
-        assert!(cm.is_healthy(&target).await);
+        assert_eq!(result.unwrap().status, ServingStatus::NotServing);
     }
 }

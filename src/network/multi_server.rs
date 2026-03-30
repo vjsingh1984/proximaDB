@@ -875,15 +875,15 @@ impl SharedServices {
         let orchestrator = if let Some(orch) = orchestrator {
             orch
         } else {
-            // Create a default orchestrator if none provided (backward compatibility)
             let mut default_orchestrator =
                 CrossCacheOrchestrator::new((storage_config.cache_size_mb * 1024 * 1024) as usize);
             default_orchestrator.start_eviction_service(None);
             let orch = Arc::new(default_orchestrator);
             orch.clone().start_rebalancing_service();
-            CrossCacheOrchestrator::register_global(orch.clone());
             orch
         };
+        // Always register globally — idempotent via OnceLock
+        CrossCacheOrchestrator::register_global(orchestrator.clone());
 
         // =========================================================================
         // Initialize EventLog service and start AXIS consumer for async index building

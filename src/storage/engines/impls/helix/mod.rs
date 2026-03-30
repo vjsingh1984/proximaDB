@@ -2139,35 +2139,18 @@ impl UnifiedStorageEngine for HelixEngine {
 
     async fn collection_stats(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<crate::storage::traits::CollectionStats> {
-        // HELIX uses PCA-reduced Hilbert curve storage
-        // Scan filesystem for collection data files
-        let storage_url = format!("/data/collections/{}", collection_id);
-        let fs = self.filesystem.clone();
-
-        let mut total_bytes: u64 = 0;
-        if let Ok(entries) = fs.list(&storage_url).await {
-            for entry in &entries {
-                if !entry.metadata.is_directory {
-                    total_bytes += entry.metadata.size as u64;
-                }
-            }
-        }
-
-        // HELIX stores PCA-reduced vectors: typically 128 dims * 4 bytes + metadata
-        let avg_record_bytes: u64 = 640;
-        let estimated_row_count = if total_bytes > 0 {
-            total_bytes / avg_record_bytes
-        } else {
-            0
-        };
+        let metrics = self.metrics.read().await;
+        let total_vectors = metrics.total_vectors;
+        let total_bytes = metrics.total_size_bytes;
+        let avg_vector_bytes = if total_vectors > 0 { total_bytes / total_vectors } else { 640 };
 
         Ok(crate::storage::traits::CollectionStats {
-            row_count: estimated_row_count,
-            avg_vector_bytes: 512,
+            row_count: total_vectors,
+            avg_vector_bytes,
             engine_strategy: crate::storage::traits::StorageEngineStrategy::Helix,
-            has_metadata_index: false,
+            has_metadata_index: true,
             has_hnsw_index: false,
             total_bytes,
             dimension: Some(self.config.pca_dimensions as u32),

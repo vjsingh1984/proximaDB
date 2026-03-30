@@ -133,6 +133,12 @@ impl DocumentStoreParticipant {
             .unwrap_or(0)
     }
 
+    /// Clear all staged operations for a transaction (called on rollback)
+    pub async fn clear_staged(&self, transaction_id: &str) {
+        let mut transactions = self.transactions.write().await;
+        transactions.remove(transaction_id);
+    }
+
     async fn stage_operation(
         &self,
         transaction_id: &str,
@@ -343,6 +349,12 @@ impl ObservabilityStoreParticipant {
                     .saturating_sub(state.next_commit_index)
             })
             .unwrap_or(0)
+    }
+
+    /// Clear all staged operations for a transaction (called on rollback)
+    pub async fn clear_staged(&self, transaction_id: &str) {
+        let mut transactions = self.transactions.write().await;
+        transactions.remove(transaction_id);
     }
 
     async fn stage_operation(
