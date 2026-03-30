@@ -156,3 +156,123 @@ impl TransactionLog for NoOpTransactionLog {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_noop_log_append() {
+        let log = NoOpTransactionLog;
+        let record = LogRecord::Begin {
+            tx_id: "tx-1".to_string(),
+            timestamp: 1234567890,
+        };
+        assert!(log.append(record).is_ok());
+    }
+
+    #[test]
+    fn test_noop_log_read_all_empty() {
+        let log = NoOpTransactionLog;
+        let records = log.read_all().unwrap();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn test_noop_log_clear() {
+        let log = NoOpTransactionLog;
+        assert!(log.clear().is_ok());
+    }
+
+    #[test]
+    fn test_file_log_roundtrip() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("test_tx.log");
+
+        let log = FileTransactionLog::new(&log_path).unwrap();
+
+        // Write records
+        log.append(LogRecord::Begin {
+            tx_id: "tx-100".to_string(),
+            timestamp: 1000,
+        })
+        .unwrap();
+        log.append(LogRecord::Prepare {
+            tx_id: "tx-100".to_string(),
+            participants: vec!["vector:col1".to_string(), "doc:col2".to_string()],
+        })
+        .unwrap();
+        log.append(LogRecord::Commit {
+            tx_id: "tx-100".to_string(),
+        })
+        .unwrap();
+
+        // Read back
+        let records = log.read_all().unwrap();
+        assert_eq!(records.len(), 3);
+
+        match &records[0] {
+            LogRecord::Begin { tx_id, timestamp } => {
+                assert_eq!(tx_id, "tx-100");
+                assert_eq!(*timestamp, 1000);
+            }
+            _ => panic!("Expected Begin record"),
+        }
+
+        match &records[1] {
+            LogRecord::Prepare {
+                tx_id,
+                participants,
+            } => {
+                assert_eq!(tx_id, "tx-100");
+                assert_eq!(participants.len(), 2);
+            }
+            _ => panic!("Expected Prepare record"),
+        }
+
+        match &records[2] {
+            LogRecord::Commit { tx_id } => assert_eq!(tx_id, "tx-100"),
+            _ => panic!("Expected Commit record"),
+        }
+    }
+
+    #[test]
+    fn test_file_log_clear() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("clear_test.log");
+
+        let log = FileTransactionLog::new(&log_path).unwrap();
+        log.append(LogRecord::Begin {
+            tx_id: "tx-1".to_string(),
+            timestamp: 1,
+        })
+        .unwrap();
+
+        log.clear().unwrap();
+        let records = log.read_all().unwrap();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn test_file_log_abort_record() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("abort_test.log");
+
+        let log = FileTransactionLog::new(&log_path).unwrap();
+        log.append(LogRecord::Abort {
+            tx_id: "tx-fail".to_string(),
+            reason: "constraint violation".to_string(),
+        })
+        .unwrap();
+
+        let records = log.read_all().unwrap();
+        assert_eq!(records.len(), 1);
+        match &records[0] {
+            LogRecord::Abort { tx_id, reason } => {
+                assert_eq!(tx_id, "tx-fail");
+                assert!(reason.contains("constraint"));
+            }
+            _ => panic!("Expected Abort record"),
+        }
+    }
+}

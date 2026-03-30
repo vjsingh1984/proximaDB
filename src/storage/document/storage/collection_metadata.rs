@@ -194,3 +194,63 @@ impl CollectionMetadataStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_component_basic() {
+        let encoded = CollectionMetadataStore::encode_component("test");
+        assert_eq!(encoded, "74657374"); // hex of "test"
+    }
+
+    #[test]
+    fn test_encode_component_special_chars() {
+        let encoded = CollectionMetadataStore::encode_component("my/collection.name");
+        assert!(!encoded.contains('/'));
+        assert!(!encoded.contains('.'));
+    }
+
+    #[test]
+    fn test_collection_path() {
+        let store = CollectionMetadataStore::new("/tmp/test_meta");
+        let path = store.collection_path("users");
+        assert!(path.to_str().unwrap().ends_with(".json"));
+        assert!(path.to_str().unwrap().contains("test_meta"));
+    }
+
+    #[test]
+    fn test_store_creation() {
+        let store = CollectionMetadataStore::new("/tmp/test_store");
+        assert_eq!(store.base_path, PathBuf::from("/tmp/test_store"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_collection() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = CollectionMetadataStore::new(temp_dir.path());
+        // Deleting a non-existent collection should succeed (idempotent)
+        let result = store.delete_collection("nonexistent").await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_stored_metadata_serialization() {
+        let metadata = StoredCollectionMetadata {
+            format_version: 1,
+            name: "test_col".to_string(),
+            config_json: "{}".to_string(),
+            document_count: 100,
+            storage_size_bytes: 4096,
+            created_at_ns: 1000000,
+            updated_at_ns: 2000000,
+        };
+
+        let json = serde_json::to_string(&metadata).unwrap();
+        let deserialized: StoredCollectionMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name, "test_col");
+        assert_eq!(deserialized.document_count, 100);
+        assert_eq!(deserialized.format_version, 1);
+    }
+}
