@@ -2794,7 +2794,7 @@ impl RaptorWriter {
             timestamp: vector.timestamp.unwrap_or(0) as u32,
             updated_at: vector.updated_at.map(|v| v as u32),
             expires_at: vector.expires_at.map(|v| v as u32),
-            version: vector.version.map(|v| v as u32),
+            version: vector.version,
             source_content,
         };
 
@@ -4226,7 +4226,7 @@ impl RaptorWriter {
         let all_rowgroup_centroids: Vec<(u16, Vec<f32>)> = self
             .row_groups
             .iter()
-            .filter_map(|rg| rg.centroid.as_ref().map(|c| (rg.id as u16, c.clone())))
+            .filter_map(|rg| rg.centroid.as_ref().map(|c| (rg.id, c.clone())))
             .collect();
 
         // Compute centroid statistics before modifying row group
@@ -4431,10 +4431,10 @@ impl RaptorWriter {
         // The bloom filter is written separately in write_bloom_filter_metadata
         // For now, return a simple metadata with basic info
         Ok(BloomFilterMetadata {
-            offset: offset as u64,
+            offset,
             size: compressed.len() as u64,
             num_entries: self.ivf_builder.nodes.len() as u32,
-            num_bits: (self.ivf_builder.nodes.len() * 10) as usize, // Estimate: 10 bits per entry
+            num_bits: self.ivf_builder.nodes.len() * 10, // Estimate: 10 bits per entry
             num_hashes: 7,             // Standard for 1% false positive rate
             false_positive_rate: 0.01, // Default 1% false positive rate
         })
@@ -4622,7 +4622,7 @@ impl RaptorWriter {
                             num_centroids: m.num_centroids,
                             file_offset: 0,     // Will be set when writing to disk
                             compressed_size: 0, // Will be set when writing to disk
-                            uncompressed_size: (m.num_vectors * m.num_centroids * 4) as u32, // P×K×4 bytes
+                            uncompressed_size: m.num_vectors * m.num_centroids * 4, // P×K×4 bytes
                             compression_algorithm: "zstd".to_string(),
                             encoding_metadata: m.compression_metadata,
                         })
@@ -4887,7 +4887,7 @@ impl RaptorWriter {
             self.ivf_builder.nodes[idx].cluster_id = cluster_id as u32;
 
             // Calculate distance to assigned centroid (d2 component) using unified distance
-            let centroid = &self.ivf_builder.centroids[cluster_id as usize];
+            let centroid = &self.ivf_builder.centroids[cluster_id];
             let dist_result = self.distance_compute.calculate_distance(
                 &self.ivf_builder.vectors[idx],
                 &centroid.vector,
@@ -5376,7 +5376,7 @@ impl RaptorWriter {
             offset,
             size: compressed.len() as u64,
             num_entries: self.bloom_builder.ids.len() as u32,
-            num_bits: (self.bloom_builder.ids.len() * 10) as usize, // 10 bits per ID
+            num_bits: self.bloom_builder.ids.len() * 10, // 10 bits per ID
             num_hashes: 7, // Optimal for 1% false positive rate
             false_positive_rate: self.bloom_builder.target_false_positive_rate,
         })

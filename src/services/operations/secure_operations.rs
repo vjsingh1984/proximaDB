@@ -309,7 +309,7 @@ impl SecureVectorOperations {
         let is_encrypted = record
             .metadata
             .get("__encrypted")
-            .and_then(|v| sql_value_to_string(v))
+            .and_then(sql_value_to_string)
             .map(|s| s == "true")
             .unwrap_or(false);
 

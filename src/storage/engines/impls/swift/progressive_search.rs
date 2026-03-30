@@ -428,7 +428,7 @@ async fn phase2_int8_filtering(
                         candidates.push(Candidate {
                             superblock_idx: sb_idx,
                             block_idx: b_idx,
-                            vector_idx: v_idx as u32,
+                            vector_idx: v_idx,
                             similarity: distance,
                         });
 
@@ -443,7 +443,7 @@ async fn phase2_int8_filtering(
                 candidates.push(Candidate {
                     superblock_idx: sb_idx,
                     block_idx: b_idx,
-                    vector_idx: v_idx as u32,
+                    vector_idx: v_idx,
                     similarity: 0.0,
                 });
 
@@ -534,7 +534,7 @@ async fn phase3_pq_refinement(
                         candidates.push(Candidate {
                             superblock_idx: sb_idx,
                             block_idx: b_idx,
-                            vector_idx: v_idx as u32,
+                            vector_idx: v_idx,
                             similarity: distance,
                         });
 
@@ -549,7 +549,7 @@ async fn phase3_pq_refinement(
                 candidates.push(Candidate {
                     superblock_idx: sb_idx,
                     block_idx: b_idx,
-                    vector_idx: v_idx as u32,
+                    vector_idx: v_idx,
                     similarity: 0.0,
                 });
 

@@ -104,7 +104,7 @@ impl RefactoredIvfIndex {
             let cluster_id = self.assign_to_cluster(&vector.vector)?;
             self.inverted_lists
                 .entry(cluster_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(id);
         }
         

@@ -103,7 +103,7 @@ pub async fn auth_middleware<B>(
         .auth_service
         .authenticate(&auth_header)
         .await
-        .map_err(|e| auth_error_to_response(e))?;
+        .map_err(auth_error_to_response)?;
 
     // Check basic permissions for the endpoint
     let required_permission = determine_required_permission(method.as_str(), path);
@@ -115,7 +115,7 @@ pub async fn auth_middleware<B>(
             .rbac
             .check_permission_with_context(&auth_result.user_id, permission, &context)
             .await
-            .map_err(|e| auth_error_to_response(e))?;
+            .map_err(auth_error_to_response)?;
     }
 
     // Add auth result to request extensions for use by handlers

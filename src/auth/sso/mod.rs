@@ -148,7 +148,7 @@ static SSO_MANAGER: std::sync::OnceLock<SSOIntegrationManager> = std::sync::Once
 
 /// Initialize global SSO manager
 pub fn initialize_sso_manager() -> &'static SSOIntegrationManager {
-    SSO_MANAGER.get_or_init(|| SSOIntegrationManager::new())
+    SSO_MANAGER.get_or_init(SSOIntegrationManager::new)
 }
 
 /// Get global SSO manager

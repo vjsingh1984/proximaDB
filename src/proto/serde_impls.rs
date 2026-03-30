@@ -239,7 +239,7 @@ impl<'de> Deserialize<'de> for SqlValue {
             serde_json::Value::Array(arr) => {
                 // Convert JSON array to SqlArray
                 let values: Vec<SqlValue> =
-                    arr.iter().filter_map(|v| json_to_sql_value(v)).collect();
+                    arr.iter().filter_map(json_to_sql_value).collect();
                 Some(SqlValueVariant::ArrayValue(
                     crate::proto::proximadb_v1::SqlArray { values },
                 ))

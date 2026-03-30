@@ -468,7 +468,7 @@ impl UnifiedHandlers {
             success,
             operation: operation as i32,
             collection,
-            collections: collections.unwrap_or_else(|| Vec::new()),
+            collections: collections.unwrap_or_else(Vec::new),
             affected_count,
             total_count: total_count.unwrap_or(0),
             metadata: Default::default(),
@@ -722,8 +722,8 @@ impl UnifiedHandlers {
                     vector: v.vector,
                     metadata: v.metadata,
                     timestamp: v.timestamp,
-                    updated_at: v.updated_at.map(|x| x as i64),
-                    expires_at: v.expires_at.map(|x| x as i64),
+                    updated_at: v.updated_at,
+                    expires_at: v.expires_at,
                     version: v.version,
                     source: v.source,
                 }
@@ -1114,7 +1114,7 @@ impl UnifiedHandlers {
                         request
                             .vector_search_request
                             .clone()
-                            .unwrap_or_else(|| Default::default()),
+                            .unwrap_or_default(),
                     )
                     .await?;
                 if let Some(results) = vector_search_response.results {
@@ -1129,13 +1129,13 @@ impl UnifiedHandlers {
                         let graph_req = request
                             .graph_traversal_request
                             .clone()
-                            .unwrap_or_else(|| Default::default());
+                            .unwrap_or_default();
                         let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
                             graph_id: "default".to_string(), // TODO: Extract from request or pass as parameter
                             start_node_id: start_node_ids
                                 .first()
                                 .cloned()
-                                .unwrap_or_else(|| String::new()), // Use first for now, need to handle multiple starts
+                                .unwrap_or_default(), // Use first for now, need to handle multiple starts
                             max_depth: if graph_req.max_depth == 0 {
                                 3
                             } else {
@@ -1677,7 +1677,7 @@ impl UnifiedHandlers {
             rows,
             rows_scanned: 0,
             rows_returned: result.row_count as u64,
-            execution_time_ms: result.execution_time_ms as u64,
+            execution_time_ms: result.execution_time_ms,
             columns: result.columns.iter().map(|c| c.0.clone()).collect(),
             column_types: result.columns.iter().map(|c| c.1.clone()).collect(),
         })

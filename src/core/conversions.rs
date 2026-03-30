@@ -225,7 +225,7 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
             metadata: native.metadata,
             version: native.version,
             similarity: native.similarity,
-            timestamp: native.timestamp.map(|t| t as i64),
+            timestamp: native.timestamp,
             source: native.source.as_ref().and_then(|sc| match &sc.data {
                 Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => {
                     Some(text.clone())
@@ -294,7 +294,7 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
             metadata: native.metadata.clone(),
             version: native.version,
             similarity: native.similarity,
-            timestamp: native.timestamp.map(|t| t as i64),
+            timestamp: native.timestamp,
             source: native.source.as_ref().and_then(|sc| match &sc.data {
                 Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => {
                     Some(text.clone())
@@ -641,7 +641,7 @@ pub fn build_vector_search_request(
     VectorSearchRequest {
         collection_id,
         queries: vec![query],
-        top_k: top_k as u32,
+        top_k,
         distance_metric_override: None,
         search_params: None,
         include_fields: Some(crate::proto::proximadb_v1::IncludeFields {

@@ -936,7 +936,7 @@ impl UnifiedIvfIndex {
                     },
                     demotion_criteria: DemotionCriteria {
                         max_idle_time: Duration::from_secs(
-                            config.posting_list_config.demotion_threshold as u64,
+                            config.posting_list_config.demotion_threshold,
                         ),
                         memory_pressure_threshold: 0.85,
                         min_tier: InfrastructureTier::Memory,
@@ -1195,7 +1195,7 @@ impl UnifiedIvfIndex {
         let _vector_key = PartitionedKey::new(self.collection_id.clone(), id.clone());
 
         // Convert HashMap metadata to Vec<MetadataItem>
-        let _metadata_items = metadata
+        let _metadata_items: Vec<crate::proto::proximadb_v1::MetadataItem> = metadata
             .map(|map| {
                 map.into_iter()
                     .map(|(key, value)| crate::proto::proximadb_v1::MetadataItem {
@@ -1219,7 +1219,7 @@ impl UnifiedIvfIndex {
                     })
                     .collect()
             })
-            .unwrap_or_else(|| Vec::new());
+            .unwrap_or_default();
 
         // Get or create zero-overhead collection for this collection_id
         let collections = self.vectors.clone();

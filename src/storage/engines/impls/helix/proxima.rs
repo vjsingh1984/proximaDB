@@ -1177,7 +1177,7 @@ pub fn extract_helix_metadata(
                 compressed_size: 0, // Will be set during compression
                 timestamp: chunk
                     .iter()
-                    .map(|r| r.timestamp.unwrap_or(0) as i64)
+                    .map(|r| r.timestamp.unwrap_or(0))
                     .max()
                     .unwrap_or(0),
                 compaction_level: 0,

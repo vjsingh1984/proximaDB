@@ -965,7 +965,7 @@ impl ArrowFileExportHandler {
         let dimension = collection
             .config
             .as_ref()
-            .map(|c| c.dimension as u32)
+            .map(|c| c.dimension)
             .unwrap_or(0);
 
         Ok((num_batches, total_records, dimension))
@@ -1000,7 +1000,7 @@ impl ArrowFileExportHandler {
             })
             .or_else(|| {
                 // Fall back to collection config
-                collection.config.as_ref().map(|c| c.dimension as u32)
+                collection.config.as_ref().map(|c| c.dimension)
             })
             .unwrap_or(0);
 
@@ -1069,7 +1069,7 @@ impl ArrowFileExportHandler {
             dimension = collection
                 .config
                 .as_ref()
-                .map(|c| c.dimension as u32)
+                .map(|c| c.dimension)
                 .unwrap_or(0);
         }
 

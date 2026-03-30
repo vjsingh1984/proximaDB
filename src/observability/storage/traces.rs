@@ -121,7 +121,7 @@ impl TraceStorage {
             let mut spans_by_time = self.spans_by_time.write().await;
             spans_by_time
                 .entry(span.start_time_ns)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(span.span_id.clone());
         }
 
@@ -130,7 +130,7 @@ impl TraceStorage {
             let mut service_index = self.service_index.write().await;
             let traces = service_index
                 .entry(span.service_name.clone())
-                .or_insert_with(Vec::new);
+                .or_default();
             if !traces.contains(trace_id) {
                 traces.push(trace_id.clone());
             }

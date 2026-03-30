@@ -867,7 +867,7 @@ impl SwiftFile {
             // Track AdaCurve codes per superblock for aggregation
             superblock_codes
                 .entry(superblock_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(adacurve_code);
 
             self.superblocks[superblock_id].add_block(block);

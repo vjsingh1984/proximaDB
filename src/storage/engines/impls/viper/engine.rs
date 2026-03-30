@@ -1316,9 +1316,9 @@ impl ViperEngine {
                             id: vector_id.to_string(),
                             vector,
                             metadata: metadata_map,
-                            timestamp: Some(timestamp as i64),
-                            updated_at: Some(updated_at as i64),
-                            expires_at: expires_at.map(|v| v as i64),
+                            timestamp: Some(timestamp),
+                            updated_at: Some(updated_at),
+                            expires_at,
                             version: Some(version as u32),
                             source: None,
                         };
@@ -2530,7 +2530,7 @@ impl UnifiedStorageEngine for ViperEngine {
 
         let collection_context = crate::storage::engines::core::formats::columnar::columnar_query_engine::CollectionContext {
             collection_id: collection_id.to_string(),
-            dimension: dimension as usize,
+            dimension,
             distance_metric: "cosine".to_string(), // TODO: Get from config
             quantization_config: collection_opt
                 .as_ref()
@@ -2581,7 +2581,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 collection_config: collection_opt.as_ref().and_then(|c| c.config.as_ref()).map(
                     |cfg| crate::core::search::unified_interface::CollectionConfig {
                         default_distance_metric: distance_metric.clone(),
-                        vector_dimension: dimension as usize,
+                        vector_dimension: dimension,
                         enable_quantization: cfg.quantization.is_some(),
                         enable_metadata_filtering: !cfg.filterable_columns.is_empty(),
                         estimated_document_count: 1000, // Default estimate

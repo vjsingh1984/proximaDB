@@ -917,8 +917,8 @@ impl WALFlushCoordinator {
                         .await
                     {
                         Ok(result) => {
-                            let entries = result.base.entries_flushed.unwrap_or(0) as u64;
-                            let bytes = result.base.bytes_written.unwrap_or(0) as u64;
+                            let entries = result.base.entries_flushed.unwrap_or(0);
+                            let bytes = result.base.bytes_written.unwrap_or(0);
 
                             total_vectors_flushed += entries;
                             total_bytes_written += bytes;

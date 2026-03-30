@@ -398,7 +398,7 @@ impl MetadataMemoryIndexes {
             if let Some(config) = record.config.as_ref() {
                 prefix_index
                     .entry(config.name.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(record.id.clone());
             }
         }
@@ -410,7 +410,7 @@ impl MetadataMemoryIndexes {
                 for tag in &config.tags {
                     tag_index
                         .entry(tag.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(record.id.clone());
                 }
             }
@@ -422,7 +422,7 @@ impl MetadataMemoryIndexes {
             if let Some(stats) = &record.stats {
                 size_index
                     .entry(stats.data_size_bytes)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(record.id.clone());
             }
         }
@@ -432,7 +432,7 @@ impl MetadataMemoryIndexes {
             let mut time_index = self.created_time_index.write().await;
             time_index
                 .entry(record.created_at)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(record.id.clone());
         }
     }

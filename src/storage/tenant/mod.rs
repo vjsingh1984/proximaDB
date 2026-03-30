@@ -87,7 +87,7 @@ static TENANT_REGISTRY: std::sync::OnceLock<TenantManager> = std::sync::OnceLock
 
 /// Initialize global tenant manager
 pub fn initialize_tenant_manager() -> &'static TenantManager {
-    TENANT_REGISTRY.get_or_init(|| TenantManager::new())
+    TENANT_REGISTRY.get_or_init(TenantManager::new)
 }
 
 /// Get global tenant manager

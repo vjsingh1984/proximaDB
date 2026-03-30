@@ -853,7 +853,7 @@ impl Compaction {
             }
             let should_keep = if is_tombstone {
                 // Keep tombstones that are less than 1 hour old
-                let age = (current_time / 1000) - (vector_record.timestamp.unwrap_or(0) as i64); // Both in seconds
+                let age = (current_time / 1000) - vector_record.timestamp.unwrap_or(0); // Both in seconds
                 let keep_tombstone = age < (60 * 60); // 1 hour in seconds
 
                 if !keep_tombstone {
@@ -1051,7 +1051,7 @@ impl Compaction {
                     // Ensure parent directory exists
                     if let Some(parent) = staging_file_path.parent() {
                         std::fs::create_dir_all(parent)
-                            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+                            .map_err(crate::core::StorageError::DiskIO)?;
                     }
 
                     let config = ArrowBlockConfig::new(dimension);
@@ -1160,7 +1160,7 @@ impl Compaction {
                     // Ensure parent directory exists
                     if let Some(parent) = task.output_file.parent() {
                         std::fs::create_dir_all(parent)
-                            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+                            .map_err(crate::core::StorageError::DiskIO)?;
                     }
 
                     let config = ArrowBlockConfig::new(dimension);

@@ -465,7 +465,7 @@ impl CollectionService {
                 config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
             );
             if let Some(compression_config) = resolved_compression {
-                storage_cfg.compression = Some(compression_config.algorithm as i32);
+                storage_cfg.compression = Some(compression_config.algorithm);
             }
         }
 

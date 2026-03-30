@@ -223,7 +223,7 @@ impl LeveledCompactor {
             // Add new L1 files
             levels_write
                 .entry(1)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .extend(new_l1_files);
         }
 
@@ -397,7 +397,7 @@ impl LeveledCompactor {
 
         levels_write
             .entry(1)
-            .or_insert_with(Vec::new)
+            .or_default()
             .extend(new_l1_files);
 
         drop(levels_write); // Release lock before filesystem operations
@@ -587,7 +587,7 @@ impl LeveledCompactor {
             // Add new files to next level
             levels_write
                 .entry(level + 1)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .extend(new_files);
         }
 

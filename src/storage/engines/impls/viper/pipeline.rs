@@ -3038,8 +3038,8 @@ impl CompactionEngine {
                     }
                     map
                 },
-                timestamp: Some(timestamp as i64),
-                updated_at: Some(timestamp as i64),
+                timestamp: Some(timestamp),
+                updated_at: Some(timestamp),
                 expires_at: None,
                 version: Some(1),
                 source: None,
@@ -3182,7 +3182,7 @@ impl CompactionEngine {
 
             groups
                 .entry(group_key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(record.clone());
         }
 
@@ -3228,10 +3228,10 @@ impl CompactionEngine {
         let mut time_groups: HashMap<i64, Vec<VectorRecord>> = HashMap::new();
 
         for record in records {
-            let time_bucket = (record.timestamp.unwrap_or(0) as i64) / window_size_ms;
+            let time_bucket = record.timestamp.unwrap_or(0) / window_size_ms;
             time_groups
                 .entry(time_bucket)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(record.clone());
         }
 

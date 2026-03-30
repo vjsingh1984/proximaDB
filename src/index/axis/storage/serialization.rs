@@ -584,7 +584,7 @@ impl SerializableIndex for AxisHnswIndex {
         };
 
         // Serialize with bincode
-        let bytes = bincode::serialize(&state).map_err(|e| SerializationError::Bincode(e))?;
+        let bytes = bincode::serialize(&state).map_err(SerializationError::Bincode)?;
 
         info!(
             "HNSW serialize_internal complete: {} bytes, {} vectors, {} layers",
@@ -605,7 +605,7 @@ impl AxisHnswIndex {
 
         // Deserialize the state
         let state: SerializableHnswState =
-            bincode::deserialize(data).map_err(|e| SerializationError::Bincode(e))?;
+            bincode::deserialize(data).map_err(SerializationError::Bincode)?;
 
         // Validate version
         if state.version > SerializableHnswState::CURRENT_VERSION {

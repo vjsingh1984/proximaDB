@@ -88,7 +88,7 @@ impl ParquetReader {
             // Update statistics
             self.stats.files_read += 1;
             self.stats.records_read += records.len();
-            self.stats.row_groups_read += metadata.num_row_groups() as usize;
+            self.stats.row_groups_read += metadata.num_row_groups();
 
             Ok(records)
         })
@@ -138,7 +138,7 @@ impl ParquetReader {
         // Update statistics
         self.stats.files_read += 1;
         self.stats.records_read += all_records.len();
-        self.stats.row_groups_read += metadata.num_row_groups() as usize;
+        self.stats.row_groups_read += metadata.num_row_groups();
 
         Ok(all_records)
     }
@@ -495,7 +495,7 @@ impl ParquetReader {
 
             let record = VectorRecord {
                 id: id_array.value(row).to_string(),
-                timestamp: Some(timestamp_array.value(row) as i64),
+                timestamp: Some(timestamp_array.value(row)),
                 vector: vector_values[row].clone(),
                 metadata,
                 ..Default::default()

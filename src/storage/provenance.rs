@@ -158,12 +158,12 @@ impl InMemoryProvenanceRegistry {
 
                         source_map
                             .entry(prov.source_id.clone())
-                            .or_insert_with(HashSet::new)
+                            .or_default()
                             .insert(entity_id.clone());
 
                         self.chunk_index
                             .entry(prov.chunk_id.clone())
-                            .or_insert_with(HashSet::new)
+                            .or_default()
                             .insert(entity_id);
                     }
 
@@ -195,7 +195,7 @@ impl InMemoryProvenanceRegistry {
         if !provenance.source_id.is_empty() {
             self.source_index
                 .entry(provenance.source_id.clone())
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(entity_id.to_string());
         }
 
@@ -204,7 +204,7 @@ impl InMemoryProvenanceRegistry {
             let chunk_key = Self::chunk_key(&provenance.source_id, &provenance.chunk_id);
             self.chunk_index
                 .entry(chunk_key)
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(entity_id.to_string());
         }
     }

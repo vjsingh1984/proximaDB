@@ -197,12 +197,12 @@ impl SubscriptionManager {
         // Add to indices
         self.collection_index
             .entry(collection)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(id.clone());
 
         self.fingerprint_index
             .entry(fingerprint.clone())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(id.clone());
 
         // Check for fingerprint sharing (deduplication opportunity)

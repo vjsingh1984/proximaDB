@@ -240,7 +240,7 @@ impl ThreeStageFilterPipeline {
         for entry in index_entries {
             block_index_map
                 .entry(entry.block_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(entry);
         }
 

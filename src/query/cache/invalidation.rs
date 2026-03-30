@@ -279,7 +279,7 @@ impl CacheInvalidator {
                 // Defer invalidation until transaction commits
                 self.pending_transactions
                     .entry(txn_id.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(event);
                 return 0;
             }
@@ -410,7 +410,7 @@ impl CacheInvalidator {
     fn add_to_batch(&self, event: &InvalidationEvent) {
         self.pending_batch
             .entry(event.collection.clone())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(event.record_key.clone());
     }
 

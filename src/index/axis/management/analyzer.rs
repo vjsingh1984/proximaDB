@@ -431,7 +431,7 @@ impl PerformanceMetricsCollector {
         let mut historical = self.historical_metrics.write().await;
         let history = historical
             .entry(collection_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         history.push(TimestampedMetrics {
             metrics,

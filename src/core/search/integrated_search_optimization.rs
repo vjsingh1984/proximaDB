@@ -669,7 +669,7 @@ impl AdvancedSearchOptimizer {
                         .unwrap_or_default(),
                     metadata: std::collections::HashMap::new(), // Would convert metadata
                     version: r.version,
-                    timestamp: r.timestamp.map(|t| t as i64),
+                    timestamp: r.timestamp,
                     source: None, // TODO: Convert SourceContent to Option<String> when needed
                     expanded_context: r
                         .expanded_context

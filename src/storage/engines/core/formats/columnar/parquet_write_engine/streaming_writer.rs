@@ -318,21 +318,21 @@ impl StreamingParquetWriter {
         // Timestamp
         let timestamps: Vec<i64> = records
             .iter()
-            .map(|r| r.timestamp.unwrap_or(0) as i64)
+            .map(|r| r.timestamp.unwrap_or(0))
             .collect();
         arrays.push(Arc::new(Int64Array::from(timestamps)));
 
         // Updated at (optional)
         let updated_at: Vec<Option<i64>> = records
             .iter()
-            .map(|r| r.updated_at.map(|v| v as i64))
+            .map(|r| r.updated_at)
             .collect();
         arrays.push(Arc::new(Int64Array::from(updated_at)));
 
         // Expires at (optional)
         let expires_at: Vec<Option<i64>> = records
             .iter()
-            .map(|r| r.expires_at.map(|v| v as i64))
+            .map(|r| r.expires_at)
             .collect();
         arrays.push(Arc::new(Int64Array::from(expires_at)));
 
@@ -802,7 +802,7 @@ impl StreamingParquetWriter {
             // File information
             file_path: self.file_path.clone(),
             file_size,
-            total_row_groups: total_row_groups as usize,
+            total_row_groups,
             // Record statistics
             total_records: self.total_records_written as usize,
             unique_ids: 0, // Would need to track this
@@ -814,9 +814,9 @@ impl StreamingParquetWriter {
             compression_ratio,
             vector_compression_ratio: compression_ratio,
             metadata_compression_ratio: 0.0,
-            row_groups_written: total_row_groups as usize,
+            row_groups_written: total_row_groups,
             avg_row_group_size: if total_row_groups > 0 {
-                self.total_records_written as usize / total_row_groups as usize
+                self.total_records_written as usize / total_row_groups
             } else {
                 0
             },

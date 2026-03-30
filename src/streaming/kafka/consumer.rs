@@ -240,7 +240,7 @@ impl KafkaVectorConsumer {
 
                     vectors_by_collection
                         .entry(collection)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(msg);
                 }
                 Err(e) => {

@@ -1473,7 +1473,7 @@ impl VectorOperationsService {
             let meta_json = crate::core::conversions::sql_values_to_json_map(rec.metadata);
             hits.push(crate::core::service_types::SearchHit {
                 id: rec.id,
-                score: rec.score as f32,
+                score: rec.score,
                 vector: rec
                     .vector
                     .as_ref()
@@ -3237,7 +3237,7 @@ impl VectorOperationsService {
             score: display_score, // Use normalized similarity instead of raw distance
             version: result.version,
             similarity: result.similarity,
-            timestamp: result.timestamp.map(|t| t as i64),
+            timestamp: result.timestamp,
             source: None,             // Add if needed
             expanded_context: vec![], // Add if needed
             semantic_similarity: result.similarity,

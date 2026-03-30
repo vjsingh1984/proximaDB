@@ -1939,8 +1939,8 @@ impl RaptorEngine {
             metadata_strs.push(Some(metadata_json));
 
             // Convert Option<i64> to Option<u32> for Arrow UInt32Array compatibility
-            versions.push(record.version.map(|v| v as u32));
-            timestamps.push(Some(record.timestamp.unwrap_or(0) as i64));
+            versions.push(record.version);
+            timestamps.push(Some(record.timestamp.unwrap_or(0)));
         }
 
         let id_array = Arc::new(StringArray::from(ids)) as ArrayRef;

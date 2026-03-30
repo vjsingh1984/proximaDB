@@ -427,7 +427,7 @@ impl AxisManager {
 
         // Check if vector is expired (MVCC support) - direct field access
         if let Some(expires_at) = vector.expires_at {
-            if (expires_at as i64) <= Utc::now().timestamp() {
+            if expires_at <= Utc::now().timestamp() {
                 // Skip inserting already expired vectors
                 return Ok(());
             }
@@ -443,7 +443,7 @@ impl AxisManager {
                 .await
                 .ok()
                 .flatten()
-                .map(|c| Arc::new(c))
+                .map(Arc::new)
         } else {
             None
         };
@@ -748,7 +748,7 @@ impl AxisManager {
             let mut pending = self.ivf_pending_vectors.write().await;
             let buffer = pending
                 .entry(collection_id.to_string())
-                .or_insert_with(Vec::new);
+                .or_default();
             buffer.push((vector.id.clone(), vector.vector.clone()));
 
             // Check if we have enough vectors to train

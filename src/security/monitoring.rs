@@ -106,7 +106,7 @@ impl SecurityMetricsCollector {
         let mut metrics = self
             .auth_metrics
             .entry(user_id.to_string())
-            .or_insert_with(|| AuthenticationMetrics::new());
+            .or_insert_with(AuthenticationMetrics::new);
 
         if success {
             metrics.successful_logins += 1;
@@ -141,7 +141,7 @@ impl SecurityMetricsCollector {
         let mut metrics = self
             .authz_metrics
             .entry(user_id.to_string())
-            .or_insert_with(|| AuthorizationMetrics::new());
+            .or_insert_with(AuthorizationMetrics::new);
 
         metrics.permission_checks += 1;
 

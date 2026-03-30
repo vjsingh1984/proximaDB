@@ -103,13 +103,13 @@ impl IndexFormatStrategy {
         match format {
             IndexSerializationFormat::Bincode => {
                 debug!("Serializing with Bincode");
-                bincode::serialize(data).map_err(|e| SerializationError::Bincode(e))
+                bincode::serialize(data).map_err(SerializationError::Bincode)
             }
 
             IndexSerializationFormat::BincodeCompressed => {
                 debug!("Serializing with compressed Bincode");
                 let bincode_data =
-                    bincode::serialize(data).map_err(|e| SerializationError::Bincode(e))?;
+                    bincode::serialize(data).map_err(SerializationError::Bincode)?;
 
                 // Compress with zstd
                 let compressed = zstd::encode_all(&bincode_data[..], 3)
@@ -134,7 +134,7 @@ impl IndexFormatStrategy {
 
                 // Simulate Avro + compression with bincode + higher compression
                 let bincode_data =
-                    bincode::serialize(data).map_err(|e| SerializationError::Bincode(e))?;
+                    bincode::serialize(data).map_err(SerializationError::Bincode)?;
 
                 // Use higher compression level for Avro simulation
                 let compression_level = match format {
@@ -166,7 +166,7 @@ impl IndexFormatStrategy {
         match format {
             IndexSerializationFormat::Bincode => {
                 debug!("Deserializing with Bincode");
-                bincode::deserialize(data).map_err(|e| SerializationError::Bincode(e))
+                bincode::deserialize(data).map_err(SerializationError::Bincode)
             }
 
             IndexSerializationFormat::BincodeCompressed => {
@@ -175,7 +175,7 @@ impl IndexFormatStrategy {
                 let decompressed = zstd::decode_all(data)
                     .map_err(|e| SerializationError::Compression(e.to_string()))?;
 
-                bincode::deserialize(&decompressed).map_err(|e| SerializationError::Bincode(e))
+                bincode::deserialize(&decompressed).map_err(SerializationError::Bincode)
             }
 
             IndexSerializationFormat::Avro
@@ -189,7 +189,7 @@ impl IndexFormatStrategy {
                 let decompressed = zstd::decode_all(data)
                     .map_err(|e| SerializationError::Compression(e.to_string()))?;
 
-                bincode::deserialize(&decompressed).map_err(|e| SerializationError::Bincode(e))
+                bincode::deserialize(&decompressed).map_err(SerializationError::Bincode)
             }
         }
     }

@@ -197,7 +197,7 @@ static RECOVERY_THREAD_POOL: std::sync::OnceLock<RecoveryThreadPool> = std::sync
 
 /// Get or create the global recovery thread pool
 pub fn get_recovery_thread_pool() -> &'static RecoveryThreadPool {
-    RECOVERY_THREAD_POOL.get_or_init(|| RecoveryThreadPool::new())
+    RECOVERY_THREAD_POOL.get_or_init(RecoveryThreadPool::new)
 }
 
 /// Initialize recovery thread pool with custom settings

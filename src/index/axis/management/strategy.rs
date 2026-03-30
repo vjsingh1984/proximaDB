@@ -132,7 +132,7 @@ impl IndexStrategyBuilder {
                     indexes.push(IndexSpecification {
                         data_type: Data::Metadata,
                         algorithm: IndexAlgorithm::BloomFilter {
-                            expected_elements: self.collection_stats.total_vectors as usize,
+                            expected_elements: self.collection_stats.total_vectors,
                             false_positive_rate: 0.01,
                         },
                         name: Some(format!("bloom_{}", field)),
@@ -201,7 +201,7 @@ impl IndexStrategyBuilder {
                 m: 16,
                 ef_construction: 200,
                 ef_search: 50,
-                max_elements: (n * 2) as usize,
+                max_elements: n * 2,
             },
 
             // Large collections with latency focus - partitioned HNSW
@@ -209,7 +209,7 @@ impl IndexStrategyBuilder {
                 m: 32,
                 ef_construction: 400,
                 ef_search: 100,
-                max_elements: ((n + (n / 10)) as usize), // 10% growth buffer
+                max_elements: n + (n / 10), // 10% growth buffer
             },
 
             // Large collections with memory constraints - IVF+PQ
@@ -219,7 +219,7 @@ impl IndexStrategyBuilder {
                 quantizer: Some(Box::new(IndexAlgorithm::PQ {
                     m: 8,
                     nbits: 8,
-                    train_size: (total_vectors.min(100_000)) as usize,
+                    train_size: total_vectors.min(100_000),
                 })),
             },
 

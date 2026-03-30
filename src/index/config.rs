@@ -219,11 +219,11 @@ impl IndexConfig {
         });
 
         let lsh_config = proto.lsh_config.as_ref().map(|l| LshConfig {
-            n_hash_tables: l.n_hash_tables.unwrap_or(10) as u32,
-            n_hash_functions: l.n_hash_functions.unwrap_or(8) as u32,
+            n_hash_tables: l.n_hash_tables.unwrap_or(10),
+            n_hash_functions: l.n_hash_functions.unwrap_or(8),
             bucket_width: l.bucket_width.unwrap_or(4.0),
             binary_vectors: l.binary_vectors.unwrap_or(false),
-            max_candidates: l.max_candidates.unwrap_or(100) as u32,
+            max_candidates: l.max_candidates.unwrap_or(100),
             projection: match l.projection.unwrap_or(0) {
                 1 => RandomProjection::Binary,
                 2 => RandomProjection::Sparse,

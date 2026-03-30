@@ -344,8 +344,8 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                 id: id.unwrap_or_default(),
                                 vector: vector.unwrap_or_default(),
                                 metadata: metadata.unwrap_or_default(),
-                                timestamp: Some(timestamp_micros as i64),
-                                updated_at: Some(timestamp_micros as i64),
+                                timestamp: Some(timestamp_micros),
+                                updated_at: Some(timestamp_micros),
                                 expires_at: vector_record
                                     .iter()
                                     .find(|(key, _)| key == "expires_at")

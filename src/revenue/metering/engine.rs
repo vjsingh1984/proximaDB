@@ -166,7 +166,7 @@ impl UsageMeteringEngine {
         let mut events = self.usage_events.write().await;
         events
             .entry(enriched_event.tenant_id.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(enriched_event.clone());
 
         // Update real-time aggregates

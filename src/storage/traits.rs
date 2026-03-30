@@ -1228,11 +1228,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
             last_flush: engine_metrics
                 .get("created_at")
                 .and_then(|v| v.as_i64())
-                .and_then(|ts| DateTime::from_timestamp_millis(ts)),
+                .and_then(DateTime::from_timestamp_millis),
             last_compaction: engine_metrics
                 .get("updated_at")
                 .and_then(|v| v.as_i64())
-                .and_then(|ts| DateTime::from_timestamp_millis(ts)),
+                .and_then(DateTime::from_timestamp_millis),
             pending_flushes: engine_metrics
                 .get("pending_flushes")
                 .and_then(|v| v.as_u64())

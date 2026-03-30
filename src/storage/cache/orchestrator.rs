@@ -796,13 +796,13 @@ impl CascadeInvalidator {
         // Add forward dependency
         self.dependency_graph
             .entry(key.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(depends_on.clone());
 
         // Add reverse dependency
         self.reverse_index
             .entry(depends_on)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(key);
     }
 

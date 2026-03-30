@@ -267,7 +267,7 @@ impl CollectionPartition {
         // Check the latest record we found
         if let Some((record, _, _)) = latest_record {
             // Check if it's expired (logical delete) - convert current_time to seconds
-            let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+            let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
             let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
 
             if is_expired.unwrap_or(false) {
@@ -365,7 +365,7 @@ impl CollectionPartition {
                     }
                 } else {
                     // No ID - include directly if not expired
-                    let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+                    let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
                     let is_expired = vector_record
                         .expires_at
                         .map(|expires| expires < current_time_secs);
@@ -381,7 +381,7 @@ impl CollectionPartition {
         let mut vectors = Vec::new();
 
         for (_, (record, _, _)) in id_to_latest {
-            let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+            let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
             let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
 
             if !is_expired.unwrap_or(false) {
@@ -481,7 +481,7 @@ impl CollectionPartition {
                     if is_newer {
                         // Skip tombstones (empty vector + expires_at in past or 0) - they mark deletions
                         // and should not be included in search results
-                        let current_time_secs = (current_time / 1_000_000) as i64;
+                        let current_time_secs = current_time / 1_000_000;
                         let is_tombstone = vector_record.vector.is_empty()
                             && vector_record
                                 .expires_at
@@ -519,7 +519,7 @@ impl CollectionPartition {
                         continue;
                     }
 
-                    let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+                    let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
                     let is_expired = vector_record
                         .expires_at
                         .map(|expires| expires < current_time_secs);
@@ -542,7 +542,7 @@ impl CollectionPartition {
         let latest_versions_count = id_to_latest.len();
 
         for (id, (score, vector_record, _, _)) in id_to_latest {
-            let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+            let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
             let is_expired = vector_record
                 .expires_at
                 .map(|expires| expires < current_time_secs);

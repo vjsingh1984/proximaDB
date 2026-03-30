@@ -155,7 +155,7 @@ impl GlobalLockManager {
         let mut level_locks = self.level_locks.write().await;
         let collection_level_locks = level_locks
             .entry(collection_id.to_string())
-            .or_insert_with(HashMap::new);
+            .or_default();
 
         // 2. Check for overlapping level ranges and acquire exclusive locks
         let overlapping_ranges: Vec<_> = collection_level_locks

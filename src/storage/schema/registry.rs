@@ -81,7 +81,7 @@ impl SchemaRegistry for InMemorySchemaRegistry {
         let mut schemas = self.schemas.write().await;
         let collection_schemas = schemas
             .entry(collection_id.to_string())
-            .or_insert_with(HashMap::new);
+            .or_default();
 
         // Check for duplicate version
         if collection_schemas.contains_key(&schema.version) {

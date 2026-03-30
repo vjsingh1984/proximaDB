@@ -769,7 +769,7 @@ impl CompactionCoordinator {
                     if compaction_result.success {
                         stats.total_compactions += 1;
                         stats.total_bytes_compacted += compaction_result.bytes_reclaimed;
-                        stats.total_files_compacted += compaction_result.files_compacted as u64;
+                        stats.total_files_compacted += compaction_result.files_compacted;
 
                         // Update average duration
                         let total_duration = stats.avg_compaction_duration_secs

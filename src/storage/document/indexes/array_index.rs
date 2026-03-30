@@ -84,7 +84,7 @@ impl ArrayIndex {
             for key in &keys {
                 index
                     .entry(key.clone())
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert(doc_id.to_string());
             }
         }

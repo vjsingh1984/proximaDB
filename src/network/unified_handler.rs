@@ -402,7 +402,7 @@ impl UnifiedQueryRequest {
         let parameters = params
             .unwrap_or_default()
             .into_iter()
-            .map(|v| Self::convert_sql_value(v))
+            .map(Self::convert_sql_value)
             .collect();
 
         Ok(UnifiedQueryRequest::SqlQuery(SqlQueryRequest {

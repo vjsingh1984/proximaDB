@@ -467,8 +467,8 @@ impl SstCompactor {
 
             // Sort by version (ascending), then by timestamp (ascending for same version)
             versions.sort_by(|a, b| {
-                let ver_a = Self::normalize_version(a.version.map(|v| v as u32));
-                let ver_b = Self::normalize_version(b.version.map(|v| v as u32));
+                let ver_a = Self::normalize_version(a.version);
+                let ver_b = Self::normalize_version(b.version);
 
                 ver_a
                     .cmp(&ver_b)
@@ -480,7 +480,7 @@ impl SstCompactor {
             let mut last_valid: Option<VectorRecord> = None;
 
             for record in versions {
-                let version = Self::normalize_version(record.version.map(|v| v as u32));
+                let version = Self::normalize_version(record.version);
 
                 if version == expected_version {
                     // This version is continuous
@@ -499,7 +499,7 @@ impl SstCompactor {
 
             // Add the highest continuous version to output
             if let Some(record) = last_valid {
-                let selected_version = Self::normalize_version(record.version.map(|v| v as u32));
+                let selected_version = Self::normalize_version(record.version);
 
                 // Track if this was an update (version > 1 OR multiple records with same ID)
                 if selected_version > 1 || has_multiple_versions {
@@ -672,8 +672,8 @@ impl SstCompactor {
 
             // Sort by version (ascending), then by timestamp (ascending for same version)
             versions.sort_by(|a, b| {
-                let ver_a = Self::normalize_version(a.version.map(|v| v as u32));
-                let ver_b = Self::normalize_version(b.version.map(|v| v as u32));
+                let ver_a = Self::normalize_version(a.version);
+                let ver_b = Self::normalize_version(b.version);
 
                 ver_a
                     .cmp(&ver_b)
@@ -685,7 +685,7 @@ impl SstCompactor {
             let mut last_valid: Option<VectorRecord> = None;
 
             for record in versions {
-                let version = Self::normalize_version(record.version.map(|v| v as u32));
+                let version = Self::normalize_version(record.version);
 
                 if version == expected_version {
                     // This version is continuous
@@ -704,7 +704,7 @@ impl SstCompactor {
 
             // Add the highest continuous version to output
             if let Some(record) = last_valid {
-                let selected_version = Self::normalize_version(record.version.map(|v| v as u32));
+                let selected_version = Self::normalize_version(record.version);
 
                 // Track if this was an update (version > 1 OR multiple records with same ID)
                 if selected_version > 1 || has_multiple_versions {

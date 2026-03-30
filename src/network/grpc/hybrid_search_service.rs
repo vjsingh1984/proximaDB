@@ -79,7 +79,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
         let results: Vec<proximadb_v1::HybridSearchResult> = fused_results
             .into_iter()
             .take(req.top_k as usize)
-            .map(|r| convert_fused_result_to_proto(r))
+            .map(convert_fused_result_to_proto)
             .collect();
 
         let results_count = results.len() as u32;
@@ -94,7 +94,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
         let response = proximadb_v1::HybridFusionSearchResponse {
             results,
             results_count,
-            fusion_strategy: req.fusion_strategy as i32,
+            fusion_strategy: req.fusion_strategy,
             metrics: Some(proximadb_v1::HybridSearchMetrics {
                 bm25_search_time_ms: 0.0, // Will be populated when real BM25 backend integrated
                 vector_search_time_ms: 0.0, // Will be populated when real vector backend integrated

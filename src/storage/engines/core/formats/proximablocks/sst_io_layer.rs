@@ -784,7 +784,7 @@ impl SharedSstFormatReader {
                 )))
             })?;
 
-            fs.read_range(file_path, block_info.offset, block_info.size as u64)
+            fs.read_range(file_path, block_info.offset, block_info.size)
                 .await
                 .map_err(|e| {
                     ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(

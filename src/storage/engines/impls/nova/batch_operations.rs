@@ -319,7 +319,7 @@ pub async fn read_batch_optimized(
         if let Some(loc) = maybe_loc {
             grouped
                 .entry(loc.row_group_id)
-                .or_default()
+                .or_insert_with(Vec::new)
                 .push(id.clone());
         }
     }

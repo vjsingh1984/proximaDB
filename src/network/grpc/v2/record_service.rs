@@ -449,7 +449,7 @@ impl ProximaRecordServiceImpl {
                     },
                     text_fields: vec![], // Would be populated from text storage
                     timestamp_ms: r.timestamp,
-                    version: r.version.map(|v| v as u32),
+                    version: r.version,
                     source: r.source.clone(),
                 }
             })
@@ -974,7 +974,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 let include_vector = req.include_vector;
 
                 let results = self.convert_search_results(&search_result, include_vector);
-                let total_found = search_result.total_found as i64;
+                let total_found = search_result.total_found;
 
                 Ok(Response::new(TypedSearchResponse {
                     results,

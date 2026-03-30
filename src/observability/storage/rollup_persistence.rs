@@ -364,7 +364,7 @@ impl RollupPersistence for InMemoryRollupPersistence {
 
         let mut data = self.data.write().await;
         let key = (resolution, series_key.to_string());
-        let entry = data.entry(key).or_insert_with(BTreeMap::new);
+        let entry = data.entry(key).or_default();
 
         let count = aggregates.len();
         for (ts, point) in aggregates {

@@ -194,7 +194,7 @@ impl PathIndex {
                 .write()
                 .map_err(|e| anyhow::anyhow!("RwLock for tree is poisoned: {}", e))?;
             tree.entry(key.clone())
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(doc_id.to_string());
         }
 

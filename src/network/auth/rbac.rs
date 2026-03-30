@@ -95,7 +95,7 @@ impl RbacService {
         let mut user_roles = self.user_roles.write().await;
         user_roles
             .entry(user_id.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(role.to_string());
 
         Ok(())
@@ -263,7 +263,7 @@ impl RbacService {
         let mut role_permissions = self.role_permissions.write().await;
         role_permissions
             .entry(role.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(permission);
         Ok(())
     }

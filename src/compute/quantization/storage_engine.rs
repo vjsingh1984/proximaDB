@@ -636,7 +636,7 @@ impl StorageQuantizationEngine {
                 let hamming_dist = query_binary
                     .iter()
                     .zip(quantized_vector.data.iter())
-                    .map(|(a, b)| (a ^ b).count_ones() as u32)
+                    .map(|(a, b)| (a ^ b).count_ones())
                     .sum::<u32>();
                 Ok(hamming_dist as f32)
             }

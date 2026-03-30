@@ -894,7 +894,7 @@ impl SchemaEvolutionService {
 
         let versions = history
             .entry(collection_name.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         // Deactivate previous versions
         for v in versions.iter_mut() {

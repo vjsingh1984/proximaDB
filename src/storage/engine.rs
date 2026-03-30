@@ -1,4 +1,4 @@
-use crate::core::{SstConfig, StorageConfig, String, VectorId, VectorRecord};
+use crate::core::{StorageConfig, String, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
@@ -150,14 +150,14 @@ impl StorageEngine {
         let sst_config = config
             .sst_config
             .clone()
-            .unwrap_or_else(|| SstConfig::default());
+            .unwrap_or_default();
         let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
 
         // Create singleton SST storage instance
         let _sst_config_for_storage = config
             .sst_config
             .clone()
-            .unwrap_or_else(|| SstConfig::default());
+            .unwrap_or_default();
         let _sst_storage = Arc::new(SstEngine::new().await.map_err(|e| {
             crate::core::error::StorageError::SstEngine(format!(
                 "Failed to create SST storage: {}",
@@ -223,7 +223,7 @@ impl StorageEngine {
             .config
             .sst_config
             .clone()
-            .unwrap_or_else(|| SstConfig::default());
+            .unwrap_or_default();
         let mut temp_manager = Compaction::new(sst_config).await?;
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);

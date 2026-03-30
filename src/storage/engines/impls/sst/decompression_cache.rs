@@ -342,7 +342,7 @@ impl DecompressionCache {
             let mut comp_caches = self.compression_caches.write().await;
             comp_caches
                 .entry(algo.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(key.clone());
         }
 

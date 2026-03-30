@@ -736,8 +736,8 @@ impl ProtoSerializationStrategy {
             .next()
             .and_then(|name| name.strip_suffix(".pbwal"))
             .and_then(|name| name.rsplit('_').next())
-            .and_then(|id| crate::storage::BatchId::from_base62(id))
-            .unwrap_or_else(|| crate::storage::BatchId::new());
+            .and_then(crate::storage::BatchId::from_base62)
+            .unwrap_or_else(crate::storage::BatchId::new);
 
         // Create WAL batch from the recovered vectors
         let batch = WALVectorBatch {

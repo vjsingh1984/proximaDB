@@ -1590,7 +1590,7 @@ async fn execute_prepared_statement(
     let params: Vec<ParameterValue> = request
         .params
         .iter()
-        .map(|v| json_to_parameter_value(v))
+        .map(json_to_parameter_value)
         .collect();
 
     // Get the substituted SQL

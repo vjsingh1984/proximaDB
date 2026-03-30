@@ -215,7 +215,7 @@ impl ArtusBloomManager {
             BloomStats {
                 column: column.to_string(),
                 size_bytes: bloom.memory_usage(),
-                num_hash_functions: bloom.hash_count() as usize,
+                num_hash_functions: bloom.hash_count(),
                 items_added: stats.map(|s| s.cardinality).unwrap_or(0),
                 false_positive_rate: self.config.false_positive_rate,
                 access_frequency: stats.map(|s| s.access_frequency).unwrap_or(0),

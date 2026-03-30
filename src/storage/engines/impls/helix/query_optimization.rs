@@ -224,7 +224,7 @@ impl SmartResultCache {
         for file in accessed_files {
             tracker
                 .entry(file)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(query_hash);
         }
 

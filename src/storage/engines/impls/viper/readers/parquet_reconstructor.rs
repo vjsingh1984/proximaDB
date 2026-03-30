@@ -254,7 +254,7 @@ impl ParquetReconstructor {
                 column_name: seek.range.column_name.clone(),
                 data: seek.data,
                 compression: self.detect_compression(&seek.range)?,
-                uncompressed_size: seek.range.length as usize, // Approximation
+                uncompressed_size: seek.range.length, // Approximation
                 row_count: 0,                                  // Will be determined during parsing
                 storage: None,
             };

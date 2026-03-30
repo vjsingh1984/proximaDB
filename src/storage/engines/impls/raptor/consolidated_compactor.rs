@@ -263,7 +263,7 @@ impl RaptorCompactor {
         )?;
 
         // Convert assignments to usize
-        let assignments_usize: Vec<usize> = assignments.iter().map(|&a| a as usize).collect();
+        let assignments_usize: Vec<usize> = assignments.to_vec();
 
         Ok(assignments_usize)
     }

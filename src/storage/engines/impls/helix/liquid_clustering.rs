@@ -195,7 +195,7 @@ impl LiquidClusteringCoordinator {
         let stats = self.cluster_stats.read().await;
 
         // Check if enough queries have been processed
-        if tracker.total_queries < self.config.recluster_threshold as usize {
+        if tracker.total_queries < self.config.recluster_threshold {
             return false;
         }
 

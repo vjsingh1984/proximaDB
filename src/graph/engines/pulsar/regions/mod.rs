@@ -268,7 +268,7 @@ impl MultiRegionCoordinator {
     ) -> Result<(), ProximaDBError> {
         self.pending_operations
             .entry(region_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(op);
 
         Ok(())

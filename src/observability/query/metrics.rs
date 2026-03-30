@@ -227,7 +227,7 @@ impl MetricQuery {
 
             let key = GroupKey::new(bucket_ts, group_labels);
 
-            groups.entry(key).or_insert_with(Vec::new).push(sample);
+            groups.entry(key).or_default().push(sample);
         }
 
         groups

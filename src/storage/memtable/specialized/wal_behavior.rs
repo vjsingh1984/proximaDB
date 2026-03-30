@@ -134,7 +134,7 @@ impl BatchCoordinator {
         // Store batch
         self.batches
             .entry(collection_id.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(batch_id, batch);
 
         Ok(())

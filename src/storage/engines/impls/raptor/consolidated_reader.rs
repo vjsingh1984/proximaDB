@@ -999,7 +999,7 @@ impl RaptorReader {
 
             if let Some(ver_array) = version_array {
                 if !ver_array.is_null(row_idx) {
-                    record.version = Some(ver_array.value(row_idx) as u32);
+                    record.version = Some(ver_array.value(row_idx));
                 }
             }
 
@@ -3886,7 +3886,7 @@ impl RaptorReader {
 
         // Use dimension from metadata, not from config
         let dimension = metadata.dimension;
-        let num_rows = rg_metadata.vector_count as usize;
+        let num_rows = rg_metadata.vector_count;
 
         // Read and decompress VECTOR column separately
         tracing::debug!(

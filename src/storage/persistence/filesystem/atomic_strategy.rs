@@ -400,8 +400,8 @@ impl CloudOptimizedExecutor {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
         encoder
             .write_all(data)
-            .map_err(|e| FilesystemError::Io(e))?;
-        encoder.finish().map_err(|e| FilesystemError::Io(e))
+            .map_err(FilesystemError::Io)?;
+        encoder.finish().map_err(FilesystemError::Io)
     }
 }
 

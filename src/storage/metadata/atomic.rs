@@ -467,7 +467,7 @@ impl AtomicMetadataStore {
 
                 version_store
                     .entry(collection_id)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(version_info);
             }
         }
@@ -598,7 +598,7 @@ impl AtomicMetadataStore {
         for collection_id in collection_ids {
             let locks = lock_table
                 .entry(collection_id.clone())
-                .or_insert_with(Vec::new);
+                .or_default();
 
             // Check for conflicts
             let has_conflict = locks.iter().any(|lock_info| {
@@ -694,10 +694,10 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     ..Default::default()
                 }),
                 created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
-                    .unwrap_or_else(|| Utc::now())
+                    .unwrap_or_else(Utc::now)
                     .timestamp_micros(),
                 updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
-                    .unwrap_or_else(|| Utc::now())
+                    .unwrap_or_else(Utc::now)
                     .timestamp_micros(),
                 storage_assignment: None, // TODO: Convert storage_assignment
             };
@@ -782,10 +782,10 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                         ..Default::default()
                     }),
                     created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
-                        .unwrap_or_else(|| Utc::now())
+                        .unwrap_or_else(Utc::now)
                         .timestamp_micros(),
                     updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
-                        .unwrap_or_else(|| Utc::now())
+                        .unwrap_or_else(Utc::now)
                         .timestamp_micros(),
                     storage_assignment: None, // TODO: Convert storage_assignment
                 }

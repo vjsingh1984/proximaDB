@@ -1911,8 +1911,8 @@ impl EmbeddedProximaDB {
                         // and post-processing (do_flush is internal implementation)
                         match storage_engine.flush(flush_params).await {
                             Ok(result) => {
-                                let entries = result.entries_flushed.unwrap_or(0) as u64;
-                                let bytes = result.bytes_written.unwrap_or(0) as u64;
+                                let entries = result.entries_flushed.unwrap_or(0);
+                                let bytes = result.bytes_written.unwrap_or(0);
 
                                 total_vectors_flushed += entries;
                                 total_bytes_written += bytes;
@@ -4669,7 +4669,7 @@ impl EmbeddedProximaDB {
         // Convert JSON values to ParameterValue
         let param_values: Vec<ParameterValue> = params
             .iter()
-            .map(|v| Self::json_to_parameter_value(v))
+            .map(Self::json_to_parameter_value)
             .collect();
 
         // Get the substituted SQL

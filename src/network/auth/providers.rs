@@ -535,7 +535,7 @@ impl AuthProvider for SamlAuthProvider {
             permissions: self.map_roles_to_permissions(&assertion.roles),
             auth_method: AuthMethod::OAuth2, // SAML treated as OAuth2 equivalent
             token_expires_at: assertion.expires_at.map(|timestamp| {
-                chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(|| chrono::Utc::now())
+                chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now)
             }),
         })
     }

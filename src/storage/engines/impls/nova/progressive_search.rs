@@ -459,7 +459,7 @@ impl ProgressiveColumnarSearch {
 
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,
-                row_offset: candidate.row_offset as u32,
+                row_offset: candidate.row_offset,
                 similarity: binary_distance,
                 vector_id: None,
                 record: None,

@@ -176,7 +176,7 @@ impl DocumentService {
                             // Replay insert
                             let mut documents = self.documents.write().await;
                             let collection_docs =
-                                documents.entry(collection_id).or_insert_with(HashMap::new);
+                                documents.entry(collection_id).or_default();
                             collection_docs.insert(document.id.clone(), document);
                             recovered_docs += 1;
                         }
@@ -211,7 +211,7 @@ impl DocumentService {
                             // Replay batch insert
                             let mut doc_store = self.documents.write().await;
                             let collection_docs =
-                                doc_store.entry(collection_id).or_insert_with(HashMap::new);
+                                doc_store.entry(collection_id).or_default();
                             for doc in docs {
                                 collection_docs.insert(doc.id.clone(), doc);
                                 recovered_docs += 1;
@@ -734,7 +734,7 @@ impl DocumentService {
             let mut documents = self.documents.write().await;
             let collection_docs = documents
                 .entry(collection.to_string())
-                .or_insert_with(HashMap::new);
+                .or_default();
             collection_docs.insert(doc_id.clone(), record.clone());
         }
 

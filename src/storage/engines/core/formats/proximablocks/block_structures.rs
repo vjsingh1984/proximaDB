@@ -1200,7 +1200,7 @@ impl ProximaDataBlock {
         // Calculate timestamp range
         let timestamps: Vec<i64> = records
             .iter()
-            .map(|r| r.timestamp.unwrap_or(0) as i64)
+            .map(|r| r.timestamp.unwrap_or(0))
             .collect();
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
@@ -1371,7 +1371,7 @@ impl ProximaDataBlock {
         // Calculate timestamp range
         let timestamps: Vec<i64> = records
             .iter()
-            .map(|r| r.timestamp.unwrap_or(0) as i64)
+            .map(|r| r.timestamp.unwrap_or(0))
             .collect();
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)

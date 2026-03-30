@@ -319,18 +319,18 @@ impl RelationsStore for InMemoryRelationsStore {
         let forward_key = Self::edge_key(collection_id, &relation.source_entity_id);
         self.forward_edges
             .entry(forward_key)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(relation.relation_type.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(forward_edge);
 
         // Update reverse edges
         let reverse_key = Self::edge_key(collection_id, &relation.target_entity_id);
         self.reverse_edges
             .entry(reverse_key)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(relation.relation_type.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(reverse_edge);
 
         // Persist to storage

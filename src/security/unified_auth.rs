@@ -760,8 +760,8 @@ impl UnifiedAuthService {
             effective_permissions: HashSet::new(), // Will be populated by RBAC manager
             auth_method: AuthMethod::JWT,
             session_id: claims.jti,
-            expires_at: Some(DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(|| Utc::now())),
-            created_at: DateTime::from_timestamp(claims.iat, 0).unwrap_or_else(|| Utc::now()),
+            expires_at: Some(DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(Utc::now)),
+            created_at: DateTime::from_timestamp(claims.iat, 0).unwrap_or_else(Utc::now),
             metadata: HashMap::new(),
         }
     }
@@ -783,7 +783,7 @@ impl UnifiedAuthService {
             auth_method: AuthMethod::ApiKey,
             session_id: format!("apikey_{}", uuid::Uuid::new_v4()),
             expires_at: api_key_info.expires_at,
-            created_at: api_key_info.created_at.unwrap_or_else(|| Utc::now()),
+            created_at: api_key_info.created_at.unwrap_or_else(Utc::now),
             metadata: HashMap::new(),
         }
     }

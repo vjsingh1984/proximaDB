@@ -667,7 +667,7 @@ impl UnifiedSwiftReader {
             let superblock_id = block_id / 64;
             blocks_by_superblock
                 .entry(superblock_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(block_id);
         }
 

@@ -1761,7 +1761,7 @@ impl UnifiedQueryOptimizer {
             match step {
                 ExecutionStep::VectorSearch { candidates, .. } => {
                     // Vector search needs more memory and CPU
-                    memory_budget_mb += (*candidates as usize * 4) / 1024; // 4 bytes per float
+                    memory_budget_mb += (*candidates * 4) / 1024; // 4 bytes per float
                     cpu_cores = cpu_cores.max(available_cores / 2);
                 }
                 ExecutionStep::CombinedFilterSearch { .. } => {

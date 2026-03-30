@@ -2156,9 +2156,9 @@ impl UnifiedSstableReader {
             for record in &block.records {
                 // Fast tombstone check (most common early exit)
                 // A tombstone is indicated by expires_at being set and in the past
-                let current_time = chrono::Utc::now().timestamp_millis() as i64;
+                let current_time = chrono::Utc::now().timestamp_millis();
                 if record.expires_at.map_or(false, |expires_at| {
-                    expires_at as i64 > 0 && (expires_at as i64) < current_time
+                    expires_at > 0 && expires_at < current_time
                 }) {
                     tombstones += 1;
                     continue;
@@ -3344,7 +3344,7 @@ impl UnifiedSstableReader {
         ]) as u64;
 
         // Read header (offset by 8 bytes for magic + header_len)
-        let header_data = fs.read_range(file_path, 8, header_len as u64).await?;
+        let header_data = fs.read_range(file_path, 8, header_len).await?;
         let header: SstableHeader = bincode::deserialize(&header_data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
 
@@ -3364,7 +3364,7 @@ impl UnifiedSstableReader {
             ]) as u64;
 
             let bloom_data = fs
-                .read_range(file_path, bloom_offset + 4, bloom_len as u64)
+                .read_range(file_path, bloom_offset + 4, bloom_len)
                 .await?;
 
             match SstableBloomFilter::deserialize(&bloom_data) {
@@ -3411,7 +3411,7 @@ impl UnifiedSstableReader {
         debug!("Header length: {} bytes", header_len);
 
         // Read the header data (offset by 8 bytes for magic + header_len)
-        let header_data = fs.read_range(file_path, 8, header_len as u64).await?;
+        let header_data = fs.read_range(file_path, 8, header_len).await?;
         let header: SstableHeader = bincode::deserialize(&header_data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
 
@@ -3453,7 +3453,7 @@ impl UnifiedSstableReader {
 
             // Read bloom filter data
             let bloom_data = fs
-                .read_range(file_path, bloom_offset + 4, bloom_len as u64)
+                .read_range(file_path, bloom_offset + 4, bloom_len)
                 .await?;
             debug!("Actually read {} bytes of bloom data", bloom_data.len());
             if bloom_data.len() < bloom_len as usize {
@@ -3763,7 +3763,7 @@ impl UnifiedSstableReader {
 
         // Read the rest of the file
         let file_metadata = fs.metadata(path).await?;
-        let file_size = file_metadata.size as u64;
+        let file_size = file_metadata.size;
 
         while offset < file_size {
             // Try to read block length
@@ -6208,7 +6208,7 @@ impl ReadingStrategySelector {
                 // Check if record is a tombstone (expired or empty vector)
                 let is_tombstone = record
                     .expires_at
-                    .map_or(false, |exp| exp < chrono::Utc::now().timestamp() as i64)
+                    .map_or(false, |exp| exp < chrono::Utc::now().timestamp())
                     || record.vector.is_empty();
 
                 if is_tombstone {

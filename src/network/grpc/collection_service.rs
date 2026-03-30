@@ -43,8 +43,8 @@ impl CollectionService for CollectionServiceImpl {
             collection_config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: cfg.name.clone(),
                 dimension: cfg.dimension,
-                distance_metric: Some(cfg.distance_metric.unwrap_or(0) as i32),
-                storage_engine: Some(cfg.storage_engine.unwrap_or(0) as i32),
+                distance_metric: Some(cfg.distance_metric.unwrap_or(0)),
+                storage_engine: Some(cfg.storage_engine.unwrap_or(0)),
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,

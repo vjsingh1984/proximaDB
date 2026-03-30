@@ -347,7 +347,7 @@ impl PulsarQueryOptimizer {
         stats
             .execution_times
             .entry(strategy_key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(time_us);
 
         // Keep only recent execution times (last 1000)

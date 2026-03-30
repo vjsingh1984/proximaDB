@@ -1617,7 +1617,7 @@ impl HardwareQuery {
     pub fn cpu_cores() -> usize {
         try_get_hardware_capabilities()
             .map(|caps| caps.cpu.logical_cores)
-            .unwrap_or_else(|| num_cpus::get())
+            .unwrap_or_else(num_cpus::get)
     }
 
     /// Get recommended thread pool size

@@ -50,7 +50,7 @@ mod write_ahead_log_batch_strategy_tests {
             let mut collections = self.collections.write().await;
             collections
                 .entry(collection_id.to_string())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(batch);
         }
 

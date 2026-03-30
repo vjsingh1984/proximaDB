@@ -1177,7 +1177,7 @@ impl PQDistanceTable {
 
         for (subvector_idx, centroids) in codebook.iter().enumerate() {
             let mut centroid_distances = Vec::with_capacity(num_centroids);
-            let subvector_size = query.len() / num_subvectors as usize;
+            let subvector_size = query.len() / num_subvectors;
             let query_subvector =
                 &query[subvector_idx * subvector_size..(subvector_idx + 1) * subvector_size];
 

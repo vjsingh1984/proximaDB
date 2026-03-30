@@ -353,7 +353,7 @@ impl QueryResultCache {
         for dep in dependencies {
             self.invalidation_registry
                 .entry(dep)
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(cache_key);
         }
 

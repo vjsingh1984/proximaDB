@@ -389,7 +389,7 @@ impl AxisClusteringEngine {
         let mut pending = self.pending_vectors.write().await;
         pending
             .entry(collection_id.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(vector);
 
         // Check if we need to recompute

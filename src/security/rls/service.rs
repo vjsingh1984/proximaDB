@@ -121,7 +121,7 @@ impl CollectionRLS {
         let policy_name = policy.name.clone();
 
         let mut policies = self.policies.write().await;
-        let collection_policies = policies.entry(collection.clone()).or_insert_with(Vec::new);
+        let collection_policies = policies.entry(collection.clone()).or_default();
 
         // Check for duplicate policy name
         if collection_policies.iter().any(|p| p.name == policy_name) {

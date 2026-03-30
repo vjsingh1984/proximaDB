@@ -459,7 +459,7 @@ impl FileSystem for LocalFileSystem {
         let mmap = unsafe {
             MmapOptions::new()
                 .map(&file)
-                .map_err(|e| FilesystemError::Io(e))?
+                .map_err(FilesystemError::Io)?
         };
 
         tracing::debug!(
@@ -484,7 +484,7 @@ impl FileSystem for LocalFileSystem {
             if let Some(parent) = resolved_path.parent() {
                 fs::create_dir_all(parent)
                     .await
-                    .map_err(|e| FilesystemError::Io(e))?;
+                    .map_err(FilesystemError::Io)?;
             }
         }
 
@@ -751,7 +751,7 @@ impl FileSystem for LocalFileSystem {
         let mut entries = Vec::new();
         let mut dir = fs::read_dir(&resolved_path)
             .await
-            .map_err(|e| FilesystemError::Io(e))?;
+            .map_err(FilesystemError::Io)?;
 
         while let Some(entry) = dir.next_entry().await.map_err(FilesystemError::Io)? {
             let entry_path = entry.path();
@@ -844,12 +844,12 @@ impl FileSystem for LocalFileSystem {
         if let Some(parent) = to_path.parent() {
             fs::create_dir_all(parent)
                 .await
-                .map_err(|e| FilesystemError::Io(e))?;
+                .map_err(FilesystemError::Io)?;
         }
 
         fs::copy(&from_path, &to_path)
             .await
-            .map_err(|e| FilesystemError::Io(e))?;
+            .map_err(FilesystemError::Io)?;
 
         Ok(())
     }

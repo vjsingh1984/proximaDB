@@ -338,7 +338,7 @@ impl ConsolidatedRBACManager {
             let mut cache = self.permission_cache.write().await;
             let user_cache = cache
                 .entry(user_id.to_string())
-                .or_insert_with(HashMap::new);
+                .or_default();
             user_cache.insert(
                 permission.clone(),
                 PermissionCacheEntry {

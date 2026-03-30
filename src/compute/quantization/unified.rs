@@ -304,19 +304,19 @@ impl UnifiedQuantizationEngine {
                 sign_based: false,
             })),
             QuantizationType::Scalar => Some(QuantizationLevel::Scalar(ScalarQuantization {
-                bits: level.bits as i32,
+                bits: level.bits,
                 scale: 1.0,
                 offset: 0.0,
                 clamp_values: false,
             })),
             QuantizationType::Product => Some(QuantizationLevel::Pq(ProductQuantization {
-                num_subvectors: level.num_subvectors.unwrap_or(8) as i32,
-                bits_per_code: level.bits as i32,
+                num_subvectors: level.num_subvectors.unwrap_or(8),
+                bits_per_code: level.bits,
                 codebook_id: Some(format!("pq_{}_{}", level.level_id, level.bits)),
                 adaptive_subvectors: false,
             })),
             QuantizationType::Uniform => Some(QuantizationLevel::Uniform(UniformQuantization {
-                bits: level.bits as i32,
+                bits: level.bits,
                 scale: None,
                 offset: None,
             })),

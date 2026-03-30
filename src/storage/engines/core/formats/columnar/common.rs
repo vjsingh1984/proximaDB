@@ -1393,7 +1393,7 @@ pub fn map_core_to_parquet_compression(
         CompressionAlgorithm::Xz | CompressionAlgorithm::Lzma => {
             // XZ and LZMA provide high compression, map to ZSTD with high level
             let high_level = level.unwrap_or(9).max(9);
-            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level as i32)?)
+            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level)?)
         }
         CompressionAlgorithm::Bzip2 => {
             // BZip2 provides good compression, map to Brotli

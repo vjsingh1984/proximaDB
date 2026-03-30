@@ -208,13 +208,13 @@ impl SstTextColumnProcessor {
                                     crate::storage::engines::core::formats::columnar::StorageType::Chunked => {
                                         result.chunked_references
                                             .entry(record.id.clone())
-                                            .or_insert_with(HashMap::new)
+                                            .or_default()
                                             .insert(col_name.clone(), format!("__chunked__:{}", col_name));
                                     }
                                     crate::storage::engines::core::formats::columnar::StorageType::Sidecar => {
                                         result.sidecar_references
                                             .entry(record.id.clone())
-                                            .or_insert_with(HashMap::new)
+                                            .or_default()
                                             .insert(col_name.clone(), format!("__sidecar__:{}", col_name));
                                     }
                                     _ => {}

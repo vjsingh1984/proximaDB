@@ -1157,8 +1157,8 @@ pub async fn hybrid_search(
         .into_iter()
         .map(|v| VectorResult {
             doc_id: v.id,
-            score: v.score as f64,
-            distance: 1.0 - v.score as f64, // Convert similarity to distance
+            score: v.score,
+            distance: 1.0 - v.score, // Convert similarity to distance
             metadata: std::collections::HashMap::new(),
         })
         .collect();

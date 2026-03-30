@@ -229,10 +229,10 @@ impl RowBasedBatchOperations {
             throughput_ops_per_second: throughput,
             memory_usage_peak: {
                 let stats = self.memory_pool.comprehensive_stats();
-                (stats.serialization.peak_size
+                stats.serialization.peak_size
                     + stats.vector.peak_size
                     + stats.compression.peak_size
-                    + stats.metadata.peak_size) as usize
+                    + stats.metadata.peak_size
             },
             cache_hit_rate: 0.0,    // Would be calculated from actual cache usage
             cpu_usage_percent: 0.0, // Would be measured

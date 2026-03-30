@@ -597,7 +597,7 @@ fn convert_property_value_to_json(prop: &PropertyValue) -> serde_json::Value {
             serde_json::Value::Array(
                 arr.values
                     .iter()
-                    .map(|v| convert_property_value_to_json(v))
+                    .map(convert_property_value_to_json)
                     .collect(),
             )
         }
