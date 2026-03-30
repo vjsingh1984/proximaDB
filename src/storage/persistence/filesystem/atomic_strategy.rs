@@ -287,11 +287,7 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         // Extract parent directory handling URLs properly
         let temp_parent = if temp_path.contains("://") {
             // For URLs, find the parent directory part
-            if let Some(last_slash) = temp_path.rfind('/') {
-                Some(temp_path[..last_slash].to_string())
-            } else {
-                None
-            }
+            temp_path.rfind('/').map(|last_slash| temp_path[..last_slash].to_string())
         } else {
             Path::new(&temp_path)
                 .parent()
@@ -306,11 +302,7 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
 
         let final_parent = if final_path.contains("://") {
             // For URLs, find the parent directory part
-            if let Some(last_slash) = final_path.rfind('/') {
-                Some(final_path[..last_slash].to_string())
-            } else {
-                None
-            }
+            final_path.rfind('/').map(|last_slash| final_path[..last_slash].to_string())
         } else {
             Path::new(final_path)
                 .parent()

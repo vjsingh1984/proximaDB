@@ -533,9 +533,7 @@ impl EarlyTerminationTracker {
 
     /// Get final results
     pub fn get_top_k(self) -> Vec<SearchCandidate> {
-        let mut candidates = Arc::try_unwrap(self.candidates)
-            .map(|rwlock| rwlock.into_inner())
-            .unwrap_or_else(|arc| arc.read().clone());
+        let mut candidates = Arc::try_unwrap(self.candidates).map_or_else(|arc| arc.read().clone(), |rwlock| rwlock.into_inner());
 
         candidates.sort_unstable_by(|a, b| {
             b.score

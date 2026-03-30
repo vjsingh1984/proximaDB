@@ -47,14 +47,11 @@ impl From<&Collection> for CollectionLookupResult {
             uuid: record.id.clone(),
             name: record
                 .config
-                .as_ref()
-                .map(|c| c.name.clone())
-                .unwrap_or_else(|| "unknown".to_string()),
+                .as_ref().map_or_else(|| "unknown".to_string(), |c| c.name.clone()),
             dimension: record
                 .config
                 .as_ref()
-                .map(|c| c.dimension as i32)
-                .unwrap_or(0),
+                .map_or(0, |c| c.dimension as i32),
             distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric)),
             indexing_algorithm: record
                 .config
@@ -62,12 +59,11 @@ impl From<&Collection> for CollectionLookupResult {
                 .and_then(|c| c.primary_index.clone())
                 .unwrap_or_else(|| "None".to_string()),
             storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine)),
-            vector_count: record.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
+            vector_count: record.stats.as_ref().map_or(0, |s| s.vector_count),
             total_size_bytes: record
                 .stats
                 .as_ref()
-                .map(|s| s.data_size_bytes)
-                .unwrap_or(0),
+                .map_or(0, |s| s.data_size_bytes),
             timestamp: record.created_at,
             updated_at: record.updated_at,
         }
@@ -153,7 +149,7 @@ impl MetadataMemoryIndexes {
 
         // Remove old record if exists (for updates)
         if let Some(old_record) = self.uuid_to_record.get(&uuid) {
-            self.remove_from_secondary_indexes(&old_record.value())
+            self.remove_from_secondary_indexes(old_record.value())
                 .await;
         }
 

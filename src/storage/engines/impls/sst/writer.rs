@@ -214,7 +214,7 @@ impl SstableWriter {
                 distance_metric: if let Some(collection) = collection_config {
                     // Get distance metric from collection config
                     collection.config.as_ref()
-                    .map(|cfg| match cfg.distance_metric() {
+                    .map_or(crate::compute::distance_computation::engine::DistanceMetric::Cosine, |cfg| match cfg.distance_metric() {
                         crate::proto::proximadb_v1::DistanceMetric::Cosine =>
                             crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                         crate::proto::proximadb_v1::DistanceMetric::Euclidean =>
@@ -223,7 +223,6 @@ impl SstableWriter {
                             crate::compute::distance_computation::engine::DistanceMetric::DotProduct,
                         _ => crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                     })
-                    .unwrap_or(crate::compute::distance_computation::engine::DistanceMetric::Cosine)
                 } else {
                     crate::compute::distance_computation::engine::DistanceMetric::Cosine
                 },
@@ -656,7 +655,7 @@ impl SstableWriter {
         debug!(
             "📊 Computed centroid for {} vectors: dim={}, min_dist={:.4}, max_dist={:.4}",
             all_vectors.len(),
-            centroid.as_ref().map(|c| c.len()).unwrap_or(0),
+            centroid.as_ref().map_or(0, |c| c.len()),
             min_distance_to_centroid.unwrap_or(0.0),
             max_distance_to_centroid.unwrap_or(0.0)
         );
@@ -842,7 +841,7 @@ impl SstableWriter {
 
             // Write block length prefix (actual data size, not padded)
             output_data.extend_from_slice(&(serialized_block.len() as u32).to_le_bytes());
-            output_data.extend_from_slice(&serialized_block);
+            output_data.extend_from_slice(serialized_block);
 
             // Add cache line padding for alignment
             if padding > 0 && padding < CACHE_LINE_SIZE {

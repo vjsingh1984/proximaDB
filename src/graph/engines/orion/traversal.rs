@@ -641,9 +641,7 @@ pub async fn parallel_breadth_first_search(
                             let parent_path = paths_guard
                                 .iter()
                                 .zip(node_ids_guard.iter())
-                                .find(|(_, id)| *id == node_id)
-                                .map(|(p, _)| p.clone())
-                                .unwrap_or_else(|| vec![node_id.clone()]);
+                                .find(|(_, id)| *id == node_id).map_or_else(|| vec![node_id.clone()], |(p, _)| p.clone());
                             drop(paths_guard);
                             drop(node_ids_guard);
 

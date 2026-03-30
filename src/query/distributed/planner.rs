@@ -261,9 +261,7 @@ impl QueryPlanner {
                     for (node_id, shard_ids) in by_node {
                         let is_local = node_id == local_node_id;
                         let address = node_lookup
-                            .get(node_id.as_str())
-                            .map(|n| n.address.clone())
-                            .unwrap_or_else(|| "localhost:5679".to_string());
+                            .get(node_id.as_str()).map_or_else(|| "localhost:5679".to_string(), |n| n.address.clone());
 
                         let subquery = ShardedSubQuery {
                             target_node: node_id.clone(),

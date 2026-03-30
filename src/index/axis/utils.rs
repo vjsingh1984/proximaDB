@@ -343,8 +343,7 @@ pub mod metadata {
                     }
                     crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f) => {
                         serde_json::Number::from_f64(f)
-                            .map(JsonValue::Number)
-                            .unwrap_or(JsonValue::Null)
+                            .map_or(JsonValue::Null, JsonValue::Number)
                     }
                     crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                         JsonValue::Bool(b)

@@ -576,8 +576,7 @@ impl NovaColumnarSearch {
                     // This ensures we don't prune too aggressively
                     let kth_best = candidates
                         .peek()
-                        .map(|c: &SearchCandidate| 1.0 - c.similarity)
-                        .unwrap_or(f32::MAX);
+                        .map_or(f32::MAX, |c: &SearchCandidate| 1.0 - c.similarity);
                     kth_best * 1.5
                 } else {
                     // Initial generous threshold based on distance metric

@@ -1126,7 +1126,7 @@ impl QueryStrategy for ObservabilityStrategy {
 
         info!(
             query_type = ?query_type,
-            time_ms = result.metrics.as_ref().map(|m| m.execution_time_ms).unwrap_or(0),
+            time_ms = result.metrics.as_ref().map_or(0, |m| m.execution_time_ms),
             "Observability query completed"
         );
 

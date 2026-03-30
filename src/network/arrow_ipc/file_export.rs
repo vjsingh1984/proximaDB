@@ -656,8 +656,7 @@ impl ArrowFileTicket {
             parsed
                 .get("type")
                 .and_then(|v| v.as_str())
-                .map(|t| t == "arrow_file")
-                .unwrap_or(false)
+                .is_some_and(|t| t == "arrow_file")
         } else {
             false
         }
@@ -906,8 +905,7 @@ impl ArrowFileExportHandler {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs() as i64);
 
         // Read file-specific metadata based on format
         let (num_batches, total_records, dimension) = match format {
@@ -963,8 +961,7 @@ impl ArrowFileExportHandler {
         let dimension = collection
             .config
             .as_ref()
-            .map(|c| c.dimension)
-            .unwrap_or(0);
+            .map_or(0, |c| c.dimension);
 
         Ok((num_batches, total_records, dimension))
     }
@@ -1066,8 +1063,7 @@ impl ArrowFileExportHandler {
             dimension = collection
                 .config
                 .as_ref()
-                .map(|c| c.dimension)
-                .unwrap_or(0);
+                .map_or(0, |c| c.dimension);
         }
 
         debug!(
@@ -1437,8 +1433,7 @@ impl ArrowFileExportHandler {
             let dimension = collection
                 .config
                 .as_ref()
-                .map(|c| c.dimension as usize)
-                .unwrap_or(0);
+                .map_or(0, |c| c.dimension as usize);
             crate::network::arrow_ipc::ArrowProtoCodec::create_vector_schema(dimension)
         };
 

@@ -202,8 +202,7 @@ impl BaseSource {
     pub fn should_shutdown(&self) -> bool {
         self.shutdown_rx
             .as_ref()
-            .map(|rx| *rx.borrow())
-            .unwrap_or(false)
+            .is_some_and(|rx| *rx.borrow())
     }
 
     /// Get shutdown receiver

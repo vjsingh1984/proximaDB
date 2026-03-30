@@ -677,11 +677,11 @@ pub async fn list_collections_v2(
                     CollectionV2Summary {
                         collection_id: c.id.clone(),
                         name: c.id.clone(),
-                        dimension: cfg.map(|cfg| cfg.dimension).unwrap_or(0),
+                        dimension: cfg.map_or(0, |cfg| cfg.dimension),
                         engine: engine_str.to_string(),
                         proxima_record_enabled: false,
                         record_count: if include_stats {
-                            Some(c.stats.as_ref().map(|s| s.vector_count as u64).unwrap_or(0))
+                            Some(c.stats.as_ref().map_or(0, |s| s.vector_count as u64))
                         } else {
                             None
                         },

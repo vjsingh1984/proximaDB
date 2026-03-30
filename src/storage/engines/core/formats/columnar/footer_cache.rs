@@ -408,13 +408,11 @@ impl ParquetFooterCache {
         // Use FileMetadata fields directly
         let file_size = metadata.size;
         let modified_time = metadata
-            .modified
-            .map(|dt| {
+            .modified.map_or_else(SystemTime::now, |dt| {
                 // Convert DateTime<Utc> to SystemTime
                 let timestamp = dt.timestamp();
                 UNIX_EPOCH + Duration::from_secs(timestamp as u64)
-            })
-            .unwrap_or_else(SystemTime::now);
+            });
 
         Ok((file_size, modified_time))
     }

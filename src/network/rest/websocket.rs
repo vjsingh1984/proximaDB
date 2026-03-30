@@ -354,8 +354,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
         session_id: session_id.to_string(),
         buffer_size: session_info
             .as_ref()
-            .map(|s| s.buffer_capacity as u32)
-            .unwrap_or(10000),
+            .map_or(10000, |s| s.buffer_capacity as u32),
         expires_in_seconds: state.coordinator.config().session_timeout.as_secs() as u32,
     });
     let session_created_json = match safe_serialize(&created_msg) {

@@ -358,9 +358,7 @@ impl<B> TenantContextExt for Request<B> {
     }
 
     fn tenant_id_or_default(&self) -> String {
-        self.tenant_context()
-            .map(|ctx| ctx.tenant_id.clone())
-            .unwrap_or_else(|| "default".to_string())
+        self.tenant_context().map_or_else(|| "default".to_string(), |ctx| ctx.tenant_id.clone())
     }
 }
 

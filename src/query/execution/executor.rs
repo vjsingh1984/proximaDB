@@ -1561,9 +1561,7 @@ impl QueryExecutor {
                                 || key.contains("time"))
                                 && let Some(timestamp_ms) = value.as_i64() {
                                     let formatted =
-                                        chrono::DateTime::from_timestamp_millis(timestamp_ms)
-                                            .map(|dt| dt.to_rfc3339())
-                                            .unwrap_or_else(|| "invalid_timestamp".to_string());
+                                        chrono::DateTime::from_timestamp_millis(timestamp_ms).map_or_else(|| "invalid_timestamp".to_string(), |dt| dt.to_rfc3339());
                                     formatted_fields.insert(
                                         format!("{}_formatted", key),
                                         serde_json::Value::String(formatted),

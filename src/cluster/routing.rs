@@ -722,7 +722,7 @@ impl RoutingService {
                 serde_json::Value::String(b) => value < b.as_str(),
                 serde_json::Value::Number(n) => {
                     if let Ok(v) = value.parse::<f64>() {
-                        n.as_f64().map(|b| v < b).unwrap_or(false)
+                        n.as_f64().is_some_and(|b| v < b)
                     } else {
                         false
                     }

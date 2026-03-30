@@ -888,7 +888,7 @@ impl ZeroCopyIOSystem {
         // Try to get from cache first
         if let Some(_cached_metadata) = self
             .metadata_cache
-            .get_metadata(&file_path, collection_id, engine_type)
+            .get_metadata(file_path, collection_id, engine_type)
             .await
         {
             trace!(cache_key, "Cache HIT for metadata");
@@ -907,7 +907,7 @@ impl ZeroCopyIOSystem {
 
             // CACHE POPULATION: Load metadata from file and populate cache
             match self
-                .populate_cache_from_file(&file_path, collection_id, engine_type)
+                .populate_cache_from_file(file_path, collection_id, engine_type)
                 .await
             {
                 Ok(metadata) => {

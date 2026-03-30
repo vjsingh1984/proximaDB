@@ -1505,8 +1505,7 @@ impl ProximaDataBlock {
         let quantized_size = self
             .quantized_vectors
             .as_ref()
-            .map(|qv| qv.iter().map(|v| v.len()).sum())
-            .unwrap_or(0);
+            .map_or(0, |qv| qv.iter().map(|v| v.len()).sum());
         let metadata_size = std::mem::size_of::<ProximaBlockMetadata>();
 
         records_size + quantized_size + metadata_size
@@ -2545,7 +2544,7 @@ impl ProximaDataBlock {
                         }
                         FilterableDataType::FilterableBoolean => SqlValue {
                             value: Some(Value::BoolValue(
-                                payload.get(0).map(|&b| b != 0).unwrap_or(false),
+                                payload.get(0).is_some_and(|&b| b != 0),
                             )),
                         },
                         FilterableDataType::FilterableString => {

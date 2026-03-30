@@ -83,7 +83,7 @@ impl SearchCoordinator {
     async fn select_search_strategy(&self, ctx: &StorageQueryContext) -> Result<SearchStrategy> {
         let collection_id = ctx.collection_id();
         let has_filters = ctx.search_params.filter_expression.is_some();
-        let vector_dimension = ctx.query_vector().map(|v| v.len()).unwrap_or(0);
+        let vector_dimension = ctx.query_vector().map_or(0, |v| v.len());
 
         debug!(
             "🔍 Analyzing query: collection={}, has_filters={}, dimensions={}",
@@ -176,12 +176,12 @@ impl SearchCoordinator {
             .into_iter()
             .filter(|r| {
                 // Tombstone check: empty vector + expires_at in past
-                let is_empty_vector = r.vector.as_ref().map(|v| v.is_empty()).unwrap_or(true);
+                let is_empty_vector = r.vector.as_ref().map_or(true, |v| v.is_empty());
                 let is_expired = r.expires_at.map_or(false, |e| e <= current_time_secs);
                 let is_tombstone = is_empty_vector && is_expired;
 
                 // Keep records that are NOT tombstones AND have valid vectors
-                !is_tombstone && r.vector.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+                !is_tombstone && r.vector.as_ref().is_some_and(|v| !v.is_empty())
             })
             .collect();
 

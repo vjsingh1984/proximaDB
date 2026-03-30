@@ -433,7 +433,7 @@ impl DeltaLakeFormat {
         }
 
         let target_version =
-            version.unwrap_or_else(|| commits.last().map(|(v, _)| *v).unwrap_or(0));
+            version.unwrap_or_else(|| commits.last().map_or(0, |(v, _)| *v));
 
         // Find checkpoint if available
         let checkpoint_version = self.find_latest_checkpoint().await?;

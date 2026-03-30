@@ -179,8 +179,7 @@ impl TemporalQueryEngine {
         );
 
         let limit = to_sequence
-            .map(|s| (s - from_sequence + 1) as usize)
-            .unwrap_or(usize::MAX);
+            .map_or(usize::MAX, |s| (s - from_sequence + 1) as usize);
         let sequences = self
             .event_index
             .get_entity_events(entity_id, from_sequence, limit)

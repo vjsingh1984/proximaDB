@@ -295,13 +295,12 @@ impl CompactionTaskBuilder {
                 let l0_total_size_mb = filtered_files
                     .compactable_files
                     .get(&0)
-                    .map(|files| {
+                    .map_or(0, |files| {
                         files
                             .iter()
                             .map(|f| f.size_bytes / (1024 * 1024))
                             .sum::<u64>() as usize
-                    })
-                    .unwrap_or(0);
+                    });
                 l0_total_size_mb >= config.l0_size_threshold_mb
             }
             "hybrid" | _ => {
@@ -314,13 +313,12 @@ impl CompactionTaskBuilder {
                 let l0_total_size_mb = filtered_files
                     .compactable_files
                     .get(&0)
-                    .map(|files| {
+                    .map_or(0, |files| {
                         files
                             .iter()
                             .map(|f| f.size_bytes / (1024 * 1024))
                             .sum::<u64>() as usize
-                    })
-                    .unwrap_or(0);
+                    });
                 let size_triggered = l0_total_size_mb >= config.l0_size_threshold_mb;
                 count_triggered || size_triggered
             }
@@ -369,13 +367,12 @@ impl CompactionTaskBuilder {
                     let level_total_size_mb = filtered_files
                         .compactable_files
                         .get(&level)
-                        .map(|files| {
+                        .map_or(0, |files| {
                             files
                                 .iter()
                                 .map(|f| f.size_bytes / (1024 * 1024))
                                 .sum::<u64>() as usize
-                        })
-                        .unwrap_or(0);
+                        });
                     level_total_size_mb >= level_size_threshold_mb
                 }
                 "hybrid" | _ => {
@@ -387,13 +384,12 @@ impl CompactionTaskBuilder {
                     let level_total_size_mb = filtered_files
                         .compactable_files
                         .get(&level)
-                        .map(|files| {
+                        .map_or(0, |files| {
                             files
                                 .iter()
                                 .map(|f| f.size_bytes / (1024 * 1024))
                                 .sum::<u64>() as usize
-                        })
-                        .unwrap_or(0);
+                        });
                     let size_triggered = level_total_size_mb >= level_size_threshold_mb;
                     count_triggered || size_triggered
                 }

@@ -69,7 +69,7 @@ impl EngineMetadataSerializer for GenericMetadataSerializer {
             let cacheable = CacheableMetadata {
                 file_path: file_meta.path.clone(),
                 file_size: file_meta.size,
-                last_modified: file_meta.modified.map(|dt| dt.timestamp()).unwrap_or(0),
+                last_modified: file_meta.modified.map_or(0, |dt| dt.timestamp()),
                 engine_metadata: None,
                 cached_component: None,
             };

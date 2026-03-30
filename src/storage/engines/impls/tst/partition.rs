@@ -663,8 +663,7 @@ impl ColumnarPartition {
                 let start = offsets[i] as usize;
                 let end = offsets
                     .get(i + 1)
-                    .map(|&v| v as usize)
-                    .unwrap_or(vector_values.len());
+                    .map_or(vector_values.len(), |&v| v as usize);
                 let vector = vector_values
                     .iter()
                     .skip(start)

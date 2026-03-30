@@ -460,9 +460,7 @@ impl ColumnarReadProvider for ArrowInMemoryProvider {
         // In production code, RwLock poisoning is extremely rare and indicates a serious bug
         // Using unwrap here is acceptable as it's a stats accessor in a non-critical path
         self.stats
-            .read()
-            .map(|stats| stats.clone())
-            .unwrap_or_else(|_| ColumnarAccessStats::default())
+            .read().map_or_else(|_| ColumnarAccessStats::default(), |stats| stats.clone())
     }
 
     fn reset_stats(&mut self) {

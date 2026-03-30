@@ -291,7 +291,7 @@ fn decode_pfor_double_delta_i32_base(data: &[u8], count: usize) -> Result<Vec<i3
     }
 
     let bitpacked_data = &data[17..17 + bitpacked_bytes];
-    let mut double_deltas = bitpack::unbitpack_i64(&bitpacked_data, bits, double_delta_count)?;
+    let mut double_deltas = bitpack::unbitpack_i64(bitpacked_data, bits, double_delta_count)?;
 
     let patch_start = 17 + bitpacked_bytes;
     for i in 0..num_patches {
@@ -373,7 +373,7 @@ fn decode_pfor_double_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i6
     }
 
     let bitpacked_data = &data[21..21 + bitpacked_bytes];
-    let mut double_deltas = bitpack::unbitpack_i64(&bitpacked_data, bits, double_delta_count)?;
+    let mut double_deltas = bitpack::unbitpack_i64(bitpacked_data, bits, double_delta_count)?;
 
     let patch_start = 21 + bitpacked_bytes;
     for i in 0..num_patches {

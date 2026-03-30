@@ -91,8 +91,7 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
             // S3 URLs must have bucket name
             if parsed_url
                 .host_str()
-                .map(|host| host.is_empty())
-                .unwrap_or(true)
+                .map_or(true, |host| host.is_empty())
             {
                 return Err(FilesystemError::InvalidPath(
                     "S3 URLs must specify bucket name".to_string(),
@@ -104,8 +103,7 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
             // GCS URLs must have bucket name
             if parsed_url
                 .host_str()
-                .map(|host| host.is_empty())
-                .unwrap_or(true)
+                .map_or(true, |host| host.is_empty())
             {
                 return Err(FilesystemError::InvalidPath(
                     "Google Cloud Storage URLs must specify bucket name".to_string(),
@@ -117,8 +115,7 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
             // ADLS URLs must have account name
             if parsed_url
                 .host_str()
-                .map(|host| host.is_empty())
-                .unwrap_or(true)
+                .map_or(true, |host| host.is_empty())
             {
                 return Err(FilesystemError::InvalidPath(
                     "Azure Data Lake Storage URLs must specify account name".to_string(),
@@ -130,8 +127,7 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
             // ABFS URLs must have account name
             if parsed_url
                 .host_str()
-                .map(|host| host.is_empty())
-                .unwrap_or(true)
+                .map_or(true, |host| host.is_empty())
             {
                 return Err(FilesystemError::InvalidPath(
                     "Azure Blob Storage URLs must specify account name".to_string(),
@@ -143,8 +139,7 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
             // HDFS URLs must have namenode host
             if parsed_url
                 .host_str()
-                .map(|host| host.is_empty())
-                .unwrap_or(true)
+                .map_or(true, |host| host.is_empty())
             {
                 return Err(FilesystemError::InvalidPath(
                     "HDFS URLs must specify namenode host".to_string(),

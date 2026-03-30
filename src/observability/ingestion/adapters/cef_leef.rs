@@ -183,8 +183,7 @@ impl CefLeefAdapter {
                 .get("sev")
                 .or_else(|| extension.get("severity"))
                 .and_then(|s| s.parse::<u8>().ok())
-                .map(|n| self.leef_severity_to_severity(n))
-                .unwrap_or(Severity::Info);
+                .map_or(Severity::Info, |n| self.leef_severity_to_severity(n));
             attributes.extend(extension);
             sev
         } else {

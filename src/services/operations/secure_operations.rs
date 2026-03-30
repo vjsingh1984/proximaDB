@@ -309,8 +309,7 @@ impl SecureVectorOperations {
             .metadata
             .get("__encrypted")
             .and_then(sql_value_to_string)
-            .map(|s| s == "true")
-            .unwrap_or(false);
+            .is_some_and(|s| s == "true");
 
         if !is_encrypted {
             return Ok(());

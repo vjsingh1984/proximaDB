@@ -1153,11 +1153,7 @@ impl ProximaEntityStore {
             LogicalOp::And => Some(FE::And(terms)),
             LogicalOp::Or => Some(FE::Or(terms)),
             LogicalOp::Not => {
-                if let Some(first) = terms.into_iter().next() {
-                    Some(FE::Not(Box::new(first)))
-                } else {
-                    None
-                }
+                terms.into_iter().next().map(|first| FE::Not(Box::new(first)))
             }
         }
     }

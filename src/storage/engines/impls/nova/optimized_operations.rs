@@ -105,16 +105,16 @@ impl OptimizedNovaOperations {
             // Pass parquet metadata from file system
             // TODO: file_path should be derived from nova_file when properly integrated
             let _file_path = "placeholder.parquet"; // Temporary placeholder
-            let _parquet_metadata = self.load_parquet_metadata(&_file_path).await?;
+            let _parquet_metadata = self.load_parquet_metadata(_file_path).await?;
             let _candidate_row_groups =
-                self.prune_row_groups_with_metadata(&_parquet_metadata, &_query)?;
+                self.prune_row_groups_with_metadata(&_parquet_metadata, _query)?;
 
             // Phase 2: Columnar filtering with SIMD using actual Parquet metadata
             return Ok(self
                 .execute_columnar_search_with_metadata(
                     &_parquet_metadata,
                     &_candidate_row_groups,
-                    &_query,
+                    _query,
                     _top_k,
                 )
                 .await?);

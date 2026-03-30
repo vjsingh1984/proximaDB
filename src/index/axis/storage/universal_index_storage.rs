@@ -235,8 +235,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
             .filter(|entry| {
                 self.data_locations
                     .get(entry.key())
-                    .map(|loc| matches!(*loc, StorageLocation::Memory))
-                    .unwrap_or(false)
+                    .is_some_and(|loc| matches!(*loc, StorageLocation::Memory))
             })
             .map(|entry| (entry.key().clone(), *entry.value()))
             .collect();

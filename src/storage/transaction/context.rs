@@ -190,8 +190,7 @@ impl WriteSet {
     pub fn conflicts_with(&self, container: &str, id: &str) -> bool {
         self.entries
             .get(container)
-            .map(|ids| ids.contains(id))
-            .unwrap_or(false)
+            .is_some_and(|ids| ids.contains(id))
     }
 
     /// Get all entries

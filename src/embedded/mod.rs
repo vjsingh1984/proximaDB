@@ -293,9 +293,7 @@ impl StorageLocationConfig {
                 self.path.clone()
             } else {
                 // Make relative path absolute
-                std::env::current_dir()
-                    .map(|p| p.join(&self.path).to_string_lossy().to_string())
-                    .unwrap_or_else(|_| self.path.clone())
+                std::env::current_dir().map_or_else(|_| self.path.clone(), |p| p.join(&self.path).to_string_lossy().to_string())
             };
             format!("file://{}", abs_path)
         }
@@ -725,9 +723,7 @@ impl EmbeddedProximaDB {
         // Initialize checkpoint manager for incremental persistence
         let base_path = config
             .storage_locations
-            .first()
-            .map(|loc| loc.path.clone())
-            .unwrap_or_else(|| "./data".to_string());
+            .first().map_or_else(|| "./data".to_string(), |loc| loc.path.clone());
         let checkpoint_manager = std::sync::Arc::new(CheckpointManager::new(&base_path));
         runtime.block_on(async {
             if let Err(e) = checkpoint_manager.init().await {
@@ -828,9 +824,7 @@ impl EmbeddedProximaDB {
         } else if config.metadata_path.starts_with('/') {
             format!("file://{}", config.metadata_path)
         } else {
-            let abs_path = std::env::current_dir()
-                .map(|p| p.join(&config.metadata_path).to_string_lossy().to_string())
-                .unwrap_or_else(|_| config.metadata_path.clone());
+            let abs_path = std::env::current_dir().map_or_else(|_| config.metadata_path.clone(), |p| p.join(&config.metadata_path).to_string_lossy().to_string());
             format!("file://{}", abs_path)
         };
 
@@ -1064,8 +1058,7 @@ impl EmbeddedProximaDB {
             AccessMode::LeaderFollower => self
                 .leader_election
                 .as_ref()
-                .map(|e| e.is_leader())
-                .unwrap_or(false),
+                .is_some_and(|e| e.is_leader()),
         }
     }
 
@@ -1693,7 +1686,7 @@ impl EmbeddedProximaDB {
                 CollectionInfo {
                     name: config.name,
                     dimension: config.dimension,
-                    vector_count: c.stats.map(|s| s.vector_count as u64).unwrap_or(0),
+                    vector_count: c.stats.map_or(0, |s| s.vector_count as u64),
                     engine: collection_engine_name(config.storage_engine),
                     disk_usage_bytes: 0, // TODO: Calculate actual disk usage
                 }
@@ -1721,7 +1714,7 @@ impl EmbeddedProximaDB {
                     CollectionInfo {
                         name: config.name,
                         dimension: config.dimension,
-                        vector_count: c.stats.map(|s| s.vector_count as u64).unwrap_or(0),
+                        vector_count: c.stats.map_or(0, |s| s.vector_count as u64),
                         engine: collection_engine_name(config.storage_engine),
                         disk_usage_bytes: 0, // TODO: Calculate actual disk usage
                     }
@@ -2324,15 +2317,14 @@ impl EmbeddedProximaDB {
     pub fn stats(&self) -> Result<StorageStats, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let collections = self.collection_service.list_collections().await.ok();
-            let total_collections = collections.as_ref().map(|c| c.len() as u64).unwrap_or(0);
+            let total_collections = collections.as_ref().map_or(0, |c| c.len() as u64);
             let total_vectors: u64 = collections
-                .map(|c| {
+                .map_or(0, |c| {
                     c.iter()
                         .filter_map(|col| col.stats.as_ref())
                         .map(|s| s.vector_count as u64)
                         .sum()
-                })
-                .unwrap_or(0);
+                });
 
             Ok(StorageStats {
                 total_vectors,
@@ -3900,8 +3892,7 @@ impl EmbeddedProximaDB {
             Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
             Some(Value::Int64Value(i)) => serde_json::Value::Number((*i).into()),
             Some(Value::NumberValue(f)) => serde_json::Number::from_f64(*f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null),
+                .map_or(serde_json::Value::Null, serde_json::Value::Number),
             Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
             Some(Value::ArrayValue(arr)) => {
                 serde_json::Value::Array(arr.values.iter().map(Self::sql_value_to_json).collect())
@@ -4039,9 +4030,7 @@ impl EmbeddedProximaDB {
         let base_path = self
             .config
             .storage_locations
-            .first()
-            .map(|loc| format!("{}/observability", loc.path))
-            .unwrap_or_else(|| "./data/observability".to_string());
+            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
@@ -4102,9 +4091,7 @@ impl EmbeddedProximaDB {
         let base_path = self
             .config
             .storage_locations
-            .first()
-            .map(|loc| format!("{}/observability", loc.path))
-            .unwrap_or_else(|| "./data/observability".to_string());
+            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
@@ -4192,9 +4179,7 @@ impl EmbeddedProximaDB {
         let base_path = self
             .config
             .storage_locations
-            .first()
-            .map(|loc| format!("{}/observability", loc.path))
-            .unwrap_or_else(|| "./data/observability".to_string());
+            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
@@ -4282,9 +4267,7 @@ impl EmbeddedProximaDB {
         let base_path = self
             .config
             .storage_locations
-            .first()
-            .map(|loc| format!("{}/observability", loc.path))
-            .unwrap_or_else(|| "./data/observability".to_string());
+            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
@@ -4357,9 +4340,7 @@ impl EmbeddedProximaDB {
         let base_path = self
             .config
             .storage_locations
-            .first()
-            .map(|loc| format!("{}/observability", loc.path))
-            .unwrap_or_else(|| "./data/observability".to_string());
+            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));

@@ -1041,8 +1041,7 @@ impl Compaction {
                     let dimension = btree_records
                         .values()
                         .next()
-                        .map(|r| r.vector.len() as u32)
-                        .unwrap_or(128);
+                        .map_or(128, |r| r.vector.len() as u32);
 
                     // Ensure parent directory exists
                     if let Some(parent) = staging_file_path.parent() {
@@ -1149,8 +1148,7 @@ impl Compaction {
                     let dimension = btree_records
                         .values()
                         .next()
-                        .map(|r| r.vector.len() as u32)
-                        .unwrap_or(128);
+                        .map_or(128, |r| r.vector.len() as u32);
 
                     // Ensure parent directory exists
                     if let Some(parent) = task.output_file.parent() {

@@ -43,8 +43,7 @@ pub fn validate_hybrid_search_request(request: &HybridSearchExecutionRequest) ->
     let has_text = request
         .text_query
         .as_ref()
-        .map(|query| !query.trim().is_empty())
-        .unwrap_or(false);
+        .is_some_and(|query| !query.trim().is_empty());
 
     if !has_vector && !has_text {
         bail!("At least one of 'vector' or 'text_query' is required");
@@ -252,8 +251,7 @@ fn sql_value_to_json(value: &proximadb_v1::SqlValue) -> JsonValue {
     match value.value.as_ref() {
         Some(SqlValueKind::StringValue(value)) => JsonValue::String(value.clone()),
         Some(SqlValueKind::NumberValue(value)) => JsonNumber::from_f64(*value)
-            .map(JsonValue::Number)
-            .unwrap_or(JsonValue::Null),
+            .map_or(JsonValue::Null, JsonValue::Number),
         Some(SqlValueKind::BoolValue(value)) => JsonValue::Bool(*value),
         Some(SqlValueKind::Int64Value(value)) => JsonValue::Number((*value).into()),
         Some(SqlValueKind::BytesValue(value)) => JsonValue::Array(

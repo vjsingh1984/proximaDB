@@ -419,8 +419,7 @@ impl UnifiedParquetReader {
         let needs_metadata = search_plan
             .collection_config
             .as_ref()
-            .map(|c| c.enable_metadata_filtering)
-            .unwrap_or(false);
+            .is_some_and(|c| c.enable_metadata_filtering);
 
         // Extract filter expression from search plan for row group pruning
         let filter_expression = search_plan.filter_expression.clone();
@@ -449,15 +448,13 @@ impl UnifiedParquetReader {
         let quantization_enabled = search_plan
             .collection_config
             .as_ref()
-            .map(|c| c.enable_quantization)
-            .unwrap_or(false);
+            .is_some_and(|c| c.enable_quantization);
 
         // Determine distance metric from collection config
         let distance_metric = search_plan
             .collection_config
             .as_ref()
-            .map(|c| c.default_distance_metric)
-            .unwrap_or(DistanceMetric::Cosine);
+            .map_or(DistanceMetric::Cosine, |c| c.default_distance_metric);
 
         // ── Phase 1: Concurrent I/O ─────────────────────────────────────────
         // Read all files concurrently using tokio tasks. Each task performs
@@ -2530,8 +2527,7 @@ impl UnifiedParquetReader {
                     }
                     Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(f)) => {
                         serde_json::Number::from_f64(*f)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number)
                     }
                     Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)

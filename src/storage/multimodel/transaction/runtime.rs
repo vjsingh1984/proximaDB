@@ -28,12 +28,12 @@ impl TransactionalMultiModelFacade {
 
         let document_participant = storage
             .get_document_store()
-            .and_then(|store| store.service().map(|service| Arc::clone(service)))
+            .and_then(|store| store.service().map(Arc::clone))
             .map(DocumentStoreParticipant::new)
             .map(Arc::new);
         let observability_participant = storage
             .get_observability_store()
-            .and_then(|store| store.service().map(|service| Arc::clone(service)))
+            .and_then(|store| store.service().map(Arc::clone))
             .map(ObservabilityStoreParticipant::new)
             .map(Arc::new);
 

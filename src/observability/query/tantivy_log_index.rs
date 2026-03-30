@@ -261,9 +261,7 @@ impl TantivyLogIndex {
         }
 
         // Add severity
-        let severity_str = Severity::try_from(log.severity)
-            .map(|s| format!("{:?}", s))
-            .unwrap_or_else(|_| "UNKNOWN".to_string());
+        let severity_str = Severity::try_from(log.severity).map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s));
         doc.add_text(self.severity_field, &severity_str);
 
         // Build combined all-text field
@@ -324,9 +322,7 @@ impl TantivyLogIndex {
                 doc.add_text(self.source_field, source);
             }
 
-            let severity_str = Severity::try_from(log.severity)
-                .map(|s| format!("{:?}", s))
-                .unwrap_or_else(|_| "UNKNOWN".to_string());
+            let severity_str = Severity::try_from(log.severity).map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s));
             doc.add_text(self.severity_field, &severity_str);
 
             // Build all-text
@@ -576,12 +572,10 @@ impl TantivyLogIndex {
         if options.start_time_ns.is_some() || options.end_time_ns.is_some() {
             let start = options
                 .start_time_ns
-                .map(std::ops::Bound::Included)
-                .unwrap_or(std::ops::Bound::Unbounded);
+                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included);
             let end = options
                 .end_time_ns
-                .map(std::ops::Bound::Included)
-                .unwrap_or(std::ops::Bound::Unbounded);
+                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included);
 
             let range_query =
                 tantivy::query::RangeQuery::new_i64_bounds("timestamp_ns".to_string(), start, end);

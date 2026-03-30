@@ -39,8 +39,7 @@ impl NovaCompactionOperations {
             .collection_config
             .as_ref()
             .and_then(|c| c.storage_assignment.as_ref())
-            .map(|s| s.base_location.as_str())
-            .unwrap_or("/data/collections");
+            .map_or("/data/collections", |s| s.base_location.as_str());
 
         // Use standard path: {base_location}/{collection_id}/data
         let data_path =
@@ -171,7 +170,7 @@ impl NovaCompactionOperations {
 
         let bytes_after = self
             .write_compacted_file(
-                &params,
+                params,
                 &output_path,
                 unique_records.clone(),
                 128 * 1024 * 1024, // Default 128MB target size

@@ -659,9 +659,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
             TempStrategy::SameDirectory => {
                 // Create ___temp subdirectory in same location (same mount point)
                 let parent = final_path.parent();
-                let temp_dir = parent
-                    .map(|p| p.join("___temp"))
-                    .unwrap_or_else(|| std::path::PathBuf::from("___temp"));
+                let temp_dir = parent.map_or_else(|| std::path::PathBuf::from("___temp"), |p| p.join("___temp"));
                 let temp_file = temp_dir.join(format!("{}.{}", filename, std::process::id())); // Add PID for uniqueness
                 Ok(temp_file.to_string_lossy().to_string())
             }

@@ -393,7 +393,7 @@ impl AxisClusteringEngine {
             .push(vector);
 
         // Check if we need to recompute
-        let pending_count = pending.get(collection_id).map(|v| v.len()).unwrap_or(0);
+        let pending_count = pending.get(collection_id).map_or(0, |v| v.len());
         if pending_count >= self.config.recompute_threshold {
             // TODO: Trigger recomputation
             tracing::info!(

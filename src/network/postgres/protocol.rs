@@ -642,19 +642,13 @@ impl PostgresProtocol {
                 // Get name and dimension from config
                 let name = collection
                     .config
-                    .as_ref()
-                    .map(|c| c.name.clone())
-                    .unwrap_or_else(|| collection.id.clone());
+                    .as_ref().map_or_else(|| collection.id.clone(), |c| c.name.clone());
                 let dim = collection
                     .config
-                    .as_ref()
-                    .map(|c| c.dimension.to_string())
-                    .unwrap_or_else(|| "0".to_string());
+                    .as_ref().map_or_else(|| "0".to_string(), |c| c.dimension.to_string());
                 let count = collection
                     .stats
-                    .as_ref()
-                    .map(|s| s.vector_count.to_string())
-                    .unwrap_or_else(|| "0".to_string());
+                    .as_ref().map_or_else(|| "0".to_string(), |s| s.vector_count.to_string());
 
                 self.send_data_row(&[&name, &dim, &count]).await?;
                 self.send_command_complete("SELECT 1").await

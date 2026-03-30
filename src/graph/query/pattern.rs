@@ -1276,8 +1276,7 @@ impl PatternMatcher {
             memory_pool
                 .label_indexes
                 .get(&node_pattern.labels[0])
-                .map(|nodes| nodes.len())
-                .unwrap_or(memory_pool.node_count())
+                .map_or(memory_pool.node_count(), |nodes| nodes.len())
         } else {
             memory_pool.node_count()
         }

@@ -930,8 +930,7 @@ impl SstCompactor {
                 // Infer dimension from first record
                 let dimension = records
                     .first()
-                    .map(|r| r.vector.len() as u32)
-                    .unwrap_or(128);
+                    .map_or(128, |r| r.vector.len() as u32);
 
                 // Ensure parent directory exists
                 let path = std::path::Path::new(output_path);

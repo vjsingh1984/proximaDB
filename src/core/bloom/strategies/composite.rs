@@ -136,11 +136,10 @@ impl MetadataBloomFilter for CompositeBloomFilter {
     ) -> bool {
         self.metadata_filters
             .get(column)
-            .map(|filter| {
+            .is_some_and(|filter| {
                 let serialized = crate::core::bloom::serialize_metadata_value(item);
                 filter.might_contain(serialized.as_bytes())
             })
-            .unwrap_or(false)
     }
 
     fn num_columns(&self) -> usize {

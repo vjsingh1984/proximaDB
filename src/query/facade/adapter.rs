@@ -149,8 +149,7 @@ impl QueryFacadeAdapter {
             results = response
                 .results
                 .as_ref()
-                .map(|r| r.results.len())
-                .unwrap_or(0),
+                .map_or(0, |r| r.results.len()),
             elapsed_ms = start.elapsed().as_millis(),
             "Vector search completed via adapter"
         );

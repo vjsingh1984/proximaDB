@@ -302,8 +302,7 @@ impl MFAService {
     pub fn is_mfa_verified(&self, session_id: &str) -> bool {
         self.active_sessions
             .get(session_id)
-            .map(|session| session.verified && Utc::now() <= session.expires_at)
-            .unwrap_or(false)
+            .is_some_and(|session| session.verified && Utc::now() <= session.expires_at)
     }
 
     /// Clean up expired MFA sessions

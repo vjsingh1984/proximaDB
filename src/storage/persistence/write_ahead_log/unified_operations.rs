@@ -398,8 +398,7 @@ impl UnifiedWALWriter {
         if entry
             .metadata
             .as_ref()
-            .map(|m| m.requires_fsync)
-            .unwrap_or(false)
+            .is_some_and(|m| m.requires_fsync)
         {
             self.flush_current_segment().await?;
         }

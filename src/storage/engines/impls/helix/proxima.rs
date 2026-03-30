@@ -198,7 +198,7 @@ impl HelixSIMDWriter {
         // Get compression ratio from the block's encoded data
         let compression_ratio = if let Some(ref encoded) = block.encoded_vectors {
             let original_size =
-                records.len() * records.first().map(|r| r.vector.len()).unwrap_or(0) * 4;
+                records.len() * records.first().map_or(0, |r| r.vector.len()) * 4;
             let encoded_size: usize = encoded.iter().map(|d| d.len()).sum();
             if original_size > 0 {
                 (encoded_size * 100) / original_size
@@ -487,11 +487,7 @@ pub async fn write_helix_sstable(
         block_offsets.push(file_data.len() as u64);
 
         // Extract Hilbert keys for this block
-        let block_hilbert_keys = if let Some(keys) = hilbert_keys {
-            Some(&keys[block_start..block_end])
-        } else {
-            None
-        };
+        let block_hilbert_keys = hilbert_keys.map(|keys| &keys[block_start..block_end]);
 
         // Create SIMD-optimized block
         let block_start_time = std::time::Instant::now();
@@ -924,7 +920,7 @@ pub async fn search_helix_sstable(
         let block_data = &chunk_data[4..4 + exact_size as usize];
 
         // Deserialize block with collection config for type-safe metadata
-        let block = ProximaDataBlock::deserialize(&block_data, collection)?;
+        let block = ProximaDataBlock::deserialize(block_data, collection)?;
 
         // Search within block
         for record in block.records.iter() {
@@ -1019,8 +1015,7 @@ fn select_blocks_by_centroid(
             .map(|(idx, meta)| {
                 let hilbert_code = meta
                     .hilbert_range
-                    .map(|(min, max)| SpatialCode::Code64((min + max) / 2))
-                    .unwrap_or(SpatialCode::Code64(0));
+                    .map_or(SpatialCode::Code64(0), |(min, max)| SpatialCode::Code64((min + max) / 2));
                 BlockPruningInfo::with_centroid(idx, hilbert_code, meta.block_centroid.clone())
             })
             .collect();

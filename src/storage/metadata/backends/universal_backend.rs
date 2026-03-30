@@ -1069,9 +1069,7 @@ impl UniversalMetadataBackend {
             operation_type: OperationType::Update,
             collection_id: record
                 .config
-                .as_ref()
-                .map(|c| c.name.clone())
-                .unwrap_or_else(|| "unknown".to_string()),
+                .as_ref().map_or_else(|| "unknown".to_string(), |c| c.name.clone()),
             collection_data: Some(record.clone()),
         };
 

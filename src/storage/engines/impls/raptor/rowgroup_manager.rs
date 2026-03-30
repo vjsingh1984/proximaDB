@@ -513,8 +513,7 @@ impl RowGroups {
                 row_group_id,
                 self.row_groups
                     .get(&row_group_id)
-                    .map(|rg| rg.vector_count)
-                    .unwrap_or(0)
+                    .map_or(0, |rg| rg.vector_count)
             );
 
             // Apply Proxima compression

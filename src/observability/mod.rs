@@ -400,8 +400,7 @@ impl ObservabilityService {
             // Extract status code from SpanStatus message
             let (status_code, status_message) = trace_data
                 .status
-                .map(|s| (s.code, s.message.unwrap_or_default()))
-                .unwrap_or((0, String::new())); // 0 = Unset
+                .map_or((0, String::new()), |s| (s.code, s.message.unwrap_or_default())); // 0 = Unset
 
             let span = TraceSpan {
                 trace_id: trace_data.trace_id,
@@ -922,8 +921,7 @@ impl ObservabilityStorageOperations for ObservabilityService {
             // Extract status code from SpanStatus message
             let (status_code, status_message) = trace_data
                 .status
-                .map(|s| (s.code, s.message.unwrap_or_default()))
-                .unwrap_or((0, String::new())); // 0 = Unset
+                .map_or((0, String::new()), |s| (s.code, s.message.unwrap_or_default())); // 0 = Unset
 
             let span = TraceSpan {
                 trace_id: trace_data.trace_id,
@@ -1125,9 +1123,9 @@ impl ObservabilityStorageOperations for ObservabilityService {
 
             result.push(TraitNamespaceInfo {
                 name: name.clone(),
-                log_count: stats.as_ref().map(|s| s.log_count).unwrap_or(0),
-                metric_count: stats.as_ref().map(|s| s.metric_series_count).unwrap_or(0),
-                trace_count: stats.as_ref().map(|s| s.trace_count).unwrap_or(0),
+                log_count: stats.as_ref().map_or(0, |s| s.log_count),
+                metric_count: stats.as_ref().map_or(0, |s| s.metric_series_count),
+                trace_count: stats.as_ref().map_or(0, |s| s.trace_count),
                 retention_config: state.config.retention,
             });
         }

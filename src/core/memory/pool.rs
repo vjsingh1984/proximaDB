@@ -589,8 +589,8 @@ impl VectorMemoryPool {
     /// Get a f32 buffer from the pool
     pub fn f32_buffer(&self, capacity: usize) -> PooledItem<Vec<f32>> {
         let mut item = self.vector_buffers.acquire();
-        (&mut *item).clear();
-        (&mut *item).reserve(capacity);
+        (*item).clear();
+        (*item).reserve(capacity);
         item
     }
 

@@ -939,8 +939,7 @@ impl Catalog for IcebergCatalog {
             .find(|s| {
                 s.get("spec-id")
                     .and_then(|v| v.as_i64())
-                    .map(|id| id as i32 == table.default_spec_id)
-                    .unwrap_or(false)
+                    .is_some_and(|id| id as i32 == table.default_spec_id)
             })
             .or_else(|| table.partition_specs.first());
 
@@ -1056,8 +1055,7 @@ impl Catalog for IcebergCatalog {
             .find(|s| {
                 s.get("order-id")
                     .and_then(|v| v.as_i64())
-                    .map(|id| id as i32 == table.default_sort_order_id)
-                    .unwrap_or(false)
+                    .is_some_and(|id| id as i32 == table.default_sort_order_id)
             })
             .or_else(|| table.sort_orders.first());
 

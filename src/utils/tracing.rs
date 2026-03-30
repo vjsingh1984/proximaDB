@@ -73,9 +73,7 @@ impl RequestContext {
     /// Otherwise, generate a new UUID v4.
     pub fn from_header(header_value: Option<&str>) -> Self {
         let request_id = header_value
-            .filter(|v| !v.is_empty())
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
+            .filter(|v| !v.is_empty()).map_or_else(|| Uuid::new_v4().to_string(), |v| v.to_string());
 
         Self {
             request_id,
@@ -203,9 +201,7 @@ pub fn create_request_context(header_value: Option<&str>) -> RequestContext {
 /// Extract request ID from a string, or generate a new one if empty/None
 pub fn extract_or_generate_request_id(value: Option<&str>) -> String {
     value
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| Uuid::new_v4().to_string())
+        .filter(|v| !v.is_empty()).map_or_else(|| Uuid::new_v4().to_string(), |v| v.to_string())
 }
 
 /// HTTP header name for request ID

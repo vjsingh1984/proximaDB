@@ -2092,7 +2092,7 @@ impl UnifiedStorageEngine for HelixEngine {
         }
 
         // Construct data directory from base_path and collection_id
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, collection_id);
 
         // Use the engine's unified caching filesystem
         let fs = &self.filesystem;
@@ -2117,7 +2117,7 @@ impl UnifiedStorageEngine for HelixEngine {
                     bloom_filter: None,
                 };
 
-                if let Some(vector) = readers::find_vector_by_id(&fs, &metadata, vector_id).await? {
+                if let Some(vector) = readers::find_vector_by_id(fs, &metadata, vector_id).await? {
                     // Update global cache with found vector
                     if let Some(orchestrator) =
                         crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()

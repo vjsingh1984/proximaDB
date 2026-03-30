@@ -1187,8 +1187,7 @@ impl FullTextIndex {
     pub fn get_document_frequency(&self, term: &str) -> u32 {
         self.inverted_index
             .get(term)
-            .map(|pl| pl.doc_frequency)
-            .unwrap_or(0)
+            .map_or(0, |pl| pl.doc_frequency)
     }
 
     /// Get term frequency for a term in a specific document
@@ -1196,8 +1195,7 @@ impl FullTextIndex {
         self.inverted_index
             .get(term)
             .and_then(|pl| pl.get_posting(doc_id))
-            .map(|p| p.term_frequency)
-            .unwrap_or(0)
+            .map_or(0, |p| p.term_frequency)
     }
 
     /// Get IDF for a term

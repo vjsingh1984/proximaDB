@@ -521,7 +521,7 @@ impl TupleData {
     pub fn get(&self, name: &str) -> Option<&ColumnValue> {
         self.values
             .iter()
-            .find(|(n, _)| n.as_ref().map(|s| s == name).unwrap_or(false))
+            .find(|(n, _)| n.as_ref().is_some_and(|s| s == name))
             .map(|(_, v)| v)
     }
 

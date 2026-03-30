@@ -207,8 +207,7 @@ impl RankingStrategy for HybridRankingStrategy {
         let graph_score = self
             .centrality_cache
             .get(&node.id)
-            .map(|entry| *entry)
-            .unwrap_or(0.0);
+            .map_or(0.0, |entry| *entry);
 
         // Combine scores with weights
         let combined_score = self.vector_weight * vector_score + self.graph_weight * graph_score;
@@ -276,8 +275,7 @@ impl RankingStrategy for GraphCentralityStrategy {
         Ok(self
             .centrality_cache
             .get(&node.id)
-            .map(|entry| *entry)
-            .unwrap_or(0.0))
+            .map_or(0.0, |entry| *entry))
     }
 
     fn strategy_name(&self) -> &str {

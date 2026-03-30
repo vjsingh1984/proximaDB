@@ -337,7 +337,7 @@ fn create_query_response_for_nodes(
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> BatchResponse {
-    let has_more = limit.map(|l| nodes.len() as u32 == l).unwrap_or(false);
+    let has_more = limit.is_some_and(|l| nodes.len() as u32 == l);
     let next_token = if has_more {
         let next_offset = offset.unwrap_or(0).saturating_add(limit.unwrap_or(0));
         Some(format!("offset:{}", next_offset))
@@ -366,7 +366,7 @@ fn create_query_response_for_edges(
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> BatchResponse {
-    let has_more = limit.map(|l| edges.len() as u32 == l).unwrap_or(false);
+    let has_more = limit.is_some_and(|l| edges.len() as u32 == l);
     let next_token = if has_more {
         let next_offset = offset.unwrap_or(0).saturating_add(limit.unwrap_or(0));
         Some(format!("offset:{}", next_offset))

@@ -285,7 +285,7 @@ impl UnifiedProgressiveSearchPipeline {
         _top_k: usize,
     ) -> Vec<SearchStage> {
         let record_count = records.len();
-        let dimension = records.first().map(|r| r.vector.len()).unwrap_or(0);
+        let dimension = records.first().map_or(0, |r| r.vector.len());
 
         // Decision logic based on data size and dimension
         if record_count < 1000 || dimension < 64 {
@@ -737,7 +737,7 @@ impl UnifiedProgressiveSearchPipeline {
         }
 
         // Check if top candidates have high enough scores
-        let top_score = candidates.peek().map(|c| c.score).unwrap_or(0.0);
+        let top_score = candidates.peek().map_or(0.0, |c| c.score);
         top_score >= self.config.early_termination_score
     }
 

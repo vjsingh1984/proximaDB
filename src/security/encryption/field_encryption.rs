@@ -183,11 +183,9 @@ impl FieldEncryption {
     ) -> Result<EncryptedField, FieldEncryptionError> {
         // Get field settings or use defaults
         let settings = self.config.field_settings.get(field_name);
-        let encryption_type = settings
-            .map(|s| s.encryption_type)
-            .unwrap_or_else(|| self.config.default_type);
+        let encryption_type = settings.map_or_else(|| self.config.default_type, |s| s.encryption_type);
 
-        let key_id = settings.map(|s| s.key_id.as_str()).unwrap_or("default");
+        let key_id = settings.map_or("default", |s| s.key_id.as_str());
 
         // Serialize value to bytes
         let plaintext = serde_json::to_vec(value)
@@ -205,9 +203,7 @@ impl FieldEncryption {
         };
 
         // Generate blind index if enabled
-        let blind_index = if settings
-            .map(|s| s.blind_index)
-            .unwrap_or_else(|| self.config.enable_blind_indexes)
+        let blind_index = if settings.map_or_else(|| self.config.enable_blind_indexes, |s| s.blind_index)
         {
             let truncate = settings.and_then(|s| s.blind_index_bytes);
             self.generate_blind_index(value, truncate)?

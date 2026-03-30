@@ -80,7 +80,7 @@ impl RaptorCompactor {
             // DIRECT reader usage - no wrapper
             let batches = self
                 .reader
-                .read_row_groups_selective(&file_path, None)
+                .read_row_groups_selective(file_path, None)
                 .await?;
 
             for batch in batches {
@@ -144,7 +144,7 @@ impl RaptorCompactor {
         for file_path in &input_files {
             let batches = self
                 .reader
-                .read_row_groups_selective(&file_path, None)
+                .read_row_groups_selective(file_path, None)
                 .await?;
 
             for batch in batches {
@@ -322,13 +322,12 @@ impl RaptorCompactor {
         for vector in vectors.drain(..) {
             let should_keep = latest_by_id
                 .get(&vector.id)
-                .map(|existing| {
+                .map_or(true, |existing| {
                     // Keep if newer version or same version with earlier timestamp
                     vector.version.unwrap_or(0) > existing.version.unwrap_or(0)
                         || (vector.version == existing.version
                             && vector.timestamp < existing.timestamp)
-                })
-                .unwrap_or(true);
+                });
 
             if should_keep {
                 latest_by_id.insert(vector.id.clone(), vector);

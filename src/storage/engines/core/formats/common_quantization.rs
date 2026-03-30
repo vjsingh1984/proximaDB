@@ -418,14 +418,12 @@ impl QuantizedVectorData {
         let binary_size = self
             .q_binary
             .as_ref()
-            .map(|v| v.iter().map(|vec| vec.len()).sum::<usize>())
-            .unwrap_or(0);
+            .map_or(0, |v| v.iter().map(|vec| vec.len()).sum::<usize>());
 
         let int8_size = self
             .q_int8
             .as_ref()
-            .map(|v| v.iter().map(|vec| vec.len()).sum::<usize>())
-            .unwrap_or(0);
+            .map_or(0, |v| v.iter().map(|vec| vec.len()).sum::<usize>());
 
         let pq_size = [&self.q_pq4, &self.q_pq8, &self.q_pq16, &self.q_pq32]
             .iter()

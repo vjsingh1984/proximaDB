@@ -171,8 +171,7 @@ fn sql_value_to_json(value: crate::proto::proximadb_v1::SqlValue) -> Option<serd
         Value::StringValue(s) => serde_json::Value::String(s),
         Value::Int64Value(i) => serde_json::Value::Number(i.into()),
         Value::NumberValue(f) => serde_json::Number::from_f64(f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
         Value::BoolValue(b) => serde_json::Value::Bool(b),
         Value::NullValue(_) => serde_json::Value::Null,
         Value::BytesValue(bytes) => {
@@ -249,7 +248,7 @@ impl QueryStrategy for VectorSearchStrategy {
 
         info!(
             collection = %collection_id,
-            results = result.metrics.as_ref().map(|m| m.results_returned).unwrap_or(0),
+            results = result.metrics.as_ref().map_or(0, |m| m.results_returned),
             time_ms = execution_time_ms,
             "Vector search completed"
         );

@@ -67,8 +67,7 @@ impl WriteAheadLogDiskManager {
         let wal_base_url = wal_base_url.as_ref().to_string();
         let encryption_enabled = encryption_layer
             .as_ref()
-            .map(|e| e.is_enabled())
-            .unwrap_or(false);
+            .is_some_and(|e| e.is_enabled());
 
         info!(
             "🎯 Creating WriteAheadLogDiskManager with base URL: {}, encryption: {}",
@@ -431,9 +430,9 @@ impl WriteAheadLogDiskManager {
     pub async fn delete_wal_file_url(&self, file_url: &str) -> Result<()> {
         debug!("🗑️ Deleting WAL file at URL: {}", file_url);
 
-        let filesystem = self.filesystem_factory.get_filesystem(&file_url)?;
+        let filesystem = self.filesystem_factory.get_filesystem(file_url)?;
         filesystem
-            .delete(&file_url)
+            .delete(file_url)
             .await
             .context("Failed to delete WAL file")?;
 

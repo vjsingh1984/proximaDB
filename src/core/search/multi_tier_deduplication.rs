@@ -219,9 +219,7 @@ impl MultiTierDeduplicator {
                                 ) => serde_json::Value::String(s.clone()),
                                 Some(
                                     crate::proto::proximadb_v1::sql_value::Value::NumberValue(n),
-                                ) => serde_json::Number::from_f64(*n)
-                                    .map(serde_json::Value::Number)
-                                    .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
+                                ) => serde_json::Number::from_f64(*n).map_or_else(|| serde_json::Value::String(n.to_string()), serde_json::Value::Number),
                                 Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
                                     b,
                                 )) => serde_json::Value::Bool(*b),

@@ -36,8 +36,7 @@ impl PromptBuilder {
         // Fallback templates if files don't exist
         if templates
             .get(&PromptTemplate::SecureTranslation)
-            .map(|t| t.is_empty())
-            .unwrap_or(true)
+            .map_or(true, |t| t.is_empty())
         {
             templates.insert(
                 PromptTemplate::SecureTranslation,

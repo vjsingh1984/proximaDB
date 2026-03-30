@@ -1177,8 +1177,7 @@ impl GlobalPartitionedMemtable {
         let collections = self.collections.read().await;
         collections
             .get(collection_id)
-            .map(|partition| (partition.vector_count, partition.total_size))
-            .unwrap_or((0, 0))
+            .map_or((0, 0), |partition| (partition.vector_count, partition.total_size))
     }
 
     /// List all collection IDs

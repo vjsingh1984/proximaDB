@@ -321,7 +321,7 @@ impl BackupCoordinator {
 
         // Get parent backup for incremental/differential
         let parent_backup = self.get_parent_backup(&actual_backup_type).await?;
-        let start_lsn = parent_backup.as_ref().map(|p| p.end_lsn + 1).unwrap_or(0);
+        let start_lsn = parent_backup.as_ref().map_or(0, |p| p.end_lsn + 1);
         let current_lsn = self.manifest_service.current_lsn().await;
 
         // Initialize backup metadata
@@ -339,8 +339,7 @@ impl BackupCoordinator {
             parent_backup_id: parent_backup.as_ref().map(|p| p.backup_id.clone()),
             chain_depth: parent_backup
                 .as_ref()
-                .map(|p| p.chain_depth + 1)
-                .unwrap_or(0),
+                .map_or(0, |p| p.chain_depth + 1),
             collections: HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -826,8 +825,7 @@ impl BackupCoordinator {
                                     if existing.is_none() || {
                                         let existing_meta = existing.and_then(|id| backups.get(id));
                                         existing_meta
-                                            .map(|m| metadata.started_at > m.started_at)
-                                            .unwrap_or(true)
+                                            .map_or(true, |m| metadata.started_at > m.started_at)
                                     } {
                                         last_backup.insert(
                                             metadata.backup_type,

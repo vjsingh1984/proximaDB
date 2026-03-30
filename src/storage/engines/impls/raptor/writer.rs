@@ -564,7 +564,7 @@ impl IvfClusteringBuilder {
         tracing::info!(
             "✅ Centroid distance matrix built: {}×{} (enables O(1) inter-centroid lookups)",
             centroid_distances.len(),
-            centroid_distances.get(0).map(|row| row.len()).unwrap_or(0)
+            centroid_distances.get(0).map_or(0, |row| row.len())
         );
 
         // Step 5: Phase 3 - Apply sophisticated 5-component boosting using AXIS infrastructure
@@ -1674,7 +1674,7 @@ impl IvfClusteringBuilder {
             "Vector {} not found in storage, returning zero vector",
             vector_id
         );
-        vec![0.0; self.centroids.get(0).map(|c| c.vector.len()).unwrap_or(768)]
+        vec![0.0; self.centroids.get(0).map_or(768, |c| c.vector.len())]
     }
 }
 
@@ -2703,11 +2703,11 @@ impl RaptorWriter {
                 .ok_or_else(|| anyhow::anyhow!("Failed to quantize vector"))?;
 
             // Get the primary quantized data (INT8)
-            let int8_data = quantized.primary.map(|q| q.data).unwrap_or_else(Vec::new);
+            let int8_data = quantized.primary.map_or_else(Vec::new, |q| q.data);
 
             // Get binary sketch for progressive search (1-bit per dimension)
             // Fall back to computing it directly if not available from quantization engine
-            let binary_data = quantized.filter.map(|q| q.data).unwrap_or_else(|| {
+            let binary_data = quantized.filter.map_or_else(|| {
                 // Compute binary sketch: 1 bit per dimension (sign-based)
                 let dim = vector.vector.len();
                 let mut binary = vec![0u8; (dim + 7) / 8];
@@ -2717,7 +2717,7 @@ impl RaptorWriter {
                     }
                 }
                 binary
-            });
+            }, |q| q.data);
 
             (int8_data, binary_data)
         };
@@ -2801,8 +2801,7 @@ impl RaptorWriter {
         let offset_in_page = self
             .current_row_page
             .as_ref()
-            .map(|p| p.rows.len() as u16)
-            .unwrap_or(0);
+            .map_or(0, |p| p.rows.len() as u16);
 
         let location = RowLocation {
             row_group_id: self.row_groups.len() as u32,
@@ -3984,8 +3983,7 @@ impl RaptorWriter {
     fn should_start_new_rowgroup(&self) -> bool {
         self.row_groups
             .last()
-            .map(|rg| rg.vector_count >= self.config.rowgroup_size)
-            .unwrap_or(true)
+            .map_or(true, |rg| rg.vector_count >= self.config.rowgroup_size)
     }
 
     async fn compress_rowgroup(&self, batch: &RecordBatch) -> Result<Vec<u8>> {
@@ -4211,8 +4209,7 @@ impl RaptorWriter {
             cluster_counts
                 .iter()
                 .max_by_key(|&(_, count)| count)
-                .map(|(&id, _)| id)
-                .unwrap_or(0)
+                .map_or(0, |(&id, _)| id)
         } else {
             0
         };
@@ -4226,7 +4223,7 @@ impl RaptorWriter {
 
         // Compute centroid statistics before modifying row group
         let centroid_stats = if let Some(ref c) = centroid {
-            let rg_id = self.row_groups.last().map(|rg| rg.id).unwrap_or(0);
+            let rg_id = self.row_groups.last().map_or(0, |rg| rg.id);
             Some(self.compute_centroid_stats(
                 &self.ivf_builder.vectors,
                 c,
@@ -4606,8 +4603,7 @@ impl RaptorWriter {
                     lookup_table: Vec::new(),
                 }
             }),
-            vector_centroid_matrices: vector_centroid_matrices
-                .map(|matrices| {
+            vector_centroid_matrices: vector_centroid_matrices.map_or_else(Vec::new, |matrices| {
                     matrices
                         .into_iter()
                         .map(|m| VectorCentroidMatrixRef {
@@ -4621,8 +4617,7 @@ impl RaptorWriter {
                             encoding_metadata: m.compression_metadata,
                         })
                         .collect()
-                })
-                .unwrap_or_else(Vec::new),
+                }),
             total_centroids: columnar_centroids.count, // K centroids = K rowgroups
             version: 1,
             checksum: 0, // TODO: Compute actual checksum
@@ -4662,7 +4657,7 @@ impl RaptorWriter {
 
         // Write magic number (last 4 bytes)
         self.filesystem
-            .append(&self.file_path, &constants::RAPTOR_MAGIC)
+            .append(&self.file_path, constants::RAPTOR_MAGIC)
             .await?;
 
         // CRITICAL: Sync file to ensure footer is written to disk before engine closes

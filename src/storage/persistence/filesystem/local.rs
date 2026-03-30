@@ -478,7 +478,7 @@ impl FileSystem for LocalFileSystem {
         let options = options.clone();
 
         // Create parent directories if requested
-        if options.as_ref().map(|o| o.create_dirs).unwrap_or(false)
+        if options.as_ref().is_some_and(|o| o.create_dirs)
             && let Some(parent) = resolved_path.parent() {
                 fs::create_dir_all(parent)
                     .await
@@ -486,7 +486,7 @@ impl FileSystem for LocalFileSystem {
             }
 
         // Check if file exists and handle overwrite option
-        if !options.as_ref().map(|o| o.overwrite).unwrap_or(true) && resolved_path.exists() {
+        if !options.as_ref().map_or(true, |o| o.overwrite) && resolved_path.exists() {
             return Err(FilesystemError::AlreadyExists(
                 resolved_path.display().to_string(),
             ));
@@ -701,7 +701,7 @@ impl FileSystem for LocalFileSystem {
                 let current_pos = file
                     .stream_position()
                     .await
-                    .map_err(|e| FilesystemError::Io(e))?;
+                    .map_err(FilesystemError::Io)?;
                 tracing::error!(
                     "LocalFS read_exact failed: path={}, offset={}, bytes_to_read={}, current_pos={}, file_size={}, error={:?}",
                     path,
@@ -771,9 +771,7 @@ impl FileSystem for LocalFileSystem {
                 // For relative URLs, preserve the relative nature
                 if let Some(root_dir) = &self.config.root_dir {
                     let relative_from_root = entry_path
-                        .strip_prefix(root_dir)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| entry_path.display().to_string());
+                        .strip_prefix(root_dir).map_or_else(|_| entry_path.display().to_string(), |p| p.to_string_lossy().to_string());
                     format!("file://./{}", relative_from_root)
                 } else {
                     // No root_dir, but path is relative - preserve relative nature

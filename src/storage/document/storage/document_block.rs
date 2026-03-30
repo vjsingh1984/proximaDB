@@ -99,16 +99,12 @@ impl DocumentBlock {
                         stats.min_value = Some(
                             stats
                                 .min_value
-                                .take()
-                                .map(|min| Self::min_value(&min, &value))
-                                .unwrap_or_else(|| value.clone()),
+                                .take().map_or_else(|| value.clone(), |min| Self::min_value(&min, &value)),
                         );
                         stats.max_value = Some(
                             stats
                                 .max_value
-                                .take()
-                                .map(|max| Self::max_value(&max, &value))
-                                .unwrap_or_else(|| value.clone()),
+                                .take().map_or_else(|| value.clone(), |max| Self::max_value(&max, &value)),
                         );
                     }
                 }

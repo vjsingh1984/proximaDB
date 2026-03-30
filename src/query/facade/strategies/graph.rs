@@ -204,8 +204,7 @@ impl GraphStrategy {
             Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
             Some(Value::IntValue(i)) => serde_json::json!(*i),
             Some(Value::DoubleValue(f)) => serde_json::Number::from_f64(*f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null),
+                .map_or(serde_json::Value::Null, serde_json::Value::Number),
             Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
             Some(Value::BytesValue(bytes)) => {
                 use base64::Engine;

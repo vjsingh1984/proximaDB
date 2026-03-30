@@ -463,9 +463,7 @@ impl ComputeScheduler {
         bail!(
             "Plan execution failed after {} attempts: {}",
             attempts,
-            last_error
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "unknown error".to_string())
+            last_error.map_or_else(|| "unknown error".to_string(), |e| e.to_string())
         )
     }
 

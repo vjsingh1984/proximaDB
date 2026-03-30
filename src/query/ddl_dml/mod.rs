@@ -493,9 +493,7 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
             // CreateIndex.name (not index_name) is the index name
             let index_name = create_index
                 .name
-                .as_ref()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "unnamed_index".to_string());
+                .as_ref().map_or_else(|| "unnamed_index".to_string(), |n| n.to_string());
 
             // table_name is the table the index is on
             let table_name = create_index.table_name.to_string();

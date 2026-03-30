@@ -77,9 +77,7 @@ impl ConfigReloader {
 
         // Get initial file modification time
         let last_modified = tokio::fs::metadata(&config_path)
-            .await
-            .map(|m| m.modified().unwrap_or(SystemTime::now()))
-            .unwrap_or_else(|_| SystemTime::now());
+            .await.map_or_else(|_| SystemTime::now(), |m| m.modified().unwrap_or(SystemTime::now()));
 
         Ok(Self {
             config: Arc::new(RwLock::new(initial_config)),

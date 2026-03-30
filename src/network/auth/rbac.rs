@@ -76,9 +76,7 @@ impl RbacService {
             .try_read()
             .map_err(|_| AuthError::InvalidCredentials)?;
         let roles = user_roles
-            .get(user_id)
-            .map(|roles| roles.iter().cloned().collect())
-            .unwrap_or_else(|| vec![self.config.default_role.clone()]);
+            .get(user_id).map_or_else(|| vec![self.config.default_role.clone()], |roles| roles.iter().cloned().collect());
         Ok(roles)
     }
 

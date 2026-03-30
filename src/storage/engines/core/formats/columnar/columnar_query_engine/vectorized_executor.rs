@@ -66,8 +66,7 @@ impl DataChunk {
         self.active_count = self
             .selection
             .as_ref()
-            .map(|s| s.true_count())
-            .unwrap_or(self.batch.num_rows());
+            .map_or(self.batch.num_rows(), |s| s.true_count());
     }
 
     /// Materialize only selected rows (late materialization)

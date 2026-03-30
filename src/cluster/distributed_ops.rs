@@ -979,8 +979,7 @@ impl DistributedCollectionOps {
             .filter(|s| {
                 s.metadata_bounds
                     .as_ref()
-                    .map(|b| b.tenant_ids.contains(tenant_id))
-                    .unwrap_or(false)
+                    .is_some_and(|b| b.tenant_ids.contains(tenant_id))
             })
             .collect();
 
@@ -1012,8 +1011,7 @@ impl DistributedCollectionOps {
             .filter(|s| {
                 s.metadata_bounds
                     .as_ref()
-                    .map(|b| b.domain_ids.contains(domain_id))
-                    .unwrap_or(false)
+                    .is_some_and(|b| b.domain_ids.contains(domain_id))
             })
             .collect();
 
@@ -1069,7 +1067,7 @@ impl DistributedCollectionOps {
             1
         } else {
             // Forward write to remote primary via RPC
-            self.forward_write_to_node(shard, &primary_node, records, consistency)
+            self.forward_write_to_node(shard, primary_node, records, consistency)
                 .await?
         };
 
@@ -1094,7 +1092,7 @@ impl DistributedCollectionOps {
                     replica_node, shard.id
                 );
                 match self
-                    .forward_write_to_node(shard, &replica_node, records, ConsistencyLevel::One)
+                    .forward_write_to_node(shard, replica_node, records, ConsistencyLevel::One)
                     .await
                 {
                     Ok(replica_acks) => {

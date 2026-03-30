@@ -249,8 +249,7 @@ impl WalSubscriber {
                 self.position_tracker
                     .load(&self.subscription_id)
                     .await?
-                    .map(|p| p.lsn)
-                    .unwrap_or(0)
+                    .map_or(0, |p| p.lsn)
             }
         };
 

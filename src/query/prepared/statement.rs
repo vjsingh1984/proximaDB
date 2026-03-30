@@ -468,7 +468,7 @@ impl PreparedStatementCache {
 
         info!(
             statement_id = %id,
-            parameter_count = self.cache.get(&id).map(|s| s.statement.parameter_count()).unwrap_or(0),
+            parameter_count = self.cache.get(&id).map_or(0, |s| s.statement.parameter_count()),
             "Prepared statement cached"
         );
 

@@ -40,9 +40,7 @@ impl CollectionIndexEntry {
     pub fn new(record: Collection) -> Self {
         let name_key = record
             .config
-            .as_ref()
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "unnamed".to_string());
+            .as_ref().map_or_else(|| "unnamed".to_string(), |c| c.name.clone());
         let uuid_key = record.id.clone();
 
         Self {
@@ -56,9 +54,7 @@ impl CollectionIndexEntry {
     pub fn update_record(&mut self, new_record: Collection) {
         self.name_key = new_record
             .config
-            .as_ref()
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "unnamed".to_string());
+            .as_ref().map_or_else(|| "unnamed".to_string(), |c| c.name.clone());
         self.uuid_key = new_record.id.clone();
         self.record = Arc::new(new_record);
     }
@@ -120,9 +116,7 @@ impl SingleCollectionIndex {
         let uuid = record.id.clone();
         let name = record
             .config
-            .as_ref()
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "unnamed".to_string());
+            .as_ref().map_or_else(|| "unnamed".to_string(), |c| c.name.clone());
 
         // Check if this is an update (collection exists)
         let old_name = self.entries.get(&uuid).map(|e| e.name_key.clone());
@@ -272,9 +266,7 @@ impl SingleCollectionIndex {
             let uuid = record.id.clone();
             let name = record
                 .config
-                .as_ref()
-                .map(|c| c.name.clone())
-                .unwrap_or_else(|| "unnamed".to_string());
+                .as_ref().map_or_else(|| "unnamed".to_string(), |c| c.name.clone());
 
             // Insert into primary index
             let entry = CollectionIndexEntry::new(record);

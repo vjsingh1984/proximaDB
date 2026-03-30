@@ -959,8 +959,7 @@ fn filter_superblocks_by_adacurve(
         .map(|(idx, sb)| {
             let code = sb
                 .adacurve_code
-                .map(SpatialCode::Code64)
-                .unwrap_or(SpatialCode::Code64(0));
+                .map_or(SpatialCode::Code64(0), SpatialCode::Code64);
             // Use FP16 centroid if available
             let centroid = if let Some(ref fp16) = sb.centroid_fp16 {
                 crate::storage::engines::impls::sst::fp16_to_fp32(fp16)

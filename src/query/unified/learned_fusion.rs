@@ -921,15 +921,13 @@ impl LearnedFusion {
                 VectorDBError::Internal(format!("Lock poisoning in training_buffer: {}", e))
             })
             .ok()
-            .map(|b| b.len())
-            // TD-007: unwrap_or with safe default - 0 if model not yet trained
-            .unwrap_or(0)
+            .map_or(0, |b| b.len())
     }
 
     /// Check if model is trained
     pub fn is_trained(&self) -> bool {
         // TD-007: unwrap_or with safe default - false if lock poisoned or not trained
-        self.is_trained.read().ok().map(|t| *t).unwrap_or(false)
+        self.is_trained.read().ok().is_some_and(|t| *t)
     }
 
     /// Fallback RRF scoring when model not trained

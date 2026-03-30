@@ -286,7 +286,7 @@ impl SchemaMapper {
             FieldTransform::ToBool => {
                 let b = match value {
                     serde_json::Value::Bool(b) => *b,
-                    serde_json::Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+                    serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
                     serde_json::Value::String(s) => {
                         matches!(s.to_lowercase().as_str(), "true" | "1" | "yes")
                     }

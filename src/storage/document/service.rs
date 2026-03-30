@@ -702,9 +702,7 @@ impl DocumentService {
         };
 
         // Generate ID if not provided
-        let doc_id = id
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let doc_id = id.map_or_else(|| uuid::Uuid::new_v4().to_string(), |s| s.to_string());
 
         // Create document record
         let record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
@@ -1311,8 +1309,7 @@ impl DocumentService {
             let documents = self.documents.read().await;
             documents
                 .get(collection)
-                .map(|docs| docs.contains_key(id))
-                .unwrap_or(false)
+                .is_some_and(|docs| docs.contains_key(id))
         };
 
         if !exists {

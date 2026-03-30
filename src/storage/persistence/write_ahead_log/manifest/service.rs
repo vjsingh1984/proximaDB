@@ -656,7 +656,7 @@ impl GlobalManifestService {
         // Get the latest checkpoint ID
         let checkpoint_id = {
             let latest = self.latest_checkpoint.read().await;
-            latest.as_ref().map(|c| c.checkpoint_id + 1).unwrap_or(1)
+            latest.as_ref().map_or(1, |c| c.checkpoint_id + 1)
         };
 
         // Find the highest flushed LSN

@@ -366,8 +366,7 @@ impl TypeCoercion {
         }
 
         Self::common_type(from, to)
-            .map(|t| &t == to)
-            .unwrap_or(false)
+            .is_some_and(|t| &t == to)
     }
 
     /// Get cast expression for SQL.

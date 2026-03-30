@@ -363,7 +363,7 @@ impl MetricStorage {
             // Check label filters
             let matches = label_filters
                 .iter()
-                .all(|(k, v)| s.labels.get(k).map(|sv| sv == v).unwrap_or(false));
+                .all(|(k, v)| s.labels.get(k).is_some_and(|sv| sv == v));
 
             if !matches {
                 continue;
@@ -590,7 +590,7 @@ impl MetricStorage {
             // Check label filters
             let matches = label_filters
                 .iter()
-                .all(|(k, v)| s.labels.get(k).map(|sv| sv == v).unwrap_or(false));
+                .all(|(k, v)| s.labels.get(k).is_some_and(|sv| sv == v));
 
             if !matches {
                 continue;
@@ -1025,8 +1025,8 @@ impl QueryAutoResult {
     /// Get the number of data points returned
     #[must_use]
     pub fn point_count(&self) -> usize {
-        self.raw_samples.as_ref().map(|s| s.len()).unwrap_or(0)
-            + self.aggregated.as_ref().map(|a| a.len()).unwrap_or(0)
+        self.raw_samples.as_ref().map_or(0, |s| s.len())
+            + self.aggregated.as_ref().map_or(0, |a| a.len())
     }
 
     /// Check if result is empty

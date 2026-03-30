@@ -135,16 +135,16 @@ impl Downsampler {
 
             // Aggregate each bucket into OHLC
             for (bucket_ts, bucket_bars) in buckets {
-                let open = bucket_bars.first().map(|b| b.open).unwrap_or(0.0);
+                let open = bucket_bars.first().map_or(0.0, |b| b.open);
                 let high = bucket_bars.iter().map(|b| b.high).fold(f64::NAN, f64::max);
                 let low = bucket_bars.iter().map(|b| b.low).fold(f64::NAN, f64::min);
-                let close = bucket_bars.last().map(|b| b.close).unwrap_or(0.0);
+                let close = bucket_bars.last().map_or(0.0, |b| b.close);
                 let volume = bucket_bars.iter().map(|b| b.volume).sum();
 
                 let dt = Utc
                     .timestamp_opt(bucket_ts, 0)
                     .single()
-                    .unwrap_or_else(|| Utc::now());
+                    .unwrap_or_else(Utc::now);
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -190,7 +190,7 @@ impl Downsampler {
                 let dt = Utc
                     .timestamp_opt(bucket_ts, 0)
                     .single()
-                    .unwrap_or_else(|| Utc::now());
+                    .unwrap_or_else(Utc::now);
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -233,7 +233,7 @@ impl Downsampler {
                 let dt = Utc
                     .timestamp_opt(bucket_ts, 0)
                     .single()
-                    .unwrap_or_else(|| Utc::now());
+                    .unwrap_or_else(Utc::now);
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -283,7 +283,7 @@ impl Downsampler {
                 let dt = Utc
                     .timestamp_opt(bucket_ts, 0)
                     .single()
-                    .unwrap_or_else(|| Utc::now());
+                    .unwrap_or_else(Utc::now);
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -320,14 +320,14 @@ impl Downsampler {
 
         for (symbol, buckets) in by_symbol {
             for (bucket_ts, bucket_bars) in buckets {
-                let first = bucket_bars.first().map(|b| b.close).unwrap_or(0.0);
-                let last = bucket_bars.last().map(|b| b.close).unwrap_or(0.0);
+                let first = bucket_bars.first().map_or(0.0, |b| b.close);
+                let last = bucket_bars.last().map_or(0.0, |b| b.close);
                 let volume = bucket_bars.iter().map(|b| b.volume).sum();
 
                 let dt = Utc
                     .timestamp_opt(bucket_ts, 0)
                     .single()
-                    .unwrap_or_else(|| Utc::now());
+                    .unwrap_or_else(Utc::now);
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -366,7 +366,7 @@ impl Downsampler {
                 let dt = Utc
                     .timestamp_opt(bucket_ts, 0)
                     .single()
-                    .unwrap_or_else(|| Utc::now());
+                    .unwrap_or_else(Utc::now);
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),

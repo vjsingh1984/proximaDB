@@ -232,8 +232,7 @@ impl AccessPatternTracker {
                 correlated.sort_by_key(|k| {
                     self.access_history
                         .get(k)
-                        .map(|e| std::cmp::Reverse(e.total_accesses))
-                        .unwrap_or(std::cmp::Reverse(0))
+                        .map_or(std::cmp::Reverse(0), |e| std::cmp::Reverse(e.total_accesses))
                 });
 
                 // Return top 5 correlated files

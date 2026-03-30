@@ -155,7 +155,7 @@ impl AWSIAMIntegration {
             organization_id: token_data.account_id.clone(),
             roles: proximadb_roles,
             permissions: HashSet::new(), // Will be populated based on roles
-            security_clearance: self.determine_security_clearance(&token_data).await?,
+            security_clearance: self.determine_security_clearance(token_data).await?,
             department: None,
             cost_center: None,
             session_id: uuid::Uuid::new_v4().to_string(),
@@ -334,8 +334,7 @@ impl AWSIAMIntegration {
                 || aws_user
                     .assumed_role_arn
                     .as_ref()
-                    .map(|arn| arn.contains(&mapping.aws_role_arn))
-                    .unwrap_or(false)
+                    .is_some_and(|arn| arn.contains(&mapping.aws_role_arn))
         });
 
         let (proximadb_role, tenant_id) = if let Some(mapping) = role_mapping {

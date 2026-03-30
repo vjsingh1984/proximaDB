@@ -642,8 +642,7 @@ impl CommonColumnarOperations {
         let serialization_time = start_time.elapsed().as_secs_f64() * 1000.0;
         let bytes_processed = records
             .first()
-            .map(|r| records.len() * r.vector.len() * 4)
-            .unwrap_or(0);
+            .map_or(0, |r| records.len() * r.vector.len() * 4);
 
         // Update metrics
         self.performance_monitor

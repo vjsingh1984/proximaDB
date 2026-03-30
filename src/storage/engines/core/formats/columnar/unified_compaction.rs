@@ -560,23 +560,21 @@ impl UnifiedColumnarCompaction {
 
                 let id = id_array.value(row_idx);
                 let version = version_array
-                    .map(|v| {
+                    .map_or(0, |v| {
                         if v.is_valid(row_idx) {
                             v.value(row_idx)
                         } else {
                             0
                         }
-                    })
-                    .unwrap_or(0);
+                    });
                 let timestamp = timestamp_array
-                    .map(|t| {
+                    .map_or(0, |t| {
                         if t.is_valid(row_idx) {
                             t.value(row_idx)
                         } else {
                             0
                         }
-                    })
-                    .unwrap_or(0);
+                    });
 
                 // Check version continuity
                 if !self.check_version_continuity(id, version, &latest_records) {

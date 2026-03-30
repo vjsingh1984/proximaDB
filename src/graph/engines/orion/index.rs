@@ -152,9 +152,7 @@ impl PropertyIndex {
 
         Ok(self
             .btree_index
-            .get(&value_str)
-            .map(|ids| ids.iter().cloned().collect())
-            .unwrap_or_else(Vec::new))
+            .get(&value_str).map_or_else(Vec::new, |ids| ids.iter().cloned().collect()))
     }
 
     /// Query the index for range queries (for comparable types)
@@ -260,9 +258,7 @@ impl LabelIndex {
     pub fn query_by_label(&self, label: &str) -> Result<Vec<NodeId>> {
         Ok(self
             .label_to_nodes
-            .get(label)
-            .map(|nodes| nodes.iter().cloned().collect())
-            .unwrap_or_else(Vec::new))
+            .get(label).map_or_else(Vec::new, |nodes| nodes.iter().cloned().collect()))
     }
 
     /// Query nodes having all specified labels (AND operation)
@@ -371,9 +367,7 @@ impl EdgeTypeIndex {
     pub fn query_by_type(&self, edge_type: &str) -> Result<Vec<EdgeId>> {
         Ok(self
             .type_to_edges
-            .get(edge_type)
-            .map(|edges| edges.iter().cloned().collect())
-            .unwrap_or_else(Vec::new))
+            .get(edge_type).map_or_else(Vec::new, |edges| edges.iter().cloned().collect()))
     }
 
     /// Update statistics

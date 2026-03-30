@@ -315,8 +315,7 @@ impl AxisEventLogConsumer {
         let has_indexes = collection
             .config
             .as_ref()
-            .map(|c| !c.index_configs.is_empty())
-            .unwrap_or(false);
+            .is_some_and(|c| !c.index_configs.is_empty());
 
         if !has_indexes {
             // No indexes configured - mark event as completed without processing
@@ -478,8 +477,7 @@ impl AxisEventLogConsumer {
         let has_indexes = collection
             .config
             .as_ref()
-            .map(|c| !c.index_configs.is_empty())
-            .unwrap_or(false);
+            .is_some_and(|c| !c.index_configs.is_empty());
 
         if !has_indexes {
             // No indexes configured - mark event as completed without processing
@@ -611,9 +609,7 @@ impl AxisEventLogConsumer {
         let index_algorithm = collection
             .config
             .as_ref()
-            .and_then(|c| c.index_configs.first())
-            .map(|i| format!("Algorithm({})", i.algorithm))
-            .unwrap_or_else(|| "None".to_string());
+            .and_then(|c| c.index_configs.first()).map_or_else(|| "None".to_string(), |i| format!("Algorithm({})", i.algorithm));
 
         debug!(
             "[AXIS Consumer] Determining extraction mode for collection {}:\n  Quantization Enabled: {:?}\n  Index Algorithm: {}",

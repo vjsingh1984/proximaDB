@@ -60,15 +60,11 @@ impl super::GraphOperationsService {
         // Determine engine type and storage ROOT URL
         let engine_type_str = collection
             .engine_config
-            .as_ref()
-            .map(|cfg| cfg.engine_type.clone())
-            .unwrap_or_else(|| "ORION".to_string());
+            .as_ref().map_or_else(|| "ORION".to_string(), |cfg| cfg.engine_type.clone());
 
         let storage_root_url = collection
             .storage_config
-            .as_ref()
-            .map(|cfg| cfg.base_url.clone())
-            .unwrap_or_else(|| self.base_storage_url.clone());
+            .as_ref().map_or_else(|| self.base_storage_url.clone(), |cfg| cfg.base_url.clone());
 
         tracing::info!(
             "Creating new graph engine for '{}' type={} storage_root={}",

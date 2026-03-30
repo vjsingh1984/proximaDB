@@ -559,9 +559,7 @@ impl ColumnarReadProvider for ParquetRangePrunedProvider {
 
     fn get_stats(&self) -> ColumnarAccessStats {
         self.stats
-            .read()
-            .map(|stats| stats.clone())
-            .unwrap_or_else(|_| ColumnarAccessStats::default())
+            .read().map_or_else(|_| ColumnarAccessStats::default(), |stats| stats.clone())
     }
 
     fn reset_stats(&mut self) {

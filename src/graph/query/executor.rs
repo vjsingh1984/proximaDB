@@ -509,16 +509,14 @@ impl QueryExecutor {
                 let above_start = match start_key {
                     Some(sk) => {
                         self.json_cmp(&val, sk)
-                            .map(|o| o != std::cmp::Ordering::Less)
-                            .unwrap_or(false)
+                            .is_some_and(|o| o != std::cmp::Ordering::Less)
                     }
                     None => true,
                 };
                 let below_end = match end_key {
                     Some(ek) => {
                         self.json_cmp(&val, ek)
-                            .map(|o| o != std::cmp::Ordering::Greater)
-                            .unwrap_or(false)
+                            .is_some_and(|o| o != std::cmp::Ordering::Greater)
                     }
                     None => true,
                 };

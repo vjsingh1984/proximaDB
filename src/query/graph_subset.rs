@@ -266,9 +266,9 @@ pub(crate) async fn execute_supported_graph_query(
 
     let projected_rows = bindings
         .into_iter()
-        .map(|binding| project_row(&binding, &compiled))
+        .map(|binding| project_row(&binding, compiled))
         .collect::<Result<Vec<_>>>()?;
-    let rows = apply_row_modifiers(projected_rows, &compiled)?;
+    let rows = apply_row_modifiers(projected_rows, compiled)?;
 
     Ok(ExecutedGraphQuery {
         stats: GraphExecutionStats {
@@ -738,8 +738,7 @@ fn property_value_to_json(value: &PropertyValue) -> Value {
         Some(property_value::Value::StringValue(value)) => Value::String(value.clone()),
         Some(property_value::Value::IntValue(value)) => Value::Number((*value).into()),
         Some(property_value::Value::DoubleValue(value)) => serde_json::Number::from_f64(*value)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
+            .map_or(Value::Null, Value::Number),
         Some(property_value::Value::BoolValue(value)) => Value::Bool(*value),
         Some(property_value::Value::BytesValue(bytes)) => {
             use base64::Engine;
@@ -830,8 +829,7 @@ fn resolve_adjacent_node_id(
 
 fn binding_is_compatible(existing: Option<&BoundValue>, candidate: &BoundValue) -> bool {
     existing
-        .map(|current| current.identity() == candidate.identity())
-        .unwrap_or(true)
+        .map_or(true, |current| current.identity() == candidate.identity())
 }
 
 fn matches_where_clause(binding: &BindingRow, clause: &WhereClause) -> bool {
@@ -842,8 +840,7 @@ fn matches_where_clause(binding: &BindingRow, clause: &WhereClause) -> bool {
             constraint,
         } => binding
             .get(variable)
-            .map(|value| matches_constraint(&resolve_entity_property(value, property), constraint))
-            .unwrap_or(false),
+            .is_some_and(|value| matches_constraint(&resolve_entity_property(value, property), constraint)),
         WhereClause::And(left, right) => {
             matches_where_clause(binding, left) && matches_where_clause(binding, right)
         }
@@ -878,16 +875,13 @@ fn matches_constraint(actual: &Value, constraint: &PropertyConstraint) -> bool {
         PropertyConstraint::NotIn(values) => !values.contains(actual),
         PropertyConstraint::Contains(expected) => actual
             .as_str()
-            .map(|value| value.contains(expected))
-            .unwrap_or(false),
+            .is_some_and(|value| value.contains(expected)),
         PropertyConstraint::StartsWith(expected) => actual
             .as_str()
-            .map(|value| value.starts_with(expected))
-            .unwrap_or(false),
+            .is_some_and(|value| value.starts_with(expected)),
         PropertyConstraint::EndsWith(expected) => actual
             .as_str()
-            .map(|value| value.ends_with(expected))
-            .unwrap_or(false),
+            .is_some_and(|value| value.ends_with(expected)),
         PropertyConstraint::Regex(pattern) => actual
             .as_str()
             .and_then(|value| {
@@ -932,8 +926,7 @@ fn resolve_node_property(node: &Node, property: &str) -> Value {
         property => node
             .properties
             .get(property)
-            .map(property_value_to_json)
-            .unwrap_or(Value::Null),
+            .map_or(Value::Null, property_value_to_json),
     }
 }
 
@@ -946,13 +939,11 @@ fn resolve_edge_property(edge: &Edge, property: &str) -> Value {
         "weight" => edge
             .weight
             .and_then(serde_json::Number::from_f64)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
+            .map_or(Value::Null, Value::Number),
         property => edge
             .properties
             .get(property)
-            .map(property_value_to_json)
-            .unwrap_or(Value::Null),
+            .map_or(Value::Null, property_value_to_json),
     }
 }
 
@@ -1079,8 +1070,7 @@ fn edge_to_json(edge: &Edge) -> Value {
             "weight".to_string(),
             edge.weight
                 .and_then(serde_json::Number::from_f64)
-                .map(Value::Number)
-                .unwrap_or(Value::Null),
+                .map_or(Value::Null, Value::Number),
         ),
         (
             "properties".to_string(),

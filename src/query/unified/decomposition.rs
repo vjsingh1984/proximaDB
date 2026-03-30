@@ -159,9 +159,7 @@ impl QueryDecomposer {
             && let Some(caps) = vector_similar.captures(query) {
                 let _field = caps
                     .get(1)
-                    .map(|m| m.as_str().trim())
-                    // TD-007: unwrap_or with safe default - "embedding" is standard field name
-                    .unwrap_or("embedding");
+                    .map_or("embedding", |m| m.as_str().trim());
                 let threshold = caps.get(3).and_then(|m| m.as_str().parse::<f32>().ok());
 
                 // Extract collection from FROM clause
@@ -261,14 +259,10 @@ impl QueryDecomposer {
             && let Some(caps) = graph_traverse.captures(query) {
                 let graph_name = caps
                     .get(1)
-                    .map(|m| m.as_str().trim().to_string())
-                    // TD-007: unwrap_or with safe default - "default" graph for unspecified queries
-                    .unwrap_or("default".to_string());
+                    .map_or("default".to_string(), |m| m.as_str().trim().to_string());
                 let edge_type = caps
                     .get(2)
-                    .map(|m| m.as_str().to_string())
-                    // TD-007: unwrap_or with safe default - "*" matches all edge types
-                    .unwrap_or("*".to_string());
+                    .map_or("*".to_string(), |m| m.as_str().to_string());
                 let max_depth = caps
                     .get(3)
                     .and_then(|m| m.as_str().parse::<u32>().ok())
@@ -310,9 +304,7 @@ impl QueryDecomposer {
                 let graph_name = "default".to_string(); // Would need to infer from context
                 let edge_type = caps
                     .get(2)
-                    .map(|m| m.as_str().to_string())
-                    // TD-007: unwrap_or with safe default - "*" matches all edge types
-                    .unwrap_or("*".to_string());
+                    .map_or("*".to_string(), |m| m.as_str().to_string());
 
                 return Ok(Some(QueryComponent {
                     model: DataModel::Graph,
@@ -342,9 +334,7 @@ impl QueryDecomposer {
             && let Some(caps) = log_query.captures(query) {
                 let namespace = caps
                     .get(1)
-                    .map(|m| m.as_str().to_string())
-                    // TD-007: unwrap_or with safe default - "default" namespace for observability queries
-                    .unwrap_or("default".to_string());
+                    .map_or("default".to_string(), |m| m.as_str().to_string());
 
                 let now = current_time_nanos();
                 let hour_ago = now - 3_600_000_000_000; // 1 hour in nanoseconds
@@ -371,19 +361,13 @@ impl QueryDecomposer {
             && let Some(caps) = metric_query.captures(query) {
                 let namespace = caps
                     .get(1)
-                    .map(|m| m.as_str().to_string())
-                    // TD-007: unwrap_or with safe default - "default" namespace for metric queries
-                    .unwrap_or("default".to_string());
+                    .map_or("default".to_string(), |m| m.as_str().to_string());
                 let metric_name = caps
                     .get(2)
-                    .map(|m| m.as_str().to_string())
-                    // TD-007: unwrap_or with safe default - "*" matches all metrics
-                    .unwrap_or("*".to_string());
+                    .map_or("*".to_string(), |m| m.as_str().to_string());
                 let agg_type = caps
                     .get(3)
-                    .map(|m| m.as_str().to_uppercase())
-                    // TD-007: unwrap_or with safe default - "AVG" is standard aggregation
-                    .unwrap_or("AVG".to_string());
+                    .map_or("AVG".to_string(), |m| m.as_str().to_uppercase());
 
                 let now = current_time_nanos();
                 let hour_ago = now - 3_600_000_000_000;
@@ -450,13 +434,13 @@ impl QueryDecomposer {
 
         for caps in path_filter_pattern.captures_iter(query) {
             // TD-007: unwrap_or with safe default - empty path if not captured
-            let path = format!("$.{}", caps.get(1).map(|m| m.as_str()).unwrap_or(""));
+            let path = format!("$.{}", caps.get(1).map_or("", |m| m.as_str()));
             let op_str = caps
                 .get(2)
                 .map(|m| m.as_str().to_uppercase())
                 .unwrap_or_default();
             // TD-007: unwrap_or with safe default - empty value if not captured
-            let value_str = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+            let value_str = caps.get(3).map_or("", |m| m.as_str());
 
             let operator = match op_str.as_str() {
                 "=" => FilterOperator::Eq,
@@ -529,12 +513,11 @@ impl QueryDecomposer {
             Regex::new(r"(?i)ORDER\s+BY\s+\$\.(\w+(?:\.\w+)*)\s*(ASC|DESC)?").ok()?;
         order_pattern.captures(query).map(|caps| {
             // TD-007: unwrap_or with safe default - empty path if not captured
-            let path = format!("$.{}", caps.get(1).map(|m| m.as_str()).unwrap_or(""));
+            let path = format!("$.{}", caps.get(1).map_or("", |m| m.as_str()));
             let ascending = caps
                 .get(2)
                 // TD-007: unwrap_or with safe default - true means ascending order
-                .map(|m| m.as_str().to_uppercase() != "DESC")
-                .unwrap_or(true);
+                .map_or(true, |m| m.as_str().to_uppercase() != "DESC");
             DocumentSort { path, ascending }
         })
     }
@@ -559,8 +542,7 @@ impl QueryDecomposer {
             let ascending = caps
                 .get(2)
                 // TD-007: unwrap_or with safe default - true means ascending order
-                .map(|m| m.as_str().to_uppercase() != "DESC")
-                .unwrap_or(true);
+                .map_or(true, |m| m.as_str().to_uppercase() != "DESC");
             OrderBy { field, ascending }
         })
     }

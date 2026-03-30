@@ -413,8 +413,7 @@ impl TimeSeriesEngine {
         let partition_count_before = self
             .partitions
             .get(&partition_key)
-            .map(|p| p.record_count())
-            .unwrap_or(0);
+            .map_or(0, |p| p.record_count());
 
         // Get or create mutable partition and insert record
         {
@@ -429,8 +428,7 @@ impl TimeSeriesEngine {
         let partition_count_after = self
             .partitions
             .get(&partition_key)
-            .map(|p| p.record_count())
-            .unwrap_or(0);
+            .map_or(0, |p| p.record_count());
 
         if partition_count_after > partition_count_before && partition_count_after >= 1000 {
             // Check each downsampler to see if it should trigger
@@ -1436,7 +1434,7 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
 
         // For each partition, flush to disk
         for partition_key in &partitions_to_compact {
-            if let Some(partition) = self.partitions.get(&partition_key) {
+            if let Some(partition) = self.partitions.get(partition_key) {
                 let partition_path = self.partition_path("", *partition_key);
                 let partition_size = partition.size_bytes();
 

@@ -294,8 +294,7 @@ impl GlobalQuantizationCache {
                     * centroids
                         .get(0)
                         .and_then(|c| c.get(0))
-                        .map(|c| c.len())
-                        .unwrap_or(0)
+                        .map_or(0, |c| c.len())
                     * 4
             }
             CodebookData::Binary { thresholds } => {

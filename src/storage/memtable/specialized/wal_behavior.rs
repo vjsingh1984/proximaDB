@@ -417,7 +417,7 @@ impl WALBehaviorWrapper {
         // Store batch in Write Buffer-specific coordinator for backward compatibility and coordination
         tracing::debug!("🚀 WAL_BEHAVIOR: Updating batch_coordinator...");
         let mut coordinator = self.batch_coordinator.write().await;
-        coordinator.add_batch(&collection_id, batch.clone())?;
+        coordinator.add_batch(collection_id, batch.clone())?;
         drop(coordinator);
 
         // Update WAL metrics

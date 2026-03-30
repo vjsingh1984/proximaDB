@@ -349,14 +349,12 @@ impl ProgressiveSearchExecutor {
                 .metadata
                 .quantization_config
                 .as_ref()
-                .map(|qc| qc.int8_ranking_selectivity)
-                .unwrap_or(0.5), // Default selectivity
+                .map_or(0.5, |qc| qc.int8_ranking_selectivity), // Default selectivity
             SearchStage::PqRanking => ctx
                 .metadata
                 .quantization_config
                 .as_ref()
-                .map(|qc| qc.pq_ranking_selectivity)
-                .unwrap_or(0.2),
+                .map_or(0.2, |qc| qc.pq_ranking_selectivity),
             SearchStage::FullPrecision => 1.0,
         };
 

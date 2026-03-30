@@ -436,7 +436,7 @@ impl ParallelAlgorithm for FloydWarshallAPSP {
 
         // Account for overhead: 10% penalty for small graphs
         let csr_out = self.engine.csr_outgoing.read().ok();
-        let node_count = csr_out.map(|csr| csr.node_count()).unwrap_or(0);
+        let node_count = csr_out.map_or(0, |csr| csr.node_count());
         let overhead_penalty = if node_count < 100 { 0.9 } else { 1.0 };
 
         max_speedup * overhead_penalty

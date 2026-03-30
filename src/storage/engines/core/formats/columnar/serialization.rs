@@ -762,8 +762,7 @@ impl ColumnarSerializer {
             .config
             .quantization
             .as_ref()
-            .map(|q| q.pq_segments.unwrap_or(8) as usize)
-            .unwrap_or(16); // Default PQ segments
+            .map_or(16, |q| q.pq_segments.unwrap_or(8) as usize); // Default PQ segments
 
         let mut builder = FixedSizeBinaryBuilder::new(pq_size as i32);
 
@@ -799,9 +798,9 @@ impl ColumnarSerializer {
             let quantized_size = quantized_data
                 .iter()
                 .map(|d| {
-                    d.primary.as_ref().map(|p| p.data.len()).unwrap_or(0)
-                        + d.filter.as_ref().map(|f| f.data.len()).unwrap_or(0)
-                        + d.fast.as_ref().map(|f| f.data.len()).unwrap_or(0)
+                    d.primary.as_ref().map_or(0, |p| p.data.len())
+                        + d.filter.as_ref().map_or(0, |f| f.data.len())
+                        + d.fast.as_ref().map_or(0, |f| f.data.len())
                 })
                 .sum::<usize>();
 

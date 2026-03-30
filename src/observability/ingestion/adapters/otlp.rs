@@ -1167,11 +1167,7 @@ fn otlp_any_value_to_string(value: &OtlpAnyValue) -> Option<String> {
         Some(i.to_string())
     } else if let Some(f) = value.double_value {
         Some(f.to_string())
-    } else if let Some(b) = &value.bytes_value {
-        Some(b.clone())
-    } else {
-        None
-    }
+    } else { value.bytes_value.as_ref().map(|b| b.clone()) }
 }
 
 /// Extract data points from an OTLP metric as (timestamp_ns, value, labels) tuples

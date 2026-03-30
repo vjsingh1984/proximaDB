@@ -2872,9 +2872,7 @@ impl FederatedExecutor {
                 let field = batch_schema.field(*index);
                 let requested_name = output_columns
                     .get(position)
-                    .or_else(|| columns.get(position))
-                    .map(String::as_str)
-                    .unwrap_or_else(|| field.name());
+                    .or_else(|| columns.get(position)).map_or_else(|| field.name(), String::as_str);
 
                 if field.name() == requested_name {
                     field.as_ref().clone()
@@ -2956,9 +2954,7 @@ impl FederatedExecutor {
                 let field = batch_schema.field(*index);
                 // For dynamically added columns (beyond output_columns), use the field's own name
                 let requested_name = output_columns
-                    .get(position)
-                    .map(String::as_str)
-                    .unwrap_or_else(|| field.name());
+                    .get(position).map_or_else(|| field.name(), String::as_str);
 
                 if field.name() == requested_name {
                     field.as_ref().clone()

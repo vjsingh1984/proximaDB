@@ -56,8 +56,7 @@ impl RLPlannerIntegration {
                     .collection
                     .config
                     .as_ref()
-                    .map(|c| c.dimension)
-                    .unwrap_or(128),
+                    .map_or(128, |c| c.dimension),
             )
             .top_k(context.search_params.and_then(|p| p.top_k).unwrap_or(10) as u32)
             .collection_size(context.total_vectors as u64)

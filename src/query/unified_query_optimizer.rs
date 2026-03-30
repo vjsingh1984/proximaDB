@@ -1510,8 +1510,7 @@ impl UnifiedQueryOptimizer {
             .collection
             .stats
             .as_ref()
-            .map(|s| s.vector_count as usize)
-            .unwrap_or(context.total_vectors.max(10000));
+            .map_or(context.total_vectors.max(10000), |s| s.vector_count as usize);
 
         // Analyze filters and compute selectivity
         let (filters, combined_selectivity) = if let Some(filter_expr) = context.filter_params {
@@ -1540,8 +1539,7 @@ impl UnifiedQueryOptimizer {
                 .collection
                 .config
                 .as_ref()
-                .map(|c| c.dimension as usize)
-                .unwrap_or(128);
+                .map_or(128, |c| c.dimension as usize);
 
             // Base cost: O(n * d) for exhaustive search, reduced by quantization
             let base_search_cost = (dataset_size as f64 * dimension as f64) / 1_000_000.0;
@@ -1570,8 +1568,7 @@ impl UnifiedQueryOptimizer {
             .collection
             .config
             .as_ref()
-            .map(|c| c.dimension as usize)
-            .unwrap_or(128);
+            .map_or(128, |c| c.dimension as usize);
         let bytes_per_vector = dimension * 4; // FP32
         let estimated_memory_mb = (dataset_size * bytes_per_vector) as f64 / (1024.0 * 1024.0);
 

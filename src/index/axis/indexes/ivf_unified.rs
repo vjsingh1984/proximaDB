@@ -867,7 +867,7 @@ impl UnifiedIvfIndex {
             .collect();
 
         candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        candidates.first().map(|c| c.0).unwrap_or(0)
+        candidates.first().map_or(0, |c| c.0)
     }
 
     fn update_centroids_from_assignments(

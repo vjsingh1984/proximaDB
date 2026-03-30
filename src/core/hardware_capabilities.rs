@@ -1060,7 +1060,7 @@ impl HardwareCapabilities {
 
             // Check for ARM cache size indicators
             if line_lower.contains("cache") && line_lower.contains("size")
-                && let Some(size) = Self::parse_arm_cache_size(&line) {
+                && let Some(size) = Self::parse_arm_cache_size(line) {
                     // ARM cpuinfo often doesn't specify cache level clearly
                     // Use heuristics based on size ranges
                     if size <= 128 * 1024
@@ -1083,10 +1083,10 @@ impl HardwareCapabilities {
             // Check for specific ARM vendor cache info
             if line_lower.contains("apple") && line_lower.contains("cache") {
                 // Apple Silicon specific parsing
-                cache_sizes = Self::parse_apple_silicon_cache(&line, cache_sizes);
+                cache_sizes = Self::parse_apple_silicon_cache(line, cache_sizes);
             } else if line_lower.contains("qualcomm") || line_lower.contains("snapdragon") {
                 // Qualcomm Snapdragon specific parsing
-                cache_sizes = Self::parse_qualcomm_cache(&line, cache_sizes);
+                cache_sizes = Self::parse_qualcomm_cache(line, cache_sizes);
             }
         }
 
@@ -1601,22 +1601,18 @@ impl HardwareQuery {
     /// Check if AVX-512 is available
     pub fn has_avx512() -> bool {
         try_get_hardware_capabilities()
-            .map(|caps| caps.has_avx512())
-            .unwrap_or(false)
+            .is_some_and(|caps| caps.has_avx512())
     }
 
     /// Check if GPU acceleration is available
     pub fn has_gpu() -> bool {
         try_get_hardware_capabilities()
-            .map(|caps| caps.has_gpu())
-            .unwrap_or(false)
+            .is_some_and(|caps| caps.has_gpu())
     }
 
     /// Get the number of CPU cores
     pub fn cpu_cores() -> usize {
-        try_get_hardware_capabilities()
-            .map(|caps| caps.cpu.logical_cores)
-            .unwrap_or_else(num_cpus::get)
+        try_get_hardware_capabilities().map_or_else(num_cpus::get, |caps| caps.cpu.logical_cores)
     }
 
     /// Get recommended thread pool size
@@ -1629,8 +1625,7 @@ impl HardwareQuery {
     /// Get recommended cache size
     pub fn recommended_cache_size() -> u64 {
         try_get_hardware_capabilities()
-            .map(|caps| caps.memory.recommended_cache_size)
-            .unwrap_or(1024 * 1024 * 1024) // 1GB default
+            .map_or(1024 * 1024 * 1024, |caps| caps.memory.recommended_cache_size) // 1GB default
     }
 
     /// Get L3 cache size for optimal row group sizing

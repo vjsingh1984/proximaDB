@@ -107,14 +107,12 @@ pub trait StorageMetrics: StorageIdentity + Send + Sync {
         let warnings = stats
             .engine_specific
             .get("warnings")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
+            .and_then(|v| v.as_array()).map_or_else(Vec::new, |arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str())
                     .map(|s| s.to_string())
                     .collect()
-            })
-            .unwrap_or_else(Vec::new);
+            });
 
         Ok(EngineHealth {
             healthy,

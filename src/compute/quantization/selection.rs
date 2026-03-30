@@ -136,8 +136,7 @@ impl QuantizationSelector {
         let dimension = params
             .vector_records
             .first()
-            .map(|record| record.vector.len())
-            .unwrap_or(0);
+            .map_or(0, |record| record.vector.len());
 
         // Recommendations based on data characteristics
         match (vector_count, dimension) {

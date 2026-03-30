@@ -430,8 +430,7 @@ impl MaterializedView {
     pub fn row_count(&self) -> usize {
         self.cached_result
             .as_ref()
-            .map(|r| r.row_count())
-            .unwrap_or(0)
+            .map_or(0, |r| r.row_count())
     }
 
     /// Convert to catalog object for persistence

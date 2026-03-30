@@ -87,7 +87,7 @@ impl SstEngine {
         }
 
         // Extract storage URL from parameters
-        let collection_storage_url = Self::get_collection_storage_url_from_params(&params)?;
+        let collection_storage_url = Self::get_collection_storage_url_from_params(params)?;
         let collection_id = params
             .collection_id
             .as_ref()
@@ -140,7 +140,7 @@ impl SstEngine {
                 sorted_tuples,
                 &collection_storage_url,
                 &sst_filename,
-                &params,
+                params,
                 block_format,
             )
             .await?;

@@ -81,8 +81,7 @@ impl QueryPreprocessor {
             cache_size
         );
         let cache_size = NonZeroUsize::new(cache_size)
-            .map(NonZeroUsize::get)
-            .unwrap_or(100);
+            .map_or(100, NonZeroUsize::get);
 
         // Initialize quantization engine with default configuration
         // TEMPORARILY DISABLED TO DEBUG SEGFAULT

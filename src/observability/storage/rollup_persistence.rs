@@ -284,7 +284,7 @@ impl RollupPersistence for FileRollupPersistence {
         let mut entries = fs::read_dir(&dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map(|e| e == "json").unwrap_or(false) {
+            if path.extension().is_some_and(|e| e == "json") {
                 // Load and update file
                 let content = match fs::read_to_string(&path).await {
                     Ok(c) => c,

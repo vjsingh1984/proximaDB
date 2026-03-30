@@ -183,8 +183,7 @@ impl AxisHnswIndex {
 
         let coll_str = collection_id
             .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("<unnamed>");
+            .map_or("<unnamed>", |s| s.as_str());
         info!(
             "Creating AXIS HNSW index for collection '{}': M={}, ef_construction={}, ef={}, dim={}, repr={:?}",
             coll_str, config.m, config.ef_construction, config.ef, dimension, extraction_mode

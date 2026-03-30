@@ -192,8 +192,7 @@ impl QueryEvaluator {
         // Get the minimum score in current results
         let current_min = current_results
             .last()
-            .map(|r| r.score)
-            .unwrap_or(score_threshold);
+            .map_or(score_threshold, |r| r.score);
 
         // Evaluate new vectors
         let mut candidates = Vec::new();

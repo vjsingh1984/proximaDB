@@ -801,9 +801,7 @@ impl VectorRecordProcessor {
                             serde_json::Value::String(s.clone())
                         }
                         Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                            serde_json::Number::from_f64(*n)
-                                .map(serde_json::Value::Number)
-                                .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                            serde_json::Number::from_f64(*n).map_or_else(|| serde_json::Value::String(n.to_string()), serde_json::Value::Number)
                         }
                         Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                             serde_json::Value::Number(serde_json::Number::from(*i))
@@ -818,9 +816,7 @@ impl VectorRecordProcessor {
                             serde_json::Value::String(s.clone())
                         }
                         Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                            serde_json::Number::from_f64(*n)
-                                .map(serde_json::Value::Number)
-                                .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                            serde_json::Number::from_f64(*n).map_or_else(|| serde_json::Value::String(n.to_string()), serde_json::Value::Number)
                         }
                         Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                             serde_json::Value::Number(serde_json::Number::from(*i))
@@ -1261,7 +1257,7 @@ impl VectorRecordProcessor {
                         return count_cmp;
                     }
                     // Secondary sort by ID for consistency
-                    a.id.as_str().cmp(&b.id.as_str())
+                    a.id.as_str().cmp(b.id.as_str())
                 });
             }
 
@@ -1307,7 +1303,7 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
+                records.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1319,7 +1315,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_str().cmp(&b.id.as_str());
+                        let id_cmp = a.id.as_str().cmp(b.id.as_str());
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1384,7 +1380,7 @@ impl VectorRecordProcessor {
                 });
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
+                records.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1396,7 +1392,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_str().cmp(&b.id.as_str());
+                        let id_cmp = a.id.as_str().cmp(b.id.as_str());
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1825,7 +1821,7 @@ impl VectorProcessor for VectorRecordProcessor {
             }
 
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
+                records.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
                 tracing::debug!("🔢 Sorted {} records by ID", record_count);
             }
 
@@ -1848,7 +1844,7 @@ impl VectorProcessor for VectorRecordProcessor {
 
                     // Stage 1: ID comparison (if enabled)
                     if *include_id {
-                        let id_cmp = a.id.as_str().cmp(&b.id.as_str());
+                        let id_cmp = a.id.as_str().cmp(b.id.as_str());
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }

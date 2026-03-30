@@ -1164,8 +1164,7 @@ impl CostModel {
                 let base_rows = self
                     .collection_stats
                     .get(collection_id)
-                    .map(|s| s.row_count)
-                    .unwrap_or(10_000);
+                    .map_or(10_000, |s| s.row_count);
                 // Vector search returns at most top_k results
                 let top_k_u64 = *top_k as u64;
                 let capped = top_k_u64.min(base_rows);
@@ -1233,7 +1232,7 @@ impl CostModel {
                 let scale = self
                     .collection_stats
                     .get(collection_id)
-                    .map(|s| {
+                    .map_or(1.0, |s| {
                         let n = s.row_count as f64;
                         if n <= 1.0 {
                             return 1.0;
@@ -1245,7 +1244,6 @@ impl CostModel {
                             n / 10_000.0 // linear scan scaling
                         }
                     })
-                    .unwrap_or(1.0)
                     .max(0.1);
                 (base_cost + filter_cost) * scale
             }

@@ -184,8 +184,7 @@ pub async fn vector_search(
                 request
                     .queries
                     .first()
-                    .map(|q| !q.filters.is_empty())
-                    .unwrap_or(false),
+                    .is_some_and(|q| !q.filters.is_empty()),
                 request
                     .queries
                     .first()
@@ -714,7 +713,7 @@ pub async fn execute_sql(
                     // Convert fields to a JSON object instead of list of key/value pairs
                     let mut obj = serde_json::Map::new();
                     for field in &row.fields {
-                        let value = field.value.as_ref().map(sql_value_to_json).unwrap_or(serde_json::Value::Null);
+                        let value = field.value.as_ref().map_or(serde_json::Value::Null, sql_value_to_json);
                         obj.insert(field.key.clone(), value);
                     }
                     serde_json::Value::Object(obj)

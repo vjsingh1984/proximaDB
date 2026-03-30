@@ -637,8 +637,7 @@ impl ProtoSerializationStrategy {
                 .multi_disk
                 .data_directories
                 .first()
-                .map(|d| d.as_str())
-                .unwrap_or("./data/wal"),
+                .map_or("./data/wal", |d| d.as_str()),
             collection_id
         );
 

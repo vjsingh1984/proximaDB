@@ -249,28 +249,28 @@ impl PromQLParser {
                 (
                     parts[0].trim(),
                     MatchOp::NotRegex,
-                    parts.get(1).map(|s| s.trim()).unwrap_or(""),
+                    parts.get(1).map_or("", |s| s.trim()),
                 )
             } else if part.contains("=~") {
                 let parts: Vec<&str> = part.splitn(2, "=~").collect();
                 (
                     parts[0].trim(),
                     MatchOp::Regex,
-                    parts.get(1).map(|s| s.trim()).unwrap_or(""),
+                    parts.get(1).map_or("", |s| s.trim()),
                 )
             } else if part.contains("!=") {
                 let parts: Vec<&str> = part.splitn(2, "!=").collect();
                 (
                     parts[0].trim(),
                     MatchOp::NotEqual,
-                    parts.get(1).map(|s| s.trim()).unwrap_or(""),
+                    parts.get(1).map_or("", |s| s.trim()),
                 )
             } else if part.contains('=') {
                 let parts: Vec<&str> = part.splitn(2, '=').collect();
                 (
                     parts[0].trim(),
                     MatchOp::Equal,
-                    parts.get(1).map(|s| s.trim()).unwrap_or(""),
+                    parts.get(1).map_or("", |s| s.trim()),
                 )
             } else {
                 return Err(anyhow!("Invalid label matcher: {}", part));
@@ -561,8 +561,7 @@ impl PromQLExecutor {
                     let label_value = s
                         .labels
                         .get(&matcher.name)
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
+                        .map_or("", |s| s.as_str());
                     let matches = match matcher.op {
                         MatchOp::Equal => label_value == matcher.value,
                         MatchOp::NotEqual => label_value != matcher.value,

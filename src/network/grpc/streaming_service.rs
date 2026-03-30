@@ -541,7 +541,7 @@ impl StreamingService for StreamingServiceImpl {
         {
             Ok(session_id) => {
                 let info = self.coordinator.get_session_info(&session_id);
-                let buffer_size = info.as_ref().map(|s| s.buffer_capacity as u32).unwrap_or(0);
+                let buffer_size = info.as_ref().map_or(0, |s| s.buffer_capacity as u32);
 
                 info!(
                     session_id = %session_id,

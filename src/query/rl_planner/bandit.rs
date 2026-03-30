@@ -199,17 +199,13 @@ impl ContextualBanditPlanner {
             let posterior_sample = self
                 .action_stats
                 .get(&action_id)
-                .map(|beta| beta.sample())
-                // TD-007: unwrap_or with safe default - optimistic prior (0.5) for new actions
-                .unwrap_or(0.5);
+                .map_or(0.5, |beta| beta.sample());
 
             // Add context bonus
             let context_bonus = self
                 .context_weights
                 .get(&action_id)
-                .map(|w| w.compute_bonus(&features))
-                // TD-007: unwrap_or with safe default - no bonus (0.0) for actions without context
-                .unwrap_or(0.0);
+                .map_or(0.0, |w| w.compute_bonus(&features));
 
             let total_sample = posterior_sample + context_bonus;
 
@@ -253,17 +249,13 @@ impl ContextualBanditPlanner {
             let expected = self
                 .action_stats
                 .get(&action_id)
-                .map(|beta| beta.mean())
-                // TD-007: unwrap_or with safe default - optimistic prior (0.5) for new actions
-                .unwrap_or(0.5);
+                .map_or(0.5, |beta| beta.mean());
 
             // Context bonus
             let context_bonus = self
                 .context_weights
                 .get(&action_id)
-                .map(|w| w.compute_bonus(&features))
-                // TD-007: unwrap_or with safe default - no bonus (0.0) for actions without context
-                .unwrap_or(0.0);
+                .map_or(0.0, |w| w.compute_bonus(&features));
 
             let total_value = expected + context_bonus;
 
@@ -291,9 +283,7 @@ impl ContextualBanditPlanner {
         let expected = self
             .action_stats
             .get(&action_id)
-            .map(|b| b.mean() as f32)
-            // TD-007: unwrap_or with safe default - optimistic prior (0.5) for new actions
-            .unwrap_or(0.5);
+            .map_or(0.5, |b| b.mean() as f32);
         let error = (reward - expected) as f64;
 
         self.context_weights
@@ -375,15 +365,11 @@ impl ContextualBanditPlanner {
                 let expected = self
                     .action_stats
                     .get(&action_id)
-                    .map(|b| b.mean())
-                    // TD-007: unwrap_or with safe default - optimistic prior (0.5) for new actions
-                    .unwrap_or(0.5);
+                    .map_or(0.5, |b| b.mean());
                 let context_bonus = self
                     .context_weights
                     .get(&action_id)
-                    .map(|w| w.compute_bonus(&features))
-                    // TD-007: unwrap_or with safe default - no bonus (0.0) for actions without context
-                    .unwrap_or(0.0);
+                    .map_or(0.0, |w| w.compute_bonus(&features));
                 (action.clone(), expected + context_bonus)
             })
             .collect();

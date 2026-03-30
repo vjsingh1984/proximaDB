@@ -152,8 +152,7 @@ impl FluentAdapter {
             .get("level")
             .or_else(|| record.get("severity"))
             .and_then(|v| v.as_str())
-            .map(|s| self.parse_level(s))
-            .unwrap_or(Severity::Info);
+            .map_or(Severity::Info, |s| self.parse_level(s));
 
         let source = record
             .get("host")

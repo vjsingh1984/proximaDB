@@ -554,9 +554,7 @@ impl SwiftEngine {
                     crate::storage::engines::impls::sst::fp16_to_fp32(fp16_centroid)
                 } else {
                     sb.centroid
-                        .as_ref()
-                        .map(|c| c.clone())
-                        .unwrap_or_else(|| vec![0.0; query.len()])
+                        .as_ref().map_or_else(|| vec![0.0; query.len()], |c| c.clone())
                 }
             })
             .collect();
@@ -661,7 +659,7 @@ impl SwiftEngine {
             let superblock = &superblocks[superblock_idx];
 
             // Phase 3: Use quantization engine for progressive search within superblock
-            if let Some(ref _quantization_engine) = Some(&self.storage_quantization_engine) {
+            if let Some(_quantization_engine) = Some(&self.storage_quantization_engine) {
                 // TODO: Implement progressive search using quantization engine
                 // For now, simulate with placeholder results
                 for block in &superblock.blocks {
@@ -1025,8 +1023,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             .collection_config
             .as_ref()
             .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.dimension)
-            .unwrap_or(384);
+            .map_or(384, |cfg| cfg.dimension);
 
         // Create new SWIFT file from flush parameters
         let mut swift_file = SwiftFile::new(
@@ -1246,15 +1243,12 @@ impl UnifiedStorageEngine for SwiftEngine {
         // Build merged output file
         let dimension = files
             .first()
-            .map(|f| f.header.dimension as usize)
-            .unwrap_or(0);
+            .map_or(0, |f| f.header.dimension as usize);
         let mut merged_file = SwiftFile::new(
             collection_id.to_string(),
             dimension,
             files
-                .first()
-                .map(|f| f.header.distance_metric.clone())
-                .unwrap_or_else(|| "euclidean".to_string()),
+                .first().map_or_else(|| "euclidean".to_string(), |f| f.header.distance_metric.clone()),
         );
         merged_file.build_blocks_from_records(live_records)?;
 

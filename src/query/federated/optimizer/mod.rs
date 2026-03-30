@@ -946,8 +946,7 @@ impl JoinOrderOptimizer {
                     // Update best if this is better
                     let is_better = best_entry
                         .as_ref()
-                        .map(|e| join_cost < e.cost)
-                        .unwrap_or(true);
+                        .map_or(true, |e| join_cost < e.cost);
 
                     if is_better {
                         let plan = PlanNode {
@@ -1746,8 +1745,7 @@ impl CrossModelOptimizer {
         // Estimate filter complexity and fields
         let filter_complexity = filter
             .as_ref()
-            .map(|f| f.matches("AND").count() + f.matches("OR").count() + 1)
-            .unwrap_or(1);
+            .map_or(1, |f| f.matches("AND").count() + f.matches("OR").count() + 1);
         let filter_fields: Vec<String> = vec![]; // Would need proper filter parsing
 
         // Get statistics
@@ -1909,8 +1907,7 @@ impl CrossModelOptimizer {
                     let target = query
                         .targets
                         .first()
-                        .map(|t| t.name.clone())
-                        .unwrap_or("default".to_string());
+                        .map_or("default".to_string(), |t| t.name.clone());
                     PlanNode {
                         id: self.next_id(),
                         node_type: PlanNodeType::VectorSearch {
@@ -1926,8 +1923,7 @@ impl CrossModelOptimizer {
                 QuerySourceRef::Target(target) => {
                     let rows = stats
                         .get(&target.name)
-                        .map(|s| s.estimated_count())
-                        .unwrap_or(1000);
+                        .map_or(1000, |s| s.estimated_count());
 
                     PlanNode {
                         id: self.next_id(),
@@ -2094,9 +2090,7 @@ impl CrossModelOptimizer {
         let projection_sources = select_items
             .iter()
             .map(|item| {
-                Self::parse_aggregate_expr(item)
-                    .map(|aggregate| aggregate.alias)
-                    .unwrap_or_else(|| item.expression.clone())
+                Self::parse_aggregate_expr(item).map_or_else(|| item.expression.clone(), |aggregate| aggregate.alias)
             })
             .collect::<Vec<_>>();
         let projection_output_columns = select_items
@@ -2651,9 +2645,7 @@ impl CrossModelOptimizer {
     fn plan_sql_query(&self, query: &FederatedQuery) -> Result<PlanNode> {
         let target = query
             .targets
-            .first()
-            .map(|t| t.name.clone())
-            .unwrap_or_else(|| "unknown".to_string());
+            .first().map_or_else(|| "unknown".to_string(), |t| t.name.clone());
 
         Ok(PlanNode {
             id: self.next_id(),
@@ -2891,8 +2883,7 @@ impl CrossModelOptimizer {
                     let target = query
                         .targets
                         .first()
-                        .map(|t| t.name.clone())
-                        .unwrap_or("default".to_string());
+                        .map_or("default".to_string(), |t| t.name.clone());
                     PlanNode {
                         id: self.next_id(),
                         node_type: PlanNodeType::VectorSearch {
@@ -2962,9 +2953,7 @@ impl CrossModelOptimizer {
     }
 
     fn vector_source_from_literal(raw: &str) -> VectorSource {
-        Self::parse_vector_literal(raw)
-            .map(VectorSource::Literal)
-            .unwrap_or_else(|| Self::vector_source_from_expression(raw))
+        Self::parse_vector_literal(raw).map_or_else(|| Self::vector_source_from_expression(raw), VectorSource::Literal)
     }
 
     fn vector_source_from_expression(expr: &str) -> VectorSource {

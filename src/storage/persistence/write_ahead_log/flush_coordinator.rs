@@ -212,7 +212,7 @@ impl WALFlushCoordinator {
                     files.len()
                 );
                 // Implement comprehensive disk WAL file reading and recovery
-                self.extract_vectors_from_disk_files(&files)
+                self.extract_vectors_from_disk_files(files)
                     .await
                     .unwrap_or_else(|e| {
                         warn!(
@@ -635,17 +635,14 @@ impl WALFlushCoordinator {
         let flush_states = self.flush_states.read().await;
         flush_states
             .get(collection_id)
-            .map(|state| state.uses_disk_wal)
-            .unwrap_or(true) // Default to disk WAL
+            .map_or(true, |state| state.uses_disk_wal) // Default to disk WAL
     }
 
     /// Get pending flushes for a collection
     pub async fn get_pending_flushes(&self, collection_id: &str) -> Vec<PendingFlush> {
         let flush_states = self.flush_states.read().await;
         flush_states
-            .get(collection_id)
-            .map(|state| state.pending_flushes.values().cloned().collect())
-            .unwrap_or_else(Vec::new)
+            .get(collection_id).map_or_else(Vec::new, |state| state.pending_flushes.values().cloned().collect())
     }
 
     /// Cancel a pending flush (in case of errors)

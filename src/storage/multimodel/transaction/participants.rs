@@ -124,13 +124,12 @@ impl DocumentStoreParticipant {
         let transactions = self.transactions.read().await;
         transactions
             .get(transaction_id)
-            .map(|state| {
+            .map_or(0, |state| {
                 state
                     .operations
                     .len()
                     .saturating_sub(state.next_commit_index)
             })
-            .unwrap_or(0)
     }
 
     /// Clear all staged operations for a transaction (called on rollback)
@@ -342,13 +341,12 @@ impl ObservabilityStoreParticipant {
         let transactions = self.transactions.read().await;
         transactions
             .get(transaction_id)
-            .map(|state| {
+            .map_or(0, |state| {
                 state
                     .operations
                     .len()
                     .saturating_sub(state.next_commit_index)
             })
-            .unwrap_or(0)
     }
 
     /// Clear all staged operations for a transaction (called on rollback)

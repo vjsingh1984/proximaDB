@@ -328,13 +328,11 @@ impl VectorOperationsService {
         let include_vectors = req
             .include_fields
             .as_ref()
-            .map(|f| f.vector)
-            .unwrap_or(false);
+            .is_some_and(|f| f.vector);
         let include_metadata = req
             .include_fields
             .as_ref()
-            .map(|f| f.metadata)
-            .unwrap_or(true);
+            .map_or(true, |f| f.metadata);
 
         let cfg = Some(UnifiedSearchConfig {
             optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
@@ -1034,8 +1032,7 @@ impl VectorOperationsService {
 
         let progressive_enabled = config
             .as_ref()
-            .map(|c| c.progressive_search)
-            .unwrap_or(false);
+            .is_some_and(|c| c.progressive_search);
         debug!(
             "Search: collection={}, progressive={}",
             collection_id, progressive_enabled
@@ -1122,7 +1119,7 @@ impl VectorOperationsService {
                                 );
 
                                 // Log security incident for audit trail
-                                if let Some(ref _audit_logger) = self.get_audit_logger() {
+                                if let Some(_audit_logger) = self.get_audit_logger() {
                                     // TODO: Implement log_security_incident method
                                     warn!(
                                         "Security incident logged: cross_tenant_data_leakage_prevented for vector {}",
@@ -1147,7 +1144,7 @@ impl VectorOperationsService {
                         vector_result.id
                     );
 
-                    if let Some(ref _audit_logger) = self.get_audit_logger() {
+                    if let Some(_audit_logger) = self.get_audit_logger() {
                         // TODO: Implement log_security_incident method
                         warn!(
                             "Security incident logged: missing_tenant_metadata for vector {}",
@@ -1205,8 +1202,7 @@ impl VectorOperationsService {
 
         let progressive_enabled = config
             .as_ref()
-            .map(|c| c.progressive_search)
-            .unwrap_or(false);
+            .is_some_and(|c| c.progressive_search);
         debug!(
             "Search v1: collection={}, progressive={}",
             collection_id, progressive_enabled
@@ -1386,9 +1382,7 @@ impl VectorOperationsService {
                     candidates,
                 } => {
                     let quant_info = quantization_strategy
-                        .as_ref()
-                        .map(|q| format!("{:?}", q.quantization_type))
-                        .unwrap_or_else(|| "None/FP32".to_string());
+                        .as_ref().map_or_else(|| "None/FP32".to_string(), |q| format!("{:?}", q.quantization_type));
                     tracing::info!(
                         "  [Step {}] VectorSearch: method={:?} | quantization={} | candidates={}",
                         idx + 1,
@@ -2143,7 +2137,7 @@ impl VectorOperationsService {
                     // Tombstone: vector is explicitly empty (Some(vec![])) AND expired
                     // A record with vector=None is NOT a tombstone - it's just missing vector data
                     let is_explicit_empty_vector =
-                        r.vector.as_ref().map(|v| v.is_empty()).unwrap_or(false);
+                        r.vector.as_ref().is_some_and(|v| v.is_empty());
                     let is_expired = r.expires_at.map_or(false, |e| e <= current_time_secs);
                     let is_tombstone = is_explicit_empty_vector && is_expired;
 
@@ -2272,11 +2266,10 @@ impl VectorOperationsService {
         let engine_type = collection
             .storage_assignment
             .as_ref()
-            .map(|sa| {
+            .map_or(crate::proto::proximadb_v1::StorageEngine::Sst, |sa| {
                 crate::proto::proximadb_v1::StorageEngine::try_from(sa.engine)
                     .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst)
-            })
-            .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst);
+            });
 
         debug!(
             "🔧 Creating storage engine {:?} for collection {}",
@@ -2449,26 +2442,14 @@ impl VectorOperationsService {
 
         // Convert SearchParams to HybridQuery for AxisManager
         let vector_query = if let Some(vectors) = search_params.query_vectors {
-            if let Some(vector) = vectors.first() {
-                Some(
-                    crate::index::axis::management::manager::VectorQuery::Dense {
+            vectors.first().map(|vector| crate::index::axis::management::manager::VectorQuery::Dense {
                         vector: vector.clone(),
                         similarity_threshold: 0.0,
-                    },
-                )
-            } else {
-                None
-            }
-        } else if let Some(vector) = search_params.vector {
-            Some(
-                crate::index::axis::management::manager::VectorQuery::Dense {
+                    })
+        } else { search_params.vector.map(|vector| crate::index::axis::management::manager::VectorQuery::Dense {
                     vector,
                     similarity_threshold: 0.0,
-                },
-            )
-        } else {
-            None
-        };
+                }) };
 
         let hybrid_query = crate::index::axis::management::manager::HybridQuery {
             collection_id: collection_id.to_string(),

@@ -254,8 +254,7 @@ impl IntegratedSearchOptimizer {
         // Build filterable columns from collection config
         let filterable_columns: Vec<FilterableColumn> = collection
             .config
-            .as_ref()
-            .map(|config| {
+            .as_ref().map_or_else(Vec::new, |config| {
                 config
                     .filterable_columns
                     .iter()
@@ -273,8 +272,7 @@ impl IntegratedSearchOptimizer {
                         estimated_cardinality: col.estimated_cardinality.map(|c| c as usize),
                     })
                     .collect()
-            })
-            .unwrap_or_else(Vec::new);
+            });
 
         // Analyze storage characteristics
         let storage_info = self.analyze_storage_info(collection_id).await?;

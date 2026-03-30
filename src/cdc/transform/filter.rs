@@ -417,53 +417,46 @@ impl FilterRule {
             MetadataCondition::NotEquals { value: expected } => value != Some(expected),
 
             MetadataCondition::Contains { value: search } => value
-                .map(|v| match v {
+                .is_some_and(|v| match v {
                     serde_json::Value::String(s) => s.contains(search),
                     serde_json::Value::Array(arr) => arr
                         .iter()
-                        .any(|item| item.as_str().map(|s| s == search).unwrap_or(false)),
+                        .any(|item| item.as_str().is_some_and(|s| s == search)),
                     _ => false,
-                })
-                .unwrap_or(false),
+                }),
 
             MetadataCondition::StartsWith { value: prefix } => value
                 .and_then(|v| v.as_str())
-                .map(|s| s.starts_with(prefix))
-                .unwrap_or(false),
+                .is_some_and(|s| s.starts_with(prefix)),
 
             MetadataCondition::EndsWith { value: suffix } => value
                 .and_then(|v| v.as_str())
-                .map(|s| s.ends_with(suffix))
-                .unwrap_or(false),
+                .is_some_and(|s| s.ends_with(suffix)),
 
             MetadataCondition::Matches { pattern } => {
                 // Simple substring match (would use regex crate in production)
                 value
                     .and_then(|v| v.as_str())
-                    .map(|s| s.contains(pattern))
-                    .unwrap_or(false)
+                    .is_some_and(|s| s.contains(pattern))
             }
 
             MetadataCondition::GreaterThan { value: threshold } => value
                 .and_then(|v| v.as_f64())
-                .map(|n| n > *threshold)
-                .unwrap_or(false),
+                .is_some_and(|n| n > *threshold),
 
             MetadataCondition::LessThan { value: threshold } => value
                 .and_then(|v| v.as_f64())
-                .map(|n| n < *threshold)
-                .unwrap_or(false),
+                .is_some_and(|n| n < *threshold),
 
             MetadataCondition::InRange { min, max } => value
                 .and_then(|v| v.as_f64())
-                .map(|n| n >= *min && n <= *max)
-                .unwrap_or(false),
+                .is_some_and(|n| n >= *min && n <= *max),
 
-            MetadataCondition::In { values } => value.map(|v| values.contains(v)).unwrap_or(false),
+            MetadataCondition::In { values } => value.is_some_and(|v| values.contains(v)),
 
-            MetadataCondition::IsNull => value.map(|v| v.is_null()).unwrap_or(true),
+            MetadataCondition::IsNull => value.map_or(true, |v| v.is_null()),
 
-            MetadataCondition::IsNotNull => value.map(|v| !v.is_null()).unwrap_or(false),
+            MetadataCondition::IsNotNull => value.is_some_and(|v| !v.is_null()),
         }
     }
 }

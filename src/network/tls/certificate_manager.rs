@@ -489,8 +489,7 @@ impl CertificateManager {
             .basic_constraints()
             .ok()
             .flatten()
-            .map(|bc| bc.value.ca)
-            .unwrap_or(false);
+            .is_some_and(|bc| bc.value.ca);
 
         // Extract key usage
         let key_usage = cert

@@ -1104,8 +1104,7 @@ impl RecordMigrationService {
     /// Check if a migration is paused for a collection
     pub fn is_migration_paused(&self, collection_id: &str) -> bool {
         self.get_active_migration(collection_id)
-            .map(|s| s.is_paused())
-            .unwrap_or(false)
+            .is_some_and(|s| s.is_paused())
     }
 
     /// Get all active migrations

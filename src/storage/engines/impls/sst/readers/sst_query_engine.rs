@@ -1446,9 +1446,7 @@ impl UnifiedSstableReader {
 
         if &magic_bytes[0..4] != b"SST1" {
             // Log what we actually found for debugging
-            let found_magic = std::str::from_utf8(&magic_bytes[0..4])
-                .map(|s| s.to_string())
-                .unwrap_or_else(|_| format!("bytes: {:?}", &magic_bytes[0..4]));
+            let found_magic = std::str::from_utf8(&magic_bytes[0..4]).map_or_else(|_| format!("bytes: {:?}", &magic_bytes[0..4]), |s| s.to_string());
 
             return Err(anyhow::anyhow!(
                 "Invalid SSTable format: expected SST1 magic marker, found '{}' in file {}",
@@ -4351,8 +4349,7 @@ impl UnifiedSstableReader {
                 }
                 Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                     serde_json::Number::from_f64(*n)
-                        .map(serde_json::Value::Number)
-                        .unwrap_or(serde_json::Value::Null)
+                        .map_or(serde_json::Value::Null, serde_json::Value::Number)
                 }
                 Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                     serde_json::Value::Bool(*b)
@@ -4473,7 +4470,7 @@ impl UnifiedSstableReader {
 
             // Filter blocks based on metadata ranges in index
             for index_entry in &index_blocks {
-                if self.should_read_block_for_filter(&index_entry, filter) {
+                if self.should_read_block_for_filter(index_entry, filter) {
                     let data_block = block_reader
                         .read_data_block_at_offset(index_entry.offset, index_entry.size as usize)
                         .await?;

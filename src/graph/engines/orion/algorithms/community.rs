@@ -418,8 +418,7 @@ impl ParallelAlgorithm for LouvainCommunityDetection {
                 let best_community = neighbor_communities
                     .into_iter()
                     .max_by_key(|(_, count)| *count)
-                    .map(|(community, _)| community)
-                    .unwrap_or(current_community);
+                    .map_or(current_community, |(community, _)| community);
 
                 (node_idx, best_community)
             })

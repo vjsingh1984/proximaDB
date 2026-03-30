@@ -655,7 +655,7 @@ impl StreamingRowGroupIterator {
                 }
                 if !projection_indices.is_empty() {
                     Some(parquet::arrow::ProjectionMask::leaves(
-                        &parquet_schema,
+                        parquet_schema,
                         projection_indices,
                     ))
                 } else {

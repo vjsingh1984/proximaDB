@@ -242,7 +242,7 @@ impl KeyManager {
         let expired: Vec<KeyVersionId> = versions
             .values()
             .filter(|v| !v.active)
-            .filter(|v| v.expires_at.map(|exp| exp < now).unwrap_or(false))
+            .filter(|v| v.expires_at.is_some_and(|exp| exp < now))
             .map(|v| v.id)
             .collect();
 

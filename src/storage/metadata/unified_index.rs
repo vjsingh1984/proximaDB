@@ -78,9 +78,7 @@ impl UnifiedCollectionIndex {
         let uuid = record.id.clone();
         let name = record
             .config
-            .as_ref()
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "unnamed".to_string());
+            .as_ref().map_or_else(|| "unnamed".to_string(), |c| c.name.clone());
 
         // Atomic operation: insert into both maps
         let record_arc = Arc::new(record);

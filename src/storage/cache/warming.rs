@@ -227,7 +227,7 @@ impl CacheWarmer {
                 if let Some(engine) = self.get_best_engine_for_collection(&collection_id) {
                     // We need base_path for storage engines - get from collection metadata
                     if let Ok(Some(vector)) = self
-                        .load_vector_with_base_path(&engine, &collection_id, &vector_id)
+                        .load_vector_with_base_path(engine, &collection_id, &vector_id)
                         .await
                         && let Some(vector_cache) = self.cache_orchestrator.get_vector_cache() {
                             let _ = vector_cache.put(cache_key.clone(), vector).await;

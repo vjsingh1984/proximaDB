@@ -1100,7 +1100,7 @@ impl ViperEngine {
             vector_id, collection_id, base_path
         );
         // Get all Parquet files from {base_path}/{collection_id}/data
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, collection_id);
         let parquet_files = self.list_parquet_files_in_dir(&data_dir).await?;
         if parquet_files.is_empty() {
             debug!("📁 No Parquet files found for collection {}", collection_id);
@@ -1159,13 +1159,11 @@ impl ViperEngine {
                         let timestamp = batch
                             .column_by_name(FIELD_TIMESTAMP)
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
-                            .map(|arr| arr.value(row_idx))
-                            .unwrap_or(0);
+                            .map_or(0, |arr| arr.value(row_idx));
                         let version = batch
                             .column_by_name(FIELD_VERSION)
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
-                            .map(|arr| arr.value(row_idx))
-                            .unwrap_or(0);
+                            .map_or(0, |arr| arr.value(row_idx));
                         let expires_at = batch
                             .column_by_name(FIELD_EXPIRES_AT)
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
@@ -1202,8 +1200,7 @@ impl ViperEngine {
                         let updated_at = batch
                             .column_by_name("updated_at")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
-                            .map(|arr| arr.value(row_idx))
-                            .unwrap_or(0);
+                            .map_or(0, |arr| arr.value(row_idx));
                         // Parse metadata from extra_meta list of key-value pairs
                         let mut metadata_map: HashMap<
                             String,
@@ -1894,7 +1891,7 @@ impl UnifiedStorageEngine for ViperEngine {
             debug!("🟦 VIPER DO_FLUSH: Collection config found");
             if let Some(ref config) = collection_config.config {
                 debug!("🟦 VIPER DO_FLUSH: Config field found");
-                if let Some(ref _storage_config) = config.storage_config.as_ref() {
+                if let Some(_storage_config) = config.storage_config.as_ref() {
                     debug!("🟦 VIPER DO_FLUSH: Storage config found");
                     debug!("   ✅ Found storage_config in collection_config");
                 } else {
@@ -2430,8 +2427,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 vector_dimension: collection_opt
                     .as_ref()
                     .and_then(|c| c.config.as_ref())
-                    .map(|c| c.dimension as usize)
-                    .unwrap_or(0), // Fallback only if config not available
+                    .map_or(0, |c| c.dimension as usize), // Fallback only if config not available
                 enable_quantization: collection_opt
                     .as_ref()
                     .and_then(|c| c.config.as_ref())
@@ -2455,8 +2451,7 @@ impl UnifiedStorageEngine for ViperEngine {
             },
             filterable_columns: collection_opt
                 .as_ref()
-                .and_then(|c| c.config.as_ref())
-                .map(|c| {
+                .and_then(|c| c.config.as_ref()).map_or_else(Vec::new, |c| {
                     c.filterable_columns
                         .iter()
                         .map(|col| {
@@ -2468,8 +2463,7 @@ impl UnifiedStorageEngine for ViperEngine {
                             }
                         })
                         .collect()
-                })
-                .unwrap_or_else(Vec::new),
+                }),
             available_quantization: vec![
                 UnifiedQuantizationLevel::Binary,
                 UnifiedQuantizationLevel::Int8,
@@ -2498,8 +2492,7 @@ impl UnifiedStorageEngine for ViperEngine {
         let dimension = collection_opt
             .as_ref()
             .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.dimension as usize)
-            .unwrap_or(128);
+            .map_or(128, |cfg| cfg.dimension as usize);
         let parquet_reader =
             crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
                 parquet_files.clone(),
@@ -2514,9 +2507,7 @@ impl UnifiedStorageEngine for ViperEngine {
         // Get filterable columns from collection config if available
         let _filterable_column_specs = collection_opt
             .as_ref()
-            .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.filterable_columns.clone())
-            .unwrap_or_else(Vec::new);
+            .and_then(|c| c.config.as_ref()).map_or_else(Vec::new, |cfg| cfg.filterable_columns.clone());
 
         let collection_context = crate::storage::engines::core::formats::columnar::columnar_query_engine::CollectionContext {
             collection_id: collection_id.to_string(),

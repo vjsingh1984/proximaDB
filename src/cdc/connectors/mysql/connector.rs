@@ -194,7 +194,7 @@ impl MySqlConnector {
         mysql_config.validate().map_err(CdcError::Configuration)?;
 
         let source_config = SourceConfig::mysql(
-            &format!("mysql_{}", mysql_config.server_id),
+            format!("mysql_{}", mysql_config.server_id),
             &mysql_config.connection_url,
         );
 
@@ -394,10 +394,10 @@ impl CdcSource for MySqlConnector {
 
         // Save current position/GTID
         if let Some(gtid) = self.current_gtid.read().await.clone() {
-            let offset = Offset::new(&self.name().to_string(), 0).with_metadata("gtid", gtid);
+            let offset = Offset::new(self.name().to_string(), 0).with_metadata("gtid", gtid);
             self.offset_store.store(&offset).await?;
         } else if let Some(pos) = self.current_position.read().await.clone() {
-            let offset = Offset::new(&self.name().to_string(), pos.position)
+            let offset = Offset::new(self.name().to_string(), pos.position)
                 .with_metadata("filename", pos.filename);
             self.offset_store.store(&offset).await?;
         }
@@ -419,13 +419,13 @@ impl CdcSource for MySqlConnector {
     async fn current_offset(&self) -> CdcResult<Option<Offset>> {
         if let Some(gtid) = self.current_gtid.read().await.clone() {
             return Ok(Some(
-                Offset::new(&self.name().to_string(), 0).with_metadata("gtid", gtid),
+                Offset::new(self.name().to_string(), 0).with_metadata("gtid", gtid),
             ));
         }
 
         if let Some(pos) = self.current_position.read().await.clone() {
             return Ok(Some(
-                Offset::new(&self.name().to_string(), pos.position)
+                Offset::new(self.name().to_string(), pos.position)
                     .with_metadata("filename", pos.filename),
             ));
         }

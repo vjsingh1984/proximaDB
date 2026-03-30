@@ -451,8 +451,7 @@ impl Shard {
         if shard
             .partition_config
             .as_ref()
-            .map(|c| c.track_metadata_bounds)
-            .unwrap_or(false)
+            .is_some_and(|c| c.track_metadata_bounds)
         {
             shard.metadata_bounds = Some(MetadataBounds::new());
         }

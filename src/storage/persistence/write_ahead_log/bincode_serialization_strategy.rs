@@ -514,8 +514,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
                 .multi_disk
                 .data_directories
                 .first()
-                .map(|d| d.as_str())
-                .unwrap_or("/tmp/proximadb/data/wal");
+                .map_or("/tmp/proximadb/data/wal", |d| d.as_str());
 
             let disk_manager =
                 WriteAheadLogDiskManager::new(self.filesystem_factory.clone(), base_location);
@@ -754,8 +753,7 @@ impl BincodeSerializationStrategy {
             .multi_disk
             .data_directories
             .first()
-            .map(|d| d.as_str())
-            .unwrap_or("/tmp/proximadb/data/wal");
+            .map_or("/tmp/proximadb/data/wal", |d| d.as_str());
 
         // Create disk manager for this collection
         let disk_manager =

@@ -719,13 +719,11 @@ impl MultiServerBuilder {
             unified_mode: self
                 .api_config
                 .as_ref()
-                .map(|c| c.unified_mode)
-                .unwrap_or(false),
+                .is_some_and(|c| c.unified_mode),
             unified_port: self
                 .api_config
                 .as_ref()
-                .map(|c| c.unified_port)
-                .unwrap_or(5678),
+                .map_or(5678, |c| c.unified_port),
             unified_bind_address: "0.0.0.0".to_string(),
             // Cluster mode defaults
             #[cfg(feature = "cluster")]

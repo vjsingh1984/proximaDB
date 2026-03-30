@@ -220,12 +220,10 @@ impl TenantPerformanceMonitor {
             tenant_id,
             metrics_map
                 .get(tenant_id)
-                .map(|m| m.current_qps)
-                .unwrap_or(0.0),
+                .map_or(0.0, |m| m.current_qps),
             metrics_map
                 .get(tenant_id)
-                .map(|m| m.avg_response_time_ms)
-                .unwrap_or(0.0)
+                .map_or(0.0, |m| m.avg_response_time_ms)
         );
 
         Ok(())

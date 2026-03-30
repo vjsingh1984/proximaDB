@@ -343,8 +343,7 @@ impl AtomicMetadataStore {
                         dimension: collection
                             .config
                             .as_ref()
-                            .map(|c| c.dimension as usize)
-                            .unwrap_or(0),
+                            .map_or(0, |c| c.dimension as usize),
                         distance_metric: collection
                             .config
                             .as_ref()
@@ -356,13 +355,11 @@ impl AtomicMetadataStore {
                         vector_count: collection
                             .stats
                             .as_ref()
-                            .map(|s| s.vector_count as u64)
-                            .unwrap_or(0),
+                            .map_or(0, |s| s.vector_count as u64),
                         total_size_bytes: collection
                             .stats
                             .as_ref()
-                            .map(|s| s.data_size_bytes as u64)
-                            .unwrap_or(0),
+                            .map_or(0, |s| s.data_size_bytes as u64),
                         config: std::collections::HashMap::new(), // TODO: Convert from collection config
                         description: None,
                         tags: Vec::new(),
@@ -386,7 +383,7 @@ impl AtomicMetadataStore {
                     // Fetch existing metadata and update it
                     let existing = self
                         .write_buffer_manager
-                        .get_collection(&collection_id)
+                        .get_collection(collection_id)
                         .await?
                         .ok_or_else(|| {
                             anyhow::anyhow!("Collection not found: {}", collection_id)

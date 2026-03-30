@@ -507,8 +507,7 @@ impl ProximaDB {
         let rest_auth_enabled = config
             .security
             .as_ref()
-            .map(|s| s.authentication.enabled)
-            .unwrap_or(false);
+            .is_some_and(|s| s.authentication.enabled);
         let mut multi_server = network::MultiServer::new(
             multi_config,
             shared_services,

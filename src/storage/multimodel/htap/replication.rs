@@ -262,7 +262,7 @@ impl ReplicationCoordinator {
 
         // Check if table has been replicated at all
         let table_lsns = self.table_lsns.read().await;
-        table_lsns.get(table).map(|&lsn| lsn > 0).unwrap_or(false)
+        table_lsns.get(table).is_some_and(|&lsn| lsn > 0)
     }
 
     /// Wait for OLAP to catch up to a specific LSN

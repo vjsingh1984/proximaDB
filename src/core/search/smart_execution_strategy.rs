@@ -377,7 +377,7 @@ impl SmartExecutionStrategy {
             filter_selectivity: self.estimate_filter_selectivity(params),
             top_k: params.top_k.unwrap_or(10),
             is_batch: params.is_batch_search(),
-            batch_size: params.query_vectors.as_ref().map(|v| v.len()).unwrap_or(1),
+            batch_size: params.query_vectors.as_ref().map_or(1, |v| v.len()),
             requires_vectors: true,  // Would check if vectors are needed
             requires_metadata: true, // Would check if metadata is needed
             distance_metric: params
@@ -446,8 +446,7 @@ impl SmartExecutionStrategy {
             metadata
                 .index_types
                 .first()
-                .map(|s| s.as_str())
-                .unwrap_or("FLAT")
+                .map_or("FLAT", |s| s.as_str())
         };
 
         let fallback_probability = if metadata.update_frequency > 100.0 {

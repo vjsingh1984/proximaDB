@@ -304,7 +304,7 @@ impl PositionStore for FilePositionStore {
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map(|e| e == "pos").unwrap_or(false)
+            if path.extension().is_some_and(|e| e == "pos")
                 && let Some(stem) = path.file_stem() {
                     ids.push(stem.to_string_lossy().to_string());
                 }

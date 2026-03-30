@@ -475,11 +475,7 @@ impl ProximaBlocksHeaderLoader {
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     Some(ColumnValue::Int64(i))
-                } else if let Some(f) = n.as_f64() {
-                    Some(ColumnValue::Float64(f))
-                } else {
-                    None
-                }
+                } else { n.as_f64().map(ColumnValue::Float64) }
             }
             serde_json::Value::String(s) => Some(ColumnValue::String(s.clone())),
             _ => None,

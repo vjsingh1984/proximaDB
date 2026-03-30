@@ -674,8 +674,7 @@ impl SchemaEvolutionService {
                         .columns
                         .iter()
                         .find(|c| &c.name == column_name)
-                        .map(|c| c.default_value.is_some())
-                        .unwrap_or(false);
+                        .is_some_and(|c| c.default_value.is_some());
 
                     if !has_default {
                         result.add_error(format!(
@@ -756,8 +755,7 @@ impl SchemaEvolutionService {
                             .columns
                             .iter()
                             .find(|c| &c.name == column_name)
-                            .map(|c| c.default_value.is_some())
-                            .unwrap_or(false);
+                            .is_some_and(|c| c.default_value.is_some());
 
                         if !has_default {
                             result.issues.push(CompatibilityIssue {
@@ -1211,8 +1209,7 @@ impl SchemaEvolutionService {
                         .columns
                         .iter()
                         .find(|c| &c.name == column_name)
-                        .map(|c| c.default_value.is_some())
-                        .unwrap_or(false);
+                        .is_some_and(|c| c.default_value.is_some());
 
                     if !has_default {
                         result.add_error(format!(

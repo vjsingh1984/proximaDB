@@ -236,8 +236,7 @@ impl NovaFlushOperations {
             .collection_config
             .as_ref()
             .and_then(|c| c.storage_assignment.as_ref())
-            .map(|s| s.base_location.as_str())
-            .unwrap_or("/data/collections");
+            .map_or("/data/collections", |s| s.base_location.as_str());
 
         // Extract filterable_columns from collection config
         let filterable_columns = params

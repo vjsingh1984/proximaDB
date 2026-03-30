@@ -70,8 +70,7 @@ impl SstRecord {
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
                         serde_json::Number::from_f64(f)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number)
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(b)

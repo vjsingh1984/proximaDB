@@ -106,7 +106,7 @@ pub fn bfs_generic(
             cur = p.clone();
             path.push(cur.clone());
         }
-        if path.last().map(|x| x == start).unwrap_or(false) {
+        if path.last().is_some_and(|x| x == start) {
             path.reverse();
             paths.push(path);
         }

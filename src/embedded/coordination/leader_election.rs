@@ -249,9 +249,7 @@ impl LeaderElection {
             node_id: self.node_id.clone(),
             pid: std::process::id(),
             timestamp: chrono::Utc::now().to_rfc3339(),
-            hostname: hostname::get()
-                .map(|h| h.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "unknown".to_string()),
+            hostname: hostname::get().map_or_else(|_| "unknown".to_string(), |h| h.to_string_lossy().to_string()),
         };
 
         let json = serde_json::to_string_pretty(&info)

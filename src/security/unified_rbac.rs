@@ -726,8 +726,7 @@ impl ConsolidatedRBACManager {
         let role_exists = if let Some(tenant_id) = tenant_id {
             self.tenant_roles
                 .get(tenant_id)
-                .map(|roles| roles.contains_key(role_name))
-                .unwrap_or(false)
+                .is_some_and(|roles| roles.contains_key(role_name))
         } else {
             false
         };
@@ -774,9 +773,7 @@ impl ConsolidatedRBACManager {
         // Get or create user role assignment
         let mut assignment = self
             .user_role_assignments
-            .get(user_id)
-            .map(|a| a.clone())
-            .unwrap_or_else(|| UserRoleAssignment {
+            .get(user_id).map_or_else(|| UserRoleAssignment {
                 user_id: user_id.to_string(),
                 tenant_id: None,
                 roles: HashSet::new(),
@@ -784,7 +781,7 @@ impl ConsolidatedRBACManager {
                 assigned_at: Utc::now(),
                 assigned_by: "system".to_string(),
                 expires_at: None,
-            });
+            }, |a| a.clone());
 
         // Add the direct permission
         assignment.direct_permissions.insert(permission.clone());

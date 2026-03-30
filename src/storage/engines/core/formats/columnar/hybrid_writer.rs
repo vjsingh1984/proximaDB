@@ -414,7 +414,7 @@ impl HybridParquetWriter {
 
         // Write records
         if let Some(writer) = writer_lock.as_mut() {
-            writer.write_batch(&records).await?;
+            writer.write_batch(records).await?;
         }
 
         self.stats

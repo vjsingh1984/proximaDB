@@ -233,9 +233,7 @@ impl WindowExecutor {
             .iter()
             .map(|f| {
                 row.fields
-                    .get(f)
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "null".to_string())
+                    .get(f).map_or_else(|| "null".to_string(), |v| v.to_string())
             })
             .collect::<Vec<_>>()
             .join("|")
@@ -277,13 +275,9 @@ impl WindowExecutor {
                 }
                 // Fall back to string comparison
                 let sa = va
-                    .as_str()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| va.to_string());
+                    .as_str().map_or_else(|| va.to_string(), |s| s.to_string());
                 let sb = vb
-                    .as_str()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| vb.to_string());
+                    .as_str().map_or_else(|| vb.to_string(), |s| s.to_string());
                 sa.cmp(&sb)
             }
         }
@@ -427,8 +421,7 @@ impl WindowExecutor {
                             partition
                                 .get(*i)
                                 .and_then(|(_, row)| row.fields.get(field))
-                                .map(|v| !v.is_null())
-                                .unwrap_or(false)
+                                .is_some_and(|v| !v.is_null())
                         })
                         .count() as u64;
                     JsonValue::from(count)
@@ -498,7 +491,7 @@ impl WindowExecutor {
         let default_val: JsonValue = call
             .args
             .get(2)
-            .map(|s| {
+            .map_or(JsonValue::Null, |s| {
                 // Try to parse as number, otherwise use as string
                 if let Ok(n) = s.parse::<f64>() {
                     JsonValue::from(n)
@@ -507,8 +500,7 @@ impl WindowExecutor {
                 } else {
                     JsonValue::from(s.clone())
                 }
-            })
-            .unwrap_or(JsonValue::Null);
+            });
 
         for (pos, (idx, _)) in partition.iter().enumerate() {
             let target_pos = if is_lag {

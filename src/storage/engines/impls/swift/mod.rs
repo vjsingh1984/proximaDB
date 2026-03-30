@@ -1037,7 +1037,7 @@ impl SwiftFile {
                 buffer.extend_from_slice(&1u8.to_le_bytes()); // Has bloom filter
                 // For now, just use first block's bloom filter as representative
                 // TODO: Implement proper bloom filter aggregation
-                if let Some(ref first_block) = superblock.blocks.first() {
+                if let Some(first_block) = superblock.blocks.first() {
                     if let Some(ref bloom) = first_block.bloom_filter {
                         let bloom_bytes: Vec<u8> = bloom.serialize()?;
                         buffer.extend_from_slice(&(bloom_bytes.len() as u32).to_le_bytes());

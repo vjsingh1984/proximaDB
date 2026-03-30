@@ -308,9 +308,7 @@ impl StorageQuantizationEngine {
         let mut results = Vec::with_capacity(vectors.len());
 
         for (i, vector) in vectors.iter().enumerate() {
-            let id = ids
-                .map(|ids| ids[i].clone())
-                .unwrap_or_else(|| format!("vec_{}", i));
+            let id = ids.map_or_else(|| format!("vec_{}", i), |ids| ids[i].clone());
 
             let mut data = StorageQuantizedData {
                 id,
@@ -365,9 +363,7 @@ impl StorageQuantizationEngine {
         let mut results = Vec::with_capacity(vectors.len());
 
         for (i, vector) in vectors.iter().enumerate() {
-            let id = ids
-                .map(|ids| ids[i].clone())
-                .unwrap_or_else(|| format!("vec_{}", i));
+            let id = ids.map_or_else(|| format!("vec_{}", i), |ids| ids[i].clone());
 
             let mut data = StorageQuantizedData {
                 id,

@@ -1153,8 +1153,7 @@ impl AxisManager {
             strategy_type: search_strategy
                 .indexes
                 .first()
-                .map(|idx| idx.data_type)
-                .unwrap_or(Data::DenseVector { dimension: 128 }), // Default to dense vector
+                .map_or(Data::DenseVector { dimension: 128 }, |idx| idx.data_type), // Default to dense vector
             total_vectors: 0,    // TODO: Implement actual counting
             index_size_bytes: 0, // TODO: Implement actual size calculation
             last_updated: Utc::now(),

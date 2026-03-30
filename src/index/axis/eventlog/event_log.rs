@@ -260,8 +260,7 @@ impl EventLogQueue {
     pub fn can_compact(&self, file_path: &str) -> bool {
         self.file_status
             .get(file_path)
-            .map(|s| s.ready_for_compaction)
-            .unwrap_or(true) // If not tracked, allow compaction
+            .map_or(true, |s| s.ready_for_compaction) // If not tracked, allow compaction
     }
 
     /// Clean up after compaction

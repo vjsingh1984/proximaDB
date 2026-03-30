@@ -1135,7 +1135,7 @@ impl UnifiedQueryHandler {
             .map_err(|e| anyhow!("Vector batch failed: {}", e))?;
 
         let metrics = response.metrics.as_ref();
-        let inserted = metrics.map(|m| m.successful_count as u32).unwrap_or(0);
+        let inserted = metrics.map_or(0, |m| m.successful_count as u32);
 
         Ok(UnifiedQueryResponse {
             success: response.success,
@@ -1182,18 +1182,14 @@ impl UnifiedQueryHandler {
                 let collection_info: Vec<CollectionInfo> = collections
                     .into_iter()
                     .map(|c| {
-                        let dimension = c.config.as_ref().map(|cfg| cfg.dimension).unwrap_or(0);
+                        let dimension = c.config.as_ref().map_or(0, |cfg| cfg.dimension);
                         let vector_count =
-                            c.stats.as_ref().map(|s| s.vector_count as u64).unwrap_or(0);
+                            c.stats.as_ref().map_or(0, |s| s.vector_count as u64);
                         let storage_engine = c
                             .storage_assignment
-                            .as_ref()
-                            .map(|sa| {
-                                proximadb_v1::StorageEngine::try_from(sa.engine)
-                                    .map(|e| format!("{:?}", e).to_lowercase())
-                                    .unwrap_or_else(|_| "sst".to_string())
-                            })
-                            .unwrap_or_else(|| "sst".to_string());
+                            .as_ref().map_or_else(|| "sst".to_string(), |sa| {
+                                proximadb_v1::StorageEngine::try_from(sa.engine).map_or_else(|_| "sst".to_string(), |e| format!("{:?}", e).to_lowercase())
+                            });
 
                         CollectionInfo {
                             id: c.id,
@@ -1228,22 +1224,16 @@ impl UnifiedQueryHandler {
                 let dimension = collection
                     .config
                     .as_ref()
-                    .map(|cfg| cfg.dimension)
-                    .unwrap_or(0);
+                    .map_or(0, |cfg| cfg.dimension);
                 let vector_count = collection
                     .stats
                     .as_ref()
-                    .map(|s| s.vector_count as u64)
-                    .unwrap_or(0);
+                    .map_or(0, |s| s.vector_count as u64);
                 let storage_engine = collection
                     .storage_assignment
-                    .as_ref()
-                    .map(|sa| {
-                        proximadb_v1::StorageEngine::try_from(sa.engine)
-                            .map(|e| format!("{:?}", e).to_lowercase())
-                            .unwrap_or_else(|_| "sst".to_string())
-                    })
-                    .unwrap_or_else(|| "sst".to_string());
+                    .as_ref().map_or_else(|| "sst".to_string(), |sa| {
+                        proximadb_v1::StorageEngine::try_from(sa.engine).map_or_else(|_| "sst".to_string(), |e| format!("{:?}", e).to_lowercase())
+                    });
 
                 Ok(UnifiedQueryResponse {
                     success: true,

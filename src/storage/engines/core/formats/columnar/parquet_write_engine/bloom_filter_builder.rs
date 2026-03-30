@@ -134,8 +134,7 @@ impl BloomFilterBuilder {
     pub fn might_contain(&self, row_group: usize, id: &str) -> bool {
         self.bloom_filters
             .get(&row_group)
-            .map(|filter| filter.might_contain(id.as_bytes()))
-            .unwrap_or(false)
+            .is_some_and(|filter| filter.might_contain(id.as_bytes()))
     }
 
     /// Get or create filter for a row group

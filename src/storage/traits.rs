@@ -1260,14 +1260,12 @@ pub trait UnifiedStorageEngine: Send + Sync {
         let warnings = stats
             .engine_specific
             .get("warnings")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
+            .and_then(|v| v.as_array()).map_or_else(Vec::new, |arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str())
                     .map(|s| s.to_string())
                     .collect()
-            })
-            .unwrap_or_else(Vec::new);
+            });
 
         Ok(EngineHealth {
             healthy,
@@ -1732,7 +1730,7 @@ impl StorageQueryContext {
         let storage_strategy = config
             .and_then(|c| c.storage_engine)
             .and_then(|e| crate::proto::proximadb_v1::StorageEngine::try_from(e).ok())
-            .map(|engine| match engine {
+            .map_or(StorageEngineStrategy::Sst, |engine| match engine {
                 crate::proto::proximadb_v1::StorageEngine::Viper => StorageEngineStrategy::Viper,
                 crate::proto::proximadb_v1::StorageEngine::Sst => StorageEngineStrategy::Sst,
                 crate::proto::proximadb_v1::StorageEngine::Nova => StorageEngineStrategy::Nova,
@@ -1741,8 +1739,7 @@ impl StorageQueryContext {
                 crate::proto::proximadb_v1::StorageEngine::Raptor => StorageEngineStrategy::Raptor,
                 crate::proto::proximadb_v1::StorageEngine::Tst => StorageEngineStrategy::TimeSeries,
                 _ => StorageEngineStrategy::Sst, // Default to SST for unknown engines
-            })
-            .unwrap_or(StorageEngineStrategy::Sst);
+            });
 
         let mut adjusted_params = (*search_params).clone();
         if matches!(
@@ -1770,30 +1767,25 @@ impl StorageQueryContext {
                 })
                 .unwrap_or(false),
             has_quantization: config.and_then(|c| c.quantization.as_ref()).is_some(),
-            dimension: config.map(|c| c.dimension as usize).unwrap_or(0),
+            dimension: config.map_or(0, |c| c.dimension as usize),
             distance_metric: config
-                .map(|c| match c.distance_metric {
+                .map_or(crate::compute::distance_computation::DistanceMetric::Cosine, |c| match c.distance_metric {
                     Some(0) => crate::compute::distance_computation::DistanceMetric::Euclidean,
                     Some(1) => crate::compute::distance_computation::DistanceMetric::Cosine,
                     Some(2) => crate::compute::distance_computation::DistanceMetric::DotProduct,
                     _ => crate::compute::distance_computation::DistanceMetric::Cosine,
-                })
-                .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
+                }),
             storage_strategy,
-            storage_path: storage_assignment
-                .map(|sa| sa.base_location.clone())
-                .unwrap_or_else(|| "./data".to_string()),
+            storage_path: storage_assignment.map_or_else(|| "./data".to_string(), |sa| sa.base_location.clone()),
             estimated_vector_count: 0,
             estimated_size_bytes: 0,
             performance_tier: PerformanceTier::Warm, // Default since preset field doesn't exist
             compression_enabled: config
                 .and_then(|c| c.storage_config.as_ref())
-                .map(|s| s.compression.unwrap_or(0) != 0) // Assume 0 means no compression
-                .unwrap_or(false),
+                .is_some_and(|s| s.compression.unwrap_or(0) != 0),
             quantization_enabled: config
                 .and_then(|c| c.quantization.as_ref())
-                .map(|_| true)
-                .unwrap_or(false),
+                .is_some_and(|_| true),
             // Parse quantization config for progressive search
             quantization_config: config.and_then(|c| c.quantization.as_ref()).and_then(|qc| {
                 config
@@ -1849,8 +1841,7 @@ impl StorageQueryContext {
         self.metadata
             .quantization_config
             .as_ref()
-            .map(|qc| qc.progressive_search_enabled)
-            .unwrap_or(false)
+            .is_some_and(|qc| qc.progressive_search_enabled)
     }
 
     /// Get progressive quantization levels ordered by search priority
@@ -1866,8 +1857,7 @@ impl StorageQueryContext {
         self.metadata
             .quantization_config
             .as_ref()
-            .map(|qc| qc.binary_filter_selectivity)
-            .unwrap_or(0.1)
+            .map_or(0.1, |qc| qc.binary_filter_selectivity)
     }
 
     /// Check if SIMD acceleration should be used
@@ -1875,8 +1865,7 @@ impl StorageQueryContext {
         self.metadata
             .quantization_config
             .as_ref()
-            .map(|qc| qc.enable_simd_acceleration)
-            .unwrap_or(true)
+            .map_or(true, |qc| qc.enable_simd_acceleration)
     }
 
     /// Get the parsed quantization config
@@ -1941,7 +1930,7 @@ impl StorageQueryContext {
     /// Get collection-specific storage path
     pub fn collection_storage_path(&self) -> Option<String> {
         self.storage_url().map(|base| {
-            crate::utils::StoragePath::collection_data_path(base, &self.collection_id())
+            crate::utils::StoragePath::collection_data_path(base, self.collection_id())
         })
     }
 }

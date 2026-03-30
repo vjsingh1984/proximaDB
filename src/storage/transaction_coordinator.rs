@@ -1101,9 +1101,7 @@ impl TransactionCoordinator {
         // Build staging directory name
         let staging_dir = config
             .custom_staging_dir
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or_else(|| config.operation_type.staging_dir_name());
+            .as_ref().map_or_else(|| config.operation_type.staging_dir_name(), |s| s.as_str());
 
         // For metadata operations with custom staging dir containing path separators,
         // we need special handling

@@ -548,8 +548,7 @@ fn rows_to_json(rows: &[RowData], table_map: &Option<TableMapEvent>) -> Option<s
     let empty_columns = vec![];
     let columns_def = table_map
         .as_ref()
-        .map(|t| &t.columns)
-        .unwrap_or(&empty_columns);
+        .map_or(&empty_columns, |t| &t.columns);
 
     let mut obj = serde_json::map::Map::new();
     for (i, col) in columns.iter().enumerate() {

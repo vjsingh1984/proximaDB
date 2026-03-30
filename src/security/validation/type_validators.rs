@@ -625,8 +625,7 @@ impl DecimalValidator {
         let effective_precision = self.precision.min(38);
         let max_value = 10i128
             .checked_pow(effective_precision as u32)
-            .map(|v| v - 1)
-            .unwrap_or(i128::MAX);
+            .map_or(i128::MAX, |v| v - 1);
 
         if value.abs() > max_value {
             return Err(ValidationError::DecimalOverflow {
@@ -650,7 +649,7 @@ impl DecimalValidator {
 
         // Count total digits
         let integer_digits = parts[0].trim_start_matches('-').len();
-        let fractional_digits = parts.get(1).map(|s| s.len()).unwrap_or(0);
+        let fractional_digits = parts.get(1).map_or(0, |s| s.len());
         let total_digits = integer_digits + fractional_digits;
 
         if total_digits > self.precision as usize {

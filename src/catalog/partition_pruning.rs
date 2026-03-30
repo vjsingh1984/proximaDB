@@ -606,18 +606,12 @@ impl PartitionPruner {
 
         // Try date only (YYYY-MM-DD)
         if let Ok(dt) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-            return match dt.and_hms_opt(0, 0, 0) {
-                Some(nt) => Some(nt.and_utc()),
-                None => None,
-            };
+            return dt.and_hms_opt(0, 0, 0).map(|nt| nt.and_utc());
         }
 
         // Try month (YYYY-MM)
         if let Ok(dt) = chrono::NaiveDate::parse_from_str(&format!("{}-01", s), "%Y-%m-%d") {
-            return match dt.and_hms_opt(0, 0, 0) {
-                Some(nt) => Some(nt.and_utc()),
-                None => None,
-            };
+            return dt.and_hms_opt(0, 0, 0).map(|nt| nt.and_utc());
         }
 
         None

@@ -96,13 +96,11 @@ impl StreamingParquetWriter {
         );
 
         // Convert proto filterable columns to columnar format
-        let columnar_filterable: Vec<ColumnarFilterableSpec> = filterable_columns
-            .map(|cols| {
+        let columnar_filterable: Vec<ColumnarFilterableSpec> = filterable_columns.map_or_else(Vec::new, |cols| {
                 cols.iter()
                     .map(ColumnarFilterableSpec::from_proto)
                     .collect()
-            })
-            .unwrap_or_else(Vec::new);
+            });
 
         // Build optimized schema
         let mut schema_builder = ParquetSchemaBuilder::new(dimension, config.clone());

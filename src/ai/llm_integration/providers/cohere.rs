@@ -151,8 +151,7 @@ impl LLMClient for CohereClient {
                     .meta
                     .billed_units
                     .as_ref()
-                    .map(|b| b.input_tokens.unwrap_or(0) + b.output_tokens.unwrap_or(0))
-                    .unwrap_or(0),
+                    .map_or(0, |b| b.input_tokens.unwrap_or(0) + b.output_tokens.unwrap_or(0)),
             },
             confidence_score: Some(0.85),
             finish_reason: FinishReason::Stop,

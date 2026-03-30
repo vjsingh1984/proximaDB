@@ -1616,8 +1616,7 @@ impl UnifiedHandlers {
             c.id == collection_id
                 || c.config
                     .as_ref()
-                    .map(|cfg| cfg.name == collection_id)
-                    .unwrap_or(false)
+                    .is_some_and(|cfg| cfg.name == collection_id)
         }))
     }
 

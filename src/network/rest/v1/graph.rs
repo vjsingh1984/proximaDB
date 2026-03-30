@@ -525,8 +525,7 @@ fn convert_properties_to_json(
                 }
                 Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(f)) => {
                     serde_json::Number::from_f64(*f)
-                        .map(serde_json::Value::Number)
-                        .unwrap_or(serde_json::Value::Null)
+                        .map_or(serde_json::Value::Null, serde_json::Value::Number)
                 }
                 Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
                     serde_json::Value::Bool(*b)
@@ -587,8 +586,7 @@ fn convert_property_value_to_json(prop: &PropertyValue) -> serde_json::Value {
         }
         Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(f)) => {
             serde_json::Number::from_f64(*f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
+                .map_or(serde_json::Value::Null, serde_json::Value::Number)
         }
         Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
             serde_json::Value::Bool(*b)
@@ -632,11 +630,7 @@ fn convert_json_to_property_value(value: serde_json::Value) -> PropertyValue {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Some(Value::IntValue(i))
-            } else if let Some(f) = n.as_f64() {
-                Some(Value::DoubleValue(f))
-            } else {
-                None
-            }
+            } else { n.as_f64().map(Value::DoubleValue) }
         }
         serde_json::Value::Bool(b) => Some(Value::BoolValue(b)),
         serde_json::Value::Array(arr) => {
@@ -655,9 +649,7 @@ fn convert_json_to_property_value(value: serde_json::Value) -> PropertyValue {
 
 fn format_timestamp(ts_ms: &i64) -> String {
     // Convert Unix epoch milliseconds to ISO 8601 string
-    chrono::DateTime::from_timestamp_millis(*ts_ms)
-        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
-        .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string())
+    chrono::DateTime::from_timestamp_millis(*ts_ms).map_or_else(|| "1970-01-01T00:00:00.000Z".to_string(), |dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
 }
 
 /// Create the graph REST router with multi-graph support

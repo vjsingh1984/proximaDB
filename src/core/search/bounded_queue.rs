@@ -113,8 +113,7 @@ impl BoundedPriorityQueue {
         self.min_score = self
             .heap
             .peek()
-            .map(|e| e.record.score)
-            .unwrap_or(f32::NEG_INFINITY);
+            .map_or(f32::NEG_INFINITY, |e| e.record.score);
     }
 
     /// Check if a score has potential to enter the queue

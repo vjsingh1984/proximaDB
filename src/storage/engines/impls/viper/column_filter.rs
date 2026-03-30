@@ -537,7 +537,7 @@ impl VIPERSelectiveReader {
 
         // Implement true selective parquet reading using row indices
         let selected_records = self
-            .read_selective_rows(parquet_file, &qualifying_indices)
+            .read_selective_rows(parquet_file, qualifying_indices)
             .await?;
 
         let io_savings = if !selected_records.is_empty() {

@@ -533,8 +533,7 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> Option<ser
     value.value.as_ref().map(|v| match v {
         Value::StringValue(s) => serde_json::Value::String(s.clone()),
         Value::NumberValue(n) => serde_json::Number::from_f64(*n)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
         Value::BoolValue(b) => serde_json::Value::Bool(*b),
         Value::Int64Value(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
         Value::NullValue(_) => serde_json::Value::Null,

@@ -271,8 +271,7 @@ impl CompactionCoordinator {
         if !self
             .config
             .as_ref()
-            .map(|c| c.enable_background_compaction)
-            .unwrap_or(false)
+            .is_some_and(|c| c.enable_background_compaction)
         {
             return Ok(None);
         }
@@ -349,16 +348,14 @@ impl CompactionCoordinator {
                     < self
                         .config
                         .as_ref()
-                        .map(|c| c.min_compaction_interval_secs)
-                        .unwrap_or(60) as i64
+                        .map_or(60, |c| c.min_compaction_interval_secs) as i64
                 {
                     debug!(
                         "🔧 CompactionCoordinator: Too soon for compaction ({}s < {}s)",
                         elapsed.num_seconds(),
                         self.config
                             .as_ref()
-                            .map(|c| c.min_compaction_interval_secs)
-                            .unwrap_or(60)
+                            .map_or(60, |c| c.min_compaction_interval_secs)
                     );
                     return Ok(false);
                 }
@@ -370,16 +367,14 @@ impl CompactionCoordinator {
             >= self
                 .config
                 .as_ref()
-                .map(|c| c.max_concurrent_compactions)
-                .unwrap_or(2)
+                .map_or(2, |c| c.max_concurrent_compactions)
         {
             debug!(
                 "🔧 CompactionCoordinator: Too many active compactions ({}/{})",
                 active_count,
                 self.config
                     .as_ref()
-                    .map(|c| c.max_concurrent_compactions)
-                    .unwrap_or(2)
+                    .map_or(2, |c| c.max_concurrent_compactions)
             );
             return Ok(false);
         }
@@ -387,10 +382,9 @@ impl CompactionCoordinator {
         // Also check actual file count in storage (not just tracked state)
         let preferred_engine = state
             .as_ref()
-            .map(|s| s.preferred_engine.as_str())
-            .unwrap_or("viper");
+            .map_or("viper", |s| s.preferred_engine.as_str());
         let actual_file_count = match self
-            .discover_existing_files_for_collection(collection_id, &preferred_engine)
+            .discover_existing_files_for_collection(collection_id, preferred_engine)
             .await
         {
             Ok(files) => files.len(),
@@ -406,8 +400,7 @@ impl CompactionCoordinator {
         // Use the maximum of tracked state and actual file count
         let effective_file_count = state
             .as_ref()
-            .map(|s| s.files_needing_compaction)
-            .unwrap_or(0)
+            .map_or(0, |s| s.files_needing_compaction)
             .max(actual_file_count);
 
         // Check thresholds
@@ -416,27 +409,23 @@ impl CompactionCoordinator {
                 >= self
                     .config
                     .as_ref()
-                    .map(|c| c.max_files_before_compaction)
-                    .unwrap_or(10)
+                    .map_or(10, |c| c.max_files_before_compaction)
                 || s.uncompacted_size_bytes
                     >= self
                         .config
                         .as_ref()
-                        .map(|c| c.max_size_before_compaction)
-                        .unwrap_or(1024 * 1024 * 1024)
+                        .map_or(1024 * 1024 * 1024, |c| c.max_size_before_compaction)
                 || s.flushes_since_compaction
                     >= self
                         .config
                         .as_ref()
-                        .map(|c| c.max_flushes_before_compaction)
-                        .unwrap_or(5)
+                        .map_or(5, |c| c.max_flushes_before_compaction)
         } else {
             effective_file_count
                 >= self
                     .config
                     .as_ref()
-                    .map(|c| c.max_files_before_compaction)
-                    .unwrap_or(10)
+                    .map_or(10, |c| c.max_files_before_compaction)
         };
 
         if should_compact {
@@ -445,31 +434,25 @@ impl CompactionCoordinator {
                 collection_id,
                 state
                     .as_ref()
-                    .map(|s| s.files_needing_compaction)
-                    .unwrap_or(0),
+                    .map_or(0, |s| s.files_needing_compaction),
                 self.config
                     .as_ref()
-                    .map(|c| c.max_files_before_compaction)
-                    .unwrap_or(10),
+                    .map_or(10, |c| c.max_files_before_compaction),
                 actual_file_count,
                 state
                     .as_ref()
-                    .map(|s| s.uncompacted_size_bytes)
-                    .unwrap_or(0)
+                    .map_or(0, |s| s.uncompacted_size_bytes)
                     / (1024 * 1024),
                 self.config
                     .as_ref()
-                    .map(|c| c.max_size_before_compaction)
-                    .unwrap_or(1024 * 1024 * 1024)
+                    .map_or(1024 * 1024 * 1024, |c| c.max_size_before_compaction)
                     / (1024 * 1024),
                 state
                     .as_ref()
-                    .map(|s| s.flushes_since_compaction)
-                    .unwrap_or(0),
+                    .map_or(0, |s| s.flushes_since_compaction),
                 self.config
                     .as_ref()
-                    .map(|c| c.max_flushes_before_compaction)
-                    .unwrap_or(5)
+                    .map_or(5, |c| c.max_flushes_before_compaction)
             );
         } else if actual_file_count > 5 {
             debug!(
@@ -498,9 +481,7 @@ impl CompactionCoordinator {
         let preferred_engine = {
             let states = self.collection_states.read().await;
             states
-                .get(&collection_id)
-                .map(|s| s.preferred_engine.clone())
-                .unwrap_or_else(|| "VIPER".to_string())
+                .get(&collection_id).map_or_else(|| "VIPER".to_string(), |s| s.preferred_engine.clone())
         };
 
         // Create compaction task

@@ -239,9 +239,7 @@ pub async fn get_schema(
         schema_version,
         collection_id: collection_id.clone(),
         schema: schema_def,
-        created_at: chrono::DateTime::from_timestamp(collection.created_at / 1000, 0)
-            .map(|dt| dt.to_rfc3339())
-            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+        created_at: chrono::DateTime::from_timestamp(collection.created_at / 1000, 0).map_or_else(|| chrono::Utc::now().to_rfc3339(), |dt| dt.to_rfc3339()),
         updated_at: if collection.updated_at != collection.created_at {
             chrono::DateTime::from_timestamp(collection.updated_at / 1000, 0)
                 .map(|dt| dt.to_rfc3339())
@@ -599,17 +597,14 @@ pub async fn update_schema(
     // Step 4: Create new schema version
     let previous_schema_id = config
         .record_schema
-        .as_ref()
-        .map(|s| s.schema_id.clone())
-        .unwrap_or_else(|| format!("schema_{}_v0", collection_id));
+        .as_ref().map_or_else(|| format!("schema_{}_v0", collection_id), |s| s.schema_id.clone());
 
     let new_schema_id = format!("schema_{}_{}", collection_id, uuid::Uuid::new_v4());
     let new_version = increment_version(
         config
             .record_schema
             .as_ref()
-            .map(|s| s.schema_version.as_str())
-            .unwrap_or("0.0.0"),
+            .map_or("0.0.0", |s| s.schema_version.as_str()),
     );
 
     // Step 5: Build and store updated schema configuration
@@ -760,8 +755,7 @@ fn build_existing_schema(
     let allow_additional = config
         .record_schema
         .as_ref()
-        .map(|s| s.auto_evolve)
-        .unwrap_or(true);
+        .map_or(true, |s| s.auto_evolve);
 
     Some(SchemaDefinition {
         columns,

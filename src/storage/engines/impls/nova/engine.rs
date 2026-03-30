@@ -788,9 +788,7 @@ impl NovaEngine {
         let filterable_columns = params
             .collection_config
             .as_ref()
-            .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.filterable_columns.clone())
-            .unwrap_or_else(|| {
+            .and_then(|c| c.config.as_ref()).map_or_else(|| {
                 vec![crate::proto::proximadb_v1::FilterableColumnSpec {
                     name: FIELD_ID.to_string(),
                     data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString
@@ -799,7 +797,7 @@ impl NovaEngine {
                     supports_range: false,
                     estimated_cardinality: Some(1000000),
                 }]
-            });
+            }, |cfg| cfg.filterable_columns.clone());
 
         // Configure writer with NOVA-specific settings
         // Include both ID and filterable columns in bloom filters
@@ -920,7 +918,7 @@ impl NovaEngine {
                 *dim as usize
             } else {
                 // Fallback: use first record's vector dimension
-                records.first().map(|r| r.vector.len()).unwrap_or(0)
+                records.first().map_or(0, |r| r.vector.len())
             };
 
         // Build vector column as FixedSizeList

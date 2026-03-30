@@ -786,8 +786,7 @@ impl StorageEngine {
             let collection_name = collection
                 .config
                 .as_ref()
-                .map(|c| c.name.as_str())
-                .unwrap_or("unknown");
+                .map_or("unknown", |c| c.name.as_str());
 
             // Storage assignment is now part of collection metadata
             if let Some(ref assignment) = collection.storage_assignment {

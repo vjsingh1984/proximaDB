@@ -787,12 +787,10 @@ impl HybridFusionEngine {
 
                 let bm25_better = bm25_rank
                     .zip(bm25_ranks.get(other_doc))
-                    .map(|(my_r, other_r)| my_r < other_r)
-                    .unwrap_or(false);
+                    .is_some_and(|(my_r, other_r)| my_r < other_r);
                 let vector_better = vector_rank
                     .zip(vector_ranks.get(other_doc))
-                    .map(|(my_r, other_r)| my_r < other_r)
-                    .unwrap_or(false);
+                    .is_some_and(|(my_r, other_r)| my_r < other_r);
 
                 // Wins if ranks higher in both
                 if bm25_better && vector_better {
@@ -802,13 +800,11 @@ impl HybridFusionEngine {
                 let other_bm25_better = bm25_ranks
                     .get(other_doc)
                     .zip(bm25_rank)
-                    .map(|(other_r, my_r)| other_r < my_r)
-                    .unwrap_or(false);
+                    .is_some_and(|(other_r, my_r)| other_r < my_r);
                 let other_vector_better = vector_ranks
                     .get(other_doc)
                     .zip(vector_rank)
-                    .map(|(other_r, my_r)| other_r < my_r)
-                    .unwrap_or(false);
+                    .is_some_and(|(other_r, my_r)| other_r < my_r);
 
                 // Losses if ranks lower in both
                 if other_bm25_better && other_vector_better {
@@ -822,13 +818,11 @@ impl HybridFusionEngine {
             let bm25_score = bm25_results
                 .iter()
                 .find(|r| &r.doc_id == doc_id)
-                .map(|r| r.score)
-                .unwrap_or(0.0);
+                .map_or(0.0, |r| r.score);
             let vector_score = vector_results
                 .iter()
                 .find(|r| &r.doc_id == doc_id)
-                .map(|r| r.score)
-                .unwrap_or(0.0);
+                .map_or(0.0, |r| r.score);
 
             fused_map.insert(
                 doc_id.to_string(),
@@ -837,8 +831,8 @@ impl HybridFusionEngine {
                     bm25_score,
                     vector_score,
                     fused_score: condorcet_score,
-                    bm25_rank: bm25_rank.map(|r| r + 1).unwrap_or(usize::MAX),
-                    vector_rank: vector_rank.map(|r| r + 1).unwrap_or(usize::MAX),
+                    bm25_rank: bm25_rank.map_or(usize::MAX, |r| r + 1),
+                    vector_rank: vector_rank.map_or(usize::MAX, |r| r + 1),
                     highlights: None,
                     metadata: HashMap::new(),
                 },

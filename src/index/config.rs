@@ -315,12 +315,11 @@ impl IndexConfig {
             pq_config: None,   // PQ config is algorithm-specific, set when PQ algorithm is selected
             annoy_config: None, // Annoy config is algorithm-specific, set when ANNOY algorithm is selected
             lsh_config,
-            build_concurrency: Some(self.build_concurrency.map(|x| x as u32).unwrap_or(1)),
-            memory_limit_mb: Some(self.memory_limit_mb.map(|x| x as u32).unwrap_or(512)),
+            build_concurrency: Some(self.build_concurrency.map_or(1, |x| x as u32)),
+            memory_limit_mb: Some(self.memory_limit_mb.map_or(512, |x| x as u32)),
             checkpoint_interval_ms: Some(
                 self.checkpoint_interval_ms
-                    .map(|x| x as u32)
-                    .unwrap_or(30000),
+                    .map_or(30000, |x| x as u32),
             ),
             is_primary: Some(true),           // Default to primary index
             use_cases: vec![],                // Default empty use cases

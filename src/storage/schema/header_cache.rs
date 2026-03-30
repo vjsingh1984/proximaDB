@@ -1054,8 +1054,7 @@ impl VectorPruner for EnhancedCachedHeader {
             .rowgroups
             .first()
             .and_then(|rg| rg.centroid.as_ref())
-            .map(|c| c.len())
-            .unwrap_or(0)
+            .map_or(0, |c| c.len())
     }
 
     fn num_entries(&self) -> usize {

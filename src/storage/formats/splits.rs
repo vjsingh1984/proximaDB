@@ -465,11 +465,7 @@ impl ScalarValue {
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     Some(ScalarValue::Int64(i))
-                } else if let Some(f) = n.as_f64() {
-                    Some(ScalarValue::Float64(f))
-                } else {
-                    None
-                }
+                } else { n.as_f64().map(ScalarValue::Float64) }
             }
             serde_json::Value::String(s) => Some(ScalarValue::String(s.clone())),
             _ => None,
@@ -659,8 +655,7 @@ impl SplitPlanner {
                 .iter()
                 .enumerate()
                 .min_by_key(|(_, c)| *c)
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+                .map_or(0, |(i, _)| i);
 
             partitions[min_idx].push(split);
             partition_costs[min_idx] += cost;

@@ -965,7 +965,7 @@ impl Flush {
             sorted_records.sort_by(|a, b| {
                 let a_id = a.id.as_str();
                 let b_id = b.id.as_str();
-                a_id.cmp(&b_id)
+                a_id.cmp(b_id)
             });
 
             return Ok((

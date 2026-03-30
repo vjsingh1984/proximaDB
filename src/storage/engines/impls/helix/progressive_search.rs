@@ -290,8 +290,8 @@ impl ProgressiveSearchCoordinator {
         debug!(
             "Progressive search complete: {} results with scores {:.4}-{:.4}",
             final_results.len(),
-            final_results.last().map(|r| r.score).unwrap_or(0.0),
-            final_results.first().map(|r| r.score).unwrap_or(0.0),
+            final_results.last().map_or(0.0, |r| r.score),
+            final_results.first().map_or(0.0, |r| r.score),
         );
 
         Ok(final_results)

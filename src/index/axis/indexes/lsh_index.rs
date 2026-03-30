@@ -191,8 +191,7 @@ impl AxisLshIndex {
     ) -> Self {
         let coll_str = collection_id
             .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("<unnamed>");
+            .map_or("<unnamed>", |s| s.as_str());
         info!(
             "Creating AXIS LSH index for collection '{}': {} tables, {} hashes, {} dim, repr={:?}",
             coll_str, config.n_tables, config.n_hashes, dimension, preferred_extraction_mode

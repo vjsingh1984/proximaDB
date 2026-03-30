@@ -809,9 +809,7 @@ impl AutoScheduler {
         history
             .iter()
             .rev()
-            .find(|op| op.operation_type == op_type)
-            .map(|op| op.scheduled_at)
-            .unwrap_or_else(|| Utc::now() - Duration::hours(1))
+            .find(|op| op.operation_type == op_type).map_or_else(|| Utc::now() - Duration::hours(1), |op| op.scheduled_at)
     }
 
     async fn analyze_workload(&self) {

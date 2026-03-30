@@ -381,7 +381,7 @@ impl RaptorReader {
 
                 // Use standard decompression (Proxima used for different data types)
                 let decompressed = crate::core::compression::decompress(
-                    &compressed_data,
+                    compressed_data,
                     CompressionAlgorithm::Zstd,
                     CompressionContext::Column,
                 )?;
@@ -409,7 +409,7 @@ impl RaptorReader {
 
                 // DIRECT decode
                 let decompressed = crate::core::compression::decompress(
-                    &compressed_data,
+                    compressed_data,
                     CompressionAlgorithm::Zstd,
                     CompressionContext::Column,
                 )?;
@@ -1297,12 +1297,11 @@ impl RaptorReader {
 
         let query_to_centroid = centroid
             .as_ref()
-            .map(|c| {
+            .map_or(0.0, |c| {
                 distance_compute
                     .calculate_distance(query, c, metric)
                     .raw_value
-            })
-            .unwrap_or(0.0);
+            });
 
         // Step 2: Use P×K filtering with triangle inequality
         // Track filtering statistics
@@ -1339,7 +1338,7 @@ impl RaptorReader {
                 });
                 candidates.truncate(k);
                 // Update threshold to k-th best + margin
-                threshold = candidates.last().map(|(_, d)| *d * 1.2).unwrap_or(f32::MAX);
+                threshold = candidates.last().map_or(f32::MAX, |(_, d)| *d * 1.2);
             }
 
             if idx < ids.len() {
@@ -1441,7 +1440,7 @@ impl RaptorReader {
                     ))
                 })?;
             let dist = distance_compute
-                .calculate_distance(query, &centroid, &metric)
+                .calculate_distance(query, &centroid, metric)
                 .raw_value;
 
             // Simple 1-to-1 mapping: centroid_id == rowgroup_id
@@ -1590,12 +1589,11 @@ impl RaptorReader {
 
         let query_to_centroid = centroid
             .as_ref()
-            .map(|c| {
+            .map_or(0.0, |c| {
                 distance_compute
                     .calculate_distance(query, c, metric)
                     .raw_value
-            })
-            .unwrap_or(0.0);
+            });
 
         // Step 2: Use P×K filtering with triangle inequality
         let total_vectors = vectors.len();
@@ -1637,8 +1635,7 @@ impl RaptorReader {
                 threshold = candidate_distances
                     .last()
                     .copied()
-                    .map(|d| d * 1.2)
-                    .unwrap_or(f32::MAX);
+                    .map_or(f32::MAX, |d| d * 1.2);
             }
         }
 
@@ -3431,8 +3428,7 @@ impl RaptorReader {
             // Triangle inequality: query_to_neighbor >= |query_to_seed - seed_to_neighbor|
             let expansion_threshold = centroid_distances
                 .get(top_k_rowgroups.min(k - 1))
-                .map(|(d, _)| d * 1.5) // 50% margin beyond kth best
-                .unwrap_or(f32::MAX);
+                .map_or(f32::MAX, |(d, _)| d * 1.5);
 
             for &(seed_dist, seed_rg) in centroid_distances.iter().take(3) {
                 if let Some(&seed_idx) = rg_to_idx.get(&seed_rg) {

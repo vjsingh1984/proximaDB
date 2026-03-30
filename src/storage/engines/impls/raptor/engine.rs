@@ -2064,8 +2064,7 @@ impl RaptorEngine {
         let metadata_str = batch
             .column_by_name("metadata")
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::StringArray>())
-            .map(|arr| arr.value(index))
-            .unwrap_or("");
+            .map_or("", |arr| arr.value(index));
 
         let metadata_json: serde_json::Value = if metadata_str.is_empty() {
             serde_json::json!({})
@@ -2401,7 +2400,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Find RAPTOR data files for this collection
         // Construct data directory from base_path and collection_id
         // Format is: {baseurl}/{collectionid}/data/
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, collection_id);
         tracing::info!(
             "RAPTOR vector_by_id: Constructed data directory path: {}",
             data_dir
@@ -2565,7 +2564,7 @@ impl UnifiedStorageEngine for RaptorEngine {
                                             i
                                         );
                                         return Ok(Some(
-                                            self.reconstruct_vector_record(&batch, i)?,
+                                            self.reconstruct_vector_record(batch, i)?,
                                         ));
                                     }
                                 }

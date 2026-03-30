@@ -176,7 +176,7 @@ impl BlockFormatReader {
     /// Detect format from file path
     pub fn detect_format<P: AsRef<Path>>(path: P) -> BlockFormat {
         let path = path.as_ref();
-        if path.extension().map(|e| e == "arrow").unwrap_or(false) {
+        if path.extension().is_some_and(|e| e == "arrow") {
             BlockFormat::ArrowBlock
         } else {
             BlockFormat::ProximaBlocks

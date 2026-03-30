@@ -255,17 +255,13 @@ impl GraphOperationsService {
     pub fn from_config(cfg: &crate::core::config::Config) -> Self {
         let engine_name = cfg
             .graph
-            .as_ref()
-            .map(|g| g.engine.to_ascii_uppercase())
-            .unwrap_or_else(|| "ORION".to_string());
+            .as_ref().map_or_else(|| "ORION".to_string(), |g| g.engine.to_ascii_uppercase());
 
         // Get storage URL from config
         let base_storage_url = cfg
             .storage
             .storage_locations
-            .first()
-            .map(|loc| loc.url.clone())
-            .unwrap_or_else(|| "file:///tmp/proximadb".to_string());
+            .first().map_or_else(|| "file:///tmp/proximadb".to_string(), |loc| loc.url.clone());
 
         // Engine selection: PULSAR requires 'distributed-graph' feature, QUASAR requires 'tiered-graph'
         // Engine is determined per-graph from collection metadata during recovery
@@ -431,9 +427,7 @@ impl GraphOperationsService {
         let collection = self.collection_service.get_graph(graph_id).await?;
         let engine_type = collection
             .as_ref()
-            .and_then(|c| c.storage_config.as_ref())
-            .map(|sc| sc.engine_type.to_uppercase())
-            .unwrap_or_else(|| "ORION".to_string());
+            .and_then(|c| c.storage_config.as_ref()).map_or_else(|| "ORION".to_string(), |sc| sc.engine_type.to_uppercase());
 
         tracing::debug!(
             "Recovering graph {} with engine type: {}",
@@ -1939,8 +1933,7 @@ impl GraphOperationsService {
         let maybe_collection = self.collection_service.get_graph(graph_id).await?;
         let has_schema = maybe_collection
             .as_ref()
-            .map(|c| c.schema.is_some())
-            .unwrap_or(false);
+            .is_some_and(|c| c.schema.is_some());
 
         if has_schema {
             // Schema/cardinality validation (only when schema exists)

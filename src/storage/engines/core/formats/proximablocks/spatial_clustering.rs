@@ -905,8 +905,7 @@ fn kmeans_clustering(points: &[Vec<f32>], k: usize) -> Vec<Vec<f32>> {
                     (i, dist)
                 })
                 .min_by(|(_, d1), (_, d2)| d1.partial_cmp(d2).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+                .map_or(0, |(i, _)| i);
 
             clusters[nearest].push(point.clone());
         }

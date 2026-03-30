@@ -346,8 +346,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                             .columns
                             .iter()
                             .position(|c| c.id == *after_id)
-                            .map(|p| p + 1)
-                            .unwrap_or(new_schema.columns.len());
+                            .map_or(new_schema.columns.len(), |p| p + 1);
                         new_schema.columns.insert(pos, col);
                     } else {
                         new_schema.columns.push(col);

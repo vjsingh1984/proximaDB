@@ -355,9 +355,7 @@ impl SwiftCandidateLoader {
     ) -> Vec<ScoredCandidate> {
         let mut candidates = Vec::new();
 
-        let indices: Vec<usize> = block_indices
-            .map(|i| i.to_vec())
-            .unwrap_or_else(|| (0..superblock.blocks.len()).collect());
+        let indices: Vec<usize> = block_indices.map_or_else(|| (0..superblock.blocks.len()).collect(), |i| i.to_vec());
 
         for block_idx in indices {
             if let Some(block) = superblock.blocks.get(block_idx) {
@@ -403,9 +401,7 @@ impl SwiftCandidateLoader {
     ) -> Vec<ScoredCandidate> {
         let mut all_candidates = Vec::new();
 
-        let sb_indices: Vec<usize> = superblock_filter
-            .map(|i| i.to_vec())
-            .unwrap_or_else(|| (0..superblocks.len()).collect());
+        let sb_indices: Vec<usize> = superblock_filter.map_or_else(|| (0..superblocks.len()).collect(), |i| i.to_vec());
 
         for sb_idx in sb_indices {
             if let Some(superblock) = superblocks.get(sb_idx) {

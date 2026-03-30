@@ -799,9 +799,7 @@ impl BPlusTreeIndex {
             let start_key = chunk.first().map(|e| e.key.clone()).unwrap_or_default();
             // Use last_key from the last entry in chunk if available, otherwise fall back to key
             let end_key = chunk
-                .last()
-                .map(|e| e.last_key.clone().unwrap_or_else(|| e.key.clone()))
-                .unwrap_or_else(|| start_key.clone());
+                .last().map_or_else(|| start_key.clone(), |e| e.last_key.clone().unwrap_or_else(|| e.key.clone()));
             leaves.push(BPlusLeaf {
                 start_key,
                 end_key,
@@ -1720,8 +1718,7 @@ mod block_utils {
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number)
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
@@ -1944,8 +1941,7 @@ mod block_operations {
         let quantized_size = block
             .quantized_vectors
             .as_ref()
-            .map(|vecs| vecs.iter().map(|v| v.len()).sum::<usize>())
-            .unwrap_or(0);
+            .map_or(0, |vecs| vecs.iter().map(|v| v.len()).sum::<usize>());
 
         if original_size > 0 && quantized_size > 0 {
             1.0 - (quantized_size as f32 / original_size as f32)

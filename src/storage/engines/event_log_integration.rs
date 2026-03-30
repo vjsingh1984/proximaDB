@@ -249,8 +249,7 @@ impl FlushParametersExt for FlushParameters {
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|config| config.quantization.as_ref())
-            .map(|q| q.enabled.unwrap_or(false))
-            .unwrap_or(false)
+            .is_some_and(|q| q.enabled.unwrap_or(false))
     }
 
     fn has_fp32(&self) -> bool {

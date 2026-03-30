@@ -326,8 +326,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 let current_time = chrono::Utc::now().timestamp();
                 let is_expired = wal_record
                     .expires_at
-                    .map(|expires| expires < current_time)
-                    .unwrap_or(false);
+                    .is_some_and(|expires| expires < current_time);
 
                 if !is_expired {
                     return Ok(Some(wal_record));

@@ -245,8 +245,7 @@ impl DiskANNIndex {
             max_degree: self
                 .vamana_graph
                 .as_ref()
-                .map(|g| g.max_degree)
-                .unwrap_or(0),
+                .map_or(0, |g| g.max_degree),
             is_built: self.vamana_graph.is_some(),
         }
     }

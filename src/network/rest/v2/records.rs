@@ -107,7 +107,7 @@ fn sql_value_to_json(
         Some(Value::ArrayValue(arr)) => serde_json::Value::Array(
             arr.values
                 .iter()
-                .map(|v| sql_value_to_json(v))
+                .map(sql_value_to_json)
                 .collect::<Result<Vec<_>, _>>()?,
         ),
         Some(Value::ObjectValue(obj)) => {
@@ -133,11 +133,7 @@ fn json_to_filter_clause_value(
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Some(Value::IntValue(i))
-            } else if let Some(f) = n.as_f64() {
-                Some(Value::DoubleValue(f))
-            } else {
-                None
-            }
+            } else { n.as_f64().map(Value::DoubleValue) }
         }
         serde_json::Value::Bool(b) => Some(Value::BoolValue(*b)),
         _ => None, // Arrays and objects not directly supported in FilterClause

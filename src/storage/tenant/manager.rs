@@ -123,8 +123,7 @@ impl TenantManager {
     pub fn is_tenant_active(&self, tenant_id: &str) -> bool {
         self.active_tenants
             .get(tenant_id)
-            .map(|entry| entry.status == TenantStatus::Active)
-            .unwrap_or(false)
+            .is_some_and(|entry| entry.status == TenantStatus::Active)
     }
 
     /// Get tenant resource usage

@@ -97,8 +97,7 @@ pub(super) fn cmp_prop_gt(
     match lhs {
         Some(v) => extract_number_from_value(v)
             .zip(extract_number_from_value(rhs))
-            .map(|(a, b)| a > b)
-            .unwrap_or(false),
+            .is_some_and(|(a, b)| a > b),
         None => false,
     }
 }
@@ -109,8 +108,7 @@ pub(super) fn cmp_prop_ge(
     match lhs {
         Some(v) => extract_number_from_value(v)
             .zip(extract_number_from_value(rhs))
-            .map(|(a, b)| a >= b)
-            .unwrap_or(false),
+            .is_some_and(|(a, b)| a >= b),
         None => false,
     }
 }
@@ -121,8 +119,7 @@ pub(super) fn cmp_prop_lt(
     match lhs {
         Some(v) => extract_number_from_value(v)
             .zip(extract_number_from_value(rhs))
-            .map(|(a, b)| a < b)
-            .unwrap_or(false),
+            .is_some_and(|(a, b)| a < b),
         None => false,
     }
 }
@@ -133,8 +130,7 @@ pub(super) fn cmp_prop_le(
     match lhs {
         Some(v) => extract_number_from_value(v)
             .zip(extract_number_from_value(rhs))
-            .map(|(a, b)| a <= b)
-            .unwrap_or(false),
+            .is_some_and(|(a, b)| a <= b),
         None => false,
     }
 }

@@ -355,8 +355,7 @@ impl BackupManager {
                                 .data_files
                                 .iter()
                                 .find(|f| f.relative_path == relative_path)
-                                .map(|f| f.modified_time != modified_time)
-                                .unwrap_or(true); // File not in previous backup
+                                .map_or(true, |f| f.modified_time != modified_time); // File not in previous backup
 
                             if should_backup {
                                 changed_files.push(path);

@@ -382,8 +382,7 @@ impl AxisAnnoyIndex {
 
         let coll_str = collection_id
             .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("default");
+            .map_or("default", |s| s.as_str());
         info!(
             "Creating AXIS Annoy index for collection '{}': {} trees, search_k={}, dim={}",
             coll_str, config.n_trees, config.search_k, dimension
@@ -435,8 +434,7 @@ impl AxisAnnoyIndex {
         let coll_str = self
             .collection_id
             .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("default");
+            .map_or("default", |s| s.as_str());
         info!(
             "Building Annoy index with {} trees for {} vectors in collection '{}'",
             self.config.n_trees,

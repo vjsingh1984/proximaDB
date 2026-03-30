@@ -253,7 +253,7 @@ impl FileEncryptionLayer {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(base_key);
-        hasher.update(&chunk_id.to_be_bytes());
+        hasher.update(chunk_id.to_be_bytes());
         let result = hasher.finalize();
 
         let mut key = [0u8; 32];

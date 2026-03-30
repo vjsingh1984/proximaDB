@@ -261,14 +261,12 @@ impl TenantAwareEntityStore {
         let entity_count = self
             .tenant_entities
             .get(tenant_id)
-            .map(|store| store.len())
-            .unwrap_or(0);
+            .map_or(0, |store| store.len());
 
         let header_count = self
             .tenant_entity_headers
             .get(tenant_id)
-            .map(|headers| headers.len())
-            .unwrap_or(0);
+            .map_or(0, |headers| headers.len());
 
         TenantEntityStats {
             tenant_id: tenant_id.to_string(),

@@ -179,9 +179,7 @@ impl OrionPersistence {
             // Extract path component for WAL writer (strip file:// prefix if present)
             let wal_path_str = if wal_url.starts_with("file://") {
                 wal_url
-                    .strip_prefix("file://")
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| wal_url.clone())
+                    .strip_prefix("file://").map_or_else(|| wal_url.clone(), |s| s.to_string())
             } else {
                 wal_url.clone()
             };

@@ -141,7 +141,7 @@ impl MongoDbConnector {
         let db_name = mongo_config.database.as_deref().unwrap_or("default");
 
         let source_config = SourceConfig::mongodb(
-            &format!("mongodb_{}", db_name),
+            format!("mongodb_{}", db_name),
             &mongo_config.connection_uri,
         );
 
@@ -355,7 +355,7 @@ impl CdcSource for MongoDbConnector {
         // Save resume token
         if let Some(token) = self.resume_token.read().await.clone() {
             let offset =
-                Offset::new(&self.name().to_string(), 0).with_metadata("resume_token", token.data);
+                Offset::new(self.name().to_string(), 0).with_metadata("resume_token", token.data);
             self.offset_store.store(&offset).await?;
         }
 
@@ -376,7 +376,7 @@ impl CdcSource for MongoDbConnector {
     async fn current_offset(&self) -> CdcResult<Option<Offset>> {
         if let Some(token) = self.resume_token.read().await.clone() {
             return Ok(Some(
-                Offset::new(&self.name().to_string(), 0).with_metadata("resume_token", token.data),
+                Offset::new(self.name().to_string(), 0).with_metadata("resume_token", token.data),
             ));
         }
         Ok(None)

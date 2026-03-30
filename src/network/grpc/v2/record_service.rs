@@ -387,9 +387,7 @@ impl ProximaRecordServiceImpl {
             TypedVal::UuidValue(uuid) => {
                 // Convert UUID bytes to string for storage
                 if uuid.len() == 16 {
-                    let uuid_str = uuid::Uuid::from_slice(uuid)
-                        .map(|u| u.to_string())
-                        .unwrap_or_else(|_| hex::encode(uuid));
+                    let uuid_str = uuid::Uuid::from_slice(uuid).map_or_else(|_| hex::encode(uuid), |u| u.to_string());
                     Value::StringValue(uuid_str)
                 } else {
                     Value::BytesValue(uuid.clone())
@@ -590,9 +588,7 @@ impl ProximaRecordServiceImpl {
                     }
                     proximadb_v2::typed_value::Value::UuidValue(uuid) => {
                         let uuid_str = if uuid.len() == 16 {
-                            uuid::Uuid::from_slice(uuid)
-                                .map(|u| u.to_string())
-                                .unwrap_or_else(|_| hex::encode(uuid))
+                            uuid::Uuid::from_slice(uuid).map_or_else(|_| hex::encode(uuid), |u| u.to_string())
                         } else {
                             hex::encode(uuid)
                         };
@@ -1383,15 +1379,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Generate schema ID
         let schema_id = req
             .schema
-            .as_ref()
-            .map(|s| {
+            .as_ref().map_or_else(|| format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4()), |s| {
                 if s.schema_id.is_empty() {
                     format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4())
                 } else {
                     s.schema_id.clone()
                 }
-            })
-            .unwrap_or_else(|| format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4()));
+            });
 
         // For now, we don't persist the schema separately - it's stored in collection config
         // A full implementation would update the collection's record_schema config

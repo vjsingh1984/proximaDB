@@ -798,13 +798,9 @@ impl AggregationExecutor {
                     Some(SqlValue {
                         value: Some(SqlValueVariant::Int64Value(i)),
                     })
-                } else if let Some(f) = n.as_f64() {
-                    Some(SqlValue {
+                } else { n.as_f64().map(|f| SqlValue {
                         value: Some(SqlValueVariant::NumberValue(f)),
-                    })
-                } else {
-                    None
-                }
+                    }) }
             }
             JsonValue::String(s) => Some(SqlValue {
                 value: Some(SqlValueVariant::StringValue(s.clone())),

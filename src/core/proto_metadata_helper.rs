@@ -13,9 +13,7 @@ pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, serd
         .map(|item| {
             let value = match &item.value {
                 Some(metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                Some(metadata_item::Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
+                Some(metadata_item::Value::NumberValue(n)) => serde_json::Number::from_f64(*n).map_or_else(|| serde_json::Value::String(n.to_string()), serde_json::Value::Number),
                 Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                 None => serde_json::Value::Null,
             };
@@ -153,9 +151,7 @@ pub fn sqlvalue_metadata_to_json(
                         serde_json::Value::String(s.clone())
                     }
                     crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                        serde_json::Number::from_f64(*n)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                        serde_json::Number::from_f64(*n).map_or_else(|| serde_json::Value::String(n.to_string()), serde_json::Value::Number)
                     }
                     crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                         serde_json::Value::Bool(*b)
