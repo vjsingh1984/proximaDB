@@ -122,6 +122,7 @@ pub mod execution; // New unified execution engine
 pub mod explain;
 pub mod facade; // Unified query facade - single entry point for all queries (consolidates 5 parallel paths)
 pub mod federated; // Federated multi-model query engine (cross-model joins, SQL extensions)
+pub mod graph_subset; // Shared graph query subset for facade and federated SQL extensions
 pub mod materialized_view; // A1: Materialized views for complex dashboard queries
 pub mod parsers; // Query language parsers (MongoDB, etc.)
 pub mod prepared; // Prepared statements for parse-once-execute-many pattern

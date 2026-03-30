@@ -309,6 +309,58 @@ fn parse_path_segment(input: &str) -> IResult<&str, (NodePattern, EdgePattern, N
     )(input)
 }
 
+/// Parse a multi-hop path chain: `(a)-[:X]->(b)-[:Y]->(c)-[:Z]->(d)`
+///
+/// Returns all nodes and edges in the chain. For a chain of length N,
+/// there are N+1 nodes and N edges.
+fn parse_path_chain(input: &str) -> IResult<&str, (Vec<NodePattern>, Vec<EdgePattern>)> {
+    let (remaining, first_node) = parse_node_pattern(input)?;
+    let mut nodes = vec![first_node];
+    let mut edges = Vec::new();
+    let mut rest = remaining;
+
+    // Repeatedly parse edge-node pairs
+    loop {
+        let trimmed = rest.trim_start();
+        // Check if next token starts an edge pattern (- or <)
+        if !trimmed.starts_with('-') && !trimmed.starts_with('<') {
+            break;
+        }
+
+        match preceded(multispace0::<&str, nom::error::Error<&str>>, parse_edge_pattern)(rest) {
+            Ok((after_edge, (is_incoming, edge_var, edge_types, edge_props, is_outgoing, _var_length))) => {
+                match preceded(multispace0::<&str, nom::error::Error<&str>>, parse_node_pattern)(after_edge) {
+                    Ok((after_node, next_node)) => {
+                        let prev_node = nodes.last().expect("at least one node exists");
+
+                        let direction = match (is_incoming, is_outgoing) {
+                            (false, true) => EdgeDirection::Outgoing,
+                            (true, false) => EdgeDirection::Incoming,
+                            _ => EdgeDirection::Bidirectional,
+                        };
+
+                        edges.push(EdgePattern {
+                            variable: edge_var,
+                            from_variable: prev_node.variable.clone(),
+                            to_variable: next_node.variable.clone(),
+                            edge_types,
+                            properties: edge_props,
+                            direction,
+                            optional: false,
+                        });
+                        nodes.push(next_node);
+                        rest = after_node;
+                    }
+                    Err(_) => break,
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    Ok((rest, (nodes, edges)))
+}
+
 // Parse WHERE clause conditions
 fn parse_where_condition(input: &str) -> IResult<&str, WhereClause> {
     alt((
@@ -502,10 +554,8 @@ fn parse_match_clause(input: &str) -> IResult<&str, (Vec<NodePattern>, Vec<EdgeP
                 separated_list1(
                     delimited(multispace0, char(','), multispace0),
                     alt((
-                        // Path segment: (a)-[r]->(b)
-                        map(parse_path_segment, |(from, edge, to)| {
-                            (vec![from, to], vec![edge])
-                        }),
+                        // Multi-hop path chain: (a)-[]->(b)-[]->(c)...
+                        parse_path_chain,
                         // Simple node: (n:Label)
                         map(parse_node_pattern, |node| (vec![node], vec![])),
                     )),

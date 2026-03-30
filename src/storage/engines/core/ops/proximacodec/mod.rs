@@ -49,6 +49,7 @@
 //! assert_eq!(values, decoded);
 //! ```
 
+pub mod adaptive;
 pub mod analysis;
 pub mod codec;
 pub mod registry;

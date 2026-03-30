@@ -56,6 +56,7 @@
 
 pub mod context;
 pub mod isolation;
+pub mod log;
 pub mod manager;
 pub mod operations;
 

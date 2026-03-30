@@ -177,6 +177,7 @@
 pub mod arrow_ipc;
 pub mod auth;
 pub mod grpc;
+pub mod hybrid_search;
 pub mod metrics_service;
 pub mod middleware;
 pub mod multi_server;

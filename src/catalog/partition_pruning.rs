@@ -636,7 +636,7 @@ impl PartitionPruner {
         for partition in partitions {
             for (field, value) in &partition.values {
                 map.entry(field.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(PartitionRange {
                         min: value.clone(),
                         max: value.clone(),
