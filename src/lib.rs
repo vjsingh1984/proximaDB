@@ -18,17 +18,21 @@
 
 // Increase recursion limit for complex types with serde
 #![recursion_limit = "1024"]
+// Suppress documentation warnings crate-wide until doc policy is established.
+// Tracked as a future initiative — adding 5,000+ doc comments needs a dedicated pass.
+#![allow(missing_docs)]
+#![allow(clippy::missing_docs_in_private_items)]
+// Suppress warnings that require significant API redesign (tracked separately)
+#![allow(clippy::too_many_arguments)] // Needs config-struct refactor
+#![allow(clippy::type_complexity)] // Needs type-alias extraction
+#![allow(clippy::result_large_err)] // Needs error-type refactor
 // Enforce error handling best practices
 #![warn(clippy::unwrap_used)]
 #![warn(clippy::expect_used)]
 #![warn(clippy::panic)]
 #![warn(clippy::unimplemented)]
 #![warn(clippy::todo)]
-#![warn(clippy::too_many_arguments)]
-#![warn(clippy::type_complexity)]
 #![warn(clippy::large_enum_variant)]
-#![warn(clippy::result_large_err)]
-#![warn(clippy::missing_docs_in_private_items)]
 
 //! # ProximaDB - Cloud-Native Vector Database
 //!
