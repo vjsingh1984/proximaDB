@@ -210,7 +210,7 @@ impl LinearFusionModel {
         // Xavier initialization
         let scale = (2.0 / num_features as f64).sqrt();
         let weights: Vec<f64> = (0..num_features)
-            .map(|i| ((i as f64 * 0.1).sin() * scale))
+            .map(|i| (i as f64 * 0.1).sin() * scale)
             .collect();
 
         Self {

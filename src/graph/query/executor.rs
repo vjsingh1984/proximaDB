@@ -24,8 +24,7 @@ use super::planner::{
     SortField, TraversalAlgorithm,
 };
 use super::{QueryContext, QueryResult};
-use crate::core::QueryError;
-use crate::core::error::{ProximaDBError, VectorDBError};
+use crate::core::error::VectorDBError;
 use crate::graph::GraphOperationsService;
 use std::collections::HashMap;
 use std::sync::Arc;

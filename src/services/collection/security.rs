@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::audit::logger::{AuditConfig, AuditLogger};
 use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};

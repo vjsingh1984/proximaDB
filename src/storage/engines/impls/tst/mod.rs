@@ -110,7 +110,6 @@ use anyhow::Result;
 use arrow::array::{Float64Array, Int64Array, StringArray};
 use async_trait::async_trait;
 use chrono::{DateTime, Datelike, Timelike, Utc};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -1117,7 +1116,7 @@ impl StorageReader for TimeSeriesEngine {
         // Try to extract time range from filters
         // For now, use default time range when FilterExpression is present
         // TODO: Implement FilterExpression to string conversion
-        let (start, end) = if ctx.search_params.filter_expression.is_some() {
+        let (_start, _end) = if ctx.search_params.filter_expression.is_some() {
             // FilterExpression present - use default 24-hour range
             // In the future, we could extract timestamp from FilterExpression
             let now = Utc::now();
@@ -1403,10 +1402,10 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
         let mut result = CompactionResult::default();
 
         // Identify partitions to compact based on collection_id
-        let partitions_to_compact: Vec<_> = if let Some(collection_id) = &params.collection_id {
+        let partitions_to_compact: Vec<_> = if let Some(_collection_id) = &params.collection_id {
             self.partitions
                 .iter()
-                .filter(|(key, _)| {
+                .filter(|(_key, _)| {
                     // For TST engine, we use simple timestamp-based compaction
                     // Compact all partitions for the specified collection
                     true
@@ -1618,7 +1617,7 @@ impl ScanIterator for TimeSeriesScanIterator {
 
 impl TimeSeriesScanIterator {
     /// Check if a record matches the scan strategy
-    fn matches_strategy(&self, record: &VectorRecord) -> bool {
+    fn matches_strategy(&self, _record: &VectorRecord) -> bool {
         // Apply filters based on strategy
         // For now, just return true (all records match)
         // TODO: Implement proper strategy-based filtering

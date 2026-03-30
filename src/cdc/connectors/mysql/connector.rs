@@ -28,7 +28,7 @@
 
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
-use tracing::{error, info, warn};
+use tracing::info;
 
 use super::config::{BinlogPosition, MySqlConfig};
 use super::decoder::{BinlogDecoder, BinlogEvent};
@@ -334,10 +334,10 @@ impl CdcSource for MySqlConnector {
 
     async fn start(
         &mut self,
-        event_tx: mpsc::Sender<ChangeEvent>,
-        offset_store: Arc<dyn OffsetStore>,
+        _event_tx: mpsc::Sender<ChangeEvent>,
+        _offset_store: Arc<dyn OffsetStore>,
     ) -> CdcResult<SourceHandle> {
-        let shutdown_rx = self.base.init_shutdown();
+        let _shutdown_rx = self.base.init_shutdown();
         self.base.set_status(SourceStatus::Connecting);
 
         info!(

@@ -381,7 +381,7 @@ impl FilterPushdownPlanner {
 
         for condition in &storage_filter.conditions {
             match condition {
-                StorageFilterCondition::Equals { field, value } => {
+                StorageFilterCondition::Equals { field, value: _ } => {
                     if let Some(column_stats) = stats.column_stats.get(field) {
                         let distinct_ratio = 1.0 / (column_stats.distinct_values as f32);
                         selectivity *= distinct_ratio;

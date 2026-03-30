@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Main Business Intelligence Engine
 #[derive(Clone)]

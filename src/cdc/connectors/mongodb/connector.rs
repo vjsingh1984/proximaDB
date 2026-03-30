@@ -29,7 +29,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
-use tracing::{info, warn};
+use tracing::info;
 
 use super::change_event::{ChangeStreamOperation, MongoChangeEvent, ResumeToken};
 use super::config::MongoDbConfig;
@@ -301,7 +301,7 @@ impl CdcSource for MongoDbConnector {
         event_tx: mpsc::Sender<ChangeEvent>,
         offset_store: Arc<dyn OffsetStore>,
     ) -> CdcResult<SourceHandle> {
-        let shutdown_rx = self.base.init_shutdown();
+        let _shutdown_rx = self.base.init_shutdown();
         self.base.set_status(SourceStatus::Connecting);
 
         info!(

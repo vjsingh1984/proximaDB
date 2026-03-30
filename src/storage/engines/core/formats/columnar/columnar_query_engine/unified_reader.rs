@@ -444,7 +444,7 @@ impl UnifiedParquetReader {
         let mut priority_queue = BoundedPriorityQueue::new(search_plan.top_k);
         let mut total_records_scanned = 0;
         let mut row_groups_skipped = 0;
-        let mut files_skipped_early = 0;
+        let files_skipped_early = 0;
 
         // Check if quantization is enabled for this search
         let quantization_enabled = search_plan

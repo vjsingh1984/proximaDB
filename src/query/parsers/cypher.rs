@@ -774,7 +774,7 @@ impl super::QueryParser for CypherParser {
 // ============================================================================
 
 /// Parse identifier (variable names, labels, property keys)
-fn identifier(input: &str) -> ParseResult<String> {
+fn identifier(input: &str) -> ParseResult<'_, String> {
     map(
         recognize(tuple((
             alt((alpha1, tag("_"))),
@@ -785,7 +785,7 @@ fn identifier(input: &str) -> ParseResult<String> {
 }
 
 /// Parse backtick-quoted identifier
-fn quoted_identifier(input: &str) -> ParseResult<String> {
+fn quoted_identifier(input: &str) -> ParseResult<'_, String> {
     map(
         delimited(char('`'), take_while1(|c| c != '`'), char('`')),
         String::from,
@@ -793,12 +793,12 @@ fn quoted_identifier(input: &str) -> ParseResult<String> {
 }
 
 /// Parse any identifier (normal or quoted)
-fn any_identifier(input: &str) -> ParseResult<String> {
+fn any_identifier(input: &str) -> ParseResult<'_, String> {
     alt((quoted_identifier, identifier))(input)
 }
 
 /// Parse string literal (single or double quoted)
-fn string_literal(input: &str) -> ParseResult<String> {
+fn string_literal(input: &str) -> ParseResult<'_, String> {
     alt((
         map(
             delimited(char('"'), take_while(|c| c != '"'), char('"')),
@@ -812,14 +812,14 @@ fn string_literal(input: &str) -> ParseResult<String> {
 }
 
 /// Parse integer literal
-fn integer_literal(input: &str) -> ParseResult<i64> {
+fn integer_literal(input: &str) -> ParseResult<'_, i64> {
     map_res(recognize(tuple((opt(char('-')), digit1))), |s: &str| {
         s.parse::<i64>()
     })(input)
 }
 
 /// Parse float literal
-fn float_literal(input: &str) -> ParseResult<f64> {
+fn float_literal(input: &str) -> ParseResult<'_, f64> {
     map_res(
         recognize(tuple((
             opt(char('-')),
@@ -833,7 +833,7 @@ fn float_literal(input: &str) -> ParseResult<f64> {
 }
 
 /// Parse boolean literal
-fn boolean_literal(input: &str) -> ParseResult<bool> {
+fn boolean_literal(input: &str) -> ParseResult<'_, bool> {
     alt((
         value(true, tag_no_case("true")),
         value(false, tag_no_case("false")),
@@ -841,12 +841,12 @@ fn boolean_literal(input: &str) -> ParseResult<bool> {
 }
 
 /// Parse null literal
-fn null_literal(input: &str) -> ParseResult<serde_json::Value> {
+fn null_literal(input: &str) -> ParseResult<'_, serde_json::Value> {
     value(serde_json::Value::Null, tag_no_case("null"))(input)
 }
 
 /// Parse a property value (string, number, boolean, null)
-fn property_value(input: &str) -> ParseResult<serde_json::Value> {
+fn property_value(input: &str) -> ParseResult<'_, serde_json::Value> {
     alt((
         map(string_literal, serde_json::Value::String),
         map(float_literal, |f| {
@@ -875,7 +875,7 @@ fn property_value(input: &str) -> ParseResult<serde_json::Value> {
 }
 
 /// Parse property assignment: key: value
-fn property_assignment(input: &str) -> ParseResult<(String, PropertyConstraint)> {
+fn property_assignment(input: &str) -> ParseResult<'_, (String, PropertyConstraint)> {
     map(
         separated_pair(
             any_identifier,
@@ -887,7 +887,7 @@ fn property_assignment(input: &str) -> ParseResult<(String, PropertyConstraint)>
 }
 
 /// Parse property map: {key: value, ...}
-fn property_map(input: &str) -> ParseResult<HashMap<String, PropertyConstraint>> {
+fn property_map(input: &str) -> ParseResult<'_, HashMap<String, PropertyConstraint>> {
     map(
         delimited(
             pair(char('{'), multispace0),
@@ -902,7 +902,7 @@ fn property_map(input: &str) -> ParseResult<HashMap<String, PropertyConstraint>>
 }
 
 /// Parse property value map: {key: value, ...} for CREATE
-fn property_value_map(input: &str) -> ParseResult<HashMap<String, serde_json::Value>> {
+fn property_value_map(input: &str) -> ParseResult<'_, HashMap<String, serde_json::Value>> {
     map(
         delimited(
             pair(char('{'), multispace0),
@@ -921,17 +921,17 @@ fn property_value_map(input: &str) -> ParseResult<HashMap<String, serde_json::Va
 }
 
 /// Parse labels: :Label1:Label2
-fn parse_labels(input: &str) -> ParseResult<Vec<String>> {
+fn parse_labels(input: &str) -> ParseResult<'_, Vec<String>> {
     many1(preceded(char(':'), any_identifier))(input)
 }
 
 /// Parse optional labels
-fn parse_optional_labels(input: &str) -> ParseResult<Vec<String>> {
+fn parse_optional_labels(input: &str) -> ParseResult<'_, Vec<String>> {
     map(opt(parse_labels), |labels| labels.unwrap_or_default())(input)
 }
 
 /// Parse node pattern: (variable:Label {props})
-fn parse_node_pattern(input: &str) -> ParseResult<NodePattern> {
+fn parse_node_pattern(input: &str) -> ParseResult<'_, NodePattern> {
     map(
         delimited(
             char('('),
@@ -953,17 +953,17 @@ fn parse_node_pattern(input: &str) -> ParseResult<NodePattern> {
 }
 
 /// Parse edge direction left: <- or -
-fn parse_edge_left(input: &str) -> ParseResult<bool> {
+fn parse_edge_left(input: &str) -> ParseResult<'_, bool> {
     alt((value(true, tag("<-")), value(false, tag("-"))))(input)
 }
 
 /// Parse edge direction right: -> or -
-fn parse_edge_right(input: &str) -> ParseResult<bool> {
+fn parse_edge_right(input: &str) -> ParseResult<'_, bool> {
     alt((value(true, tag("->")), value(false, tag("-"))))(input)
 }
 
 /// Parse variable-length path: *min..max or *max or *
-fn parse_var_length(input: &str) -> ParseResult<(u32, u32)> {
+fn parse_var_length(input: &str) -> ParseResult<'_, (u32, u32)> {
     preceded(
         char('*'),
         alt((
@@ -985,14 +985,14 @@ fn parse_var_length(input: &str) -> ParseResult<(u32, u32)> {
 }
 
 /// Parse edge type: :TYPE1|TYPE2
-fn parse_edge_types(input: &str) -> ParseResult<Vec<String>> {
+fn parse_edge_types(input: &str) -> ParseResult<'_, Vec<String>> {
     preceded(char(':'), separated_list1(char('|'), any_identifier))(input)
 }
 
 /// Parse edge specification: [variable:TYPE {props}]
 fn parse_edge_spec(
     input: &str,
-) -> ParseResult<(
+) -> ParseResult<'_, (
     Option<String>,                      // variable
     Vec<String>,                         // edge types
     HashMap<String, PropertyConstraint>, // properties
@@ -1024,7 +1024,7 @@ fn parse_edge_spec(
 /// Parse full edge pattern: <-[spec]- or -[spec]-> or -[spec]-
 fn parse_edge_pattern_full(
     input: &str,
-) -> ParseResult<(
+) -> ParseResult<'_, (
     bool,                                // is incoming
     Option<String>,                      // variable
     Vec<String>,                         // edge types
@@ -1039,7 +1039,7 @@ fn parse_edge_pattern_full(
 }
 
 /// Parse a path segment: (node)-[edge]->(node)
-fn parse_path_segment(input: &str) -> ParseResult<(NodePattern, EdgePattern, NodePattern)> {
+fn parse_path_segment(input: &str) -> ParseResult<'_, (NodePattern, EdgePattern, NodePattern)> {
     map(
         tuple((
             parse_node_pattern,
@@ -1073,7 +1073,7 @@ fn parse_path_segment(input: &str) -> ParseResult<(NodePattern, EdgePattern, Nod
 }
 
 /// Parse comparison operator
-fn parse_comparison_op(input: &str) -> ParseResult<&str> {
+fn parse_comparison_op(input: &str) -> ParseResult<'_, &str> {
     alt((
         tag(">="),
         tag("<="),
@@ -1087,7 +1087,7 @@ fn parse_comparison_op(input: &str) -> ParseResult<&str> {
 }
 
 /// Parse a WHERE property condition: variable.property op value
-fn parse_where_property(input: &str) -> ParseResult<WhereClause> {
+fn parse_where_property(input: &str) -> ParseResult<'_, WhereClause> {
     map(
         tuple((
             any_identifier,
@@ -1120,7 +1120,7 @@ fn parse_where_property(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse IS NULL / IS NOT NULL
-fn parse_is_null(input: &str) -> ParseResult<WhereClause> {
+fn parse_is_null(input: &str) -> ParseResult<'_, WhereClause> {
     alt((
         map(
             tuple((
@@ -1156,7 +1156,7 @@ fn parse_is_null(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse IN clause
-fn parse_in_clause(input: &str) -> ParseResult<WhereClause> {
+fn parse_in_clause(input: &str) -> ParseResult<'_, WhereClause> {
     map(
         tuple((
             any_identifier,
@@ -1181,7 +1181,7 @@ fn parse_in_clause(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse STARTS WITH / ENDS WITH / CONTAINS
-fn parse_string_predicates(input: &str) -> ParseResult<WhereClause> {
+fn parse_string_predicates(input: &str) -> ParseResult<'_, WhereClause> {
     alt((
         map(
             tuple((
@@ -1233,7 +1233,7 @@ fn parse_string_predicates(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse primary WHERE condition
-fn parse_where_primary(input: &str) -> ParseResult<WhereClause> {
+fn parse_where_primary(input: &str) -> ParseResult<'_, WhereClause> {
     alt((
         // NOT condition
         map(
@@ -1258,7 +1258,7 @@ fn parse_where_primary(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse WHERE condition with AND/OR
-fn parse_where_condition(input: &str) -> ParseResult<WhereClause> {
+fn parse_where_condition(input: &str) -> ParseResult<'_, WhereClause> {
     let (input, first) = parse_where_primary(input)?;
 
     // Try to parse chained AND/OR
@@ -1298,7 +1298,7 @@ fn parse_where_condition(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse WHERE clause
-fn parse_where_clause(input: &str) -> ParseResult<WhereClause> {
+fn parse_where_clause(input: &str) -> ParseResult<'_, WhereClause> {
     preceded(
         pair(tag_no_case("WHERE"), multispace1),
         parse_where_condition,
@@ -1306,7 +1306,7 @@ fn parse_where_clause(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse aggregation function
-fn parse_aggregation(input: &str) -> ParseResult<PropertyProjection> {
+fn parse_aggregation(input: &str) -> ParseResult<'_, PropertyProjection> {
     alt((
         // COUNT(*)
         map(
@@ -1413,7 +1413,7 @@ fn parse_aggregation(input: &str) -> ParseResult<PropertyProjection> {
 
 /// Parse function call (labels, type, id, etc.)
 #[allow(dead_code)]
-fn parse_function_call(input: &str) -> ParseResult<CypherFunction> {
+fn parse_function_call(input: &str) -> ParseResult<'_, CypherFunction> {
     alt((
         map(
             tuple((
@@ -1532,7 +1532,7 @@ pub enum CypherFunction {
 }
 
 /// Parse return item: variable, variable.property, aggregation, or function
-fn parse_return_item(input: &str) -> ParseResult<(String, PropertyProjection)> {
+fn parse_return_item(input: &str) -> ParseResult<'_, (String, PropertyProjection)> {
     alt((
         // Aggregation with alias
         map(
@@ -1595,7 +1595,7 @@ fn parse_return_item(input: &str) -> ParseResult<(String, PropertyProjection)> {
 }
 
 /// Parse ORDER BY clause
-fn parse_order_by(input: &str) -> ParseResult<Vec<(String, bool)>> {
+fn parse_order_by(input: &str) -> ParseResult<'_, Vec<(String, bool)>> {
     preceded(
         tuple((
             tag_no_case("ORDER"),
@@ -1623,7 +1623,7 @@ fn parse_order_by(input: &str) -> ParseResult<Vec<(String, bool)>> {
 }
 
 /// Parse LIMIT clause
-fn parse_limit(input: &str) -> ParseResult<usize> {
+fn parse_limit(input: &str) -> ParseResult<'_, usize> {
     preceded(
         pair(tag_no_case("LIMIT"), multispace1),
         map_res(digit1, |s: &str| s.parse::<usize>()),
@@ -1631,7 +1631,7 @@ fn parse_limit(input: &str) -> ParseResult<usize> {
 }
 
 /// Parse SKIP clause
-fn parse_skip(input: &str) -> ParseResult<usize> {
+fn parse_skip(input: &str) -> ParseResult<'_, usize> {
     preceded(
         pair(tag_no_case("SKIP"), multispace1),
         map_res(digit1, |s: &str| s.parse::<usize>()),
@@ -1639,7 +1639,7 @@ fn parse_skip(input: &str) -> ParseResult<usize> {
 }
 
 /// Parse RETURN clause
-fn parse_return_clause(input: &str) -> ParseResult<ReturnSpec> {
+fn parse_return_clause(input: &str) -> ParseResult<'_, ReturnSpec> {
     map(
         tuple((
             tag_no_case("RETURN"),
@@ -1668,7 +1668,7 @@ fn parse_return_clause(input: &str) -> ParseResult<ReturnSpec> {
 }
 
 /// Parse MATCH clause
-fn parse_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Vec<EdgePattern>)> {
+fn parse_match_clause(input: &str) -> ParseResult<'_, (Vec<NodePattern>, Vec<EdgePattern>)> {
     preceded(
         pair(tag_no_case("MATCH"), multispace1),
         map(
@@ -1697,7 +1697,7 @@ fn parse_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Vec<EdgePat
 }
 
 /// Parse OPTIONAL MATCH clause
-fn parse_optional_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Vec<EdgePattern>)> {
+fn parse_optional_match_clause(input: &str) -> ParseResult<'_, (Vec<NodePattern>, Vec<EdgePattern>)> {
     preceded(
         tuple((
             tag_no_case("OPTIONAL"),
@@ -1735,7 +1735,7 @@ fn parse_optional_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Ve
 }
 
 /// Parse CREATE node spec
-fn parse_create_node_spec(input: &str) -> ParseResult<CreateNodeSpec> {
+fn parse_create_node_spec(input: &str) -> ParseResult<'_, CreateNodeSpec> {
     map(
         delimited(
             char('('),
@@ -1758,7 +1758,7 @@ fn parse_create_node_spec(input: &str) -> ParseResult<CreateNodeSpec> {
 /// Parse CREATE edge spec
 fn parse_create_edge_spec(
     input: &str,
-) -> ParseResult<(
+) -> ParseResult<'_, (
     Option<String>,                     // variable
     Option<String>,                     // edge type
     HashMap<String, serde_json::Value>, // properties
@@ -1793,7 +1793,7 @@ fn parse_create_edge_spec(
 /// Parse CREATE edge pattern: (a)-[r:TYPE]->(b)
 fn parse_create_edge_pattern(
     input: &str,
-) -> ParseResult<(CreateNodeSpec, CreateEdgeSpec, CreateNodeSpec)> {
+) -> ParseResult<'_, (CreateNodeSpec, CreateEdgeSpec, CreateNodeSpec)> {
     map(
         tuple((
             parse_create_node_spec,
@@ -1824,7 +1824,7 @@ fn parse_create_edge_pattern(
 }
 
 /// Parse CREATE clause
-fn parse_create_clause(input: &str) -> ParseResult<CreateClause> {
+fn parse_create_clause(input: &str) -> ParseResult<'_, CreateClause> {
     preceded(
         pair(tag_no_case("CREATE"), multispace1),
         map(
@@ -1851,7 +1851,7 @@ fn parse_create_clause(input: &str) -> ParseResult<CreateClause> {
 }
 
 /// Parse DELETE clause
-fn parse_delete_clause(input: &str) -> ParseResult<DeleteClause> {
+fn parse_delete_clause(input: &str) -> ParseResult<'_, DeleteClause> {
     alt((
         // DETACH DELETE
         map(
@@ -1890,7 +1890,7 @@ fn parse_delete_clause(input: &str) -> ParseResult<DeleteClause> {
 }
 
 /// Parse SET item
-fn parse_set_item(input: &str) -> ParseResult<SetItem> {
+fn parse_set_item(input: &str) -> ParseResult<'_, SetItem> {
     alt((
         // n.prop = value
         map(
@@ -1943,7 +1943,7 @@ fn parse_set_item(input: &str) -> ParseResult<SetItem> {
 }
 
 /// Parse SET clause
-fn parse_set_clause(input: &str) -> ParseResult<SetClause> {
+fn parse_set_clause(input: &str) -> ParseResult<'_, SetClause> {
     preceded(
         pair(tag_no_case("SET"), multispace1),
         map(
@@ -1957,7 +1957,7 @@ fn parse_set_clause(input: &str) -> ParseResult<SetClause> {
 }
 
 /// Parse REMOVE item
-fn parse_remove_item(input: &str) -> ParseResult<RemoveItem> {
+fn parse_remove_item(input: &str) -> ParseResult<'_, RemoveItem> {
     alt((
         // n.prop
         map(
@@ -1979,7 +1979,7 @@ fn parse_remove_item(input: &str) -> ParseResult<RemoveItem> {
 }
 
 /// Parse REMOVE clause
-fn parse_remove_clause(input: &str) -> ParseResult<RemoveClause> {
+fn parse_remove_clause(input: &str) -> ParseResult<'_, RemoveClause> {
     preceded(
         pair(tag_no_case("REMOVE"), multispace1),
         map(
@@ -1993,7 +1993,7 @@ fn parse_remove_clause(input: &str) -> ParseResult<RemoveClause> {
 }
 
 /// Parse MERGE clause
-fn parse_merge_clause(input: &str) -> ParseResult<MergeClause> {
+fn parse_merge_clause(input: &str) -> ParseResult<'_, MergeClause> {
     map(
         tuple((
             preceded(
@@ -2054,7 +2054,7 @@ fn parse_merge_clause(input: &str) -> ParseResult<MergeClause> {
 }
 
 /// Parse WITH clause
-fn parse_with_clause(input: &str) -> ParseResult<WithClause> {
+fn parse_with_clause(input: &str) -> ParseResult<'_, WithClause> {
     map(
         tuple((
             tag_no_case("WITH"),
@@ -2081,7 +2081,7 @@ fn parse_with_clause(input: &str) -> ParseResult<WithClause> {
 }
 
 /// Parse a complete Cypher query
-fn parse_cypher_query(input: &str) -> ParseResult<CypherQuery> {
+fn parse_cypher_query(input: &str) -> ParseResult<'_, CypherQuery> {
     map(
         tuple((
             // Reading clauses
@@ -2148,7 +2148,7 @@ fn parse_cypher_query(input: &str) -> ParseResult<CypherQuery> {
 }
 
 /// Parse simple MATCH query into CompiledPattern
-fn parse_simple_query(input: &str) -> ParseResult<CompiledPattern> {
+fn parse_simple_query(input: &str) -> ParseResult<'_, CompiledPattern> {
     map(
         tuple((
             parse_match_clause,

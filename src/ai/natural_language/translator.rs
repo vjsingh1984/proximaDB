@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Natural Language Query Translator
 #[derive(Clone)]

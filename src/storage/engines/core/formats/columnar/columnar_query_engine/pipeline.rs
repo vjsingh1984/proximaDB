@@ -22,9 +22,9 @@ use arrow::array::{Array, Float32Array, FixedSizeListArray, ListArray, StringArr
 use arrow::record_batch::RecordBatch;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::trace;
 
-use super::vectorized_executor::{DataChunk, evaluate_predicate_vectorized, vectorized_filter_batch};
+use super::vectorized_executor::{DataChunk, vectorized_filter_batch};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;

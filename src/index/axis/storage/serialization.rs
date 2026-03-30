@@ -23,7 +23,7 @@ use crate::index::axis::{AxisHnswConfig, AxisHnswIndex, UnifiedIvfConfig, Unifie
 use bincode;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Magic bytes for index format identification
 const AXIS_MAGIC: &[u8; 4] = b"AXIS";
