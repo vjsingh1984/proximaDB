@@ -21,6 +21,7 @@ use std::collections::HashMap;
 
 /// Comprehensive authentication configuration for enterprise deployment
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AuthConfig {
     /// Enable authentication (if false, all requests pass through)
     pub enabled: bool,
@@ -47,20 +48,6 @@ pub struct AuthConfig {
     pub audit_logging: AuditConfig,
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            jwt: JwtConfig::default(),
-            api_keys: HashMap::new(),
-            rbac: RbacConfig::default(),
-            oauth2: None,
-            client_certificates: None,
-            session: SessionConfig::default(),
-            audit_logging: AuditConfig::default(),
-        }
-    }
-}
 
 /// JWT token configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

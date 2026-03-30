@@ -282,20 +282,17 @@ pub struct Snapshot {
 
 /// Compression codec options
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum CompressionCodec {
     None,
     Snappy,
     Gzip,
+    #[default]
     Lz4,
     Zstd,
     Brotli,
 }
 
-impl Default for CompressionCodec {
-    fn default() -> Self {
-        Self::Lz4
-    }
-}
 
 /// Write mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

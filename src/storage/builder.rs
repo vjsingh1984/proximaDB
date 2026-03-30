@@ -19,8 +19,10 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 
 /// Storage layout strategy
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub enum StorageLayoutStrategy {
     /// Traditional LSM-tree based storage
+    #[default]
     Regular,
     /// VIPER - clustered vector storage with intelligent partitioning
     Viper,
@@ -28,11 +30,6 @@ pub enum StorageLayoutStrategy {
     Hybrid,
 }
 
-impl Default for StorageLayoutStrategy {
-    fn default() -> Self {
-        Self::Regular // Default to regular for compatibility
-    }
-}
 
 // NOTE: Indexing, distance metrics, and hardware acceleration have been moved to their respective modules:
 // - src/indexing/builder.rs for IndexingConfig, IndexingAlgorithm, etc.

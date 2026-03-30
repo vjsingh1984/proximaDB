@@ -101,6 +101,7 @@ pub struct AzureADConfig {
 
 /// mTLS configuration for client certificate authentication
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct MtlsConfig {
     /// Whether mTLS authentication is enabled
     pub enabled: bool,
@@ -115,16 +116,6 @@ pub struct MtlsConfig {
     pub cn_role_mapping: HashMap<String, String>,
 }
 
-impl Default for MtlsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            ca_cert_path: None,
-            require_client_cert: false,
-            cn_role_mapping: HashMap::new(),
-        }
-    }
-}
 
 /// Validated client identity extracted from an X.509 certificate
 #[derive(Debug, Clone)]

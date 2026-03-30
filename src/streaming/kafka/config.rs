@@ -171,8 +171,10 @@ pub enum AutoOffsetReset {
 /// Message deserialization format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum DeserializationFormat {
     /// JSON format
+    #[default]
     Json,
     /// Apache Avro format (requires schema registry)
     Avro,
@@ -182,17 +184,14 @@ pub enum DeserializationFormat {
     Raw,
 }
 
-impl Default for DeserializationFormat {
-    fn default() -> Self {
-        Self::Json
-    }
-}
 
 /// Commit strategy for offset management
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CommitStrategy {
     /// Commit after processing (may duplicate on failure)
+    #[default]
     AtLeastOnce,
     /// Commit before processing (may lose on failure)
     AtMostOnce,
@@ -202,11 +201,6 @@ pub enum CommitStrategy {
     Manual,
 }
 
-impl Default for CommitStrategy {
-    fn default() -> Self {
-        Self::AtLeastOnce
-    }
-}
 
 /// Dead letter queue configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

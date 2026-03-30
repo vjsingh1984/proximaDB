@@ -14,8 +14,10 @@ use crate::core::error::VectorDBError;
 
 /// Strategy for fusing results from multiple query components
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum FusionStrategy {
     /// Only return records that appear in ALL component results (AND logic)
+    #[default]
     Intersection,
     /// Return records that appear in ANY component result (OR logic)
     Union,
@@ -37,11 +39,6 @@ pub enum FusionStrategy {
     Custom(String), // Stores function name, actual logic in executor
 }
 
-impl Default for FusionStrategy {
-    fn default() -> Self {
-        Self::Intersection
-    }
-}
 
 /// Result fuser that combines sub-query results
 pub struct ResultFuser {

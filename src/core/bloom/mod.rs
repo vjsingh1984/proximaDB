@@ -327,20 +327,17 @@ pub enum BloomStrategy {
 
 /// Hash algorithm selection
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub enum HashAlgorithm {
     /// MurmurHash3 - fast and good distribution
     Murmur3,
     /// xxHash - extremely fast (default) - our internal optimized implementation
+    #[default]
     XXHash,
     /// FNV-1a - simple and fast, good for small keys
     Fnv1a,
 }
 
-impl Default for HashAlgorithm {
-    fn default() -> Self {
-        Self::XXHash // Default to fastest algorithm
-    }
-}
 
 /// Enhanced bloom filter configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

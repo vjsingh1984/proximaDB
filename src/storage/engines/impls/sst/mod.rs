@@ -671,20 +671,17 @@ pub struct SstableHeader {
 
 /// Vector format type for bytemuck optimization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum VectorFormat {
     /// All vectors have the same fixed dimension (use bytemuck)
     Fixed { dimension: usize },
     /// Vectors have variable dimensions (use standard serialization)
+    #[default]
     Variable,
     /// Mixed dimensions - majority fixed, some variable
     Mixed { dominant_dimension: usize },
 }
 
-impl Default for VectorFormat {
-    fn default() -> Self {
-        VectorFormat::Variable
-    }
-}
 
 // ============================================================================
 // FP16 Centroid Quantization Utilities (50% storage reduction)

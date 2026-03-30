@@ -36,18 +36,15 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Graph engine type selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum GraphEngineTypeProto {
     Unspecified = 0,
+    #[default]
     Orion = 1,
     Pulsar = 2,
     Quasar = 3,
 }
 
-impl Default for GraphEngineTypeProto {
-    fn default() -> Self {
-        GraphEngineTypeProto::Orion
-    }
-}
 
 /// PULSAR graph configuration (stub)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

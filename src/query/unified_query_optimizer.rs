@@ -980,21 +980,18 @@ pub enum FilterPushdownOperation {
 
 /// Optimization goals
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum OptimizationGoal {
     MaximizeRecall,
     MaximizeSpeed,
     MinimizeMemory,
     MinimizeLatency,
     MaximizeThroughput,
+    #[default]
     Balanced,
     BalancedSpeedRecall,
 }
 
-impl Default for OptimizationGoal {
-    fn default() -> Self {
-        OptimizationGoal::Balanced
-    }
-}
 
 impl std::fmt::Display for OptimizationGoal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

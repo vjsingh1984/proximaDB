@@ -44,6 +44,7 @@ pub struct ViperFactory {
 
 /// Complete VIPER configuration
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ViperConfiguration {
     /// Core storage configuration
     pub storage_config: ViperStorageConfig,
@@ -855,18 +856,6 @@ impl ProcessorFactory for SimilarityProcessorFactory {
 
 // Default implementations
 
-impl Default for ViperConfiguration {
-    fn default() -> Self {
-        Self {
-            storage_config: ViperStorageConfig::default(),
-            schema_config: ViperSchemaConfig::default(),
-            processing_config: ViperProcessingConfig::default(),
-            ttl_config: TTLConfig::default(),
-            compaction_config: CompactionConfig::default(),
-            optimization_config: OptimizationConfig::default(),
-        }
-    }
-}
 
 impl Default for ViperStorageConfig {
     fn default() -> Self {

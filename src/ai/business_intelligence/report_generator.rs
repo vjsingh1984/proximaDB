@@ -23,7 +23,9 @@ pub struct ExecutiveReport {
 
 /// Report output formats
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ReportFormat {
+    #[default]
     Html,
     Markdown,
     Json,
@@ -38,8 +40,3 @@ impl ReportGenerator {
     }
 }
 
-impl Default for ReportFormat {
-    fn default() -> Self {
-        ReportFormat::Html
-    }
-}

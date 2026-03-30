@@ -11,10 +11,12 @@ use tracing::debug;
 
 /// Transaction isolation level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum IsolationLevel {
     /// Read uncommitted - can see uncommitted changes from other transactions
     ReadUncommitted,
     /// Read committed - only see committed changes (default)
+    #[default]
     ReadCommitted,
     /// Repeatable read - consistent reads within transaction
     RepeatableRead,
@@ -22,11 +24,6 @@ pub enum IsolationLevel {
     Serializable,
 }
 
-impl Default for IsolationLevel {
-    fn default() -> Self {
-        IsolationLevel::ReadCommitted
-    }
-}
 
 impl IsolationLevel {
     /// Get display name

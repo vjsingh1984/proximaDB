@@ -219,10 +219,12 @@ pub struct VectorSearchParams {
 
 /// Distance metrics for vector search
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum DistanceMetric {
     /// Euclidean distance (L2)
     Euclidean,
     /// Cosine similarity
+    #[default]
     Cosine,
     /// Dot product
     DotProduct,
@@ -230,11 +232,6 @@ pub enum DistanceMetric {
     Manhattan,
 }
 
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        Self::Cosine
-    }
-}
 
 /// Document query expression
 #[derive(Debug, Clone)]
@@ -339,17 +336,14 @@ pub enum StartNodeSpec {
 
 /// Traversal direction
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum TraversalDirection {
+    #[default]
     Outgoing,
     Incoming,
     Both,
 }
 
-impl Default for TraversalDirection {
-    fn default() -> Self {
-        Self::Outgoing
-    }
-}
 
 /// Node filter for graph queries
 #[derive(Debug, Clone)]
@@ -422,8 +416,10 @@ pub struct MetricQueryExpr {
 
 /// Metric aggregation functions
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum MetricAggregation {
     Sum,
+    #[default]
     Avg,
     Min,
     Max,
@@ -435,11 +431,6 @@ pub enum MetricAggregation {
     Rate,
 }
 
-impl Default for MetricAggregation {
-    fn default() -> Self {
-        Self::Avg
-    }
-}
 
 /// Generic filter that can apply to any record
 #[derive(Debug, Clone)]

@@ -4,8 +4,10 @@
 
 /// Engine-specific optimization profiles
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum EngineProfile {
     /// SST: Write-optimized with filtering stages
+    #[default]
     SST,
     /// SWIFT: Low-latency optimization
     Swift,
@@ -19,8 +21,3 @@ pub enum EngineProfile {
     Nova,
 }
 
-impl Default for EngineProfile {
-    fn default() -> Self {
-        EngineProfile::SST
-    }
-}

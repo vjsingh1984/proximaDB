@@ -9,8 +9,10 @@ use std::collections::HashMap;
 
 /// Index update behavior modes
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum IndexUpdateMode {
     /// Block flush until index is updated (default for strong consistency)
+    #[default]
     Synchronous,
     /// Return from flush immediately, update index in background
     Asynchronous,
@@ -18,11 +20,6 @@ pub enum IndexUpdateMode {
     Hybrid,
 }
 
-impl Default for IndexUpdateMode {
-    fn default() -> Self {
-        Self::Synchronous // Default to synchronous for data consistency
-    }
-}
 
 /// HNSW algorithm configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -101,17 +98,14 @@ impl Default for IvfConfig {
 
 /// Random projection types for LSH
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum RandomProjection {
+    #[default]
     Gaussian,
     Binary,
     Sparse,
 }
 
-impl Default for RandomProjection {
-    fn default() -> Self {
-        Self::Gaussian
-    }
-}
 
 /// LSH algorithm configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

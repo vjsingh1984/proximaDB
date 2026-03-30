@@ -162,6 +162,7 @@ pub struct StrategyConfigTemplate {
 
 /// Conditions for strategy applicability
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ApplicabilityConditions {
     pub min_vector_count: Option<u64>,
     pub max_vector_count: Option<u64>,
@@ -638,14 +639,3 @@ impl PerformancePredictor {
     }
 }
 
-impl Default for ApplicabilityConditions {
-    fn default() -> Self {
-        Self {
-            min_vector_count: None,
-            max_vector_count: None,
-            min_sparsity: None,
-            max_sparsity: None,
-            required_query_pattern: None,
-        }
-    }
-}

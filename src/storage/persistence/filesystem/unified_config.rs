@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 /// Unified cache configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct UnifiedCacheConfig {
     /// Memory management settings
     pub memory: MemoryConfig,
@@ -182,17 +183,6 @@ pub enum WorkloadType {
     Custom(Box<UnifiedCacheConfig>),
 }
 
-impl Default for UnifiedCacheConfig {
-    fn default() -> Self {
-        Self {
-            memory: MemoryConfig::default(),
-            disk: DiskCacheConfig::default(),
-            io: IOOptimizationConfig::default(),
-            behavior: CacheBehaviorConfig::default(),
-            performance: PerformanceConfig::default(),
-        }
-    }
-}
 
 impl Default for MemoryConfig {
     fn default() -> Self {

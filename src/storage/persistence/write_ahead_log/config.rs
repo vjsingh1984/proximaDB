@@ -177,26 +177,17 @@ pub enum DurabilityLevel {
 
 /// WAL strategy type selection
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub enum WriteBufferStrategyType {
     /// Modern Avro batch strategy with zero-copy optimization
     AvroBatch,
     /// Modern Bincode batch strategy with optimal Rust performance
+    #[default]
     BincodeBatch,
     /// Modern Proto batch strategy for proto-first architecture
     ProtoBatch,
 }
 
-impl Default for WriteBufferStrategyType {
-    fn default() -> Self {
-        // Default to BincodeBatch for maximum performance with vector workloads
-        // Bincode provides:
-        // - Fastest serialization/deserialization (critical for high-throughput ingestion)
-        // - Most compact format (20-40% space savings vs Proto)
-        // - Zero-copy deserialization potential
-        // - Native Rust types with no conversion overhead
-        Self::BincodeBatch
-    }
-}
 
 impl std::fmt::Display for WriteBufferStrategyType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -265,23 +256,19 @@ pub struct MemTableConfig {
 
 /// Memtable strategy type selection
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub enum MemTableType {
     /// Skip List - High write throughput, ordered data (RocksDB/LevelDB default)
     SkipList,
     /// B+ Tree - Stable inserts/queries, general use, memory efficient
     BTree,
     /// ART - Concurrent Adaptive Radix Tree, high performance for range queries
+    #[default]
     Art,
     /// Hash Map - Write-heavy, unordered ingestion, point lookups only
     HashMap,
 }
 
-impl Default for MemTableType {
-    fn default() -> Self {
-        // ART (Adaptive Radix Tree) for efficient metadata filtering and space efficiency
-        Self::Art
-    }
-}
 
 impl Default for MemTableConfig {
     fn default() -> Self {
@@ -598,22 +585,19 @@ impl Default for CloudBackupConfig {
 
 /// Cloud backup strategy
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum CloudBackupStrategy {
     /// Real-time backup on every write
     RealTime,
     /// Periodic batch backup
     Periodic { interval_secs: u64 },
     /// Backup on flush events
+    #[default]
     OnFlush,
     /// Backup on demand only
     OnDemand,
 }
 
-impl Default for CloudBackupStrategy {
-    fn default() -> Self {
-        Self::OnFlush
-    }
-}
 
 /// Backup frequency configuration
 #[derive(Debug, Clone)]

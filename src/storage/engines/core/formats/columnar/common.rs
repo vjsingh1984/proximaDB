@@ -24,6 +24,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Common configuration for VIPER and NOVA engines
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct CommonColumnarConfig {
     /// Base columnar configuration
     pub base_config: ColumnarConfig,
@@ -97,6 +98,7 @@ pub struct CompressionLevels {
 
 /// Serialization optimization configuration
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct SerializationOptimizationConfig {
     /// Memory pool configuration
     pub memory_pools: MemoryPoolConfig,
@@ -276,6 +278,7 @@ pub struct HardwareAccelerationConfig {
 
 /// Engine-specific optimizations
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct EngineOptimizations {
     /// VIPER-specific optimizations
     pub viper_optimizations: ViperOptimizations,
@@ -978,18 +981,6 @@ impl CompressionStrategy {
 }
 
 // Default implementations
-impl Default for CommonColumnarConfig {
-    fn default() -> Self {
-        Self {
-            base_config: ColumnarConfig::default(),
-            schema_config: SchemaGenerationConfig::default(),
-            serialization_config: SerializationOptimizationConfig::default(),
-            // distance_config removed
-            engine_optimizations: EngineOptimizations::default(),
-            monitoring_config: MonitoringConfig::default(),
-        }
-    }
-}
 
 // Implement Default for all the nested config structs...
 impl Default for SchemaGenerationConfig {
@@ -1024,16 +1015,6 @@ impl Default for CompressionLevels {
     }
 }
 
-impl Default for SerializationOptimizationConfig {
-    fn default() -> Self {
-        Self {
-            memory_pools: MemoryPoolConfig::default(),
-            simd_settings: SIMDOptimizationSettings::default(),
-            batch_processing: BatchProcessingConfig::default(),
-            zero_copy_optimization: ZeroCopyConfig::default(),
-        }
-    }
-}
 
 impl Default for MemoryPoolConfig {
     fn default() -> Self {
@@ -1165,15 +1146,6 @@ impl Default for HardwareAccelerationConfig {
     }
 }
 
-impl Default for EngineOptimizations {
-    fn default() -> Self {
-        Self {
-            viper_optimizations: ViperOptimizations::default(),
-            nova_optimizations: NovaOptimizations::default(),
-            shared_optimizations: SharedOptimizations::default(),
-        }
-    }
-}
 
 impl Default for ViperOptimizations {
     fn default() -> Self {

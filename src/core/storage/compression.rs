@@ -4,6 +4,7 @@ use crate::core::foundation::BaseConfig;
 
 /// Unified compression algorithm enum - replaces 10+ duplicates
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
@@ -14,6 +15,7 @@ pub enum CompressionAlgorithm {
     /// Zstandard compression with configurable level
     Zstd { level: i32 },
     /// Snappy compression  
+    #[default]
     Snappy,
     /// GZIP compression
     Gzip,
@@ -25,12 +27,6 @@ pub enum CompressionAlgorithm {
     Mixed,
 }
 
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        // Smart default: Snappy provides good balance of compression ratio and speed
-        Self::Snappy
-    }
-}
 
 /// Unified compression configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

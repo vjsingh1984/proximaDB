@@ -51,8 +51,10 @@ impl Default for VectorSerializationConfig {
 
 /// Compression algorithms supported for vector data
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum CompressionAlgorithm {
     /// No compression
+    #[default]
     None,
     /// Zstandard compression
     Zstd,
@@ -89,11 +91,6 @@ pub enum CompressionAlgorithm {
     Mixed,
 }
 
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        CompressionAlgorithm::None
-    }
-}
 
 /// Vector serialization format marker
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

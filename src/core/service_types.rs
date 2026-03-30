@@ -42,34 +42,28 @@ pub type IndexingAlgorithm = String;
 pub type StorageEngine = String;
 /// Compression algorithms for data storage and transmission
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum CompressionAlgorithm {
     None,
+    #[default]
     Snappy,
     Lz4,
     Zstd,
     Gzip,
 }
 
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        Self::Snappy
-    }
-}
 
 /// Compaction strategies for storage optimization
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum CompactionStrategy {
+    #[default]
     SizeTiered,
     Leveled,
     TimeWindow,
     None,
 }
 
-impl Default for CompactionStrategy {
-    fn default() -> Self {
-        Self::SizeTiered
-    }
-}
 
 /// Compaction configuration for storage engines
 #[derive(Debug, Clone)]
@@ -170,6 +164,7 @@ pub struct Collection {
 
 /// Vector operation response metrics
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct VectorOperationMetrics {
     /// Total number of vectors processed
     pub total_processed: i64,
@@ -187,19 +182,6 @@ pub struct VectorOperationMetrics {
     pub index_update_time_us: i64,
 }
 
-impl Default for VectorOperationMetrics {
-    fn default() -> Self {
-        Self {
-            total_processed: 0,
-            successful_count: 0,
-            failed_count: 0,
-            updated_count: 0,
-            processing_time_us: 0,
-            wal_write_time_us: 0,
-            index_update_time_us: 0,
-        }
-    }
-}
 
 /// Vector insert request for zero-copy operations
 #[derive(Debug, Clone)]

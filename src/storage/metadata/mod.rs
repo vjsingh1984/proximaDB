@@ -123,6 +123,7 @@ pub enum MetadataOperation {
 }
 
 /// Metadata query filters
+#[derive(Default)]
 pub struct MetadataFilter {
     /// Filter by access pattern
     pub access_pattern: Option<String>,
@@ -170,18 +171,6 @@ impl Clone for MetadataFilter {
     }
 }
 
-impl Default for MetadataFilter {
-    fn default() -> Self {
-        Self {
-            access_pattern: None,
-            tags: Vec::new(),
-            owner: None,
-            min_vector_count: None,
-            max_age_days: None,
-            custom_filter: None,
-        }
-    }
-}
 
 /// Interface for metadata storage operations
 #[async_trait]

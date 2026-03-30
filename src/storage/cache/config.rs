@@ -4,6 +4,7 @@ use anyhow::Result;
 
 /// Complete cache configuration for production deployment
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub struct CacheConfig {
     /// Global cache settings
     pub global: GlobalCacheConfig,
@@ -261,20 +262,6 @@ pub struct AlertThresholds {
     pub max_prefetch_queue: usize,
 }
 
-impl Default for CacheConfig {
-    fn default() -> Self {
-        Self {
-            global: GlobalCacheConfig::default(),
-            vector_data: VectorCacheConfig::default(),
-            query_result: QueryCacheConfig::default(),
-            filter_bitmap: FilterCacheConfig::default(),
-            index_structure: IndexCacheConfig::default(),
-            metadata: MetadataStoreConfig::default(),
-            coordination: CoordinationConfig::default(),
-            monitoring: MonitoringConfig::default(),
-        }
-    }
-}
 
 impl Default for GlobalCacheConfig {
     fn default() -> Self {

@@ -173,6 +173,7 @@ pub struct ProximaMetadata {
 
 /// Quantized section for hierarchical storage
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct QuantizedSection {
     pub binary_vectors: Option<Vec<Vec<u8>>>,
     pub int8_vectors: Option<Vec<Vec<i8>>>,
@@ -312,6 +313,7 @@ pub struct ProximaDataBlock {
 /// Block metadata for Proxima encoded blocks
 /// Shared between SST and SWIFT engines
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ProximaBlockMetadata {
     /// Basic information
     pub record_count: u32,
@@ -5574,16 +5576,6 @@ impl Default for AccessPattern {
     }
 }
 
-impl Default for QuantizedSection {
-    fn default() -> Self {
-        Self {
-            binary_vectors: None,
-            int8_vectors: None,
-            pq_vectors: None,
-            codebooks: None,
-        }
-    }
-}
 
 impl Default for BlockMetadataStats {
     fn default() -> Self {
@@ -5596,24 +5588,6 @@ impl Default for BlockMetadataStats {
     }
 }
 
-impl Default for ProximaBlockMetadata {
-    fn default() -> Self {
-        Self {
-            record_count: 0,
-            size_bytes: 0,
-            compressed_size: 0,
-            timestamp: 0,
-            compaction_level: 0,
-            has_deletes: false,
-            has_updates: false,
-            version_range: (0, 0),
-            column_stats: HashMap::new(),
-            quantization_stats: QuantizationStatistics::default(),
-            data_checksum: 0,
-            metadata_checksum: 0,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

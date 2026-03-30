@@ -91,8 +91,10 @@ use crate::storage::engines::core::formats::arrow_block::{
 
 /// Block format selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum BlockFormat {
     /// ProximaDB's native ProximaBlocks format
+    #[default]
     ProximaBlocks,
     /// Arrow IPC based storage format
     ArrowBlock,
@@ -116,11 +118,6 @@ impl BlockFormat {
     }
 }
 
-impl Default for BlockFormat {
-    fn default() -> Self {
-        BlockFormat::ProximaBlocks
-    }
-}
 
 /// Adapter for writing blocks in different formats
 pub struct BlockFormatWriter {

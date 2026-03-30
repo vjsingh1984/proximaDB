@@ -94,8 +94,10 @@ impl PartialOrd for MergeEntry {
 
 /// Sorting strategy for compacted records
 #[derive(Clone)]
+#[derive(Default)]
 pub enum CompactionSortStrategy {
     /// Sort by record ID (default for SSTable binary search)
+    #[default]
     ById,
     /// Sort by metadata fields for better compression
     ByMetadata(Vec<String>),
@@ -119,11 +121,6 @@ impl std::fmt::Debug for CompactionSortStrategy {
     }
 }
 
-impl Default for CompactionSortStrategy {
-    fn default() -> Self {
-        CompactionSortStrategy::ById
-    }
-}
 
 /// Zero-copy SST compactor that works directly with VectorRecord
 pub struct SstCompactor {

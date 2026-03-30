@@ -23,10 +23,12 @@ use std::time::Duration;
 
 /// Performance tier for storage (from traits.rs)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum PerformanceTier {
     /// Memory/NVMe, <1ms latency - highest performance
     Hot,
     /// SSD, <10ms latency - balanced performance/cost
+    #[default]
     Warm,
     /// HDD/Cloud, <100ms latency - cost-optimized
     Cold,
@@ -76,11 +78,6 @@ impl PerformanceTier {
     }
 }
 
-impl Default for PerformanceTier {
-    fn default() -> Self {
-        Self::Warm
-    }
-}
 
 impl std::fmt::Display for PerformanceTier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 /// Storage engine types for state encoding
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum StorageEngineType {
+    #[default]
     SST,
     HELIX,
     VIPER,
@@ -16,11 +18,6 @@ pub enum StorageEngineType {
     RAPTOR,
 }
 
-impl Default for StorageEngineType {
-    fn default() -> Self {
-        Self::SST
-    }
-}
 
 impl std::fmt::Display for StorageEngineType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -85,8 +82,10 @@ impl std::fmt::Display for QuantizationLevel {
 
 /// Filter complexity categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum FilterComplexity {
     /// No filter
+    #[default]
     None,
     /// Simple equality filter (e.g., category = 'books')
     Simple,
@@ -98,11 +97,6 @@ pub enum FilterComplexity {
     FullText,
 }
 
-impl Default for FilterComplexity {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 impl std::fmt::Display for FilterComplexity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

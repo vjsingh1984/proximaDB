@@ -136,6 +136,7 @@ impl Default for StreamConfig {
 
 /// Per-session configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct SessionConfig {
     /// Buffer size for this session (overrides default)
     pub buffer_size: Option<usize>,
@@ -159,18 +160,6 @@ pub struct SessionConfig {
     pub flush_interval: Option<Duration>,
 }
 
-impl Default for SessionConfig {
-    fn default() -> Self {
-        Self {
-            buffer_size: None,
-            rate_limit: None,
-            ordering: OrderingMode::default(),
-            delivery: DeliverySemantics::default(),
-            partition_key: None,
-            flush_interval: None,
-        }
-    }
-}
 
 impl SessionConfig {
     /// Create a session config with a specific buffer size

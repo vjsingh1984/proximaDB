@@ -311,8 +311,10 @@ pub trait GpuAccelerator: Send + Sync {
 
 /// Distance computation mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum DistanceMode {
     /// Use CPU computation
+    #[default]
     Cpu,
     /// Use GPU if available, fallback to CPU
     GpuWithFallback,
@@ -324,11 +326,6 @@ pub enum DistanceMode {
     Normalized,
 }
 
-impl Default for DistanceMode {
-    fn default() -> Self {
-        Self::Cpu
-    }
-}
 
 /// Properties of a distance metric
 #[derive(Debug, Clone)]

@@ -225,8 +225,10 @@ pub struct LLMRequestContext {
 
 /// Priority levels for LLM requests
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum RequestPriority {
     Low,
+    #[default]
     Normal,
     High,
     Critical,
@@ -438,11 +440,6 @@ impl Default for GoogleVertexConfig {
     }
 }
 
-impl Default for RequestPriority {
-    fn default() -> Self {
-        RequestPriority::Normal
-    }
-}
 
 impl LLMRequestContext {
     pub fn new(request_id: String) -> Self {

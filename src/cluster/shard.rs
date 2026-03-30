@@ -262,8 +262,10 @@ fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp
 
 /// Partition strategy for a collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum PartitionStrategy {
     /// Hash-based partitioning on record ID (default)
+    #[default]
     HashId,
     /// Hash-based partitioning on specified metadata field(s)
     HashMetadata {
@@ -288,11 +290,6 @@ pub enum PartitionStrategy {
     },
 }
 
-impl Default for PartitionStrategy {
-    fn default() -> Self {
-        Self::HashId
-    }
-}
 
 /// Configuration for collection partitioning
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

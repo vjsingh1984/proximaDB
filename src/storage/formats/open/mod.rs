@@ -84,6 +84,7 @@ use std::collections::HashMap;
 
 /// Configuration for object storage access
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct StorageOptions {
     /// Storage URL (s3://, gs://, azure://, file://)
     pub url: String,
@@ -113,21 +114,6 @@ pub struct StorageOptions {
     pub options: HashMap<String, String>,
 }
 
-impl Default for StorageOptions {
-    fn default() -> Self {
-        Self {
-            url: String::new(),
-            region: None,
-            access_key_id: None,
-            secret_access_key: None,
-            session_token: None,
-            account_name: None,
-            account_key: None,
-            gcs_credentials: None,
-            options: HashMap::new(),
-        }
-    }
-}
 
 impl StorageOptions {
     /// Create options for local filesystem

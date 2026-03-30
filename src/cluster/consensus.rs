@@ -117,6 +117,7 @@ pub enum Command {
 
 /// Persistent state on all servers
 #[derive(Debug, Clone)]
+#[derive(Default)]
 struct PersistentState {
     /// Latest term server has seen
     current_term: u64,
@@ -126,15 +127,6 @@ struct PersistentState {
     log: Vec<LogEntry>,
 }
 
-impl Default for PersistentState {
-    fn default() -> Self {
-        Self {
-            current_term: 0,
-            voted_for: None,
-            log: Vec::new(),
-        }
-    }
-}
 
 /// Volatile state on all servers
 #[derive(Debug, Clone, Default)]
@@ -147,6 +139,7 @@ struct VolatileState {
 
 /// Volatile state on leaders (reinitialized after election)
 #[derive(Debug, Clone)]
+#[derive(Default)]
 struct LeaderState {
     /// For each server, index of next log entry to send
     next_index: HashMap<String, u64>,
@@ -154,14 +147,6 @@ struct LeaderState {
     match_index: HashMap<String, u64>,
 }
 
-impl Default for LeaderState {
-    fn default() -> Self {
-        Self {
-            next_index: HashMap::new(),
-            match_index: HashMap::new(),
-        }
-    }
-}
 
 /// Result of applying a command
 #[derive(Debug)]

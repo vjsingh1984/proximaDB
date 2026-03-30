@@ -119,8 +119,10 @@ pub struct DefaultVectorRecordBridge {
 
 /// Mode for handling metadata in conversions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum MetadataMode {
     /// Store metadata as JSON string (simple, flexible)
+    #[default]
     JsonString,
     /// Store metadata as Arrow Struct (typed, efficient)
     ArrowStruct,
@@ -128,11 +130,6 @@ pub enum MetadataMode {
     Auto,
 }
 
-impl Default for MetadataMode {
-    fn default() -> Self {
-        Self::JsonString
-    }
-}
 
 impl DefaultVectorRecordBridge {
     /// Create a new bridge with the given schema.

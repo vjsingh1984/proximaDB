@@ -60,6 +60,7 @@ pub struct TranslationMetadata {
 
 /// User context for translation (simplified version)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct UserContext {
     pub user_id: String,
     pub tenant_id: Option<String>,
@@ -612,17 +613,6 @@ impl Default for TranslatorConfig {
     }
 }
 
-impl Default for UserContext {
-    fn default() -> Self {
-        Self {
-            user_id: String::new(),
-            tenant_id: None,
-            accessible_tables: vec![],
-            permissions: vec![],
-            roles: vec![],
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

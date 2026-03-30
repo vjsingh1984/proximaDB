@@ -157,20 +157,17 @@ pub struct TextStorageConfig {
 
 /// Compression options for sidecar files
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum SidecarCompression {
     /// No compression
     None,
     /// LZ4 compression (fast)
+    #[default]
     Lz4,
     /// Zstd compression (better ratio)
     Zstd,
 }
 
-impl Default for SidecarCompression {
-    fn default() -> Self {
-        Self::Lz4
-    }
-}
 
 impl Default for TextStorageConfig {
     fn default() -> Self {

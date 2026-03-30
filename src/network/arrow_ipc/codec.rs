@@ -24,18 +24,15 @@ use crate::proto::proximadb_v1::{MetadataItem, SqlValue, VectorRecord, VectorSea
 
 /// Write mode for Arrow IPC operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum WriteMode {
     /// Use WAL for durability (30-50K vectors/sec)
+    #[default]
     WAL,
     /// Direct engine write bypassing WAL (100-200K vectors/sec)
     Direct,
 }
 
-impl Default for WriteMode {
-    fn default() -> Self {
-        WriteMode::WAL // Safe default
-    }
-}
 
 /// Metadata extracted from FlightDescriptor
 #[derive(Debug, Clone)]

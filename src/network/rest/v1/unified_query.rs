@@ -1353,6 +1353,7 @@ pub struct DistributedQueryRequest {
 /// Execution strategy for distributed queries
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub enum ExecutionStrategy {
     /// Execute locally only
     LocalOnly,
@@ -1362,14 +1363,10 @@ pub enum ExecutionStrategy {
     Broadcast,
     /// Let coordinator decide
     #[serde(alias = "auto")]
+    #[default]
     Auto,
 }
 
-impl Default for ExecutionStrategy {
-    fn default() -> Self {
-        ExecutionStrategy::Auto
-    }
-}
 
 /// Response for distributed query execution
 #[derive(Debug, Serialize)]

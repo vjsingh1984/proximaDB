@@ -40,9 +40,11 @@ pub struct ProgressiveRecalls {
 /// This enum allows users to choose between exact search (100% recall) and
 /// approximate search (faster but potentially lower recall).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum SearchMode {
     /// Exact search with 100% recall - searches all partitions (current default behavior)
     /// This is the safest option for accuracy-critical applications.
+    #[default]
     Exact,
 
     /// Approximate search using IVF-style partition pruning.
@@ -57,17 +59,13 @@ pub enum SearchMode {
     Adaptive { threshold: usize },
 }
 
-impl Default for SearchMode {
-    fn default() -> Self {
-        // Default to Exact mode to preserve 100% recall for accuracy-critical applications
-        SearchMode::Exact
-    }
-}
 
 /// Hybrid search mode controlling how BM25 text and vector results are combined
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum HybridSearchMode {
     /// Vector search only (default, ignores text_query)
+    #[default]
     VectorOnly,
     /// Keyword/BM25 search only (ignores query vectors)
     KeywordOnly,
@@ -77,11 +75,6 @@ pub enum HybridSearchMode {
     HybridCustom { rrf_k: u32 },
 }
 
-impl Default for HybridSearchMode {
-    fn default() -> Self {
-        Self::VectorOnly
-    }
-}
 
 impl SearchMode {
     /// Create approximate search mode with auto-calculated nprobe

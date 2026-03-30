@@ -25,6 +25,7 @@ use std::time::Duration;
 
 /// Main CDC configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CdcConfig {
     /// Offset storage configuration
     pub offset_storage: OffsetStorageConfig,
@@ -38,17 +39,6 @@ pub struct CdcConfig {
     pub settings: CdcSettings,
 }
 
-impl Default for CdcConfig {
-    fn default() -> Self {
-        Self {
-            offset_storage: OffsetStorageConfig::default(),
-            sources: Vec::new(),
-            sinks: Vec::new(),
-            transforms: Vec::new(),
-            settings: CdcSettings::default(),
-        }
-    }
-}
 
 impl CdcConfig {
     /// Create a new CDC configuration

@@ -272,12 +272,14 @@ pub struct DirEntry {
 
 /// Temporary directory strategy for atomic operations
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum TempStrategy {
     /// Direct write (no temp files) - for local filesystem with atomic guarantees
     DirectWrite,
 
     /// Write to ___temp subdirectory in same location (same mount point)
     /// Ensures move operations are filesystem renames, not copies
+    #[default]
     SameDirectory,
 
     /// Write to user-configured temp directory
@@ -291,12 +293,6 @@ pub enum TempStrategy {
     SystemTemp,
 }
 
-impl Default for TempStrategy {
-    fn default() -> Self {
-        // Default to same directory strategy for optimal performance
-        TempStrategy::SameDirectory
-    }
-}
 
 /// File operation options
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

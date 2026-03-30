@@ -66,10 +66,12 @@ use crate::services::schema::{InferenceConfig, InferredSchema, SchemaInferenceSe
 ///
 /// Defines the current state of a collection in the migration process.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum MigrationMode {
     /// VectorRecord only (legacy format)
     ///
     /// This is the original format. Collections start in this mode.
+    #[default]
     Legacy,
 
     /// Dual-write: both formats maintained
@@ -89,11 +91,6 @@ pub enum MigrationMode {
     Migrated,
 }
 
-impl Default for MigrationMode {
-    fn default() -> Self {
-        Self::Legacy
-    }
-}
 
 /// Migration statistics
 ///

@@ -25,8 +25,10 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Version continuity enforcement mode for MVCC
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub enum VersionContinuityMode {
     /// Strict: Versions must be exactly contiguous (0, 1, 2, ...)
+    #[default]
     Strict,
     /// Relaxed: Allow gaps but reject huge jumps (e.g., jump from 1 to 9999)
     Relaxed { max_jump: i64 },
@@ -34,11 +36,6 @@ pub enum VersionContinuityMode {
     Disabled,
 }
 
-impl Default for VersionContinuityMode {
-    fn default() -> Self {
-        VersionContinuityMode::Strict
-    }
-}
 
 /// Result of unified compaction operation
 #[derive(Debug)]

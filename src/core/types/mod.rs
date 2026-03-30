@@ -334,6 +334,7 @@ impl ColumnDataType {
 
 /// TEXT storage strategy for columnar storage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum TextStorageStrategy {
     /// Store inline in main Parquet column (<4KB)
     Inline,
@@ -342,14 +343,10 @@ pub enum TextStorageStrategy {
     /// Store in separate sidecar file (>1MB)
     Sidecar,
     /// Auto-select based on actual size (default)
+    #[default]
     Adaptive,
 }
 
-impl Default for TextStorageStrategy {
-    fn default() -> Self {
-        Self::Adaptive
-    }
-}
 
 impl TextStorageStrategy {
     /// Size thresholds for adaptive strategy
@@ -452,20 +449,17 @@ impl Default for TextColumnOptions {
 
 /// Schema enforcement mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum SchemaEnforcementMode {
     /// All columns must match schema exactly
     Strict,
     /// Schema on read, no validation at insert
     Flexible,
     /// Core columns enforced, additional fields allowed
+    #[default]
     Hybrid,
 }
 
-impl Default for SchemaEnforcementMode {
-    fn default() -> Self {
-        Self::Hybrid
-    }
-}
 
 /// Record schema with enforcement rules
 #[derive(Debug, Clone, Serialize, Deserialize)]

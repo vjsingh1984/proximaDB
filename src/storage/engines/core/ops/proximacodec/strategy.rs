@@ -31,6 +31,7 @@ use super::types::{ProximaScheme, TypeId};
 
 /// Data domain identifier for context-aware selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum DataDomain {
     /// Machine learning embeddings (typically F32, high entropy)
     MlEmbeddings,
@@ -41,14 +42,10 @@ pub enum DataDomain {
     /// Metadata columns (mixed types, variable patterns)
     Metadata,
     /// General purpose (no specific optimization)
+    #[default]
     General,
 }
 
-impl Default for DataDomain {
-    fn default() -> Self {
-        DataDomain::General
-    }
-}
 
 /// Context for codec selection decisions
 #[derive(Debug, Clone)]

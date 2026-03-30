@@ -1499,20 +1499,17 @@ pub struct WalStorageConfig {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum WalDistributionStrategy {
     /// Round-robin across WAL directories
     RoundRobin,
     /// Hash-based distribution (consistent)
     Hash,
     /// Load-balanced distribution (dynamic)
+    #[default]
     LoadBalanced,
 }
 
-impl Default for WalDistributionStrategy {
-    fn default() -> Self {
-        Self::LoadBalanced
-    }
-}
 
 impl Default for WalStorageConfig {
     fn default() -> Self {

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 #[derive(Clone)]
+#[derive(Default)]
 pub struct SharedContext {
     pub orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
     pub metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>,
@@ -16,19 +17,6 @@ pub struct SharedContext {
     pub rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 }
 
-impl Default for SharedContext {
-    fn default() -> Self {
-        Self {
-            orchestrator: None,
-            metrics_updater: None,
-            tracer: None,
-            tenant: None,
-            graph_settings: None,
-            tenant_manager: None,
-            rbac_enforcer: None,
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct GraphTraversalSettings {

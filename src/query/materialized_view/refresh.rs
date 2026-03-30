@@ -15,8 +15,10 @@ use super::definition::{MaterializedViewError, MaterializedViewId, MaterializedV
 
 /// Refresh strategy for materialized views
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum RefreshStrategy {
     /// Refresh only when explicitly requested
+    #[default]
     Manual,
 
     /// Refresh at fixed intervals
@@ -57,11 +59,6 @@ where
     Ok(Duration::from_secs(secs))
 }
 
-impl Default for RefreshStrategy {
-    fn default() -> Self {
-        RefreshStrategy::Manual
-    }
-}
 
 impl RefreshStrategy {
     /// Create a periodic refresh strategy

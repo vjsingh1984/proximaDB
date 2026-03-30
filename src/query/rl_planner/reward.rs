@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Optimization goal determines reward weighting
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum OptimizationGoal {
     /// Minimize latency (60% latency, 30% recall, 10% throughput)
     MinLatency,
@@ -15,6 +16,7 @@ pub enum OptimizationGoal {
     /// Maximize throughput (30% latency, 20% recall, 50% throughput)
     MaxThroughput,
     /// Balanced optimization (40% latency, 40% recall, 20% throughput)
+    #[default]
     Balanced,
     /// Custom weights (latency, recall, throughput as u8 percentages)
     Custom {
@@ -24,11 +26,6 @@ pub enum OptimizationGoal {
     },
 }
 
-impl Default for OptimizationGoal {
-    fn default() -> Self {
-        Self::Balanced
-    }
-}
 
 impl OptimizationGoal {
     /// Get weights for this goal (normalized to sum to 1.0)

@@ -38,6 +38,7 @@ pub struct TimePartition {
 
 /// Partition metadata
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct PartitionMetadata {
     /// Number of records in partition
     pub record_count: usize,
@@ -55,17 +56,6 @@ pub struct PartitionMetadata {
     pub last_flush: Option<DateTime<Utc>>,
 }
 
-impl Default for PartitionMetadata {
-    fn default() -> Self {
-        Self {
-            record_count: 0,
-            size_bytes: 0,
-            min_timestamp: None,
-            max_timestamp: None,
-            last_flush: None,
-        }
-    }
-}
 
 impl TimePartition {
     /// Create a new empty time partition

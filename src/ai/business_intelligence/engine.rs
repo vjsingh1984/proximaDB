@@ -72,6 +72,7 @@ pub struct BusinessMetrics {
 
 /// Revenue-related metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct RevenueMetrics {
     pub total_revenue: Option<f64>,
     pub revenue_growth_percent: Option<f64>,
@@ -81,6 +82,7 @@ pub struct RevenueMetrics {
 
 /// Customer-related metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CustomerMetrics {
     pub total_customers: Option<u64>,
     pub new_customers: Option<u64>,
@@ -90,6 +92,7 @@ pub struct CustomerMetrics {
 
 /// Operational metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct OperationalMetrics {
     pub system_uptime_percent: Option<f64>,
     pub average_response_time_ms: Option<f64>,
@@ -99,6 +102,7 @@ pub struct OperationalMetrics {
 
 /// Performance metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct PerformanceMetrics {
     pub queries_per_second: Option<f64>,
     pub cache_hit_rate_percent: Option<f64>,
@@ -736,46 +740,6 @@ mod tests {
     }
 }
 
-impl Default for RevenueMetrics {
-    fn default() -> Self {
-        Self {
-            total_revenue: None,
-            revenue_growth_percent: None,
-            avg_revenue_per_customer: None,
-            revenue_by_segment: HashMap::new(),
-        }
-    }
-}
 
-impl Default for CustomerMetrics {
-    fn default() -> Self {
-        Self {
-            total_customers: None,
-            new_customers: None,
-            churn_rate_percent: None,
-            customer_satisfaction_score: None,
-        }
-    }
-}
 
-impl Default for OperationalMetrics {
-    fn default() -> Self {
-        Self {
-            system_uptime_percent: None,
-            average_response_time_ms: None,
-            error_rate_percent: None,
-            resource_utilization_percent: None,
-        }
-    }
-}
 
-impl Default for PerformanceMetrics {
-    fn default() -> Self {
-        Self {
-            queries_per_second: None,
-            cache_hit_rate_percent: None,
-            storage_efficiency_percent: None,
-            concurrent_users: None,
-        }
-    }
-}

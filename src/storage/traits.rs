@@ -89,6 +89,7 @@ use crate::index::axis::eventlog::StorageEngineType;
 /// engine.migrate_to_tier(old_data, PerformanceTier::Archive)?;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum PerformanceTier {
     /// Hot data - keep in memory/SSD, optimize for latency
     /// Target: <1ms latency, highest cost
@@ -96,6 +97,7 @@ pub enum PerformanceTier {
 
     /// Warm data - balance between latency and cost
     /// Target: <10ms latency, moderate cost
+    #[default]
     Warm,
 
     /// Cold data - optimize for cost, higher latency acceptable
@@ -107,11 +109,6 @@ pub enum PerformanceTier {
     Archive,
 }
 
-impl Default for PerformanceTier {
-    fn default() -> Self {
-        Self::Warm
-    }
-}
 // Core types imported as needed in implementations
 
 /// Strategy enum for selecting storage engine type
@@ -143,9 +140,11 @@ impl Default for PerformanceTier {
 /// | Raptor   | 250K  | 3ms   | 4-6x        | Medium |
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum StorageEngineStrategy {
     /// VIPER: Vector-optimized Intelligent Parquet with Efficient Retrieval (Default)
     /// Best for: Analytics, batch operations, maximum compression
+    #[default]
     Viper,
 
     /// SST: Sorted String Table storage engine
@@ -177,11 +176,6 @@ pub enum StorageEngineStrategy {
     Hybrid,
 }
 
-impl Default for StorageEngineStrategy {
-    fn default() -> Self {
-        Self::Viper // VIPER is the default strategy
-    }
-}
 
 /// Core metadata provider trait for collection metadata operations
 ///

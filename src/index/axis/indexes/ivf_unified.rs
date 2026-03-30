@@ -58,10 +58,12 @@ impl<K: std::fmt::Display> std::fmt::Display for PartitionedKey<K> {
 
 /// Clustering method for IVF training
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum IvfClusteringMethod {
     /// Standard K-means (fast, reasonable quality)
     KMeans,
     /// K-means++ (better initialization, more accurate)
+    #[default]
     KMeansPlusPlus,
     /// Mini-batch K-means (faster for large datasets)
     MiniBatchKMeans { batch_size: usize },
@@ -73,11 +75,6 @@ pub enum IvfClusteringMethod {
     External(ClusteringAlgorithm),
 }
 
-impl Default for IvfClusteringMethod {
-    fn default() -> Self {
-        Self::KMeansPlusPlus // Better than standard K-means
-    }
-}
 
 /// Configuration for unified IVF index
 #[derive(Debug, Clone)]

@@ -27,6 +27,7 @@ use std::collections::HashMap;
 
 /// Authentication configuration
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct AuthConfig {
     /// Enable authentication (if false, all requests pass through)
     pub enabled: bool,
@@ -36,15 +37,6 @@ pub struct AuthConfig {
     pub require_auth_for_health: bool,
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            api_keys: HashMap::new(),
-            require_auth_for_health: false,
-        }
-    }
-}
 
 /// User information associated with an API key
 #[derive(Debug, Clone)]

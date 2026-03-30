@@ -81,8 +81,10 @@ pub enum FullTextIndexError {
 
 /// Tokenizer type selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum TokenizerType {
     /// Standard tokenizer: lowercase, remove punctuation, split on whitespace
+    #[default]
     Standard,
     /// Whitespace-only tokenizer: split on whitespace, preserve case
     Whitespace,
@@ -96,11 +98,6 @@ pub enum TokenizerType {
     Keyword,
 }
 
-impl Default for TokenizerType {
-    fn default() -> Self {
-        Self::Standard
-    }
-}
 
 /// Configuration for tokenization
 #[derive(Debug, Clone)]

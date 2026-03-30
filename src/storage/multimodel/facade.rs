@@ -24,6 +24,7 @@ use super::traits::{ModelType, MultiModelStorageEngine, StoreCapabilities};
 
 /// Configuration for the multi-model storage facade
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct MultiModelFacadeConfig {
     /// Vector store configuration
     pub vector: VectorStoreConfig,
@@ -37,17 +38,6 @@ pub struct MultiModelFacadeConfig {
     pub observability: ObservabilityStoreConfig,
 }
 
-impl Default for MultiModelFacadeConfig {
-    fn default() -> Self {
-        Self {
-            vector: VectorStoreConfig::default(),
-            document: DocumentStoreConfig::default(),
-            graph: GraphStoreConfig::default(),
-            rdbms: RDBMSStoreConfig::default(),
-            observability: ObservabilityStoreConfig::default(),
-        }
-    }
-}
 
 /// MultiModelStorageFacade provides unified access to all specialized stores
 ///

@@ -54,6 +54,7 @@ use tracing::info;
 
 /// TLS configuration for ProximaDB
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct TlsConfig {
     /// Certificate manager
     pub certificate_manager: Option<CertificateManager>,
@@ -69,18 +70,6 @@ pub struct TlsConfig {
     pub ca_file: Option<PathBuf>,
 }
 
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            certificate_manager: None,
-            enabled: false,
-            require_client_certs: false,
-            cert_file: None,
-            key_file: None,
-            ca_file: None,
-        }
-    }
-}
 
 impl TlsConfig {
     /// Create new TLS configuration

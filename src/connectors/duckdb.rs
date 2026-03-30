@@ -317,10 +317,12 @@ pub struct DuckDBVectorSearchParams {
 
 /// DuckDB distance metrics
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default)]
 pub enum DuckDBDistanceMetric {
     /// Euclidean (L2) distance
     L2,
     /// Cosine similarity
+    #[default]
     Cosine,
     /// Dot product
     DotProduct,
@@ -328,11 +330,6 @@ pub enum DuckDBDistanceMetric {
     InnerProduct,
 }
 
-impl Default for DuckDBDistanceMetric {
-    fn default() -> Self {
-        Self::Cosine
-    }
-}
 
 /// DuckDB table scan function
 pub struct DuckDBTableScan {

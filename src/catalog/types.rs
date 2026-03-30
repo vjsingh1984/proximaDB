@@ -432,8 +432,10 @@ pub type PartitionField = CatalogPartitionField;
 
 /// Partition transforms (Iceberg-compatible)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum PartitionTransform {
     /// Identity transform (no transformation)
+    #[default]
     Identity,
     /// Bucket transform (hash into N buckets)
     Bucket(u32),
@@ -451,11 +453,6 @@ pub enum PartitionTransform {
     Void,
 }
 
-impl Default for PartitionTransform {
-    fn default() -> Self {
-        PartitionTransform::Identity
-    }
-}
 
 impl std::fmt::Display for PartitionTransform {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

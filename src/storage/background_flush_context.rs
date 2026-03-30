@@ -75,18 +75,15 @@ pub struct QuantizationConfig {
 
 /// Operation priority for background tasks
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum OperationPriority {
     Low,
+    #[default]
     Normal,
     High,
     Critical,
 }
 
-impl Default for OperationPriority {
-    fn default() -> Self {
-        OperationPriority::Normal
-    }
-}
 
 /// Pre-computed context containing ALL metadata needed for background flush/compaction
 ///

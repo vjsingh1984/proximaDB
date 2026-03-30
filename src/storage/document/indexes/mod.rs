@@ -32,6 +32,7 @@ enum IndexType {
 }
 
 /// Collection index set - all indexes for a single collection
+#[derive(Default)]
 struct CollectionIndexes {
     /// Path-based B+ tree indexes
     path_indexes: HashMap<String, PathIndex>,
@@ -41,15 +42,6 @@ struct CollectionIndexes {
     fulltext_index: Option<FullTextIndex>,
 }
 
-impl Default for CollectionIndexes {
-    fn default() -> Self {
-        Self {
-            path_indexes: HashMap::new(),
-            array_indexes: HashMap::new(),
-            fulltext_index: None,
-        }
-    }
-}
 
 /// Index manager for document collections
 pub struct IndexManager {

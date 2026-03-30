@@ -54,10 +54,12 @@ pub enum MigrationStatus {
 
 /// Priority for migration tasks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default)]
 pub enum MigrationPriority {
     /// Low priority (background optimization)
     Low = 0,
     /// Normal priority (policy-triggered)
+    #[default]
     Normal = 1,
     /// High priority (space pressure)
     High = 2,
@@ -65,11 +67,6 @@ pub enum MigrationPriority {
     Critical = 3,
 }
 
-impl Default for MigrationPriority {
-    fn default() -> Self {
-        MigrationPriority::Normal
-    }
-}
 
 /// A migration task for moving data between tiers
 #[derive(Debug, Clone)]

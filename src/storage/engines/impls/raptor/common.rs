@@ -270,6 +270,7 @@ pub enum ColumnType {
 /// Compact metadata representation for serialization
 /// This is a lightweight version of RowGroup for storage in footer
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub struct RowGroupMetadata {
     pub id: u16,             // Rowgroup ID == Centroid ID
     pub vector_count: usize, // Number of vectors in this rowgroup
@@ -391,24 +392,6 @@ pub struct DistanceBounds {
     pub p90: f32, // 90th percentile (for adaptive pruning)
 }
 
-impl Default for RowGroupMetadata {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            vector_count: 0,
-            offset: 0,
-            compressed_size: 0,
-            column_pages: HashMap::new(),
-            vector_stats: VectorStats::default(),
-            metadata_stats: HashMap::new(),
-            min_timestamp: None,
-            max_timestamp: None,
-            centroid: None,
-            centroid_stats: None,
-            bloom_filter_offset: None,
-        }
-    }
-}
 
 /// Row page metadata for detailed page-level tracking
 #[derive(Debug, Clone)]
@@ -441,7 +424,9 @@ pub struct VectorStats {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum VectorEncoding {
+    #[default]
     Raw,
     ProductQuantization {
         num_subvectors: usize,
@@ -458,11 +443,6 @@ pub enum VectorEncoding {
     },
 }
 
-impl Default for VectorEncoding {
-    fn default() -> Self {
-        VectorEncoding::Raw
-    }
-}
 
 // ====== Column Statistics (unified from reader.rs and rowgroup.rs) ======
 

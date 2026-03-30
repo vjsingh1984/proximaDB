@@ -30,6 +30,7 @@ pub enum WorkloadType {
 
 /// Complete system configuration
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ZeroCopyIOConfig {
     /// Metadata cache configuration
     pub metadata_cache: MetadataCacheConfig,
@@ -553,16 +554,6 @@ impl ZeroCopyIOConfig {
 }
 
 // Default implementations
-impl Default for ZeroCopyIOConfig {
-    fn default() -> Self {
-        Self {
-            metadata_cache: MetadataCacheConfig::default(),
-            download_optimizer: DownloadOptimizerConfig::default(),
-            integration: IntegrationConfig::default(),
-            performance: PerformanceConfig::default(),
-        }
-    }
-}
 
 impl Default for MetadataCacheConfig {
     fn default() -> Self {
