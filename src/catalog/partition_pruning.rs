@@ -762,7 +762,7 @@ mod tests {
     }
 
     fn create_test_partition_spec() -> CatalogPartitionSpec {
-        use super::super::types::PartitionTransform;
+        use super::super::types::{CatalogPartitionField, PartitionTransform};
         CatalogPartitionSpec {
             spec_id: 0,
             fields: vec![
