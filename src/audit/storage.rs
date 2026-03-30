@@ -143,12 +143,11 @@ impl AuditStorage for FileAuditStorage {
                 events.extend(file_events);
 
                 // Apply limit if specified
-                if let Some(limit) = limit {
-                    if events.len() >= limit {
+                if let Some(limit) = limit
+                    && events.len() >= limit {
                         events.truncate(limit);
                         break;
                     }
-                }
             }
         }
 
@@ -213,8 +212,8 @@ impl AuditStorage for FileAuditStorage {
         while let Some(entry) = dir_entries.next_entry().await? {
             let file_path = entry.path();
 
-            if let Ok(metadata) = entry.metadata().await {
-                if let Ok(modified) = metadata.modified() {
+            if let Ok(metadata) = entry.metadata().await
+                && let Ok(modified) = metadata.modified() {
                     let modified_dt: DateTime<Utc> = modified.into();
 
                     if modified_dt < cutoff_date {
@@ -230,7 +229,6 @@ impl AuditStorage for FileAuditStorage {
                         }
                     }
                 }
-            }
         }
 
         info!(
@@ -265,29 +263,25 @@ impl FileAuditStorage {
             match serde_json::from_str::<AuditEvent>(line) {
                 Ok(event) => {
                     // Apply filters
-                    if let Some(ref filter_type) = event_type {
-                        if &event.event_type != filter_type {
+                    if let Some(ref filter_type) = event_type
+                        && &event.event_type != filter_type {
                             continue;
                         }
-                    }
 
-                    if let Some(ref filter_user) = user_id {
-                        if event.user_id.as_ref() != Some(filter_user) {
+                    if let Some(ref filter_user) = user_id
+                        && event.user_id.as_ref() != Some(filter_user) {
                             continue;
                         }
-                    }
 
-                    if let Some(since_time) = since {
-                        if event.timestamp < since_time {
+                    if let Some(since_time) = since
+                        && event.timestamp < since_time {
                             continue;
                         }
-                    }
 
-                    if let Some(until_time) = until {
-                        if event.timestamp > until_time {
+                    if let Some(until_time) = until
+                        && event.timestamp > until_time {
                             continue;
                         }
-                    }
 
                     events.push(event);
                 }

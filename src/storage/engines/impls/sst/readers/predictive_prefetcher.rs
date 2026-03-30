@@ -231,8 +231,7 @@ impl PredictivePrefetcher {
             .access_patterns
             .sequential_patterns
             .get(&current_key.file_path)
-        {
-            if seq_pattern.access_count > 3 {
+            && seq_pattern.access_count > 3 {
                 // Use access count as confidence metric
                 for i in 1..=self.config.prefetch_window {
                     let next_block_id =
@@ -250,7 +249,6 @@ impl PredictivePrefetcher {
                     ));
                 }
             }
-        }
 
         // Random pattern prediction (hot blocks)
         if let Some(rand_pattern) = self
@@ -298,13 +296,12 @@ impl PredictivePrefetcher {
         for (i, record) in history.iter().enumerate() {
             if record.key.file_path == current_key.file_path {
                 // Look at next accesses
-                if let Some(next_record) = history.get(i + 1) {
-                    if next_record.key.file_path == current_key.file_path {
+                if let Some(next_record) = history.get(i + 1)
+                    && next_record.key.file_path == current_key.file_path {
                         *pattern_scores
                             .entry(next_record.key.block_id)
                             .or_insert(0.0) += 1.0;
                     }
-                }
             }
         }
 
@@ -382,12 +379,11 @@ impl PredictivePrefetcher {
     async fn detect_access_type(&self, key: &BlockCacheKey) -> AccessType {
         // Convert BlockCacheKey to String for map lookup
         let key_str = format!("{}:{}:{}", key.file_path, key.block_id, key.block_index);
-        if let Some(pattern) = self.access_patterns.sequential_patterns.get(&key_str) {
-            if pattern.access_count > 3 {
+        if let Some(pattern) = self.access_patterns.sequential_patterns.get(&key_str)
+            && pattern.access_count > 3 {
                 // Use access count threshold
                 return AccessType::Sequential;
             }
-        }
 
         AccessType::Random
     }

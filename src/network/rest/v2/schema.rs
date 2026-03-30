@@ -423,14 +423,13 @@ pub async fn update_schema(
         }
 
         // Validate decimal precision/scale
-        if column.data_type == "decimal" {
-            if column.precision.is_none() || column.scale.is_none() {
+        if column.data_type == "decimal"
+            && (column.precision.is_none() || column.scale.is_none()) {
                 return Err(ApiError::InvalidArgument(format!(
                     "Column '{}' with type 'decimal' requires precision and scale",
                     column.name
                 )));
             }
-        }
 
         // Validate vector dimension
         if column.data_type == "vector" && column.vector_dimension.is_none() {
@@ -774,15 +773,14 @@ fn build_existing_schema(
 /// Increment semantic version (e.g., "1.0.0" -> "1.0.1")
 fn increment_version(current: &str) -> String {
     let parts: Vec<&str> = current.split('.').collect();
-    if parts.len() == 3 {
-        if let (Ok(major), Ok(minor), Ok(patch)) = (
+    if parts.len() == 3
+        && let (Ok(major), Ok(minor), Ok(patch)) = (
             parts[0].parse::<u32>(),
             parts[1].parse::<u32>(),
             parts[2].parse::<u32>(),
         ) {
             return format!("{}.{}.{}", major, minor, patch + 1);
         }
-    }
     // Fallback: return 1.0.0
     "1.0.0".to_string()
 }
@@ -853,14 +851,13 @@ pub fn validate_schema(
         }
 
         // Warn about large max_length for indexed text
-        if let Some(max_length) = column.max_length {
-            if max_length > 4096 && column.indexed.unwrap_or(false) {
+        if let Some(max_length) = column.max_length
+            && max_length > 4096 && column.indexed.unwrap_or(false) {
                 warnings.push(format!(
                     "Column '{}' has large max_length ({}) with indexing enabled",
                     column.name, max_length
                 ));
             }
-        }
     }
 
     // Check evolution compatibility if existing schema provided
@@ -889,14 +886,13 @@ pub fn validate_schema(
 
         // Check for type changes
         for (name, new_col) in &new_columns {
-            if let Some(existing_col) = existing_columns.get(name) {
-                if existing_col.data_type != new_col.data_type {
+            if let Some(existing_col) = existing_columns.get(name)
+                && existing_col.data_type != new_col.data_type {
                     errors.push(format!(
                         "Cannot change type of column '{}' from '{}' to '{}'",
                         name, existing_col.data_type, new_col.data_type
                     ));
                 }
-            }
         }
 
         // Check new columns are nullable or have defaults

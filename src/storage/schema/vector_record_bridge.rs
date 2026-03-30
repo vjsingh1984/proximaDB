@@ -594,8 +594,8 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
         let mut columns: Vec<ArrayRef> = vec![id_array];
 
         // Add vector column if present in schema and requested
-        if self.include_vectors {
-            if let Some(dimension) = self.vector_dimension() {
+        if self.include_vectors
+            && let Some(dimension) = self.vector_dimension() {
                 let _dimension = dimension as i32;
 
                 // Store as FixedSizeListArray - each row contains one vector
@@ -609,7 +609,6 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
                 ));
                 columns.push(vector_array);
             }
-        }
 
         // Add metadata column
         let metadata_dtype = if matches!(self.metadata_mode, MetadataMode::ArrowStruct) {
@@ -714,8 +713,8 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
 
         for (i, record) in records.iter().enumerate() {
             // Validate vector dimension
-            if let Some(dim) = expected_dim {
-                if record.vector.len() != dim as usize {
+            if let Some(dim) = expected_dim
+                && record.vector.len() != dim as usize {
                     return Err(anyhow!(
                         "Record {} has wrong vector dimension: expected {}, got {}",
                         i,
@@ -723,7 +722,6 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
                         record.vector.len()
                     ));
                 }
-            }
 
             // Validate ID is not empty
             if record.id.is_empty() {

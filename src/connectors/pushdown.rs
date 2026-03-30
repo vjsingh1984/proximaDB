@@ -923,11 +923,10 @@ impl VectorSearchPushdown {
         if !["cosine", "euclidean", "dot_product", "l2"].contains(&self.metric.as_str()) {
             return Err(format!("Unknown metric: {}", self.metric));
         }
-        if let Some(threshold) = self.threshold {
-            if !(0.0..=1.0).contains(&threshold) && self.metric == "cosine" {
+        if let Some(threshold) = self.threshold
+            && !(0.0..=1.0).contains(&threshold) && self.metric == "cosine" {
                 return Err("Cosine threshold must be between 0.0 and 1.0".to_string());
             }
-        }
         Ok(())
     }
 }

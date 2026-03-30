@@ -494,18 +494,16 @@ impl ObservabilityService {
 
         for summary in summaries {
             // Apply operation filter
-            if let Some(op) = &params.operation {
-                if &summary.root_operation != op {
+            if let Some(op) = &params.operation
+                && &summary.root_operation != op {
                     continue;
                 }
-            }
 
             // Apply min duration filter
-            if let Some(min_dur) = params.min_duration_ns {
-                if summary.duration_ns < min_dur {
+            if let Some(min_dur) = params.min_duration_ns
+                && summary.duration_ns < min_dur {
                     continue;
                 }
-            }
 
             // Fetch all spans for this trace
             let spans = self

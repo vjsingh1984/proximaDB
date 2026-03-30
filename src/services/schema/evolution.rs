@@ -850,11 +850,9 @@ impl SchemaEvolutionService {
             .issues
             .iter()
             .any(|i| i.severity == IssueSeverity::Warning)
-        {
-            if result.compatibility_level == CompatibilityLevel::Full {
+            && result.compatibility_level == CompatibilityLevel::Full {
                 result.compatibility_level = CompatibilityLevel::Backward;
             }
-        }
 
         result
     }

@@ -426,13 +426,12 @@ impl TantivyLogIndex {
 
         for (_score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher.doc(doc_address)?;
-            if let Some(id_value) = doc.get_first(self.id_field) {
-                if let Some(id) = id_value.as_str() {
+            if let Some(id_value) = doc.get_first(self.id_field)
+                && let Some(id) = id_value.as_str() {
                     let term = Term::from_field_text(self.id_field, id);
                     writer.delete_term(term);
                     deleted += 1;
                 }
-            }
         }
 
         // Update count
@@ -513,16 +512,14 @@ impl TantivyLogIndex {
                 .unwrap_or(0);
 
             // Apply time filter (post-filter for accuracy)
-            if let Some(start) = options.start_time_ns {
-                if timestamp_ns < start {
+            if let Some(start) = options.start_time_ns
+                && timestamp_ns < start {
                     continue;
                 }
-            }
-            if let Some(end) = options.end_time_ns {
-                if timestamp_ns > end {
+            if let Some(end) = options.end_time_ns
+                && timestamp_ns > end {
                     continue;
                 }
-            }
 
             results.push(LogSearchResult {
                 id,

@@ -194,8 +194,8 @@ impl super::VectorBatchSerializer for AvroSerializer {
                 value.map_err(|e| anyhow::anyhow!("Failed to read Avro value: {}", e))?;
 
             // Parse the Avro value into VectorRecord structs
-            if let Value::Record(record) = avro_value {
-                if let Some((_, Value::Array(vectors))) =
+            if let Value::Record(record) = avro_value
+                && let Some((_, Value::Array(vectors))) =
                     record.iter().find(|(key, _)| *key == "vectors")
                 {
                     for vector_value in vectors {
@@ -371,7 +371,6 @@ impl super::VectorBatchSerializer for AvroSerializer {
                         }
                     }
                 }
-            }
         }
 
         Ok(result)

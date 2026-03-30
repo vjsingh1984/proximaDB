@@ -591,8 +591,7 @@ impl SstCompactor {
             if let Some((_, iter)) = active_iterators
                 .iter_mut()
                 .find(|(idx, _)| *idx == entry.file_index)
-            {
-                if let Some(next_record) = iter.next() {
+                && let Some(next_record) = iter.next() {
                     let rec = next_record?;
                     heap.push(Reverse(MergeEntry {
                         timestamp: rec.timestamp.unwrap_or(0) as u32,
@@ -600,7 +599,6 @@ impl SstCompactor {
                         file_index: entry.file_index,
                     }));
                 }
-            }
         }
 
         // Separate append-only records (no ID) from versioned records
@@ -1018,8 +1016,8 @@ impl SstCompactor {
         let mut all_stats = Vec::new();
 
         for level in 0..max_level {
-            if let Some(files) = level_files.get(&level) {
-                if files.len() >= 4 {
+            if let Some(files) = level_files.get(&level)
+                && files.len() >= 4 {
                     // Compact when 4+ files at a level
                     let output_file = format!(
                         "level_{}_compacted_{}.sstable",
@@ -1038,7 +1036,6 @@ impl SstCompactor {
 
                     all_stats.push(stats);
                 }
-            }
         }
 
         Ok(all_stats)

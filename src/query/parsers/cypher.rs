@@ -374,8 +374,8 @@ impl CypherLexer {
         }
 
         // Decimal part
-        if self.position < chars.len() && chars[self.position] == '.' {
-            if self.position + 1 < chars.len() && chars[self.position + 1].is_ascii_digit() {
+        if self.position < chars.len() && chars[self.position] == '.'
+            && self.position + 1 < chars.len() && chars[self.position + 1].is_ascii_digit() {
                 is_float = true;
                 num_str.push('.');
                 self.position += 1;
@@ -387,7 +387,6 @@ impl CypherLexer {
                     self.column += 1;
                 }
             }
-        }
 
         // Exponent part
         if self.position < chars.len()

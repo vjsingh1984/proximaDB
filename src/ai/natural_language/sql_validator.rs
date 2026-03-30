@@ -200,8 +200,8 @@ impl SQLValidator {
 
         // Step 2: Check for forbidden patterns
         for pattern in &self.forbidden_patterns {
-            if let Ok(regex) = regex::Regex::new(pattern) {
-                if regex.is_match(sql) {
+            if let Ok(regex) = regex::Regex::new(pattern)
+                && regex.is_match(sql) {
                     security_issues.push(SecurityIssue {
                         issue_type: SecurityIssueType::SQLInjection,
                         description: format!("Forbidden pattern detected: {}", pattern),
@@ -209,7 +209,6 @@ impl SQLValidator {
                         location: None,
                     });
                 }
-            }
         }
 
         // Step 3: Validate SQL structure using sqlparser
@@ -393,8 +392,8 @@ impl SQLValidator {
             } else {
                 after_limit
             };
-            if let Ok(limit_value) = limit_str.parse::<u32>() {
-                if limit_value > self.config.max_result_limit {
+            if let Ok(limit_value) = limit_str.parse::<u32>()
+                && limit_value > self.config.max_result_limit {
                     return Some(SecurityIssue {
                         issue_type: SecurityIssueType::ExcessiveResultSize,
                         description: format!(
@@ -405,7 +404,6 @@ impl SQLValidator {
                         location: Some(format!("LIMIT {}", limit_value)),
                     });
                 }
-            }
         }
 
         None

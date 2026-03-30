@@ -547,15 +547,14 @@ impl UnifiedColumnarCompaction {
 
             for row_idx in 0..batch.num_rows() {
                 // Skip expired records
-                if let Some(expires_at) = expires_at_array {
-                    if expires_at.is_valid(row_idx) {
+                if let Some(expires_at) = expires_at_array
+                    && expires_at.is_valid(row_idx) {
                         let expiry = expires_at.value(row_idx);
                         if expiry > 0 && expiry < current_time {
                             expired_count += 1;
                             continue;
                         }
                     }
-                }
 
                 // Skip null IDs
                 if id_array.is_null(row_idx) {
@@ -744,8 +743,8 @@ impl UnifiedColumnarCompaction {
             .set_bloom_filter_enabled(true);
 
         // Enable bloom filters for ID and filterable columns
-        if let Some(collection) = collection_config {
-            if let Some(config) = &collection.config {
+        if let Some(collection) = collection_config
+            && let Some(config) = &collection.config {
                 let filterable_cols = &config.filterable_columns;
                 // ID column always gets bloom filter
                 props_builder = props_builder.set_column_bloom_filter_enabled(
@@ -761,7 +760,6 @@ impl UnifiedColumnarCompaction {
                     );
                 }
             }
-        }
 
         let writer_properties = props_builder.build();
 
@@ -825,8 +823,8 @@ impl UnifiedColumnarCompaction {
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<RecordBatch> {
         // Try to find a filterable column to sort by
-        if let Some(collection) = collection_config {
-            if let Some(config) = &collection.config {
+        if let Some(collection) = collection_config
+            && let Some(config) = &collection.config {
                 let filterable_cols = &config.filterable_columns;
                 if let Some(first_col) = filterable_cols.first() {
                     // Check if this column exists in the batch
@@ -851,7 +849,6 @@ impl UnifiedColumnarCompaction {
                     }
                 }
             }
-        }
 
         // No filterable column found or configured, return as-is
         Ok(batch.clone())

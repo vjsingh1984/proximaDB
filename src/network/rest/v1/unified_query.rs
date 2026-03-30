@@ -926,11 +926,10 @@ fn convert_arrow_to_records(
                     if let serde_json::Value::String(s) = &value {
                         id = s.clone();
                     }
-                } else if field.name() == "score" || field.name() == "distance" {
-                    if let serde_json::Value::Number(n) = &value {
+                } else if (field.name() == "score" || field.name() == "distance")
+                    && let serde_json::Value::Number(n) = &value {
                         score = n.as_f64();
                     }
-                }
 
                 data.insert(field.name().clone(), value);
             }

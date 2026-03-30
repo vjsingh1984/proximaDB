@@ -387,15 +387,12 @@ impl MetricsPersistenceLayer {
                             .name
                             .strip_prefix("snapshot_")
                             .and_then(|s| s.strip_suffix(".bincode"))
-                        {
-                            if let Ok(timestamp) = timestamp_str.parse::<i64>() {
-                                if timestamp < cutoff {
+                            && let Ok(timestamp) = timestamp_str.parse::<i64>()
+                                && timestamp < cutoff {
                                     let path = format!("{}/{}", collection_path, snapshot.name);
                                     self.filesystem_factory.delete(&path).await?;
                                     deleted_count += 1;
                                 }
-                            }
-                        }
                     }
                 }
             }
@@ -496,8 +493,8 @@ impl MetricsPersistenceLayer {
             if self.filesystem_factory.exists(&partition_path).await? {
                 let entries = self.filesystem_factory.list(&partition_path).await?;
                 for entry in entries {
-                    if entry.name.starts_with("collection_") && entry.name.ends_with(".json") {
-                        if let Some(id) = entry
+                    if entry.name.starts_with("collection_") && entry.name.ends_with(".json")
+                        && let Some(id) = entry
                             .name
                             .strip_prefix("collection_")
                             .and_then(|s| s.strip_suffix(".json"))
@@ -507,7 +504,6 @@ impl MetricsPersistenceLayer {
                                 collections.push(collection_id);
                             }
                         }
-                    }
                 }
             }
         }

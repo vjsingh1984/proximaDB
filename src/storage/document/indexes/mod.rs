@@ -204,11 +204,10 @@ impl IndexManager {
         condition: &PathQueryCondition,
     ) -> Result<Vec<String>> {
         let indexes = self.indexes.read().await;
-        if let Some(collection_indexes) = indexes.get(collection) {
-            if let Some(index) = collection_indexes.path_indexes.get(path) {
+        if let Some(collection_indexes) = indexes.get(collection)
+            && let Some(index) = collection_indexes.path_indexes.get(path) {
                 return index.query(condition);
             }
-        }
         Ok(vec![])
     }
 
@@ -220,11 +219,10 @@ impl IndexManager {
         value: &IndexValue,
     ) -> Result<Vec<String>> {
         let indexes = self.indexes.read().await;
-        if let Some(collection_indexes) = indexes.get(collection) {
-            if let Some(index) = collection_indexes.array_indexes.get(path) {
+        if let Some(collection_indexes) = indexes.get(collection)
+            && let Some(index) = collection_indexes.array_indexes.get(path) {
                 return index.query_contains(value);
             }
-        }
         Ok(vec![])
     }
 
@@ -236,11 +234,10 @@ impl IndexManager {
         limit: usize,
     ) -> Result<Vec<(String, f32)>> {
         let indexes = self.indexes.read().await;
-        if let Some(collection_indexes) = indexes.get(collection) {
-            if let Some(ref ft_index) = collection_indexes.fulltext_index {
+        if let Some(collection_indexes) = indexes.get(collection)
+            && let Some(ref ft_index) = collection_indexes.fulltext_index {
                 return ft_index.search(query, limit);
             }
-        }
         Ok(vec![])
     }
 

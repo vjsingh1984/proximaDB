@@ -141,8 +141,8 @@ impl MetadataSorter {
     /// Extract metadata value for sorting (handles different data types)
     fn extract_metadata_value(&self, record: &VectorRecord, key: &str) -> SortableValue {
         // Find the metadata item in the HashMap
-        if let Some(sql_value) = record.metadata.get(key) {
-            if let Some(value) = &sql_value.value {
+        if let Some(sql_value) = record.metadata.get(key)
+            && let Some(value) = &sql_value.value {
                 match value {
                     crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                         return SortableValue::from_string(s);
@@ -165,7 +165,6 @@ impl MetadataSorter {
                     }
                 }
             }
-        }
 
         // Default value if key not found
         SortableValue::Null

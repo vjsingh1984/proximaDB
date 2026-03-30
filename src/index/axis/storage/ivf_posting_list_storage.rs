@@ -432,8 +432,8 @@ impl TieredPostingListManager {
         }
 
         // Try disk if available
-        if let Some(ref disk) = self.disk_storage {
-            if let Some(list) = disk.get(cluster_id).await? {
+        if let Some(ref disk) = self.disk_storage
+            && let Some(list) = disk.get(cluster_id).await? {
                 // Promote to memory
                 self.memory_storage.put(cluster_id, list.clone()).await?;
                 self.access_tracker
@@ -441,11 +441,10 @@ impl TieredPostingListManager {
                 info!("Promoted posting list {} from disk to memory", cluster_id);
                 return Ok(Some(list));
             }
-        }
 
         // Try cloud if available
-        if let Some(ref cloud) = self.cloud_storage {
-            if let Some(list) = cloud.get(cluster_id).await? {
+        if let Some(ref cloud) = self.cloud_storage
+            && let Some(list) = cloud.get(cluster_id).await? {
                 // Promote to memory (and optionally disk)
                 self.memory_storage.put(cluster_id, list.clone()).await?;
                 if let Some(ref disk) = self.disk_storage {
@@ -456,7 +455,6 @@ impl TieredPostingListManager {
                 info!("Promoted posting list {} from cloud to mem", cluster_id);
                 return Ok(Some(list));
             }
-        }
 
         Ok(None)
     }

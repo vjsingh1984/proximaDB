@@ -343,12 +343,11 @@ impl SharedSstFormatReader {
         use crate::storage::persistence::filesystem::FileSystem;
 
         // Try mmap first for local files (zero-copy)
-        if self.unified_filesystem.supports_mmap() {
-            if let Ok(Some(mmap)) = self.unified_filesystem.get_mmap(file_path).await {
+        if self.unified_filesystem.supports_mmap()
+            && let Ok(Some(mmap)) = self.unified_filesystem.get_mmap(file_path).await {
                 tracing::debug!("Using mmap for {} ({} bytes)", file_path, mmap.len());
                 return Ok(MmapOrVec::Mmap(mmap));
             }
-        }
 
         // Fall back to regular read (for cloud storage or unsupported paths)
         let data = if use_cache {
@@ -560,14 +559,13 @@ impl SharedSstFormatReader {
             for record in &block.records {
                 // Apply filter expression if provided (type-safe SqlValue filtering)
                 // Uses centralized utility from core::search::sql_value_filter
-                if let Some(filter) = filter_expression {
-                    if !crate::core::search::sql_value_filter::evaluate_filter(
+                if let Some(filter) = filter_expression
+                    && !crate::core::search::sql_value_filter::evaluate_filter(
                         filter,
                         &record.metadata,
                     ) {
                         continue; // Skip records that don't match filter
                     }
-                }
                 block_records.push(record);
                 block_vectors.push(record.vector.as_slice());
             }

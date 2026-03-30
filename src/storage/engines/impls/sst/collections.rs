@@ -367,12 +367,11 @@ impl SstEngine {
         let mut file_sizes = HashMap::new();
 
         for file_path in &files {
-            if let Ok(fs) = self.filesystem().get_filesystem(file_path) {
-                if let Ok(metadata) = fs.metadata(file_path).await {
+            if let Ok(fs) = self.filesystem().get_filesystem(file_path)
+                && let Ok(metadata) = fs.metadata(file_path).await {
                     total_size += metadata.size;
                     file_sizes.insert(file_path.clone(), metadata.size);
                 }
-            }
         }
 
         Ok(CollectionSizeInfo {

@@ -493,12 +493,11 @@ impl Analyzer {
                             // COUNT(*) or COUNT(column)
                             if args.len() == 1 {
                                 // Validate argument - for COUNT(*), arg will be Identifier("*")
-                                if let Expr::Identifier(ident) = &args[0] {
-                                    if ident == "*" {
+                                if let Expr::Identifier(ident) = &args[0]
+                                    && ident == "*" {
                                         // COUNT(*) - valid
                                         return Ok(DataType::Int64);
                                     }
-                                }
                                 // COUNT(column) - analyze the column
                                 let _arg_type = self.analyze_expr(&args[0], scope).await?;
                                 Ok(DataType::Int64)

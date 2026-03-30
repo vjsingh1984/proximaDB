@@ -314,13 +314,11 @@ impl AdvancedSearchOptimizer {
         {
             // Use sysctl on macOS
             use std::process::Command;
-            if let Ok(output) = Command::new("sysctl").arg("-n").arg("hw.memsize").output() {
-                if let Ok(bytes_str) = String::from_utf8(output.stdout) {
-                    if let Ok(bytes) = bytes_str.trim().parse::<u64>() {
+            if let Ok(output) = Command::new("sysctl").arg("-n").arg("hw.memsize").output()
+                && let Ok(bytes_str) = String::from_utf8(output.stdout)
+                    && let Ok(bytes) = bytes_str.trim().parse::<u64>() {
                         return (bytes as f64 / 1024.0 / 1024.0 / 1024.0) as f32; // Convert bytes to GB
                     }
-                }
-            }
         }
 
         #[cfg(target_os = "windows")]
@@ -482,8 +480,8 @@ impl AdvancedSearchOptimizer {
             .unwrap_or(DistanceMetric::Cosine);
 
         // Phase 7: Check result cache first
-        if self.config.enable_result_cache {
-            if let Some(cached_results) = self
+        if self.config.enable_result_cache
+            && let Some(cached_results) = self
                 .check_result_cache(collection_id, query_vector, search_params)
                 .await?
             {
@@ -493,7 +491,6 @@ impl AdvancedSearchOptimizer {
                 );
                 return Ok(cached_results);
             }
-        }
 
         // Track cache access for predictive prefetching
         self.cache_orchestrator

@@ -176,8 +176,8 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
         _options: Option<FileOptions>,
     ) -> FsResult<()> {
         // Create parent directories if needed
-        if let Some(parent) = Path::new(final_path).parent() {
-            if let Err(e) = filesystem.create_dir_all(&parent.to_string_lossy()).await {
+        if let Some(parent) = Path::new(final_path).parent()
+            && let Err(e) = filesystem.create_dir_all(&parent.to_string_lossy()).await {
                 return Err(FilesystemError::Io(std::io::Error::other(
                     format!(
                         "Failed to create parent directory {}: {}",
@@ -186,7 +186,6 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
                     ),
                 )));
             }
-        }
 
         // Direct write - fastest but not atomic
         filesystem.write(final_path, data, None).await
@@ -299,12 +298,11 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
                 .map(|p| p.to_string_lossy().to_string())
         };
 
-        if let Some(parent) = temp_parent {
-            if let Err(e) = filesystem.create_dir_all(&parent).await {
+        if let Some(parent) = temp_parent
+            && let Err(e) = filesystem.create_dir_all(&parent).await {
                 tracing::warn!("Failed to create temp parent directory {}: {}", parent, e);
                 // Try to continue, as the directory might already exist
             }
-        }
 
         let final_parent = if final_path.contains("://") {
             // For URLs, find the parent directory part
@@ -319,13 +317,12 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
                 .map(|p| p.to_string_lossy().to_string())
         };
 
-        if let Some(parent) = final_parent {
-            if let Err(e) = filesystem.create_dir_all(&parent).await {
+        if let Some(parent) = final_parent
+            && let Err(e) = filesystem.create_dir_all(&parent).await {
                 return Err(FilesystemError::Io(std::io::Error::other(
                     format!("Failed to create parent directory {}: {}", parent, e),
                 )));
             }
-        }
 
         // Write to temp file
         debug!("🔍 DEBUG ATOMIC: Writing to temp_path: {}", temp_path);

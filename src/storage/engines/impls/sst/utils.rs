@@ -344,9 +344,9 @@ impl SstableFileUtils {
 
         if let Ok(mut entries) = tokio::fs::read_dir(dir).await {
             while let Some(entry) = entries.next_entry().await? {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.ends_with(".sst") {
-                        if let Ok(metadata) = entry.metadata().await {
+                if let Some(name) = entry.file_name().to_str()
+                    && name.ends_with(".sst")
+                        && let Ok(metadata) = entry.metadata().await {
                             files.push(SstableFileInfo {
                                 path: entry.path().to_string_lossy().to_string(),
                                 name: name.to_string(),
@@ -356,8 +356,6 @@ impl SstableFileUtils {
                                 sequence: 0, // Will be parsed from filename
                             });
                         }
-                    }
-                }
             }
         }
 

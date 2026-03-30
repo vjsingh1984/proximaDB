@@ -249,12 +249,11 @@ impl HierarchicalBloomFilters {
     /// Returns indices of blocks that might contain the key
     pub fn filter_blocks(&self, key: &[u8]) -> Result<Vec<usize>> {
         // Step 1: File-level filter
-        if let Some(ref file_bloom) = self.file_bloom {
-            if !file_bloom.might_contain(key)? {
+        if let Some(ref file_bloom) = self.file_bloom
+            && !file_bloom.might_contain(key)? {
                 // Key definitely not in file
                 return Ok(Vec::new());
             }
-        }
 
         // Step 2: Block-level filter (direct)
         // Note: In a full implementation, you'd use superblock → block mapping
@@ -279,11 +278,10 @@ impl HierarchicalBloomFilters {
         blocks_per_superblock: usize,
     ) -> Result<(Vec<usize>, Vec<usize>)> {
         // Step 1: File-level filter
-        if let Some(ref file_bloom) = self.file_bloom {
-            if !file_bloom.might_contain(key)? {
+        if let Some(ref file_bloom) = self.file_bloom
+            && !file_bloom.might_contain(key)? {
                 return Ok((Vec::new(), Vec::new()));
             }
-        }
 
         // Step 2: SuperBlock-level filter
         let mut candidate_superblocks = Vec::new();
@@ -300,11 +298,10 @@ impl HierarchicalBloomFilters {
             let block_end = (block_start + blocks_per_superblock).min(self.block_blooms.len());
 
             for block_idx in block_start..block_end {
-                if let Some(block_bloom) = self.block_blooms.get(block_idx) {
-                    if block_bloom.might_contain(key)? {
+                if let Some(block_bloom) = self.block_blooms.get(block_idx)
+                    && block_bloom.might_contain(key)? {
                         candidate_blocks.push(block_idx);
                     }
-                }
             }
         }
 

@@ -486,11 +486,10 @@ impl SpatialRange {
             ) => {
                 // Must overlap in all shared dimensions
                 for (dim, (a_min, a_max)) in a_bounds {
-                    if let Some((b_min, b_max)) = b_bounds.get(dim) {
-                        if a_min > b_max || b_min > a_max {
+                    if let Some((b_min, b_max)) = b_bounds.get(dim)
+                        && (a_min > b_max || b_min > a_max) {
                             return false;
                         }
-                    }
                 }
                 true
             }
@@ -643,14 +642,13 @@ impl ProximaHeaderCache {
             let cache = self.cache.read();
             if let Some(entry) = cache.get(path) {
                 // Check TTL
-                if let Some(ttl) = self.ttl {
-                    if now.duration_since(entry.last_access) > ttl {
+                if let Some(ttl) = self.ttl
+                    && now.duration_since(entry.last_access) > ttl {
                         drop(cache);
                         self.remove(path);
                         *self.misses.write() += 1;
                         return None;
                     }
-                }
 
                 *self.hits.write() += 1;
                 trace!("Header cache hit: {}", path);

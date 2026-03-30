@@ -711,8 +711,8 @@ impl CommonColumnarOperations {
         // Check cache first
         {
             let mut cache = self.metadata_cache.write().await;
-            if let Some(cached) = cache.file_metadata.get_mut(&path_str) {
-                if !self.is_cache_expired(cached) {
+            if let Some(cached) = cache.file_metadata.get_mut(&path_str)
+                && !self.is_cache_expired(cached) {
                     cached.last_accessed = std::time::Instant::now();
                     cached.access_count += 1;
 
@@ -725,7 +725,6 @@ impl CommonColumnarOperations {
                     debug!("File metadata cache hit for: {}", path_str);
                     return Ok((metadata, schema, compression_metadata));
                 }
-            }
         }
 
         // Load metadata from file

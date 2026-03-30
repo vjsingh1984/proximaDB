@@ -306,16 +306,13 @@ impl DiskANNSearch {
                         beam.push(SearchResult::new(neighbor_id, distance));
 
                         // Track cache hit if using node ordering
-                        if config.use_node_ordering {
-                            if let Some(ordering) = &self.node_ordering {
-                                if let Some(new_pos) = ordering.get_new_position(neighbor_id) {
-                                    if new_pos < 1000 {
+                        if config.use_node_ordering
+                            && let Some(ordering) = &self.node_ordering
+                                && let Some(new_pos) = ordering.get_new_position(neighbor_id)
+                                    && new_pos < 1000 {
                                         // Assume first 1000 nodes are cached
                                         stats.cache_hits += 1;
                                     }
-                                }
-                            }
-                        }
                     }
                 }
             }

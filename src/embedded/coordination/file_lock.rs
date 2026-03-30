@@ -356,11 +356,10 @@ impl FileLockManager {
 
 impl Drop for FileLockManager {
     fn drop(&mut self) {
-        if self.locked.load(Ordering::SeqCst) {
-            if let Err(e) = self.release_lock() {
+        if self.locked.load(Ordering::SeqCst)
+            && let Err(e) = self.release_lock() {
                 tracing::error!("Failed to release lock on drop: {}", e);
             }
-        }
     }
 }
 

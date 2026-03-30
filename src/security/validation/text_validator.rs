@@ -240,11 +240,10 @@ impl TextValidator {
         }
 
         // Allowed pattern check
-        if let Some(ref re) = self.compiled_allowed {
-            if !re.is_match(text) {
+        if let Some(ref re) = self.compiled_allowed
+            && !re.is_match(text) {
                 return Err(TextValidationError::PatternMismatch);
             }
-        }
 
         Ok(())
     }

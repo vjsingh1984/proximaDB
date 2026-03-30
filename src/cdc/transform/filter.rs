@@ -343,16 +343,14 @@ impl FilterRule {
             }
 
             FilterRuleType::LsnRange { min, max } => {
-                if let Some(min_lsn) = min {
-                    if event.lsn < *min_lsn {
+                if let Some(min_lsn) = min
+                    && event.lsn < *min_lsn {
                         return false;
                     }
-                }
-                if let Some(max_lsn) = max {
-                    if event.lsn > *max_lsn {
+                if let Some(max_lsn) = max
+                    && event.lsn > *max_lsn {
                         return false;
                     }
-                }
                 true
             }
 

@@ -201,8 +201,8 @@ impl PhysicalOperator for ExpandOperator {
     fn next(&mut self) -> Result<Option<ResultTuple>> {
         loop {
             // Expand current node's edges
-            if let Some(ref mut iter) = self.edge_iterator {
-                if let Some((edge, target_node)) = iter.next() {
+            if let Some(ref mut iter) = self.edge_iterator
+                && let Some((edge, target_node)) = iter.next() {
                     // Create result tuple by extending input tuple
                     let mut result = self
                         .current_input
@@ -224,7 +224,6 @@ impl PhysicalOperator for ExpandOperator {
 
                     return Ok(Some(result));
                 }
-            }
 
             // Get next input tuple
             if let Some(input_tuple) = self.input.next()? {

@@ -393,11 +393,10 @@ impl DeltaLakeFormat {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 // Match commit files like 00000000000000000001.json
-                if name.ends_with(".json") && !name.contains("checkpoint") {
-                    if let Ok(version) = name.trim_end_matches(".json").parse::<i64>() {
+                if name.ends_with(".json") && !name.contains("checkpoint")
+                    && let Ok(version) = name.trim_end_matches(".json").parse::<i64>() {
                         commits.push((version, path));
                     }
-                }
             }
         }
 
@@ -449,12 +448,11 @@ impl DeltaLakeFormat {
         let mut last_timestamp = Utc::now();
 
         // Load from checkpoint if available
-        if let Some(cv) = checkpoint_version {
-            if cv <= target_version {
+        if let Some(cv) = checkpoint_version
+            && cv <= target_version {
                 debug!("Loading from checkpoint version {}", cv);
                 // TODO: Load checkpoint parquet file
             }
-        }
 
         // Apply commits
         for (v, path) in &commits {
@@ -1033,8 +1031,7 @@ impl OpenTableFormat for DeltaLakeFormat {
             let content = fs::read_to_string(path).await?;
             for line in content.lines() {
                 if let Ok(action) = serde_json::from_str::<HashMap<String, serde_json::Value>>(line)
-                {
-                    if let Some(info) = action.get("commitInfo") {
+                    && let Some(info) = action.get("commitInfo") {
                         let commit_info: CommitInfoAction = serde_json::from_value(info.clone())?;
                         let commit_time = Utc
                             .timestamp_millis_opt(commit_info.timestamp)
@@ -1044,7 +1041,6 @@ impl OpenTableFormat for DeltaLakeFormat {
                             return self.get_snapshot_at(&self.config.table_uri, *version).await;
                         }
                     }
-                }
             }
         }
 
@@ -1164,8 +1160,8 @@ impl OpenTableFormat for DeltaLakeFormat {
             }
 
             // Check modification time
-            if let Ok(metadata) = entry.metadata().await {
-                if let Ok(modified) = metadata.modified() {
+            if let Ok(metadata) = entry.metadata().await
+                && let Ok(modified) = metadata.modified() {
                     let modified_ms = modified
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as i64)
@@ -1179,7 +1175,6 @@ impl OpenTableFormat for DeltaLakeFormat {
                         }
                     }
                 }
-            }
         }
 
         info!("Vacuum removed {} bytes", removed_bytes);

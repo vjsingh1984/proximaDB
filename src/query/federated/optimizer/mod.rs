@@ -1524,11 +1524,10 @@ impl CrossModelOptimizer {
                     SqlExtension::DocumentQuery { collection, .. } => Some(collection.clone()),
                     _ => None,
                 };
-                if let Some(name) = collection_name {
-                    if let Some(model_stats) = provider.get_statistics(&name) {
+                if let Some(name) = collection_name
+                    && let Some(model_stats) = provider.get_statistics(&name) {
                         stats.insert(name, model_stats);
                     }
-                }
             }
             // Also check query targets
             for target in &query.targets {
@@ -3927,11 +3926,10 @@ impl CrossModelOptimizer {
                 // Collect all columns needed for grouping and aggregation
                 let mut agg_required: Vec<String> = group_by.clone();
                 for agg in &aggregates {
-                    if let Some(col) = &agg.column {
-                        if !agg_required.contains(col) {
+                    if let Some(col) = &agg.column
+                        && !agg_required.contains(col) {
                             agg_required.push(col.clone());
                         }
-                    }
                 }
 
                 let input = self.push_projections_with_required(*input, &agg_required)?;

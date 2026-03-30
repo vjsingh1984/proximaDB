@@ -1063,14 +1063,13 @@ impl GraphOperationsService {
             }
             if let Some(val) = node.properties.get(property) {
                 let k = index_key_for_value(val);
-                if let Some(existing) = map.get(&k) {
-                    if existing.value() != &node.id {
+                if let Some(existing) = map.get(&k)
+                    && existing.value() != &node.id {
                         return Err(ProximaDBError::InvalidInput(format!(
                             "Existing duplicate value '{}' for unique ({},{})",
                             k, label, property
                         )));
                     }
-                }
                 map.insert(k, node.id.clone());
             }
         }
@@ -1561,8 +1560,8 @@ impl GraphOperationsService {
                         let Some(filter_val) = filter.value.as_ref() else {
                             continue;
                         };
-                        if let Some(prefix) = extract_string_from_value(filter_val) {
-                            if let Some(map_lock) =
+                        if let Some(prefix) = extract_string_from_value(filter_val)
+                            && let Some(map_lock) =
                                 self.memory_pool.edge_property_str_ordered.get(&filter.key)
                             {
                                 // Handle poisoned lock gracefully
@@ -1585,7 +1584,6 @@ impl GraphOperationsService {
                                     Some(prev) => prev.intersection(&matched).cloned().collect(),
                                 });
                             }
-                        }
                     }
                     Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
                         // Safely handle missing filter value
@@ -2167,9 +2165,9 @@ impl GraphOperationsService {
         engine: &crate::graph::engines::GraphEngineImpl,
     ) -> Result<()> {
         let maybe_collection = self.collection_service.get_graph(graph_id).await?;
-        if let Some(coll) = maybe_collection {
-            if let Some(schema) = &coll.schema {
-                if let Some(ets) = schema
+        if let Some(coll) = maybe_collection
+            && let Some(schema) = &coll.schema
+                && let Some(ets) = schema
                     .edge_types
                     .iter()
                     .find(|et| et.edge_type == edge.edge_type)
@@ -2221,8 +2219,6 @@ impl GraphOperationsService {
                         _ => {}
                     }
                 }
-            }
-        }
         Ok(())
     }
 }

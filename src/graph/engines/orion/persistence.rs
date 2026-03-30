@@ -764,11 +764,10 @@ impl OrionPersistence {
             );
 
             for entry in entries {
-                if entry.is_graph_operation() {
-                    if let crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation::GraphOp(graph_op) = entry.operation {
+                if entry.is_graph_operation()
+                    && let crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation::GraphOp(graph_op) = entry.operation {
                         self.apply_graph_operation(engine, graph_op).await?;
                     }
-                }
             }
 
             tracing::info!("WAL replay completed for graph {}", self.graph_id);

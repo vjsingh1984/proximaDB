@@ -202,20 +202,17 @@ impl ProximaBlockReader {
         let mut filtered_blocks = Vec::new();
         for block in all_blocks {
             // Check bloom filter if enabled
-            if use_bloom_filters {
-                if let Some(bloom) = &block.bloom_filter {
-                    if !self.check_bloom_filter(bloom, &filter_expression) {
+            if use_bloom_filters
+                && let Some(bloom) = &block.bloom_filter
+                    && !self.check_bloom_filter(bloom, &filter_expression) {
                         continue; // Skip this block
                     }
-                }
-            }
 
             // Check metadata statistics if enabled
-            if use_metadata_stats {
-                if !self.check_metadata_stats(&block.metadata, &filter_expression) {
+            if use_metadata_stats
+                && !self.check_metadata_stats(&block.metadata, &filter_expression) {
                     continue; // Skip this block
                 }
-            }
 
             // Block passed all filters
             filtered_blocks.push(block);
@@ -281,8 +278,8 @@ impl ProximaBlockReader {
 
         for block in all_blocks {
             // Check bloom filter for each target key
-            if use_bloom_filters {
-                if let Some(bloom) = &block.bloom_filter {
+            if use_bloom_filters
+                && let Some(bloom) = &block.bloom_filter {
                     let mut has_match = false;
                     for key in target_keys {
                         // SstableBloomFilter uses might_contain_key() method
@@ -296,7 +293,6 @@ impl ProximaBlockReader {
                         continue; // Skip this block
                     }
                 }
-            }
 
             result_blocks.push(block);
 

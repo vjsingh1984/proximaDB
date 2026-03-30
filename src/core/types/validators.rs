@@ -105,11 +105,10 @@ impl TextValidator {
         }
 
         // Pattern check
-        if let Some(ref pattern) = self.pattern {
-            if !pattern.is_match(text) {
+        if let Some(ref pattern) = self.pattern
+            && !pattern.is_match(text) {
                 return Err(anyhow!("Text does not match required pattern"));
             }
-        }
 
         // Forbidden pattern check
         for forbidden in &self.forbidden_patterns {

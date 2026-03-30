@@ -267,11 +267,10 @@ impl PostgresConnector {
 
         if key_columns.is_empty() {
             // Use first column as fallback
-            if let Some((_, value)) = tuple.values.first() {
-                if let ColumnValue::Text(s) = value {
+            if let Some((_, value)) = tuple.values.first()
+                && let ColumnValue::Text(s) = value {
                     return s.clone();
                 }
-            }
             return "unknown".to_string();
         }
 

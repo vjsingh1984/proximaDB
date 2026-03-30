@@ -560,41 +560,36 @@ impl IndexConfig {
         }
 
         // Validate general config
-        if let Some(timeout) = self.async_update_timeout_ms {
-            if timeout < 1000 {
+        if let Some(timeout) = self.async_update_timeout_ms
+            && timeout < 1000 {
                 return Err(anyhow::anyhow!(
                     "async_update_timeout_ms should be at least 1000ms"
                 ));
             }
-        }
 
-        if let Some(batch_size) = self.async_update_batch_size {
-            if batch_size == 0 {
+        if let Some(batch_size) = self.async_update_batch_size
+            && batch_size == 0 {
                 return Err(anyhow::anyhow!(
                     "async_update_batch_size must be greater than 0"
                 ));
             }
-        }
 
-        if let Some(concurrency) = self.build_concurrency {
-            if concurrency == 0 {
+        if let Some(concurrency) = self.build_concurrency
+            && concurrency == 0 {
                 return Err(anyhow::anyhow!("build_concurrency must be greater than 0"));
             }
-        }
 
-        if let Some(memory_limit) = self.memory_limit_mb {
-            if memory_limit < 64 {
+        if let Some(memory_limit) = self.memory_limit_mb
+            && memory_limit < 64 {
                 return Err(anyhow::anyhow!("memory_limit_mb should be at least 64MB"));
             }
-        }
 
-        if let Some(checkpoint) = self.checkpoint_interval_ms {
-            if checkpoint < 1000 {
+        if let Some(checkpoint) = self.checkpoint_interval_ms
+            && checkpoint < 1000 {
                 return Err(anyhow::anyhow!(
                     "checkpoint_interval_ms should be at least 1000ms"
                 ));
             }
-        }
 
         Ok(())
     }
@@ -830,8 +825,8 @@ impl IndexConfig {
         // Handle algorithm-specific overrides
         match algorithm {
             "HNSW" => {
-                if let Some(user_hnsw) = &proto.hnsw_config {
-                    if let Some(mut smart_hnsw) = config.hnsw_config.take() {
+                if let Some(user_hnsw) = &proto.hnsw_config
+                    && let Some(mut smart_hnsw) = config.hnsw_config.take() {
                         // Apply user overrides to smart defaults
                         if user_hnsw.m.unwrap_or(0) != 0 {
                             smart_hnsw.m = user_hnsw.m.unwrap_or(16) as usize;
@@ -866,11 +861,10 @@ impl IndexConfig {
 
                         config.hnsw_config = Some(smart_hnsw);
                     }
-                }
             }
             "IVF" => {
-                if let Some(user_ivf) = &proto.ivf_config {
-                    if let Some(mut smart_ivf) = config.ivf_config.take() {
+                if let Some(user_ivf) = &proto.ivf_config
+                    && let Some(mut smart_ivf) = config.ivf_config.take() {
                         // Apply user overrides to smart defaults
                         if user_ivf.n_lists.unwrap_or(0) != 0 {
                             smart_ivf.n_lists = user_ivf.n_lists.unwrap_or(1000) as usize;
@@ -900,7 +894,6 @@ impl IndexConfig {
 
                         config.ivf_config = Some(smart_ivf);
                     }
-                }
             }
             _ => {}
         }

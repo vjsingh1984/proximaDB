@@ -320,8 +320,8 @@ impl DiskCsrStorage {
         }
 
         // Log to WAL before writing (write-ahead logging)
-        if self.wal_enabled {
-            if let Some(ref _wal_writer) = self.wal_writer {
+        if self.wal_enabled
+            && let Some(ref _wal_writer) = self.wal_writer {
                 // TODO: Create proper GraphOperation::CreateEdge
                 // For now, log the operation for debugging
                 tracing::debug!(
@@ -334,7 +334,6 @@ impl DiskCsrStorage {
                 // Note: In production, this would write to UnifiedWALWriter
                 // wal_writer.log_operation(operation).await?;
             }
-        }
 
         // Add to write buffer
         self.write_buffer
@@ -367,8 +366,8 @@ impl DiskCsrStorage {
             // Calculate offset in targets array for this node's edges
             // This is a simplified implementation - production would need more sophisticated offset management
 
-            if let Some(ref mut targets_mmap) = self.targets_mmap {
-                if let Some(ref _edge_ids_mmap) = self.edge_ids_mmap {
+            if let Some(ref mut targets_mmap) = self.targets_mmap
+                && let Some(ref _edge_ids_mmap) = self.edge_ids_mmap {
                     // For each edge, append to targets and edge_ids arrays
                     for (to_idx, edge_id) in edges {
                         // Convert to bytes and write to mmap
@@ -386,7 +385,6 @@ impl DiskCsrStorage {
                         }
                     }
                 }
-            }
         }
 
         // Clear write buffer after flush
@@ -410,12 +408,11 @@ impl DiskCsrStorage {
         };
 
         // Try to get from cache (non-blocking)
-        if let Ok(cache) = self.page_cache.try_read() {
-            if cache.peek(&page_id).is_some() {
+        if let Ok(cache) = self.page_cache.try_read()
+            && cache.peek(&page_id).is_some() {
                 // Cache hit - read from mmap
                 return self.read_edges_from_mmap(from_idx);
             }
-        }
 
         // Cache miss - read from disk
         self.read_edges_from_mmap(from_idx)
@@ -449,8 +446,8 @@ impl DiskCsrStorage {
                     let end_offset = usize::from_ne_bytes(end_bytes);
 
                     // Read edges from targets array
-                    if let Some(ref targets_mmap) = self.targets_mmap {
-                        if let Some(ref _edge_ids_mmap) = self.edge_ids_mmap {
+                    if let Some(ref targets_mmap) = self.targets_mmap
+                        && let Some(ref _edge_ids_mmap) = self.edge_ids_mmap {
                             for i in start_offset..end_offset {
                                 let pos = i * std::mem::size_of::<usize>();
                                 if pos + std::mem::size_of::<usize>() <= targets_mmap.len() {
@@ -469,7 +466,6 @@ impl DiskCsrStorage {
                                 }
                             }
                         }
-                    }
                 }
             }
         }

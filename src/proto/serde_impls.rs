@@ -246,42 +246,37 @@ impl<'de> Deserialize<'de> for SqlValue {
             }
             serde_json::Value::Object(obj) => {
                 // Check for proto-style wrapped values first
-                if let Some(v) = obj.get("string_value") {
-                    if let Some(s) = v.as_str() {
+                if let Some(v) = obj.get("string_value")
+                    && let Some(s) = v.as_str() {
                         return Ok(SqlValue {
                             value: Some(SqlValueVariant::StringValue(s.to_string())),
                         });
                     }
-                }
-                if let Some(v) = obj.get("number_value") {
-                    if let Some(f) = v.as_f64() {
+                if let Some(v) = obj.get("number_value")
+                    && let Some(f) = v.as_f64() {
                         return Ok(SqlValue {
                             value: Some(SqlValueVariant::NumberValue(f)),
                         });
                     }
-                }
-                if let Some(v) = obj.get("bool_value") {
-                    if let Some(b) = v.as_bool() {
+                if let Some(v) = obj.get("bool_value")
+                    && let Some(b) = v.as_bool() {
                         return Ok(SqlValue {
                             value: Some(SqlValueVariant::BoolValue(b)),
                         });
                     }
-                }
-                if let Some(v) = obj.get("int64_value") {
-                    if let Some(i) = v.as_i64() {
+                if let Some(v) = obj.get("int64_value")
+                    && let Some(i) = v.as_i64() {
                         return Ok(SqlValue {
                             value: Some(SqlValueVariant::Int64Value(i)),
                         });
                     }
-                }
-                if let Some(v) = obj.get("bytes_value") {
-                    if let Some(s) = v.as_str() {
+                if let Some(v) = obj.get("bytes_value")
+                    && let Some(s) = v.as_str() {
                         let bytes = base64_decode(s).map_err(serde::de::Error::custom)?;
                         return Ok(SqlValue {
                             value: Some(SqlValueVariant::BytesValue(bytes)),
                         });
                     }
-                }
                 if obj.contains_key("null_value") {
                     return Ok(SqlValue {
                         value: Some(SqlValueVariant::NullValue(0)),

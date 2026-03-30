@@ -398,11 +398,10 @@ impl RefreshScheduler {
 
         // Find views that depend on this collection
         for entry in self.scheduled_views.iter() {
-            if entry.dependencies.contains(&collection.to_string()) {
-                if let RefreshStrategy::OnChange { debounce } = &entry.strategy {
+            if entry.dependencies.contains(&collection.to_string())
+                && let RefreshStrategy::OnChange { debounce } = &entry.strategy {
                     affected_views.push((entry.view_name.clone(), *debounce));
                 }
-            }
         }
 
         for (view_name, debounce) in affected_views {
@@ -463,8 +462,8 @@ impl RefreshScheduler {
         let now = Utc::now();
 
         for entry in self.scheduled_views.iter() {
-            if let Some(next_refresh) = entry.next_refresh {
-                if now >= next_refresh {
+            if let Some(next_refresh) = entry.next_refresh
+                && now >= next_refresh {
                     let event = RefreshEvent::scheduled(&entry.view_name);
                     if let Err(e) = self.event_tx.send(event).await {
                         warn!(
@@ -478,7 +477,6 @@ impl RefreshScheduler {
                             .fetch_add(1, Ordering::Relaxed);
                     }
                 }
-            }
         }
 
         Ok(())

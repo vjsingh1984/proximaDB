@@ -264,8 +264,8 @@ impl TierEnforcement {
             }
 
             // Check warning threshold
-            if let Some(warning_threshold) = limit.warning_threshold {
-                if usage_percentage > warning_threshold
+            if let Some(warning_threshold) = limit.warning_threshold
+                && usage_percentage > warning_threshold
                     && self.enforcement_config.enable_usage_warnings
                 {
                     warn!(
@@ -274,7 +274,6 @@ impl TierEnforcement {
                         usage_percentage * 100.0
                     );
                 }
-            }
         }
 
         Ok(EnforcementResult {

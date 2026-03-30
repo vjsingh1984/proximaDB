@@ -64,11 +64,10 @@ impl SSOIntegrationManager {
         sso_token: &SSOToken,
     ) -> Result<EnterpriseUserContext> {
         // Check cache first for performance
-        if let Some(cached) = self.token_cache.get(&sso_token.token_id) {
-            if !cached.is_expired() {
+        if let Some(cached) = self.token_cache.get(&sso_token.token_id)
+            && !cached.is_expired() {
                 return Ok(cached.user_context.clone());
             }
-        }
 
         // Validate with appropriate provider
         let validation_result = match &sso_token.provider {

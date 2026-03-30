@@ -959,11 +959,10 @@ impl HelixEngine {
         let levels = self.levels.read().await;
 
         // Check L0 trigger
-        if let Some(l0_files) = levels.get(&0) {
-            if l0_files.len() >= self.config.level0_file_num_compaction_trigger {
+        if let Some(l0_files) = levels.get(&0)
+            && l0_files.len() >= self.config.level0_file_num_compaction_trigger {
                 return true;
             }
-        }
 
         // Check size ratio triggers for other levels
         for level in 1..self.config.max_levels {
@@ -2075,8 +2074,8 @@ impl UnifiedStorageEngine for HelixEngine {
             let cache_key = format!("vector:{}:{}", collection_id, vector_id);
 
             // Try to get from vector cache first
-            if let Some(vector_cache) = orchestrator.get_vector_cache() {
-                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
+            if let Some(vector_cache) = orchestrator.get_vector_cache()
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
                     // Track cache hit for access pattern learning
                     orchestrator.pattern_tracker().track_access_async(
                         cache_key.clone(),
@@ -2084,7 +2083,6 @@ impl UnifiedStorageEngine for HelixEngine {
                     );
                     return Ok(Some(cached_vector));
                 }
-            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(

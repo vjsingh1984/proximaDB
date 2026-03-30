@@ -341,15 +341,14 @@ impl StrategyAwareReader for UnifiedNOVAReader {
         self.pruning_strategy = Self::to_nova_pruning_strategy(&self.strategy);
 
         // Update cached filesystem if needed
-        if self.strategy.should_use_cache() && self.cached_filesystem.is_none() {
-            if let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
+        if self.strategy.should_use_cache() && self.cached_filesystem.is_none()
+            && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
                 self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
                     base_fs,
                     self.collection_id.clone(),
                     "nova".to_string(),
                 )));
             }
-        }
     }
 }
 

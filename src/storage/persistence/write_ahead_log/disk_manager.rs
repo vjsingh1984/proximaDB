@@ -386,9 +386,9 @@ impl WriteAheadLogDiskManager {
             // Backward-compat path: {base}/{collection_id}/write_buffer/
             let legacy_url =
                 Self::join_url(&self.wal_base_url, &[collection_id, "write_buffer"], true);
-            if filesystem.exists(&legacy_url).await.unwrap_or(false) {
-                if let Ok(legacy_fs) = self.filesystem_factory.get_filesystem(&legacy_url) {
-                    if let Ok(entries) = legacy_fs.list(&legacy_url).await {
+            if filesystem.exists(&legacy_url).await.unwrap_or(false)
+                && let Ok(legacy_fs) = self.filesystem_factory.get_filesystem(&legacy_url)
+                    && let Ok(entries) = legacy_fs.list(&legacy_url).await {
                         for entry in entries {
                             if let Some(file_info) =
                                 self.parse_wal_filename(&entry.url, collection_id)
@@ -397,8 +397,6 @@ impl WriteAheadLogDiskManager {
                             }
                         }
                     }
-                }
-            }
         }
 
         debug!(

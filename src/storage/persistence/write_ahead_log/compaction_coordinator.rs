@@ -336,15 +336,14 @@ impl CompactionCoordinator {
         let state = states.get(collection_id);
 
         // Don't trigger if already in progress
-        if let Some(s) = state {
-            if s.compaction_in_progress {
+        if let Some(s) = state
+            && s.compaction_in_progress {
                 return Ok(false);
             }
-        }
 
         // Check time constraint
-        if let Some(s) = state {
-            if let Some(last_compaction) = s.last_compaction {
+        if let Some(s) = state
+            && let Some(last_compaction) = s.last_compaction {
                 let elapsed = Utc::now().signed_duration_since(last_compaction);
                 if elapsed.num_seconds()
                     < self
@@ -364,7 +363,6 @@ impl CompactionCoordinator {
                     return Ok(false);
                 }
             }
-        }
 
         // Check active compaction limit
         let active_count = self.active_compactions.lock().await.len();
@@ -749,15 +747,14 @@ impl CompactionCoordinator {
             if let Some(state) = states.get_mut(collection_id) {
                 state.compaction_in_progress = false;
 
-                if let Ok(compaction_result) = result {
-                    if compaction_result.success {
+                if let Ok(compaction_result) = result
+                    && compaction_result.success {
                         // Reset compaction metrics on success
                         state.files_needing_compaction = 0;
                         state.uncompacted_size_bytes = 0;
                         state.flushes_since_compaction = 0;
                         state.last_compaction = Some(Utc::now());
                     }
-                }
             }
         }
 

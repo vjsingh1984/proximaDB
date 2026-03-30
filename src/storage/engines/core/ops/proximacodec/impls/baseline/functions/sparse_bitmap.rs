@@ -178,8 +178,8 @@ fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> 
         let byte_idx = idx / 8;
         let bit_idx = idx % 8;
 
-        if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0 {
-            if value_idx < num_nonzero {
+        if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0
+            && value_idx < num_nonzero {
                 let offset = values_start + value_idx * 4;
                 let val = i32::from_le_bytes([
                     data[offset],
@@ -190,7 +190,6 @@ fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> 
                 result[idx] = val;
                 value_idx += 1;
             }
-        }
     }
 
     Ok(result)
@@ -236,8 +235,8 @@ fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> 
         let byte_idx = idx / 8;
         let bit_idx = idx % 8;
 
-        if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0 {
-            if value_idx < num_nonzero {
+        if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0
+            && value_idx < num_nonzero {
                 let offset = values_start + value_idx * 8;
                 let val = i64::from_le_bytes([
                     data[offset],
@@ -252,7 +251,6 @@ fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> 
                 result[idx] = val;
                 value_idx += 1;
             }
-        }
     }
 
     Ok(result)

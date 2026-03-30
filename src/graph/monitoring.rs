@@ -1040,11 +1040,10 @@ impl GraphProfiler {
     }
 
     pub fn record_timing(&self, session_id: &str, checkpoint: &str, duration: Duration) {
-        if let Ok(mut profiles) = self.active_profiles.write() {
-            if let Some(session) = profiles.get_mut(session_id) {
+        if let Ok(mut profiles) = self.active_profiles.write()
+            && let Some(session) = profiles.get_mut(session_id) {
                 session.timings.insert(checkpoint.to_string(), duration);
             }
-        }
     }
 
     pub fn get_recent_summaries(&self, limit: Option<usize>) -> Vec<ProfileSummary> {

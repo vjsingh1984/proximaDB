@@ -432,12 +432,11 @@ impl HyperparameterTuner {
                 scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
                 // Update best before consuming scores
-                if let Some((config, score)) = scores.first() {
-                    if *score > best_score {
+                if let Some((config, score)) = scores.first()
+                    && *score > best_score {
                         best_score = *score;
                         best_params = config.clone();
                     }
-                }
 
                 let k = (n_i as f64 / eta).floor() as usize;
                 configs = scores

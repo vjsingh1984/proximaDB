@@ -491,16 +491,14 @@ impl MetadataFilterPushdown {
         let mut inverted_index = HashMap::new();
 
         for (i, value_opt) in values.iter().enumerate() {
-            if let Some(value) = value_opt {
-                if let Some(record) = records.get(i) {
-                    if !record.id.is_empty() {
+            if let Some(value) = value_opt
+                && let Some(record) = records.get(i)
+                    && !record.id.is_empty() {
                         inverted_index
                             .entry(value.clone())
                             .or_insert_with(HashSet::new)
                             .insert(record.id.clone());
                     }
-                }
-            }
         }
 
         ColumnIndex {

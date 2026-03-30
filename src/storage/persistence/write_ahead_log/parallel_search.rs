@@ -152,11 +152,10 @@ impl ParallelWALSearch {
                 }
 
                 // Apply metadata filter if present
-                if let Some(filter) = metadata_filter {
-                    if !self.evaluate_filter(record, filter) {
+                if let Some(filter) = metadata_filter
+                    && !self.evaluate_filter(record, filter) {
                         return None;
                     }
-                }
 
                 // Calculate distance using SIMD when available
                 let score = if use_simd {

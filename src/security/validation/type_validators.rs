@@ -258,11 +258,10 @@ impl TypedValueValidator {
     /// Add a field configuration
     pub fn add_field_config(&mut self, field_name: String, config: FieldValidationConfig) {
         // Pre-compile regex if present
-        if let Some(ref pattern) = config.regex_pattern {
-            if let Ok(re) = Regex::new(pattern) {
+        if let Some(ref pattern) = config.regex_pattern
+            && let Ok(re) = Regex::new(pattern) {
                 self.regex_cache.insert(field_name.clone(), re);
             }
-        }
         self.configs.insert(field_name, config);
     }
 
@@ -273,13 +272,12 @@ impl TypedValueValidator {
 
         // Check null
         if value.is_null() {
-            if let Some(cfg) = config {
-                if !cfg.nullable {
+            if let Some(cfg) = config
+                && !cfg.nullable {
                     return Err(ValidationError::NullNotAllowed {
                         field: field_name.to_string(),
                     });
                 }
-            }
             return Ok(());
         }
 
@@ -389,25 +387,22 @@ impl TypedValueValidator {
         config: Option<&FieldValidationConfig>,
     ) -> ValidationResult {
         // Length check
-        if let Some(cfg) = config {
-            if let Some(max_len) = cfg.max_length {
-                if text.len() > max_len {
+        if let Some(cfg) = config
+            && let Some(max_len) = cfg.max_length
+                && text.len() > max_len {
                     return Err(ValidationError::LengthExceeded {
                         actual: text.len(),
                         max: max_len,
                     });
                 }
-            }
-        }
 
         // Regex pattern check
-        if let Some(re) = self.regex_cache.get(field_name) {
-            if !re.is_match(text) {
+        if let Some(re) = self.regex_cache.get(field_name)
+            && !re.is_match(text) {
                 return Err(ValidationError::PatternMismatch {
                     pattern: re.to_string(),
                 });
             }
-        }
 
         // Security check for SQL injection
         if self.security_enabled && contains_sql_injection(text) {
@@ -427,22 +422,20 @@ impl TypedValueValidator {
         config: Option<&FieldValidationConfig>,
     ) -> ValidationResult {
         if let Some(cfg) = config {
-            if let Some(min) = cfg.min_value {
-                if (value as i128) < min {
+            if let Some(min) = cfg.min_value
+                && (value as i128) < min {
                     return Err(ValidationError::BelowMinimum {
                         value: value.to_string(),
                         min: min.to_string(),
                     });
                 }
-            }
-            if let Some(max) = cfg.max_value {
-                if (value as i128) > max {
+            if let Some(max) = cfg.max_value
+                && (value as i128) > max {
                     return Err(ValidationError::AboveMaximum {
                         value: value.to_string(),
                         max: max.to_string(),
                     });
                 }
-            }
         }
         Ok(())
     }
@@ -588,11 +581,10 @@ static UUID_REGEX: Lazy<Option<Regex>> = Lazy::new(|| {
 impl UuidValidator {
     /// Validate UUID string format (RFC 4122)
     pub fn validate(value: &str) -> ValidationResult {
-        if let Some(regex) = &*UUID_REGEX {
-            if regex.is_match(value) {
+        if let Some(regex) = &*UUID_REGEX
+            && regex.is_match(value) {
                 return Ok(());
             }
-        }
 
         Err(ValidationError::InvalidFormat {
             type_name: "UUID".to_string(),
@@ -825,22 +817,20 @@ impl TimestampValidator {
     /// Validate a timestamp value (milliseconds since epoch)
     pub fn validate(&self, timestamp_ms: i64) -> ValidationResult {
         // Check minimum
-        if let Some(min) = self.min_timestamp {
-            if timestamp_ms < min {
+        if let Some(min) = self.min_timestamp
+            && timestamp_ms < min {
                 return Err(ValidationError::TimestampOutOfRange {
                     timestamp: timestamp_ms,
                 });
             }
-        }
 
         // Check maximum
-        if let Some(max) = self.max_timestamp {
-            if timestamp_ms > max {
+        if let Some(max) = self.max_timestamp
+            && timestamp_ms > max {
                 return Err(ValidationError::TimestampOutOfRange {
                     timestamp: timestamp_ms,
                 });
             }
-        }
 
         // Check future timestamps
         if !self.allow_future {

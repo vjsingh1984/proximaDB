@@ -905,11 +905,10 @@ impl GlobalPartitionedMemtable {
 
             // Secondary: Efficiency score (highest first)
             let efficiency_cmp = b.efficiency_score.partial_cmp(&a.efficiency_score);
-            if let Some(cmp) = efficiency_cmp {
-                if cmp != std::cmp::Ordering::Equal {
+            if let Some(cmp) = efficiency_cmp
+                && cmp != std::cmp::Ordering::Equal {
                     return cmp;
                 }
-            }
 
             // Tertiary: Age score (oldest first)
             a.age_score
@@ -1090,8 +1089,8 @@ impl GlobalPartitionedMemtable {
     /// Remove a specific batch from a collection (for atomic rollback)
     pub async fn remove_batch(&self, collection_id: &str, batch_id: &str) -> Result<()> {
         let mut collections = self.collections.write().await;
-        if let Some(partition) = collections.get_mut(collection_id) {
-            if let Some(removed_batch) = partition.wal_batches.remove(batch_id) {
+        if let Some(partition) = collections.get_mut(collection_id)
+            && let Some(removed_batch) = partition.wal_batches.remove(batch_id) {
                 // Update partition stats
                 partition.vector_count = partition
                     .vector_count
@@ -1123,7 +1122,6 @@ impl GlobalPartitionedMemtable {
 
                 return Ok(());
             }
-        }
 
         Err(anyhow::anyhow!(
             "Batch {} not found in collection {}",

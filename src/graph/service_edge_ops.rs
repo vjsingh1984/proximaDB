@@ -118,16 +118,14 @@ impl super::GraphOperationsService {
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
         let mut results = Vec::new();
-        if let Some(from) = &query.from_node_id {
-            if let Ok(edges) = engine.get_outgoing_edges(from, None) {
+        if let Some(from) = &query.from_node_id
+            && let Ok(edges) = engine.get_outgoing_edges(from, None) {
                 results.extend(edges);
             }
-        }
-        if let Some(to) = &query.to_node_id {
-            if let Ok(edges) = engine.get_incoming_edges(to, None) {
+        if let Some(to) = &query.to_node_id
+            && let Ok(edges) = engine.get_incoming_edges(to, None) {
                 results.extend(edges);
             }
-        }
         // Property filters (simple, if provided)
         if !query.filters.is_empty() {
             results.retain(|edge| {

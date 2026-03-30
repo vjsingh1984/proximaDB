@@ -915,8 +915,8 @@ impl RoutingService {
         }
 
         // Log routing decision for tracing
-        if let Some(ctx) = context {
-            if let Some(trace_id) = &ctx.trace_id {
+        if let Some(ctx) = context
+            && let Some(trace_id) = &ctx.trace_id {
                 tracing::debug!(
                     trace_id = %trace_id,
                     collection_id = %collection_id,
@@ -924,7 +924,6 @@ impl RoutingService {
                     "Routed to multiple shards"
                 );
             }
-        }
 
         Ok(decisions)
     }

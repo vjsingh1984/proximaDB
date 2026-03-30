@@ -726,9 +726,9 @@ impl DistributedCollectionOps {
         }
 
         // Check partition key if provided
-        if let Some(ref partition_key) = context.partition_key {
-            if let Some(ref bounds) = shard.metadata_bounds {
-                if !bounds.may_contain_partition(partition_key) {
+        if let Some(ref partition_key) = context.partition_key
+            && let Some(ref bounds) = shard.metadata_bounds
+                && !bounds.may_contain_partition(partition_key) {
                     debug!(
                         shard_id = %shard.id,
                         partition_key = %partition_key,
@@ -736,12 +736,10 @@ impl DistributedCollectionOps {
                     );
                     return false;
                 }
-            }
-        }
 
         // Check additional field filters
-        if !context.field_filters.is_empty() {
-            if let Some(ref bounds) = shard.metadata_bounds {
+        if !context.field_filters.is_empty()
+            && let Some(ref bounds) = shard.metadata_bounds {
                 for (field, value) in &context.field_filters {
                     if !bounds.may_contain_field_value(field, value) {
                         debug!(
@@ -754,7 +752,6 @@ impl DistributedCollectionOps {
                     }
                 }
             }
-        }
 
         true
     }

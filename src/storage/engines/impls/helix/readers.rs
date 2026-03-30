@@ -73,8 +73,8 @@ pub async fn search_sstable(
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<OptimizedSearchRecord>> {
     // Check bloom filter if candidate IDs provided
-    if let Some(ids) = candidate_ids {
-        if !ids.is_empty() && sstable.bloom_filter.is_some() {
+    if let Some(ids) = candidate_ids
+        && !ids.is_empty() && sstable.bloom_filter.is_some() {
             let bloom_results = check_bloom_filter(sstable, ids).await?;
 
             // Skip this SSTable if none of the candidate IDs might be present
@@ -83,7 +83,6 @@ pub async fn search_sstable(
                 return Ok(Vec::new());
             }
         }
-    }
 
     debug!(
         "Searching SSTable at level {} with {} vectors",
@@ -174,12 +173,11 @@ pub async fn find_vector_by_id(
         for record in block.records {
             if record.id == vector_id {
                 // Check if record is expired (tombstone support)
-                if let Some(expires_at) = record.expires_at {
-                    if expires_at as u64 <= current_time {
+                if let Some(expires_at) = record.expires_at
+                    && expires_at as u64 <= current_time {
                         // Record is expired, treat as deleted
                         return Ok(None);
                     }
-                }
                 return Ok(Some(record));
             }
         }

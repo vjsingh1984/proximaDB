@@ -184,11 +184,10 @@ impl FullTextIndex {
         let mut results = Vec::new();
         for (score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher.doc(doc_address)?;
-            if let Some(id_value) = doc.get_first(self.id_field) {
-                if let Some(id) = id_value.as_str() {
+            if let Some(id_value) = doc.get_first(self.id_field)
+                && let Some(id) = id_value.as_str() {
                     results.push((id.to_string(), score));
                 }
-            }
         }
 
         Ok(results)

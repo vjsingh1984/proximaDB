@@ -104,11 +104,10 @@ impl RLPlannerIntegration {
                 SearchIndexType::HilbertCurve | SearchIndexType::AdaCurve => None,
                 SearchIndexType::ZoneMap | SearchIndexType::AdaptiveMatrix => None,
             };
-            if let Some(idx_type) = mapped {
-                if !indexes.contains(&idx_type) {
+            if let Some(idx_type) = mapped
+                && !indexes.contains(&idx_type) {
                     indexes.push(idx_type);
                 }
-            }
         }
 
         // Also check collection config for explicitly enabled indexes
@@ -124,11 +123,10 @@ impl RLPlannerIntegration {
                         IndexingAlgorithm::Pq => Some(IndexType::PQ),
                         _ => None,
                     };
-                    if let Some(it) = idx_type {
-                        if !indexes.contains(&it) {
+                    if let Some(it) = idx_type
+                        && !indexes.contains(&it) {
                             indexes.push(it);
                         }
-                    }
                 }
             }
         }
@@ -412,12 +410,11 @@ pub fn get_rl_planner() -> Option<&'static RLPlannerIntegration> {
 
 /// Convenience function to select action if RL planner is enabled
 pub async fn rl_select_action(context: &UnifiedQueryContext<'_>) -> Option<ExecutionAction> {
-    if let Some(planner) = get_rl_planner() {
-        if planner.is_enabled() {
+    if let Some(planner) = get_rl_planner()
+        && planner.is_enabled() {
             let state = planner.extract_state(context);
             return Some(planner.select_action(&state).await);
         }
-    }
     None
 }
 

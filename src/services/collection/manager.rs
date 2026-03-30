@@ -223,15 +223,14 @@ impl CollectionService {
         collection_identifier: &str,
         tenant_ctx: &crate::storage::tenant::TenantContext,
     ) -> Result<Option<Collection>> {
-        if let Some(ref tenant_manager) = self.tenant_manager {
-            if !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id) {
+        if let Some(ref tenant_manager) = self.tenant_manager
+            && !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id) {
                 warn!(
                     "🚨 Tenant '{}' is not active; denying access to collection '{}'",
                     tenant_ctx.tenant_id, collection_identifier
                 );
                 return Ok(None);
             }
-        }
 
         let collection = self
             .metadata_backend
@@ -311,15 +310,14 @@ impl CollectionService {
         let collections = self.metadata_backend.list_collections().await?;
 
         if let Some(tenant_ctx) = tenant_context.filter(|_| self.tenant_manager.is_some()) {
-            if let Some(ref tenant_manager) = self.tenant_manager {
-                if !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id) {
+            if let Some(ref tenant_manager) = self.tenant_manager
+                && !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id) {
                     warn!(
                         "🚨 Tenant '{}' is not active; returning empty collection list",
                         tenant_ctx.tenant_id
                     );
                     return Ok(Vec::new());
                 }
-            }
 
             let filtered = collections
                 .into_iter()
@@ -625,8 +623,8 @@ impl CollectionService {
         }
 
         // Validate quantization configuration
-        if let Some(quant_config) = &enriched_config.quantization {
-            if quant_config.enabled.unwrap_or(false) {
+        if let Some(quant_config) = &enriched_config.quantization
+            && quant_config.enabled.unwrap_or(false) {
                 info!(
                     "⚠️ Collection '{}' has quantization enabled. All vectors MUST have unique IDs for tracking quantized representations",
                     config.name
@@ -634,7 +632,6 @@ impl CollectionService {
                 // Note: We don't fail here, but log a warning. The actual validation happens during insert
                 // This allows collections to be created with quantization enabled, but enforces IDs at insert time
             }
-        }
 
         // Check if collection already exists
         // Check if collection already exists
@@ -787,11 +784,10 @@ impl CollectionService {
     /// ✅ RESOLVE COLLECTION ID TO COLLECTION NAME  
     /// Reverse resolution for user-friendly displays
     pub async fn resolve_collection_name(&self, collection_id: &str) -> Result<Option<String>> {
-        if let Some(collection) = self.collection(collection_id).await? {
-            if let Some(config) = &collection.config {
+        if let Some(collection) = self.collection(collection_id).await?
+            && let Some(config) = &collection.config {
                 return Ok(Some(config.name.clone()));
             }
-        }
         Ok(None)
     }
 
@@ -853,15 +849,14 @@ impl CollectionService {
         proto: &Collection,
     ) -> Result<crate::index::config::IndexConfig> {
         // Check if proto has index_config field
-        if let Some(config) = proto.config.as_ref() {
-            if !config.index_configs.is_empty() {
+        if let Some(config) = proto.config.as_ref()
+            && !config.index_configs.is_empty() {
                 // Take the first IndexConfig from proto (index_configs is a Vec)
                 if let Some(first_config) = config.index_configs.first() {
                     // Convert from proto IndexConfig to internal IndexConfig
                     return Ok(self.convert_proto_index_config(first_config)?);
                 }
             }
-        }
 
         // No IndexConfig found, create smart defaults based on algorithm
         let config = proto
@@ -1193,11 +1188,10 @@ impl CollectionService {
             let mut stats = engine.collection_stats(collection_name).await?;
 
             // Enrich with metadata from collection config
-            if let Some(collection) = self.collection(collection_name).await? {
-                if let Some(config) = &collection.config {
+            if let Some(collection) = self.collection(collection_name).await?
+                && let Some(config) = &collection.config {
                     stats.dimension = Some(config.dimension as u32);
                 }
-            }
 
             return Ok(stats);
         }

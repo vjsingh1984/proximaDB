@@ -300,11 +300,10 @@ impl CompactionManager {
         let state = self.state.read().await;
 
         // Check if enough time has passed since last compaction
-        if let Some(last_time) = state.last_compaction_time.get(collection_id) {
-            if last_time.elapsed() > self.config.max_compaction_interval {
+        if let Some(last_time) = state.last_compaction_time.get(collection_id)
+            && last_time.elapsed() > self.config.max_compaction_interval {
                 return true;
             }
-        }
 
         // TODO: Add additional heuristics:
         // - Number of small files

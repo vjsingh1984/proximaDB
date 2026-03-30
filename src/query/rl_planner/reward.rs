@@ -378,21 +378,18 @@ impl RewardCalculator {
         hard_constraints: &HardConstraints,
     ) -> f32 {
         // Check hard constraints first
-        if let Some(max_lat) = hard_constraints.max_latency_ms {
-            if latency_ms > max_lat {
+        if let Some(max_lat) = hard_constraints.max_latency_ms
+            && latency_ms > max_lat {
                 return 0.0; // Constraint violation = zero reward
             }
-        }
-        if let Some(min_rec) = hard_constraints.min_recall {
-            if recall < min_rec {
+        if let Some(min_rec) = hard_constraints.min_recall
+            && recall < min_rec {
                 return 0.0;
             }
-        }
-        if let Some(min_qps) = hard_constraints.min_qps {
-            if throughput_qps < min_qps {
+        if let Some(min_qps) = hard_constraints.min_qps
+            && throughput_qps < min_qps {
                 return 0.0;
             }
-        }
 
         // No constraint violations, calculate normal reward
         self.calculate(latency_ms, recall, throughput_qps, target)

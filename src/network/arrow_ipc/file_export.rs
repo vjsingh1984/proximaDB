@@ -760,11 +760,10 @@ impl ArrowFileExportHandler {
                 }
 
                 // Check limit
-                if let Some(max) = limit {
-                    if files.len() >= max {
+                if let Some(max) = limit
+                    && files.len() >= max {
                         return Ok(files);
                     }
-                }
             }
         }
 
@@ -937,15 +936,14 @@ impl ArrowFileExportHandler {
     ) -> Result<(usize, u64, u32)> {
         // Try ArrowBlockReader first (for ProximaDB-formatted files with sidecar index)
         let idx_path = format!("{}.idx", path.display());
-        if Path::new(&idx_path).exists() {
-            if let Ok(reader) = ArrowBlockReader::open(path) {
+        if Path::new(&idx_path).exists()
+            && let Ok(reader) = ArrowBlockReader::open(path) {
                 return Ok((
                     reader.num_blocks() as usize,
                     reader.total_records(),
                     reader.metadata().dimension,
                 ));
             }
-        }
 
         // Fall back to standard Arrow IPC reader
         let file = fs::File::open(path).context("Failed to open Arrow file")?;
@@ -1052,11 +1050,10 @@ impl ArrowFileExportHandler {
                 total_records += block.records.len() as u64;
 
                 // Get dimension from first non-empty vector
-                if dimension == 0 {
-                    if let Some(first_record) = block.records.first() {
+                if dimension == 0
+                    && let Some(first_record) = block.records.first() {
                         dimension = first_record.vector.len() as u32;
                     }
-                }
             }
 
             // Move to next block (with cache-line alignment padding)
@@ -1102,8 +1099,8 @@ impl ArrowFileExportHandler {
 
         // Try ArrowBlockReader first (for ProximaDB-formatted files with sidecar index)
         let idx_path = format!("{}.idx", file_path);
-        if Path::new(&idx_path).exists() {
-            if let Ok(_reader) = ArrowBlockReader::open(path) {
+        if Path::new(&idx_path).exists()
+            && let Ok(_reader) = ArrowBlockReader::open(path) {
                 // ArrowBlockReader returns VectorRecords, so we fall back to standard IPC reader
                 // for direct RecordBatch streaming (no conversion needed)
                 debug!(
@@ -1111,7 +1108,6 @@ impl ArrowFileExportHandler {
                     file_path
                 );
             }
-        }
 
         // Use standard Arrow IPC reader for direct RecordBatch streaming
         let file = fs::File::open(path).context("Failed to open Arrow file")?;
@@ -1226,11 +1222,10 @@ impl ArrowFileExportHandler {
             // Try to deserialize the block
             if let Ok(block) = ProximaDataBlock::deserialize(block_data, None) {
                 // Get dimension from first non-empty vector
-                if dimension == 0 {
-                    if let Some(first_record) = block.records.first() {
+                if dimension == 0
+                    && let Some(first_record) = block.records.first() {
                         dimension = first_record.vector.len() as i32;
                     }
-                }
                 all_records.extend(block.records);
             }
 
@@ -1414,11 +1409,10 @@ impl ArrowFileExportHandler {
                 num_blocks += 1;
                 total_records += block.records.len() as u64;
 
-                if dimension == 0 {
-                    if let Some(first_record) = block.records.first() {
+                if dimension == 0
+                    && let Some(first_record) = block.records.first() {
                         dimension = first_record.vector.len() as u32;
                     }
-                }
             }
 
             let aligned_size = ((block_len + 63) / 64) * 64;

@@ -291,12 +291,11 @@ impl UnifiedParquetReader {
             let records = reader.read_all_with_filesystem(&path, fs).await?;
             all_records.extend(records);
 
-            if let Some(limit) = limit {
-                if all_records.len() >= limit {
+            if let Some(limit) = limit
+                && all_records.len() >= limit {
                     all_records.truncate(limit);
                     break;
                 }
-            }
         }
 
         // Apply start offset if needed
@@ -792,13 +791,12 @@ impl UnifiedParquetReader {
                                         let filter_min = min_val.as_f64().or_else(|| min_val.as_i64().map(|i| i as f64));
                                         let filter_max = max_val.as_f64().or_else(|| max_val.as_i64().map(|i| i as f64));
 
-                                        if let (Some(fmin), Some(fmax)) = (filter_min, filter_max) {
-                                            if let Some(false) = check_range_overlaps_stats(stats, col_type, fmin, fmax) {
+                                        if let (Some(fmin), Some(fmax)) = (filter_min, filter_max)
+                                            && let Some(false) = check_range_overlaps_stats(stats, col_type, fmin, fmax) {
                                                 keep_row_group = false;
                                                 debug!("  Row group {} pruned: range [{}, {}] doesn't overlap stats", rg_idx, fmin, fmax);
                                                 break;
                                             }
-                                        }
                                     }
                                     crate::storage::engines::core::formats::columnar::FilterCondition::In(_, values) => {
                                         // Check if any value in the list could fall within stats range
@@ -927,27 +925,24 @@ impl UnifiedParquetReader {
         // If quantized vectors are available and we need vectors, read them for pre-filtering
         if needs_vectors && (has_binary_vectors || has_int8_vectors || has_pq_vectors) {
             // Read quantized vectors for fast approximate filtering
-            if has_binary_vectors {
-                if let Ok(idx) = schema.index_of(
+            if has_binary_vectors
+                && let Ok(idx) = schema.index_of(
                     crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
                 ) {
                     projection.push(idx);
                 }
-            }
-            if has_int8_vectors {
-                if let Ok(idx) = schema.index_of(
+            if has_int8_vectors
+                && let Ok(idx) = schema.index_of(
                     crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8,
                 ) {
                     projection.push(idx);
                 }
-            }
-            if has_pq_vectors {
-                if let Ok(idx) = schema.index_of(
+            if has_pq_vectors
+                && let Ok(idx) = schema.index_of(
                     crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8,
                 ) {
                     projection.push(idx);
                 }
-            }
         }
 
         // Vector column if needed
@@ -1315,11 +1310,10 @@ impl UnifiedParquetReader {
             let score = sim_result.similarity_score;
 
             // Check minimum score threshold
-            if let Some(min) = min_score {
-                if score < min {
+            if let Some(min) = min_score
+                && score < min {
                     continue;
                 }
-            }
 
             // Check if this score would be accepted into the top-k queue
             if !priority_queue.would_accept(score) {
@@ -1527,24 +1521,22 @@ impl UnifiedParquetReader {
                                             break;
                                         }
                                     }
-                                } else if let Some(num_val) = value.as_f64().or_else(|| value.as_i64().map(|i| i as f64)) {
-                                    if let Some(false) = check_numeric_in_stats_range(stats, col_type, num_val) {
+                                } else if let Some(num_val) = value.as_f64().or_else(|| value.as_i64().map(|i| i as f64))
+                                    && let Some(false) = check_numeric_in_stats_range(stats, col_type, num_val) {
                                         keep_row_group = false;
                                         debug!("  Row group {} pruned: numeric {} outside stats range", rg_idx, num_val);
                                         break;
                                     }
-                                }
                             }
                             crate::storage::engines::core::formats::columnar::FilterCondition::Range(_, min_val, max_val) => {
                                 let filter_min = min_val.as_f64().or_else(|| min_val.as_i64().map(|i| i as f64));
                                 let filter_max = max_val.as_f64().or_else(|| max_val.as_i64().map(|i| i as f64));
-                                if let (Some(fmin), Some(fmax)) = (filter_min, filter_max) {
-                                    if let Some(false) = check_range_overlaps_stats(stats, col_type, fmin, fmax) {
+                                if let (Some(fmin), Some(fmax)) = (filter_min, filter_max)
+                                    && let Some(false) = check_range_overlaps_stats(stats, col_type, fmin, fmax) {
                                         keep_row_group = false;
                                         debug!("  Row group {} pruned: range [{}, {}] doesn't overlap stats", rg_idx, fmin, fmax);
                                         break;
                                     }
-                                }
                             }
                             crate::storage::engines::core::formats::columnar::FilterCondition::In(_, values) => {
                                 let mut any_could_match = false;
@@ -1648,21 +1640,18 @@ impl UnifiedParquetReader {
 
         // Quantized vectors for pre-filtering
         if needs_vectors && (has_binary_vectors || has_int8_vectors || has_pq_vectors) {
-            if has_binary_vectors {
-                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY) {
+            if has_binary_vectors
+                && let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY) {
                     projection.push(idx);
                 }
-            }
-            if has_int8_vectors {
-                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8) {
+            if has_int8_vectors
+                && let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8) {
                     projection.push(idx);
                 }
-            }
-            if has_pq_vectors {
-                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8) {
+            if has_pq_vectors
+                && let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8) {
                     projection.push(idx);
                 }
-            }
         }
 
         // Vector column
@@ -1699,16 +1688,14 @@ impl UnifiedParquetReader {
         }
 
         // Always include version and timestamp
-        if let Ok(idx) = schema.index_of("version") {
-            if !projection.contains(&idx) {
+        if let Ok(idx) = schema.index_of("version")
+            && !projection.contains(&idx) {
                 projection.push(idx);
             }
-        }
-        if let Ok(idx) = schema.index_of("timestamp") {
-            if !projection.contains(&idx) {
+        if let Ok(idx) = schema.index_of("timestamp")
+            && !projection.contains(&idx) {
                 projection.push(idx);
             }
-        }
 
         projection
     }
@@ -1727,11 +1714,10 @@ impl UnifiedParquetReader {
         let mut id_filters = Vec::new();
         for filter in metadata_filters {
             for condition in &filter.conditions {
-                if let FilterCondition::Equals(field, value) = condition {
-                    if field == "id" || field == "_id" {
+                if let FilterCondition::Equals(field, value) = condition
+                    && (field == "id" || field == "_id") {
                         id_filters.push(value.clone());
                     }
-                }
             }
         }
 
@@ -1962,8 +1948,7 @@ impl UnifiedParquetReader {
                         match field.data_type() {
                             DataType::Utf8 => {
                                 if let Some(str_array) = col.as_any().downcast_ref::<StringArray>()
-                                {
-                                    if !ArrowArrayTrait::is_null(str_array, row_idx) {
+                                    && !ArrowArrayTrait::is_null(str_array, row_idx) {
                                         meta_map.insert(
                                             field_name.clone(),
                                             SqlValue {
@@ -1973,11 +1958,10 @@ impl UnifiedParquetReader {
                                             },
                                         );
                                     }
-                                }
                             }
                             DataType::Int64 => {
-                                if let Some(int_array) = col.as_any().downcast_ref::<Int64Array>() {
-                                    if !ArrowArrayTrait::is_null(int_array, row_idx) {
+                                if let Some(int_array) = col.as_any().downcast_ref::<Int64Array>()
+                                    && !ArrowArrayTrait::is_null(int_array, row_idx) {
                                         meta_map.insert(
                                             field_name.clone(),
                                             SqlValue {
@@ -1987,13 +1971,11 @@ impl UnifiedParquetReader {
                                             },
                                         );
                                     }
-                                }
                             }
                             DataType::Float64 => {
                                 if let Some(float_array) =
                                     col.as_any().downcast_ref::<Float64Array>()
-                                {
-                                    if !ArrowArrayTrait::is_null(float_array, row_idx) {
+                                    && !ArrowArrayTrait::is_null(float_array, row_idx) {
                                         meta_map.insert(
                                             field_name.clone(),
                                             SqlValue {
@@ -2003,13 +1985,11 @@ impl UnifiedParquetReader {
                                             },
                                         );
                                     }
-                                }
                             }
                             DataType::Boolean => {
                                 if let Some(bool_array) =
                                     col.as_any().downcast_ref::<BooleanArray>()
-                                {
-                                    if !ArrowArrayTrait::is_null(bool_array, row_idx) {
+                                    && !ArrowArrayTrait::is_null(bool_array, row_idx) {
                                         meta_map.insert(
                                             field_name.clone(),
                                             SqlValue {
@@ -2019,7 +1999,6 @@ impl UnifiedParquetReader {
                                             },
                                         );
                                     }
-                                }
                             }
                             _ => {
                                 // Unsupported type - skip
@@ -2029,8 +2008,8 @@ impl UnifiedParquetReader {
                 }
 
                 // Then, extract from "extra_meta" Map column if present (non-filterable metadata)
-                if let Some(map_col) = batch.column_by_name("extra_meta") {
-                    if let Some(map_array) = map_col.as_any().downcast_ref::<MapArray>() {
+                if let Some(map_col) = batch.column_by_name("extra_meta")
+                    && let Some(map_array) = map_col.as_any().downcast_ref::<MapArray>() {
                         use arrow_array::Array;
 
                         if !map_array.is_null(row_idx) {
@@ -2040,12 +2019,10 @@ impl UnifiedParquetReader {
                             if let Some(struct_array) = map_value
                                 .as_any()
                                 .downcast_ref::<arrow_array::StructArray>()
-                            {
-                                if let Some(keys) = struct_array
+                                && let Some(keys) = struct_array
                                     .column_by_name("key")
                                     .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                                {
-                                    if let Some(values) = struct_array
+                                    && let Some(values) = struct_array
                                         .column_by_name("value")
                                         .and_then(|c| c.as_any().downcast_ref::<StringArray>())
                                     {
@@ -2060,11 +2037,8 @@ impl UnifiedParquetReader {
                                             }
                                         }
                                     }
-                                }
-                            }
                         }
                     }
-                }
 
                 meta_map
             } else {

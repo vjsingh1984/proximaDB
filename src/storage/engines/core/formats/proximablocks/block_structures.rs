@@ -2231,13 +2231,12 @@ impl ProximaDataBlock {
         source_dictionary.push(String::new()); // Empty string represents None
 
         for source in &ordered_sources {
-            if let Some(src) = source {
-                if !source_lookup.contains_key(&Some(src.clone())) {
+            if let Some(src) = source
+                && !source_lookup.contains_key(&Some(src.clone())) {
                     let dict_index = source_dictionary.len() as u32;
                     source_dictionary.push(src.clone());
                     source_lookup.insert(Some(src.clone()), dict_index);
                 }
-            }
         }
 
         debug!(
@@ -2515,8 +2514,8 @@ impl ProximaDataBlock {
         };
 
         // Try to get type from collection config for filterable columns
-        if let Some(config) = collection_config {
-            if let Some(cfg) = config.config.as_ref() {
+        if let Some(config) = collection_config
+            && let Some(cfg) = config.config.as_ref() {
                 // Check if this key is a declared filterable column
                 if let Some(col_spec) = cfg.filterable_columns.iter().find(|c| c.name == key_name) {
                     // Use declared type from config (single source of truth!)
@@ -2570,7 +2569,6 @@ impl ProximaDataBlock {
                     };
                 }
             }
-        }
 
         // Not a filterable column or no config available: use heuristic
         // The heuristic function handles type tags internally
@@ -2644,8 +2642,8 @@ impl ProximaDataBlock {
 
         if val_len == 8 {
             // 8 bytes: could be f64 or i64 - check if it looks like valid UTF-8 string first
-            if let Ok(s) = std::str::from_utf8(val_bytes) {
-                if s.chars()
+            if let Ok(s) = std::str::from_utf8(val_bytes)
+                && s.chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
                 {
                     // Looks like a string identifier (e.g., "inactive", "category")
@@ -2653,7 +2651,6 @@ impl ProximaDataBlock {
                         value: Some(Value::StringValue(s.to_string())),
                     };
                 }
-            }
             // Default to f64 for numeric data
             let num = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
             SqlValue {

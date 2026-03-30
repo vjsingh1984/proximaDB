@@ -296,9 +296,9 @@ impl AxisHnswIndex {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
 
             for &ep in entry_points {
-                if let Some(external_id) = self.id_mapping.external(ep) {
-                    if let Some(view) = vectors_lock.get(&external_id) {
-                        if let Some(vector_data) = view.as_f32() {
+                if let Some(external_id) = self.id_mapping.external(ep)
+                    && let Some(view) = vectors_lock.get(&external_id)
+                        && let Some(vector_data) = view.as_f32() {
                             let dist = self.distance_computer.distance_with_metric(
                                 query,
                                 vector_data,
@@ -308,19 +308,16 @@ impl AxisHnswIndex {
                             candidates.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
                             dynamic_candidates.push((OrderedFloat(dist), ep));
                         }
-                    }
-                }
             }
         }
 
         // Explore the graph with distance computation
         while let Some(std::cmp::Reverse((curr_dist, curr_node))) = candidates.pop() {
             // Early termination: if current distance is worse than worst in dynamic_candidates
-            if let Some((worst_dist, _)) = dynamic_candidates.peek() {
-                if curr_dist.0 > worst_dist.0 && dynamic_candidates.len() >= ef {
+            if let Some((worst_dist, _)) = dynamic_candidates.peek()
+                && curr_dist.0 > worst_dist.0 && dynamic_candidates.len() >= ef {
                     break;
                 }
-            }
 
             // Compute distances inline to avoid vector cloning (zero-copy optimization)
             if let Some(neighbors) = self.layers.get(&(layer, curr_node)) {
@@ -332,9 +329,9 @@ impl AxisHnswIndex {
                 for &neighbor in neighbors.value() {
                     if !visited.contains(&neighbor) {
                         visited.insert(neighbor);
-                        if let Some(external_id) = self.id_mapping.external(neighbor) {
-                            if let Some(view) = vectors_lock.get(&external_id) {
-                                if let Some(vector_data) = view.as_f32() {
+                        if let Some(external_id) = self.id_mapping.external(neighbor)
+                            && let Some(view) = vectors_lock.get(&external_id)
+                                && let Some(vector_data) = view.as_f32() {
                                     let dist = self.distance_computer.distance_with_metric(
                                         query,
                                         vector_data,
@@ -348,8 +345,7 @@ impl AxisHnswIndex {
                                         )));
                                         dynamic_candidates.push((OrderedFloat(dist), neighbor));
                                     } else if let Some((worst_dist, _)) = dynamic_candidates.peek()
-                                    {
-                                        if dist < worst_dist.0 {
+                                        && dist < worst_dist.0 {
                                             candidates.push(std::cmp::Reverse((
                                                 OrderedFloat(dist),
                                                 neighbor,
@@ -360,10 +356,7 @@ impl AxisHnswIndex {
                                                 dynamic_candidates.pop();
                                             }
                                         }
-                                    }
                                 }
-                            }
-                        }
                     }
                 }
             }
@@ -445,14 +438,12 @@ impl AxisHnswIndex {
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             for &neighbor in &connections {
-                if let Some(neighbor_external) = self.id_mapping.external(neighbor) {
-                    if let Some(view) = vectors_lock.get(&neighbor_external) {
-                        if let Some(neighbor_vec) = view.as_f32() {
+                if let Some(neighbor_external) = self.id_mapping.external(neighbor)
+                    && let Some(view) = vectors_lock.get(&neighbor_external)
+                        && let Some(neighbor_vec) = view.as_f32() {
                             neighbor_ids.push(neighbor);
                             neighbor_vectors.push(neighbor_vec.to_vec());
                         }
-                    }
-                }
             }
         }
 

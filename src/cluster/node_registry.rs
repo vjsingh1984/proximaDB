@@ -321,13 +321,12 @@ impl NodeRegistry {
         let mut stale_nodes = Vec::new();
 
         for (node_id, state) in nodes.iter_mut() {
-            if let Some(last_check) = state.last_check {
-                if last_check.elapsed() > timeout {
+            if let Some(last_check) = state.last_check
+                && last_check.elapsed() > timeout {
                     state.info.status = NodeStatus::Unreachable;
                     state.info.health = NodeHealth::Unhealthy;
                     stale_nodes.push(node_id.clone());
                 }
-            }
         }
 
         stale_nodes

@@ -1378,8 +1378,8 @@ impl TextColumnWriter {
         }
 
         // Auto-index if full-text indexing is enabled
-        if self.auto_index {
-            if let Some(ref mut index) = self.fulltext_index {
+        if self.auto_index
+            && let Some(ref mut index) = self.fulltext_index {
                 // For inline/sidecar, index the full document
                 // For chunked, index each chunk separately
                 if strategy == TextStorageStrategy::Chunked {
@@ -1389,7 +1389,6 @@ impl TextColumnWriter {
                     let _ = index.add_document(record_id, content);
                 }
             }
-        }
 
         Ok(())
     }
@@ -1690,15 +1689,14 @@ impl TextColumnReader {
 
             // Replace sidecar references with actual content
             for value in result.iter_mut() {
-                if let Some(val) = value.as_ref() {
-                    if val.starts_with("__sidecar__:") {
+                if let Some(val) = value.as_ref()
+                    && val.starts_with("__sidecar__:") {
                         let record_id = &val[12..];
                         if let Some(sidecar_ref) = sidecar_map.get(record_id) {
                             let content = self.load_sidecar(sidecar_ref).await?;
                             *value = Some(content);
                         }
                     }
-                }
             }
         }
 

@@ -1363,15 +1363,14 @@ impl QueryPlanner {
             }
 
             // If still full, remove least recently used
-            if cache.len() >= self.config.max_cached_plans {
-                if let Some((lru_key, _)) = cache
+            if cache.len() >= self.config.max_cached_plans
+                && let Some((lru_key, _)) = cache
                     .iter()
                     .min_by_key(|(_, cached)| cached.last_accessed)
                     .map(|(k, v)| (k.clone(), v.clone()))
                 {
                     cache.remove(&lru_key);
                 }
-            }
         }
 
         cache.insert(

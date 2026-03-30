@@ -1207,11 +1207,10 @@ impl PostgresProtocol {
             // Look for = 'value' pattern
             if let Some(eq_pos) = after.find('=') {
                 let value_start = after[eq_pos + 1..].trim();
-                if value_start.starts_with('\'') {
-                    if let Some(end) = value_start[1..].find('\'') {
+                if value_start.starts_with('\'')
+                    && let Some(end) = value_start[1..].find('\'') {
                         services.push(value_start[1..end + 1].to_string());
                     }
-                }
             }
         }
 
@@ -1226,11 +1225,10 @@ impl PostgresProtocol {
             let after = &query[name_pos..];
             if let Some(eq_pos) = after.find('=') {
                 let value_start = after[eq_pos + 1..].trim();
-                if value_start.starts_with('\'') {
-                    if let Some(end) = value_start[1..].find('\'') {
+                if value_start.starts_with('\'')
+                    && let Some(end) = value_start[1..].find('\'') {
                         return Some(value_start[1..end + 1].to_string());
                     }
-                }
             }
         }
 

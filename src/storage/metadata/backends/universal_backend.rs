@@ -535,14 +535,11 @@ impl UniversalMetadataBackend {
                     .name
                     .strip_prefix("op_")
                     .and_then(|s| s.strip_suffix(".oplog"))
-                {
-                    if let Ok(sequence) = seq_str.parse::<u64>() {
-                        if sequence > after_sequence {
+                    && let Ok(sequence) = seq_str.parse::<u64>()
+                        && sequence > after_sequence {
                             let op_path = ops_dir.join(&entry.name);
                             incremental_ops.push((sequence, op_path));
                         }
-                    }
-                }
             }
         }
 
@@ -585,11 +582,10 @@ impl UniversalMetadataBackend {
             }
             Some("Delete") => {
                 // collection_id is the name, need to get UUID first
-                if let Some(collection_id) = op_json["collection_id"].as_str() {
-                    if let Some(uuid) = self.index.get_uuid_by_name(collection_id) {
+                if let Some(collection_id) = op_json["collection_id"].as_str()
+                    && let Some(uuid) = self.index.get_uuid_by_name(collection_id) {
                         self.index.remove_collection(&uuid);
                     }
-                }
             }
             _ => {
                 // Unknown operation type, skip
@@ -883,8 +879,8 @@ impl UniversalMetadataBackend {
     /// Check if snapshot is needed after successful operation
     async fn check_snapshot_trigger(&self) -> Result<()> {
         let ops_count = self.ops_since_snapshot.fetch_add(1, Ordering::SeqCst) + 1;
-        if ops_count >= self.config.snapshot_threshold {
-            if let Some(manager) = self.snapshot_manager.lock().await.as_ref() {
+        if ops_count >= self.config.snapshot_threshold
+            && let Some(manager) = self.snapshot_manager.lock().await.as_ref() {
                 let fs = self.get_fs()?;
                 if let Err(e) = manager.create_snapshot(&self.index, &*fs).await {
                     warn!("📸 Snapshot creation failed: {}", e);
@@ -892,7 +888,6 @@ impl UniversalMetadataBackend {
                     self.ops_since_snapshot.store(0, Ordering::SeqCst);
                 }
             }
-        }
         Ok(())
     }
 

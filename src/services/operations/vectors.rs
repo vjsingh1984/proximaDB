@@ -1337,8 +1337,7 @@ impl VectorOperationsService {
         // Report execution to RL planner for learning (if RL was used)
         if let (Some(rl_state), Some(rl_action)) =
             (&execution_plan.rl_state, &execution_plan.rl_action)
-        {
-            if let Some(rl_planner) = crate::query::rl_planner::get_rl_planner() {
+            && let Some(rl_planner) = crate::query::rl_planner::get_rl_planner() {
                 // Calculate metrics for feedback
                 let latency_ms = total_time_us as f64 / 1000.0;
                 // Recall estimate: we got optimized_results.len() results out of k requested
@@ -1355,7 +1354,6 @@ impl VectorOperationsService {
                     .report_execution(rl_state, rl_action, latency_ms, recall, throughput_qps)
                     .await;
             }
-        }
 
         // Log query timing breakdown for performance analysis
         // Shows at RUST_LOG=info level for visibility
@@ -2198,8 +2196,8 @@ impl VectorOperationsService {
                 .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
 
             // Register collection with WAL manager for persistence
-            if let Some(ref storage_assignment) = collection.storage_assignment {
-                if let Some(ref config) = collection.config {
+            if let Some(ref storage_assignment) = collection.storage_assignment
+                && let Some(ref config) = collection.config {
                     // Build compression_config from storage_config if available
                     let compression_config = config.storage_config.as_ref().and_then(|sc| {
                         sc.compression.map(|alg| {
@@ -2242,7 +2240,6 @@ impl VectorOperationsService {
                         collection_id
                     );
                 }
-            }
 
             let arc_collection = Arc::new(collection);
             self.collection_cache

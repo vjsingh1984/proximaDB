@@ -966,8 +966,8 @@ impl RaptorReader {
             }
 
             // Extract quantized vector (optional)
-            if let Some(quant_array) = quantized_vector_array {
-                if !quant_array.is_null(row_idx) {
+            if let Some(quant_array) = quantized_vector_array
+                && !quant_array.is_null(row_idx) {
                     let quant_list = quant_array.value(row_idx);
                     if let Some(_u8_array) =
                         quant_list.as_primitive_opt::<arrow_array::types::UInt8Type>()
@@ -976,36 +976,31 @@ impl RaptorReader {
                         // Store quantized data internally if needed
                     }
                 }
-            }
 
             // Extract timestamp fields (optional)
-            if let Some(ts_array) = timestamp_array {
-                if !ts_array.is_null(row_idx) {
+            if let Some(ts_array) = timestamp_array
+                && !ts_array.is_null(row_idx) {
                     record.timestamp = Some(ts_array.value(row_idx) as i64);
                 }
-            }
 
-            if let Some(upd_array) = updated_at_array {
-                if !upd_array.is_null(row_idx) {
+            if let Some(upd_array) = updated_at_array
+                && !upd_array.is_null(row_idx) {
                     record.updated_at = Some(upd_array.value(row_idx) as i64);
                 }
-            }
 
-            if let Some(exp_array) = expires_at_array {
-                if !exp_array.is_null(row_idx) {
+            if let Some(exp_array) = expires_at_array
+                && !exp_array.is_null(row_idx) {
                     record.expires_at = Some(exp_array.value(row_idx) as i64);
                 }
-            }
 
-            if let Some(ver_array) = version_array {
-                if !ver_array.is_null(row_idx) {
+            if let Some(ver_array) = version_array
+                && !ver_array.is_null(row_idx) {
                     record.version = Some(ver_array.value(row_idx));
                 }
-            }
 
             // Extract metadata (JSON string → HashMap)
-            if let Some(meta_array) = metadata_array {
-                if !meta_array.is_null(row_idx) {
+            if let Some(meta_array) = metadata_array
+                && !meta_array.is_null(row_idx) {
                     let json_str = meta_array.value(row_idx);
                     if let Ok(metadata_map) = serde_json::from_str::<
                         std::collections::HashMap<String, serde_json::Value>,
@@ -1042,18 +1037,16 @@ impl RaptorReader {
                         }
                     }
                 }
-            }
 
             // Extract source content (binary)
-            if let Some(source_array) = source_content_array {
-                if !source_array.is_null(row_idx) {
+            if let Some(source_array) = source_content_array
+                && !source_array.is_null(row_idx) {
                     let source_bytes = source_array.value(row_idx);
                     // Convert bytes to source string
                     if let Ok(source_string) = String::from_utf8(source_bytes.to_vec()) {
                         record.source = Some(source_string);
                     }
                 }
-            }
 
             records.push(record);
         }
@@ -2668,8 +2661,8 @@ impl RaptorReader {
         let batch = self.read_rowgroup(rg_id).await?;
 
         // Find the vector by ID in the batch
-        if let Some(id_array) = batch.column_by_name("id") {
-            if let Some(vector_array) = batch.column_by_name("vector") {
+        if let Some(id_array) = batch.column_by_name("id")
+            && let Some(vector_array) = batch.column_by_name("vector") {
                 use arrow_array::{ListArray, StringArray};
 
                 if let Some(ids) = id_array.as_any().downcast_ref::<StringArray>() {
@@ -2677,8 +2670,7 @@ impl RaptorReader {
                         if !ids.is_null(i) && ids.value(i) == vector_id {
                             // Found the ID, extract the vector
                             if let Some(vectors) = vector_array.as_any().downcast_ref::<ListArray>()
-                            {
-                                if let Some(vector_values) = vectors
+                                && let Some(vector_values) = vectors
                                     .value(i)
                                     .as_any()
                                     .downcast_ref::<arrow_array::Float32Array>(
@@ -2688,12 +2680,10 @@ impl RaptorReader {
                                         .collect();
                                     return Ok(vector);
                                 }
-                            }
                         }
                     }
                 }
             }
-        }
 
         Err(anyhow::anyhow!(
             "Vector '{}' not found in row group {}",

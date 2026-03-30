@@ -237,8 +237,8 @@ impl ParquetRangePrunedProvider {
         use parquet::file::statistics::Statistics;
 
         // Integer statistics with integer value
-        if let Statistics::Int64(int_stats) = stats {
-            if let Some(val) = value.as_i64() {
+        if let Statistics::Int64(int_stats) = stats
+            && let Some(val) = value.as_i64() {
                 let min = int_stats.min_opt().copied();
                 let max = int_stats.max_opt().copied();
 
@@ -284,11 +284,10 @@ impl ParquetRangePrunedProvider {
                     _ => Ok(true),
                 };
             }
-        }
 
         // Float statistics with float value
-        if let Statistics::Double(float_stats) = stats {
-            if let Some(val) = value.as_f64() {
+        if let Statistics::Double(float_stats) = stats
+            && let Some(val) = value.as_f64() {
                 let min = float_stats.min_opt().copied();
                 let max = float_stats.max_opt().copied();
 
@@ -317,7 +316,6 @@ impl ParquetRangePrunedProvider {
                     _ => Ok(true),
                 };
             }
-        }
 
         // Unsupported type combination, assume match
         Ok(true)
@@ -355,12 +353,11 @@ impl ParquetRangePrunedProvider {
         // Build reader with projections
         let mut builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
 
-        if config.enable_projection {
-            if let Some(ref columns) = config.projection {
+        if config.enable_projection
+            && let Some(ref columns) = config.projection {
                 let projection = Self::build_projection_mask(builder.parquet_schema(), columns);
                 builder = builder.with_projection(projection);
             }
-        }
 
         // Read specific row groups
         let reader = builder.with_row_groups(row_groups).build()?;

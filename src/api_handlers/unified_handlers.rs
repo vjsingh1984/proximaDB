@@ -119,15 +119,14 @@ impl CollectionIdCache {
     /// Get a cached collection ID if it exists and is not expired
     pub fn get(&self, identifier: &str) -> Option<String> {
         let cache = self.cache.read().ok()?;
-        if let Some(entry) = cache.get(identifier) {
-            if entry.cached_at.elapsed() < self.ttl {
+        if let Some(entry) = cache.get(identifier)
+            && entry.cached_at.elapsed() < self.ttl {
                 debug!(
                     "Collection ID cache hit: '{}' -> '{}'",
                     identifier, entry.collection_id
                 );
                 return Some(entry.collection_id.clone());
             }
-        }
         None
     }
 

@@ -266,8 +266,8 @@ impl CacheOptimizer {
         }
 
         // Tier optimization hints
-        if config.global.enable_tiered_storage {
-            if metrics.l1_metrics.hit_rate < 0.8 && metrics.l2_metrics.hit_rate > 0.5 {
+        if config.global.enable_tiered_storage
+            && metrics.l1_metrics.hit_rate < 0.8 && metrics.l2_metrics.hit_rate > 0.5 {
                 hints.push(OptimizationHint {
                     category: "tiering".to_string(),
                     severity: HintSeverity::Medium,
@@ -276,7 +276,6 @@ impl CacheOptimizer {
                     action: Some("Reduce promotion threshold for L2 to L1".to_string()),
                 });
             }
-        }
 
         // Eviction policy hints
         if metrics.eviction_metrics.memory_pressure_evictions

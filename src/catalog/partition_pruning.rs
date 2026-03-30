@@ -238,13 +238,11 @@ impl PartitionPruner {
         let partitions_to_scan: Vec<PartitionInfo> = partitions
             .into_iter()
             .filter(|p| {
-                if let Some(value) = p.values.get(time_field) {
-                    if let Some(ts_str) = value.as_str() {
-                        if let Some(ts) = self.parse_timestamp(ts_str) {
+                if let Some(value) = p.values.get(time_field)
+                    && let Some(ts_str) = value.as_str()
+                        && let Some(ts) = self.parse_timestamp(ts_str) {
                             return ts >= from && ts <= to;
                         }
-                    }
-                }
                 false
             })
             .collect();

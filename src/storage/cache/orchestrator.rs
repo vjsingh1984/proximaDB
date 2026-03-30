@@ -344,11 +344,10 @@ impl AccessPatternTracker {
 
         for i in 0..update_count {
             let idx = history_len - 1 - i;
-            if let Some(record) = history.get_mut(idx) {
-                if !record.followed_by.contains(&key) && record.followed_by.len() < 5 {
+            if let Some(record) = history.get_mut(idx)
+                && !record.followed_by.contains(&key) && record.followed_by.len() < 5 {
                     record.followed_by.push(key.clone());
                 }
-            }
         }
 
         // Add new record
@@ -406,11 +405,10 @@ impl AccessPatternTracker {
 
             for i in 0..update_count {
                 let idx = history_len - 1 - i;
-                if let Some(record) = history_guard.get_mut(idx) {
-                    if !record.followed_by.contains(&event.key) && record.followed_by.len() < 5 {
+                if let Some(record) = history_guard.get_mut(idx)
+                    && !record.followed_by.contains(&event.key) && record.followed_by.len() < 5 {
                         record.followed_by.push(event.key.clone());
                     }
-                }
             }
 
             // Add new record

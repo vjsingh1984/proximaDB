@@ -298,8 +298,8 @@ impl AnnoyTree {
                             id.as_str()
                         };
 
-                        if let Some(view) = vectors.get(id) {
-                            if let Some(vector_data) = view.as_f32() {
+                        if let Some(view) = vectors.get(id)
+                            && let Some(vector_data) = view.as_f32() {
                                 let distance_result = distance_compute.calculate_distance(
                                     query,
                                     vector_data,
@@ -308,7 +308,6 @@ impl AnnoyTree {
                                 candidates
                                     .push((actual_id.to_string(), distance_result.rank_value));
                             }
-                        }
                     }
                 }
                 AnnoyNode::Split {

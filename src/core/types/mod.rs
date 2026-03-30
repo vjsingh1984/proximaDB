@@ -680,20 +680,18 @@ impl TypedValue {
     pub fn validate_constraints(&self, constraints: &ColumnConstraints) -> Result<()> {
         match self {
             TypedValue::Text(s) | TypedValue::Json(s) => {
-                if let Some(max) = constraints.max_length {
-                    if s.len() > max as usize {
+                if let Some(max) = constraints.max_length
+                    && s.len() > max as usize {
                         return Err(anyhow!("Text length {} exceeds maximum {}", s.len(), max));
                     }
-                }
-                if let Some(min) = constraints.min_length {
-                    if s.len() < min as usize {
+                if let Some(min) = constraints.min_length
+                    && s.len() < min as usize {
                         return Err(anyhow!(
                             "Text length {} is less than minimum {}",
                             s.len(),
                             min
                         ));
                     }
-                }
                 if let Some(pattern) = &constraints.regex_pattern {
                     let re = regex::Regex::new(pattern)
                         .map_err(|e| anyhow!("Invalid regex pattern: {e}"))?;
@@ -703,35 +701,30 @@ impl TypedValue {
                 }
             }
             TypedValue::Integer(v) => {
-                if let Some(min) = constraints.min_value {
-                    if *v < min {
+                if let Some(min) = constraints.min_value
+                    && *v < min {
                         return Err(anyhow!("Value {v} is less than minimum {min}"));
                     }
-                }
-                if let Some(max) = constraints.max_value {
-                    if *v > max {
+                if let Some(max) = constraints.max_value
+                    && *v > max {
                         return Err(anyhow!("Value {v} exceeds maximum {max}"));
                     }
-                }
             }
             TypedValue::Float(v) => {
-                if let Some(min) = constraints.min_float_value {
-                    if *v < min {
+                if let Some(min) = constraints.min_float_value
+                    && *v < min {
                         return Err(anyhow!("Value {v} is less than minimum {min}"));
                     }
-                }
-                if let Some(max) = constraints.max_float_value {
-                    if *v > max {
+                if let Some(max) = constraints.max_float_value
+                    && *v > max {
                         return Err(anyhow!("Value {v} exceeds maximum {max}"));
                     }
-                }
             }
             TypedValue::Binary(b) => {
-                if let Some(max) = constraints.max_length {
-                    if b.len() > max as usize {
+                if let Some(max) = constraints.max_length
+                    && b.len() > max as usize {
                         return Err(anyhow!("Binary length {} exceeds maximum {max}", b.len()));
                     }
-                }
             }
             TypedValue::ArrayText(_) | TypedValue::ArrayInteger(_) | TypedValue::ArrayFloat(_) => {
                 if let Some(max) = constraints.array_max_items {
@@ -750,15 +743,14 @@ impl TypedValue {
                 // Validate array text for Text arrays
                 if let TypedValue::ArrayText(arr) = self {
                     for s in arr {
-                        if let Some(max) = constraints.max_length {
-                            if s.len() > max as usize {
+                        if let Some(max) = constraints.max_length
+                            && s.len() > max as usize {
                                 return Err(anyhow!(
                                     "Array element length {} exceeds maximum {}",
                                     s.len(),
                                     max
                                 ));
                             }
-                        }
                     }
                 }
             }

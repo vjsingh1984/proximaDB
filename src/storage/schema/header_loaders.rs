@@ -199,30 +199,24 @@ impl HeaderLoader for ParquetHeaderLoader {
         // Extract schema version from Parquet key-value metadata
         if let Some(kv_metadata) = metadata.file_metadata().key_value_metadata() {
             for kv in kv_metadata {
-                if kv.key == "proximadb.schema_version" {
-                    if let Some(ref value) = kv.value {
-                        if let Ok(v) = value.parse::<u32>() {
+                if kv.key == "proximadb.schema_version"
+                    && let Some(ref value) = kv.value
+                        && let Ok(v) = value.parse::<u32>() {
                             header.schema_version = v;
                         }
-                    }
-                }
-                if kv.key == "proximadb.schema_fingerprint" {
-                    if let Some(ref value) = kv.value {
-                        if let Ok(v) = value.parse::<u64>() {
+                if kv.key == "proximadb.schema_fingerprint"
+                    && let Some(ref value) = kv.value
+                        && let Ok(v) = value.parse::<u64>() {
                             header.schema_fingerprint = v;
                         }
-                    }
-                }
                 // Store all ProximaDB metadata
-                if kv.key.starts_with("proximadb.") {
-                    if let Some(ref value) = kv.value {
-                        if let Some(key_suffix) = kv.key.strip_prefix("proximadb.") {
+                if kv.key.starts_with("proximadb.")
+                    && let Some(ref value) = kv.value
+                        && let Some(key_suffix) = kv.key.strip_prefix("proximadb.") {
                             header
                                 .engine_metadata
                                 .insert(key_suffix.to_string(), value.clone());
                         }
-                    }
-                }
             }
         }
 
@@ -629,11 +623,10 @@ impl HeaderLoaderRegistry {
         format_hint: Option<&str>,
     ) -> anyhow::Result<CachedHeader> {
         // Try format hint first
-        if let Some(fmt) = format_hint {
-            if let Some(loader) = self.find_loader(fmt) {
+        if let Some(fmt) = format_hint
+            && let Some(loader) = self.find_loader(fmt) {
                 return loader.load_header(path).await;
             }
-        }
 
         // Auto-detect from file extension
         let format = Self::detect_format_from_path(path);

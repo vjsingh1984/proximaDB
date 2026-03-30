@@ -218,24 +218,22 @@ impl TenantExtractor {
     /// Extract tenant ID from request
     fn extract_tenant_id(&self, req: &Request<Body>) -> Option<(String, TenantIdSource)> {
         // Priority 1: Explicit X-Tenant-ID header
-        if let Some(header_value) = req.headers().get(X_TENANT_ID) {
-            if let Ok(tenant_id) = header_value.to_str() {
+        if let Some(header_value) = req.headers().get(X_TENANT_ID)
+            && let Ok(tenant_id) = header_value.to_str() {
                 let tenant_id = tenant_id.trim();
                 if !tenant_id.is_empty() {
                     debug!("Extracted tenant_id from header: {}", tenant_id);
                     return Some((tenant_id.to_string(), TenantIdSource::Header));
                 }
             }
-        }
 
         // Priority 2: JWT claims (if auth middleware ran first)
         // Check for UserInfo in extensions (set by auth middleware)
-        if let Some(user_info) = req.extensions().get::<super::auth::UserInfo>() {
-            if let Some(ref tenant_id) = user_info.tenant_id {
+        if let Some(user_info) = req.extensions().get::<super::auth::UserInfo>()
+            && let Some(ref tenant_id) = user_info.tenant_id {
                 debug!("Extracted tenant_id from JWT: {}", tenant_id);
                 return Some((tenant_id.clone(), TenantIdSource::JwtClaim));
             }
-        }
 
         // Priority 3: Default tenant (if configured)
         if let Some(ref default_tenant) = self.config.default_tenant {

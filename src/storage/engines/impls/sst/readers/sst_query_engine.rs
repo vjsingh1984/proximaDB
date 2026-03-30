@@ -1341,9 +1341,8 @@ impl UnifiedSstableReader {
             "SST Reader: apply_strategy returned {} blocks",
             blocks.len()
         );
-        if let Some(first_block) = blocks.first() {
-            if let Some(_first_rec) = first_block.records.first() {}
-        }
+        if let Some(first_block) = blocks.first()
+            && let Some(_first_rec) = first_block.records.first() {}
 
         // Step 4: Process blocks and compute distances
         let mut results = Vec::new();
@@ -2166,15 +2165,14 @@ impl UnifiedSstableReader {
 
                 // Type-safe metadata filtering (zero-allocation, zero-conversion)
                 // Uses centralized SqlValue filtering from core::search::sql_value_filter
-                if let Some(filter) = filter_expr {
-                    if !crate::core::search::sql_value_filter::evaluate_filter(
+                if let Some(filter) = filter_expr
+                    && !crate::core::search::sql_value_filter::evaluate_filter(
                         filter,
                         &record.metadata,
                     ) {
                         filtered_out += 1;
                         continue; // Skip to next record immediately
                     }
-                }
 
                 // Calculate similarity using unified distance computation for semantic correctness
                 let metric = distance_metric.unwrap_or(
@@ -4552,11 +4550,10 @@ impl UnifiedSstableReader {
             for block_idx in &selected_blocks {
                 if let Some(index_entry) = index_blocks.get(*block_idx) {
                     // Zone map pruning: skip blocks that can't contain matching values
-                    if let Some(filter) = filter_expr {
-                        if !self.should_read_block_for_filter(index_entry, filter) {
+                    if let Some(filter) = filter_expr
+                        && !self.should_read_block_for_filter(index_entry, filter) {
                             continue; // Skip this block - zone map says no matches possible
                         }
-                    }
 
                     blocks_after_zone_map += 1;
                     match block_reader
@@ -4619,8 +4616,8 @@ impl UnifiedSstableReader {
 
         // Check each condition against block's min/max values
         for (column, filter_value) in &metadata_conditions {
-            if let Some(min_val) = index_entry.metadata_min_values.get(column) {
-                if let Some(max_val) = index_entry.metadata_max_values.get(column) {
+            if let Some(min_val) = index_entry.metadata_min_values.get(column)
+                && let Some(max_val) = index_entry.metadata_max_values.get(column) {
                     // Use centralized comparison: if value is outside [min, max], skip block
                     if Self::compare_metadata_values(filter_value, min_val)
                         == std::cmp::Ordering::Less
@@ -4637,7 +4634,6 @@ impl UnifiedSstableReader {
                         return false;
                     }
                 }
-            }
             // If column not tracked in block stats, be conservative and include block
         }
 

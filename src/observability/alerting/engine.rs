@@ -183,13 +183,12 @@ impl AlertEngine {
     /// Check rate of change
     async fn check_rate_of_change(&self, rule_id: &AlertRuleId, value: f64, rate: f64) -> bool {
         let state = self.state.read().await;
-        if let Some(rule_state) = state.get(rule_id) {
-            if rule_state.samples.len() >= 2 {
+        if let Some(rule_state) = state.get(rule_id)
+            && rule_state.samples.len() >= 2 {
                 let prev = rule_state.samples[rule_state.samples.len() - 1];
                 let change_rate = (value - prev).abs();
                 return change_rate > rate;
             }
-        }
         false
     }
 

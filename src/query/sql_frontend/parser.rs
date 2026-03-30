@@ -257,19 +257,17 @@ impl SqlFrontendParser {
                     ..
                 } => {
                     let limit_val = lim.as_ref().and_then(|expr| {
-                        if let SqlExpr::Value(value_with_span) = expr {
-                            if let Value::Number(n, _) = &value_with_span.value {
+                        if let SqlExpr::Value(value_with_span) = expr
+                            && let Value::Number(n, _) = &value_with_span.value {
                                 return n.parse::<u64>().ok();
                             }
-                        }
                         None
                     });
                     let offset_val = off.as_ref().and_then(|off_expr| {
-                        if let SqlExpr::Value(value_with_span) = &off_expr.value {
-                            if let Value::Number(n, _) = &value_with_span.value {
+                        if let SqlExpr::Value(value_with_span) = &off_expr.value
+                            && let Value::Number(n, _) = &value_with_span.value {
                                 return n.parse::<u64>().ok();
                             }
-                        }
                         None
                     });
                     (limit_val, offset_val)

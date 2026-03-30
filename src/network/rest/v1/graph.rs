@@ -1003,24 +1003,20 @@ pub async fn shortest_path(
     Json(mut req): Json<ShortestPathRequest>,
 ) -> impl IntoResponse {
     // Header-based overrides if JSON fields not provided
-    if req.enable_prefetch.is_none() {
-        if let Some(v) = headers
+    if req.enable_prefetch.is_none()
+        && let Some(v) = headers
             .get("x-graph-prefetch-enabled")
             .and_then(|v| v.to_str().ok())
         {
             req.enable_prefetch = Some(v.eq_ignore_ascii_case("true") || v == "1");
         }
-    }
-    if req.prefetch_budget.is_none() {
-        if let Some(v) = headers
+    if req.prefetch_budget.is_none()
+        && let Some(v) = headers
             .get("x-graph-prefetch-budget")
             .and_then(|v| v.to_str().ok())
-        {
-            if let Ok(n) = v.parse::<usize>() {
+            && let Ok(n) = v.parse::<usize>() {
                 req.prefetch_budget = Some(n);
             }
-        }
-    }
     match app_state
         .unified_handlers
         .graph_operations_service
@@ -1379,15 +1375,12 @@ pub async fn query_nodes(
     );
     let mut q = query;
     // Continuation token support: format "offset:<n>"
-    if q.offset.is_none() {
-        if let Some(token) = &q.continuation_token {
-            if let Some(rest) = token.strip_prefix("offset:") {
-                if let Ok(n) = rest.parse::<u32>() {
+    if q.offset.is_none()
+        && let Some(token) = &q.continuation_token
+            && let Some(rest) = token.strip_prefix("offset:")
+                && let Ok(n) = rest.parse::<u32>() {
                     q.offset = Some(n);
                 }
-            }
-        }
-    }
 
     match app_state
         .unified_handlers
@@ -1433,15 +1426,12 @@ pub async fn query_edges(
 ) -> impl IntoResponse {
     debug!("Querying edges in graph: {}", graph_id);
     let mut q = query;
-    if q.offset.is_none() {
-        if let Some(token) = &q.continuation_token {
-            if let Some(rest) = token.strip_prefix("offset:") {
-                if let Ok(n) = rest.parse::<u32>() {
+    if q.offset.is_none()
+        && let Some(token) = &q.continuation_token
+            && let Some(rest) = token.strip_prefix("offset:")
+                && let Ok(n) = rest.parse::<u32>() {
                     q.offset = Some(n);
                 }
-            }
-        }
-    }
     match app_state
         .unified_handlers
         .graph_operations_service

@@ -786,11 +786,10 @@ impl BincodeSerializationStrategy {
                 continue;
             }
 
-            if let Some(max_files) = limit {
-                if files_processed >= max_files {
+            if let Some(max_files) = limit
+                && files_processed >= max_files {
                     break;
                 }
-            }
 
             let file_path = format!("{}/{}", collection_wal_dir, entry.name);
 

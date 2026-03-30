@@ -308,15 +308,14 @@ impl MySqlConnector {
             decoder.decode(data)?
         };
 
-        if let Some(binlog_event) = event {
-            if let Some(change_event) = self.to_change_event(binlog_event).await {
+        if let Some(binlog_event) = event
+            && let Some(change_event) = self.to_change_event(binlog_event).await {
                 event_tx
                     .send(change_event)
                     .await
                     .map_err(|e| CdcError::Coordinator(format!("Failed to send event: {}", e)))?;
                 return Ok(1);
             }
-        }
 
         Ok(0)
     }

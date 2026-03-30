@@ -137,11 +137,10 @@ impl DocumentStrategy {
         }
 
         // Try to parse from SQL content
-        if let QueryContent::Sql(sql) = &request.content {
-            if let Some(collection) = self.parse_collection_from_sql(sql) {
+        if let QueryContent::Sql(sql) = &request.content
+            && let Some(collection) = self.parse_collection_from_sql(sql) {
                 return collection;
             }
-        }
 
         // Default collection
         "default".to_string()

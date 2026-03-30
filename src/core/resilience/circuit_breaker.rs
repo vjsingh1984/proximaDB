@@ -206,8 +206,8 @@ impl CircuitBreaker {
     /// Check if we should transition states
     fn check_state_transition(&self) {
         let state = *self.state.read();
-        if state == CircuitState::Open {
-            if let Some(last_failure) = *self.last_failure_time.read() {
+        if state == CircuitState::Open
+            && let Some(last_failure) = *self.last_failure_time.read() {
                 let timeout = Duration::from_secs(self.config.timeout_secs);
                 if last_failure.elapsed() >= timeout {
                     // Transition to half-open
@@ -220,7 +220,6 @@ impl CircuitBreaker {
                     );
                 }
             }
-        }
     }
 
     /// Execute an async operation with circuit breaker protection

@@ -379,11 +379,10 @@ impl PatternMatcher {
         // Apply property constraints
         let mut matching_nodes = Vec::new();
         for node_id in candidates {
-            if let Some(node) = memory_pool.get_node(&node_id) {
-                if self.node_matches_properties(&node, &node_pattern.properties)? {
+            if let Some(node) = memory_pool.get_node(&node_id)
+                && self.node_matches_properties(&node, &node_pattern.properties)? {
                     matching_nodes.push(node);
                 }
-            }
         }
 
         Ok(matching_nodes)
@@ -417,11 +416,10 @@ impl PatternMatcher {
             }
 
             // Check edge type
-            if !edge_pattern.edge_types.is_empty() {
-                if !edge_pattern.edge_types.contains(&edge.edge_type) {
+            if !edge_pattern.edge_types.is_empty()
+                && !edge_pattern.edge_types.contains(&edge.edge_type) {
                     continue;
                 }
-            }
 
             // Check edge properties
             if !self.edge_matches_properties(edge, &edge_pattern.properties)? {
@@ -501,11 +499,10 @@ impl PatternMatcher {
                     continue;
                 }
 
-                if !path_pattern.edge_types.is_empty() {
-                    if !path_pattern.edge_types.contains(&edge.edge_type) {
+                if !path_pattern.edge_types.is_empty()
+                    && !path_pattern.edge_types.contains(&edge.edge_type) {
                         continue;
                     }
-                }
 
                 // Get target node
                 if let Some(target_node) = memory_pool.get_node(&edge.to_node_id) {
@@ -743,11 +740,10 @@ impl PatternMatcher {
                 property,
                 constraint,
             } => {
-                if let Some(VariableBinding::Node(node)) = bindings.get(variable) {
-                    if let Some(prop_value) = node.properties.get(property) {
+                if let Some(VariableBinding::Node(node)) = bindings.get(variable)
+                    && let Some(prop_value) = node.properties.get(property) {
                         return self.evaluate_property_constraint(prop_value, constraint);
                     }
-                }
                 Ok(false)
             }
             WhereClause::And(left, right) => {
@@ -925,13 +921,11 @@ impl PatternMatcher {
                 PropertyProjection::Sum { variable, property } => {
                     let mut sum = 0i64;
                     for result in &results {
-                        if let Some(binding) = result.bindings.get(variable) {
-                            if let Some(value) = self.get_binding_property(binding, property) {
-                                if let Some(Value::IntValue(n)) = value.value {
+                        if let Some(binding) = result.bindings.get(variable)
+                            && let Some(value) = self.get_binding_property(binding, property)
+                                && let Some(Value::IntValue(n)) = value.value {
                                     sum += n;
                                 }
-                            }
-                        }
                     }
                     aggregates.insert(
                         alias.clone(),
@@ -944,14 +938,12 @@ impl PatternMatcher {
                     let mut sum = 0i64;
                     let mut count = 0i64;
                     for result in &results {
-                        if let Some(binding) = result.bindings.get(variable) {
-                            if let Some(value) = self.get_binding_property(binding, property) {
-                                if let Some(Value::IntValue(n)) = value.value {
+                        if let Some(binding) = result.bindings.get(variable)
+                            && let Some(value) = self.get_binding_property(binding, property)
+                                && let Some(Value::IntValue(n)) = value.value {
                                     sum += n;
                                     count += 1;
                                 }
-                            }
-                        }
                     }
                     let avg = if count > 0 { sum / count } else { 0 };
                     aggregates.insert(
@@ -964,15 +956,12 @@ impl PatternMatcher {
                 PropertyProjection::Min { variable, property } => {
                     let mut min: Option<i64> = None;
                     for result in &results {
-                        if let Some(binding) = result.bindings.get(variable) {
-                            if let Some(value) = self.get_binding_property(binding, property) {
-                                if let Some(Value::IntValue(n)) = value.value {
-                                    if min.is_none() || Some(n) < min {
+                        if let Some(binding) = result.bindings.get(variable)
+                            && let Some(value) = self.get_binding_property(binding, property)
+                                && let Some(Value::IntValue(n)) = value.value
+                                    && (min.is_none() || Some(n) < min) {
                                         min = Some(n);
                                     }
-                                }
-                            }
-                        }
                     }
                     aggregates.insert(
                         alias.clone(),
@@ -984,15 +973,12 @@ impl PatternMatcher {
                 PropertyProjection::Max { variable, property } => {
                     let mut max: Option<i64> = None;
                     for result in &results {
-                        if let Some(binding) = result.bindings.get(variable) {
-                            if let Some(value) = self.get_binding_property(binding, property) {
-                                if let Some(Value::IntValue(n)) = value.value {
-                                    if max.is_none() || Some(n) > max {
+                        if let Some(binding) = result.bindings.get(variable)
+                            && let Some(value) = self.get_binding_property(binding, property)
+                                && let Some(Value::IntValue(n)) = value.value
+                                    && (max.is_none() || Some(n) > max) {
                                         max = Some(n);
                                     }
-                                }
-                            }
-                        }
                     }
                     aggregates.insert(
                         alias.clone(),
@@ -1020,8 +1006,8 @@ impl PatternMatcher {
                     }
                     PropertyProjection::Property { variable, property } => {
                         // Property access (e.g., "WITH n.name AS name")
-                        if let Some(binding) = result.bindings.get(variable) {
-                            if let Some(value) = self.get_binding_property(binding, property) {
+                        if let Some(binding) = result.bindings.get(variable)
+                            && let Some(value) = self.get_binding_property(binding, property) {
                                 // Create a new binding for the projected value
                                 new_bindings.insert(
                                     alias.clone(),
@@ -1041,7 +1027,6 @@ impl PatternMatcher {
                                     )),
                                 );
                             }
-                        }
                     }
                     PropertyProjection::Count
                     | PropertyProjection::Sum { .. }

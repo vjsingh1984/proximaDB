@@ -141,16 +141,14 @@ impl DocumentBlock {
         if let Some(stats) = self.header.path_stats.get(path) {
             // Check if ranges overlap
             if let (Some(block_min), Some(block_max)) = (&stats.min_value, &stats.max_value) {
-                if let Some(query_max) = max {
-                    if Self::compare_values(block_min, query_max) > 0 {
+                if let Some(query_max) = max
+                    && Self::compare_values(block_min, query_max) > 0 {
                         return false;
                     }
-                }
-                if let Some(query_min) = min {
-                    if Self::compare_values(block_max, query_min) < 0 {
+                if let Some(query_min) = min
+                    && Self::compare_values(block_max, query_min) < 0 {
                         return false;
                     }
-                }
             }
             true
         } else {

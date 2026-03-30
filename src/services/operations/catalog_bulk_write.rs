@@ -233,8 +233,8 @@ impl CatalogBulkWriteService {
         result.write_latency_us = write_start.elapsed().as_micros() as u64;
 
         // Auto-create vector index if needed
-        if self.config.auto_create_indexes && result.table_created {
-            if let Some(vector_col) = self.find_vector_column(&table_schema) {
+        if self.config.auto_create_indexes && result.table_created
+            && let Some(vector_col) = self.find_vector_column(&table_schema) {
                 let index = CatalogIndex::new(
                     format!("{}_vector_idx", table_id.name),
                     vec![vector_col.clone()],
@@ -257,7 +257,6 @@ impl CatalogBulkWriteService {
                     }
                 }
             }
-        }
 
         // Update statistics
         if self.config.update_statistics {

@@ -1059,8 +1059,8 @@ impl HardwareCapabilities {
             let line_lower = line.to_lowercase();
 
             // Check for ARM cache size indicators
-            if line_lower.contains("cache") && line_lower.contains("size") {
-                if let Some(size) = Self::parse_arm_cache_size(&line) {
+            if line_lower.contains("cache") && line_lower.contains("size")
+                && let Some(size) = Self::parse_arm_cache_size(&line) {
                     // ARM cpuinfo often doesn't specify cache level clearly
                     // Use heuristics based on size ranges
                     if size <= 128 * 1024
@@ -1079,7 +1079,6 @@ impl HardwareCapabilities {
                         cache_sizes.l3 = size;
                     }
                 }
-            }
 
             // Check for specific ARM vendor cache info
             if line_lower.contains("apple") && line_lower.contains("cache") {

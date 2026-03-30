@@ -734,26 +734,23 @@ impl AutoScheduler {
         let metrics = self.system_metrics.read().await.clone();
 
         // Check flush triggers
-        if self.should_trigger_flush(&metrics).await {
-            if let Err(e) = self
+        if self.should_trigger_flush(&metrics).await
+            && let Err(e) = self
                 .schedule_flush("__global__", OperationPriority::Normal)
                 .await
             {
                 warn!("⏰ Failed to schedule flush: {}", e);
             }
-        }
 
         // Check compaction triggers (prefer idle/low-activity periods)
-        if analysis.is_idle || analysis.is_low_activity_window {
-            if self.should_trigger_compaction(&metrics).await {
-                if let Err(e) = self
+        if (analysis.is_idle || analysis.is_low_activity_window)
+            && self.should_trigger_compaction(&metrics).await
+                && let Err(e) = self
                     .schedule_compaction("__global__", OperationPriority::Low)
                     .await
                 {
                     warn!("⏰ Failed to schedule compaction: {}", e);
                 }
-            }
-        }
 
         // Schedule periodic health checks
         self.schedule_periodic_operations().await;
@@ -776,8 +773,8 @@ impl AutoScheduler {
             .get_last_operation_time(OperationType::HealthCheck)
             .await;
 
-        if now - last_health_check > Duration::minutes(5) {
-            if let Ok(operation) = self
+        if now - last_health_check > Duration::minutes(5)
+            && let Ok(operation) = self
                 .create_operation(
                     OperationType::HealthCheck,
                     OperationPriority::Background,
@@ -787,15 +784,14 @@ impl AutoScheduler {
             {
                 let _ = self.schedule(operation).await;
             }
-        }
 
         // Schedule periodic stats collection (every minute)
         let last_stats = self
             .get_last_operation_time(OperationType::StatsCollection)
             .await;
 
-        if now - last_stats > Duration::minutes(1) {
-            if let Ok(operation) = self
+        if now - last_stats > Duration::minutes(1)
+            && let Ok(operation) = self
                 .create_operation(
                     OperationType::StatsCollection,
                     OperationPriority::Background,
@@ -805,7 +801,6 @@ impl AutoScheduler {
             {
                 let _ = self.schedule(operation).await;
             }
-        }
     }
 
     async fn get_last_operation_time(&self, op_type: OperationType) -> DateTime<Utc> {

@@ -388,11 +388,10 @@ impl AggregationExecutor {
         if has_inclusions {
             // Include mode: only include specified fields
             for (field, &include) in &project_stage.fields {
-                if include {
-                    if let Some(val) = doc.fields.get(field) {
+                if include
+                    && let Some(val) = doc.fields.get(field) {
                         result.fields.insert(field.clone(), val.clone());
                     }
-                }
             }
         } else if has_exclusions {
             // Exclude mode: include all except specified fields
@@ -661,11 +660,10 @@ impl AggregationExecutor {
     /// Check if a document contains a term in any of the specified paths
     fn document_contains_term(&self, doc: &SqlObject, term: &str, paths: &[String]) -> bool {
         for path in paths {
-            if let Some(text) = self.extract_text_value(doc, path) {
-                if text.to_lowercase().contains(term) {
+            if let Some(text) = self.extract_text_value(doc, path)
+                && text.to_lowercase().contains(term) {
                     return true;
                 }
-            }
         }
         false
     }

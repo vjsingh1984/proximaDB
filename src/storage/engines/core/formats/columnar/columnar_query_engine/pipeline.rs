@@ -375,11 +375,10 @@ impl PipelineOperator for TopKOperator {
             for row_idx in 0..batch.num_rows() {
                 let score = scores.value(row_idx);
 
-                if let Some(min) = self.min_score {
-                    if score < min {
+                if let Some(min) = self.min_score
+                    && score < min {
                         continue;
                     }
-                }
 
                 if !self.queue.would_accept(score) {
                     continue;

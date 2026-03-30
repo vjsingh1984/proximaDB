@@ -353,11 +353,9 @@ impl SchemaRegistry for PersistentSchemaRegistry {
                 .get_schema(collection_id, version)
                 .await?
                 .is_none()
-            {
-                if let Some(schema) = self.load_schema(collection_id, version).await? {
+                && let Some(schema) = self.load_schema(collection_id, version).await? {
                     self.cache.register_schema(collection_id, schema).await.ok();
                 }
-            }
         }
 
         self.cache.list_versions(collection_id).await

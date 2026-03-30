@@ -708,12 +708,12 @@ impl LocalDiskCache {
         columns: &[String],
     ) -> Result<Option<RecordBatch>, ProximaDBError> {
         // Check if we have this row group cached
-        if let Some(cached_rgs) = self.cached_row_groups.get(file_path) {
-            if cached_rgs.contains(&rg_idx) {
+        if let Some(cached_rgs) = self.cached_row_groups.get(file_path)
+            && cached_rgs.contains(&rg_idx) {
                 // Check if we have all requested columns
-                if let Some(cached_cols) = self.cached_columns.get(file_path) {
-                    if let Some(rg_columns) = cached_cols.get(&rg_idx) {
-                        if columns.iter().all(|c| rg_columns.contains(c)) {
+                if let Some(cached_cols) = self.cached_columns.get(file_path)
+                    && let Some(rg_columns) = cached_cols.get(&rg_idx)
+                        && columns.iter().all(|c| rg_columns.contains(c)) {
                             // Load from cache
                             let cache_file = self.cache_path_for_row_group(file_path, rg_idx);
                             if cache_file.exists() {
@@ -721,10 +721,7 @@ impl LocalDiskCache {
                                 // ... implementation
                             }
                         }
-                    }
-                }
             }
-        }
 
         Ok(None)
     }
@@ -784,22 +781,19 @@ impl LocalDiskCache {
             ));
 
             // Remove all matching files using internal glob implementation
-            if let Some(parent_dir) = pattern.parent() {
-                if let Some(pattern_name) = pattern.file_name().and_then(|n| n.to_str()) {
-                    if let Ok(glob_pattern) = crate::utils::glob::GlobPattern::new(pattern_name) {
+            if let Some(parent_dir) = pattern.parent()
+                && let Some(pattern_name) = pattern.file_name().and_then(|n| n.to_str())
+                    && let Ok(glob_pattern) = crate::utils::glob::GlobPattern::new(pattern_name) {
                         let matcher = crate::utils::glob::GlobMatcher::new(&glob_pattern);
                         if let Ok(entries) = std::fs::read_dir(parent_dir) {
                             for entry in entries.flatten() {
-                                if let Some(file_name) = entry.file_name().to_str() {
-                                    if matcher.is_match(file_name) {
+                                if let Some(file_name) = entry.file_name().to_str()
+                                    && matcher.is_match(file_name) {
                                         std::fs::remove_file(entry.path()).ok();
                                     }
-                                }
                             }
                         }
                     }
-                }
-            }
         }
 
         info!(

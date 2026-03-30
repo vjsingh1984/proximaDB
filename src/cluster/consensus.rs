@@ -456,11 +456,10 @@ impl RaftConsensus {
                             let mut votes = 1; // Self vote
 
                             for peer in &peers_snapshot {
-                                if let Some(cb) = breakers.get(&peer.node_id) {
-                                    if !cb.should_allow_request() {
+                                if let Some(cb) = breakers.get(&peer.node_id)
+                                    && !cb.should_allow_request() {
                                         continue;
                                     }
-                                }
 
                                 match transport.request_vote(peer, request.clone()).await {
                                     Ok(resp) => {
@@ -572,11 +571,10 @@ impl RaftConsensus {
                             let breakers = circuit_breakers.read().await;
 
                             for peer in &peers_snapshot {
-                                if let Some(cb) = breakers.get(&peer.node_id) {
-                                    if !cb.should_allow_request() {
+                                if let Some(cb) = breakers.get(&peer.node_id)
+                                    && !cb.should_allow_request() {
                                         continue;
                                     }
-                                }
 
                                 let request = AppendEntriesRequest {
                                     term,
@@ -813,12 +811,11 @@ impl RaftConsensus {
         for entry in entries {
             if entry.index as usize <= persistent.log.len() {
                 // Entry already exists, check for conflict
-                if let Some(existing) = persistent.log.get(entry.index as usize - 1) {
-                    if existing.term != entry.term {
+                if let Some(existing) = persistent.log.get(entry.index as usize - 1)
+                    && existing.term != entry.term {
                         persistent.log.truncate(entry.index as usize - 1);
                         persistent.log.push(entry);
                     }
-                }
             } else {
                 persistent.log.push(entry);
             }
@@ -1039,15 +1036,14 @@ impl RaftConsensus {
 
                 async move {
                     // Check circuit breaker
-                    if let Some(ref cb) = breaker {
-                        if !cb.should_allow_request() {
+                    if let Some(ref cb) = breaker
+                        && !cb.should_allow_request() {
                             tracing::debug!(
                                 peer = %peer.node_id,
                                 "Circuit breaker open, skipping vote request"
                             );
                             return None;
                         }
-                    }
 
                     match transport.request_vote(&peer, req).await {
                         Ok(response) => {
@@ -1181,14 +1177,13 @@ impl RaftConsensus {
 
                 async move {
                     // Check circuit breaker
-                    if let Some(ref cb) = breaker {
-                        if !cb.should_allow_request() {
+                    if let Some(ref cb) = breaker
+                        && !cb.should_allow_request() {
                             return (
                                 peer.node_id.clone(),
                                 Err("Circuit breaker open".to_string()),
                             );
                         }
-                    }
 
                     match transport.append_entries(&peer, request).await {
                         Ok(response) => {
@@ -1306,17 +1301,15 @@ impl RaftConsensus {
 
         // Only update if new commit index is higher and the entry is from current term
         let persistent = self.persistent.read().await;
-        if new_commit > 0 {
-            if let Some(entry) = persistent.log.get(new_commit as usize - 1) {
-                if entry.term == persistent.current_term {
+        if new_commit > 0
+            && let Some(entry) = persistent.log.get(new_commit as usize - 1)
+                && entry.term == persistent.current_term {
                     drop(persistent);
                     let mut volatile = self.volatile.write().await;
                     if new_commit > volatile.commit_index {
                         volatile.commit_index = new_commit;
                     }
                 }
-            }
-        }
     }
 
     /// Step down to follower when higher term is discovered

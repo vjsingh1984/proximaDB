@@ -166,8 +166,8 @@ impl DocumentService {
         let mut recovered_collections = 0;
 
         for entry in entries {
-            if entry.is_document_operation() {
-                if let UnifiedWALOperation::DocumentOp(op) = entry.operation {
+            if entry.is_document_operation()
+                && let UnifiedWALOperation::DocumentOp(op) = entry.operation {
                     match op {
                         DocumentOperation::InsertDocument {
                             collection_id,
@@ -188,11 +188,10 @@ impl DocumentService {
                         } => {
                             // Update version (simplified recovery - full update replay would need stored doc)
                             let mut documents = self.documents.write().await;
-                            if let Some(collection_docs) = documents.get_mut(&collection_id) {
-                                if let Some(doc) = collection_docs.get_mut(&document_id) {
+                            if let Some(collection_docs) = documents.get_mut(&collection_id)
+                                && let Some(doc) = collection_docs.get_mut(&document_id) {
                                     doc.version = new_version;
                                 }
-                            }
                         }
                         DocumentOperation::DeleteDocument {
                             collection_id,
@@ -241,7 +240,6 @@ impl DocumentService {
                         }
                     }
                 }
-            }
         }
 
         info!(
@@ -791,20 +789,18 @@ impl DocumentService {
 
         // Retrieve from in-memory store
         let documents = self.documents.read().await;
-        if let Some(collection_docs) = documents.get(collection) {
-            if let Some(record) = collection_docs.get(id) {
+        if let Some(collection_docs) = documents.get(collection)
+            && let Some(record) = collection_docs.get(id) {
                 let mut result = record.clone();
 
                 // Apply projection if specified
-                if let Some(fields) = projection {
-                    if !fields.is_empty() {
+                if let Some(fields) = projection
+                    && !fields.is_empty() {
                         result.document = self.apply_projection(&result.document, &fields);
                     }
-                }
 
                 return Ok(Some(result));
             }
-        }
 
         Ok(None)
     }
@@ -858,8 +854,8 @@ impl DocumentService {
         };
 
         // Check version for optimistic locking
-        if let Some(expected) = expected_version {
-            if record.version != expected {
+        if let Some(expected) = expected_version
+            && record.version != expected {
                 self.record_update_metrics(start, true).await;
                 return Err(anyhow!(
                     "Version mismatch: expected {}, got {}",
@@ -867,7 +863,6 @@ impl DocumentService {
                     record.version
                 ));
             }
-        }
 
         // Apply updates
         for update in &updates {

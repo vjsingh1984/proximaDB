@@ -495,11 +495,10 @@ impl RowBasedIdIndex {
     /// Insert into hierarchical index
     async fn insert_hierarchical(&mut self, key: String, location: BlockLocation) -> Result<()> {
         // Insert at leaf level first
-        if let Some(leaf_level) = self.hierarchical_levels.first_mut() {
-            if let HierarchicalLevelIndex::Leaf(ref mut leaf) = leaf_level.index {
+        if let Some(leaf_level) = self.hierarchical_levels.first_mut()
+            && let HierarchicalLevelIndex::Leaf(ref mut leaf) = leaf_level.index {
                 leaf.entries.insert(key.clone(), location.clone());
             }
-        }
 
         // Propagate up the hierarchy if needed
         // This is a simplified version - production would need proper tree balancing
@@ -510,11 +509,10 @@ impl RowBasedIdIndex {
     async fn lookup_hierarchical(&self, key: &str) -> Option<BlockLocation> {
         // Start from root and navigate down
         for level in self.hierarchical_levels.iter().rev() {
-            if let Some(ref bloom) = level.bloom_filter {
-                if !bloom.might_contain_key(key).unwrap_or(true) {
+            if let Some(ref bloom) = level.bloom_filter
+                && !bloom.might_contain_key(key).unwrap_or(true) {
                     continue;
                 }
-            }
 
             match &level.index {
                 HierarchicalLevelIndex::Leaf(leaf) => {
@@ -565,8 +563,8 @@ impl DenseIndex {
 
     pub async fn insert(&mut self, key: &str, location: BlockLocation) -> Result<()> {
         // Try to parse key as numeric ID
-        if let Ok(id) = key.parse::<u64>() {
-            if id >= self.config.start_id && id < self.config.start_id + self.config.max_capacity {
+        if let Ok(id) = key.parse::<u64>()
+            && id >= self.config.start_id && id < self.config.start_id + self.config.max_capacity {
                 let index = (id - self.config.start_id) as usize;
 
                 // Grow array if needed
@@ -577,7 +575,6 @@ impl DenseIndex {
                 self.locations[index] = Some(location);
                 return Ok(());
             }
-        }
 
         // Fallback to sparse region
         if self.config.enable_sparse_regions {
@@ -600,14 +597,13 @@ impl DenseIndex {
 
     pub async fn lookup(&self, key: &str) -> Option<BlockLocation> {
         // Try dense lookup first
-        if let Ok(id) = key.parse::<u64>() {
-            if id >= self.config.start_id && id < self.config.start_id + self.config.max_capacity {
+        if let Ok(id) = key.parse::<u64>()
+            && id >= self.config.start_id && id < self.config.start_id + self.config.max_capacity {
                 let index = (id - self.config.start_id) as usize;
                 if index < self.locations.len() {
                     return self.locations[index].clone();
                 }
             }
-        }
 
         // Check sparse regions
         for sparse_region in self.sparse_regions.values() {

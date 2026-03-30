@@ -686,11 +686,10 @@ impl UnifiedDistanceCompute {
     pub fn available_backends(&self) -> Vec<HardwareBackend> {
         let mut backends = vec![self.hardware_backend];
 
-        if let Some(ref gpu) = self.gpu_accelerator_lazy.get().and_then(|g| g.as_ref()) {
-            if gpu.is_available() {
+        if let Some(ref gpu) = self.gpu_accelerator_lazy.get().and_then(|g| g.as_ref())
+            && gpu.is_available() {
                 backends.push(gpu.backend());
             }
-        }
 
         backends.push(HardwareBackend::Scalar);
         backends

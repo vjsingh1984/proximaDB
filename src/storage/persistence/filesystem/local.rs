@@ -106,9 +106,8 @@ impl LocalFileSystem {
             }
             Err(_e) => {
                 // Try alternative methods to understand the environment
-                if let Ok(exe_path) = std::env::current_exe() {
-                    if let Some(_exe_dir) = exe_path.parent() {}
-                }
+                if let Ok(exe_path) = std::env::current_exe()
+                    && let Some(_exe_dir) = exe_path.parent() {}
 
                 // Check environment variables
                 if let Ok(_pwd) = std::env::var("PWD") {}
@@ -302,9 +301,8 @@ impl LocalFileSystem {
             }
             Err(_e) => {
                 // Try alternative methods to understand the environment
-                if let Ok(exe_path) = std::env::current_exe() {
-                    if let Some(_exe_dir) = exe_path.parent() {}
-                }
+                if let Ok(exe_path) = std::env::current_exe()
+                    && let Some(_exe_dir) = exe_path.parent() {}
 
                 // Check environment variables
                 if let Ok(_pwd) = std::env::var("PWD") {}
@@ -480,13 +478,12 @@ impl FileSystem for LocalFileSystem {
         let options = options.clone();
 
         // Create parent directories if requested
-        if options.as_ref().map(|o| o.create_dirs).unwrap_or(false) {
-            if let Some(parent) = resolved_path.parent() {
+        if options.as_ref().map(|o| o.create_dirs).unwrap_or(false)
+            && let Some(parent) = resolved_path.parent() {
                 fs::create_dir_all(parent)
                     .await
                     .map_err(FilesystemError::Io)?;
             }
-        }
 
         // Check if file exists and handle overwrite option
         if !options.as_ref().map(|o| o.overwrite).unwrap_or(true) && resolved_path.exists() {

@@ -261,8 +261,8 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
         _batch_index_in_group: usize,
     ) -> Result<()> {
         // Extract vector column
-        if let Some(vector_col) = batch.column_by_name("vector") {
-            if let Some(float_array) = vector_col.as_any().downcast_ref::<Float32Array>() {
+        if let Some(vector_col) = batch.column_by_name("vector")
+            && let Some(float_array) = vector_col.as_any().downcast_ref::<Float32Array>() {
                 // Detect dimension from first batch
                 if self.dimension.is_none() && !float_array.is_empty() {
                     // Assume vectors are stored flat, dimension = total_values / num_rows
@@ -277,13 +277,11 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
                 }
 
                 // Update statistics
-                if let Some(ref mut builder) = self.current_row_group {
-                    if let Some(dim) = self.dimension {
+                if let Some(ref mut builder) = self.current_row_group
+                    && let Some(dim) = self.dimension {
                         builder.update(float_array, dim);
                     }
-                }
             }
-        }
 
         Ok(())
     }

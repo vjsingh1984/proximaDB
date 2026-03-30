@@ -96,11 +96,10 @@ impl BitReader {
     }
 
     fn read_bit(&mut self) -> Option<bool> {
-        if self.bit_position >= 8 {
-            if !self.load_next_byte() {
+        if self.bit_position >= 8
+            && !self.load_next_byte() {
                 return None;
             }
-        }
         let bit = (self.current_byte >> self.bit_position) & 1 == 1;
         self.bit_position += 1;
         Some(bit)

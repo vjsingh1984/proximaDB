@@ -426,12 +426,11 @@ impl AxisManager {
         self.ensure_collection_strategy(collection_id).await?;
 
         // Check if vector is expired (MVCC support) - direct field access
-        if let Some(expires_at) = vector.expires_at {
-            if expires_at <= Utc::now().timestamp() {
+        if let Some(expires_at) = vector.expires_at
+            && expires_at <= Utc::now().timestamp() {
                 // Skip inserting already expired vectors
                 return Ok(());
             }
-        }
 
         // Get collection config for quantization settings
         // First try shared cache, then fall back to collection service
@@ -1072,24 +1071,20 @@ impl AxisManager {
         use crate::compute::distance_computation::conversion::proto_distance_to_internal;
 
         // Try to get from shared cache first
-        if let Some(cache) = &self.shared_collection_cache {
-            if let Some(collection) = cache.get(collection_id) {
-                if let Some(config) = &collection.config {
+        if let Some(cache) = &self.shared_collection_cache
+            && let Some(collection) = cache.get(collection_id)
+                && let Some(config) = &collection.config {
                     let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
                     return Some(proto_distance_to_internal(metric_code));
                 }
-            }
-        }
 
         // Fall back to collection service
-        if let Some(collection_service) = &self.collection_service {
-            if let Ok(Some(collection)) = collection_service.collection(collection_id).await {
-                if let Some(config) = &collection.config {
+        if let Some(collection_service) = &self.collection_service
+            && let Ok(Some(collection)) = collection_service.collection(collection_id).await
+                && let Some(config) = &collection.config {
                     let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
                     return Some(proto_distance_to_internal(metric_code));
                 }
-            }
-        }
 
         None
     }
@@ -1379,15 +1374,14 @@ impl AxisManager {
         let start_time = std::time::Instant::now();
 
         // For medium-sized batches, still use batch training for better recall
-        if batch_size >= 500 {
-            if let Err(e) = self.train_ivf_for_batch(collection_id, &vectors).await {
+        if batch_size >= 500
+            && let Err(e) = self.train_ivf_for_batch(collection_id, &vectors).await {
                 tracing::warn!(
                     "⚠️ AXIS: Batch IVF training failed for collection {}: {}, using incremental",
                     collection_id,
                     e
                 );
             }
-        }
 
         for vector in vectors {
             self.insert(collection_id, &vector).await?;

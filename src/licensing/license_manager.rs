@@ -388,8 +388,8 @@ impl LicenseManager {
     /// Check current license status
     async fn check_license_status(&self, license: &LicenseInfo) -> Result<LicenseStatus> {
         // Check expiration
-        if let Some(expires_at) = license.expires_at {
-            if Utc::now() > expires_at {
+        if let Some(expires_at) = license.expires_at
+            && Utc::now() > expires_at {
                 let grace_period_end =
                     expires_at + Duration::days(self.config.grace_period_days as i64);
                 if Utc::now() > grace_period_end {
@@ -399,7 +399,6 @@ impl LicenseManager {
                     return Ok(LicenseStatus::GracePeriod { days_remaining });
                 }
             }
-        }
 
         // For privacy-conscious deployments, validate offline
         if self.config.offline_validation_only {
@@ -482,24 +481,22 @@ impl LicenseManager {
         let mut exceeded_limits = Vec::new();
 
         // Check collection limits
-        if let Some(max_collections) = limits.max_collections {
-            if context.current_collections > max_collections {
+        if let Some(max_collections) = limits.max_collections
+            && context.current_collections > max_collections {
                 exceeded_limits.push(format!(
                     "Collections: {} > {}",
                     context.current_collections, max_collections
                 ));
             }
-        }
 
         // Check vector limits
-        if let Some(max_vectors) = limits.max_vectors_total {
-            if context.current_vectors > max_vectors {
+        if let Some(max_vectors) = limits.max_vectors_total
+            && context.current_vectors > max_vectors {
                 exceeded_limits.push(format!(
                     "Vectors: {} > {}",
                     context.current_vectors, max_vectors
                 ));
             }
-        }
 
         // Check API call limits (daily)
         if let Some(max_api_calls) = limits.max_api_calls_per_month {

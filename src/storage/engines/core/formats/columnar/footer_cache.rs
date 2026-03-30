@@ -65,11 +65,10 @@ impl CachedFooter {
         }
 
         // Check TTL
-        if let Ok(elapsed) = SystemTime::now().duration_since(self.cached_at) {
-            if elapsed > max_age {
+        if let Ok(elapsed) = SystemTime::now().duration_since(self.cached_at)
+            && elapsed > max_age {
                 return false;
             }
-        }
 
         true
     }
@@ -452,15 +451,14 @@ impl ParquetFooterCache {
 
         // Check if file is accessed frequently enough
         let key = file_path.to_string();
-        if let Some(footer) = self.cache.get(&key).await {
-            if footer.access_count >= self.config.prefetch_threshold {
+        if let Some(footer) = self.cache.get(&key).await
+            && footer.access_count >= self.config.prefetch_threshold {
                 let mut queue = self.prefetch_queue.write().await;
                 if !queue.contains(&file_path.to_string()) {
                     queue.push(file_path.to_string());
                     debug!("Added {} to prefetch queue", file_path);
                 }
             }
-        }
     }
 
     /// Update statistics
@@ -484,24 +482,22 @@ impl ParquetFooterCache {
 
     /// Load persisted cache from disk
     async fn load_persisted_cache(&self) -> Result<()> {
-        if let Some(path) = &self.config.persistence_path {
-            if let Ok(data) = tokio::fs::read(path).await {
+        if let Some(path) = &self.config.persistence_path
+            && let Ok(data) = tokio::fs::read(path).await {
                 match bincode::deserialize::<Vec<(String, CachedFooter)>>(&data) {
                     Ok(entries) => {
                         info!("Loading {} cached entries from {}", entries.len(), path);
                         for (key, footer) in entries {
                             // Only load recent entries
-                            if let Ok(age) = SystemTime::now().duration_since(footer.cached_at) {
-                                if age < self.config.ttl {
+                            if let Ok(age) = SystemTime::now().duration_since(footer.cached_at)
+                                && age < self.config.ttl {
                                     self.cache.insert(key, footer).await;
                                 }
-                            }
                         }
                     }
                     Err(e) => warn!("Failed to deserialize cache: {}", e),
                 }
             }
-        }
         Ok(())
     }
 
@@ -553,11 +549,10 @@ impl ParquetFooterCache {
                     debug!("Processing {} prefetch candidates", files_to_prefetch.len());
                     for file_path in files_to_prefetch {
                         // Check if not already in cache before prefetching
-                        if cache.cache.get(&file_path).await.is_none() {
-                            if let Err(e) = cache.preload_footer(&file_path).await {
+                        if cache.cache.get(&file_path).await.is_none()
+                            && let Err(e) = cache.preload_footer(&file_path).await {
                                 warn!("Prefetch failed for {}: {}", file_path, e);
                             }
-                        }
                     }
                 }
             }

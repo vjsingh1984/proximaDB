@@ -262,8 +262,8 @@ impl GeoIndex {
                         continue;
                     }
 
-                    if let Some(entry) = entries.get(id) {
-                        if bbox.contains(&entry.point) {
+                    if let Some(entry) = entries.get(id)
+                        && bbox.contains(&entry.point) {
                             seen.insert(id.clone());
                             results.push(GeoQueryResult {
                                 id: entry.id.clone(),
@@ -271,7 +271,6 @@ impl GeoIndex {
                                 distance_km: None,
                             });
                         }
-                    }
                 }
             }
         }

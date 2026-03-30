@@ -408,11 +408,10 @@ impl RateLimitingService {
         }
 
         // Check tenant rate limit
-        if let Some(tenant_id) = &user_context.tenant_id {
-            if let Err(e) = self.check_tenant_rate_limit(tenant_id, now).await {
+        if let Some(tenant_id) = &user_context.tenant_id
+            && let Err(e) = self.check_tenant_rate_limit(tenant_id, now).await {
                 return Ok(RateLimitResult::denied("tenant", e.to_string()));
             }
-        }
 
         // Check IP rate limit
         if let Err(e) = self.check_ip_rate_limit(client_ip, now).await {
@@ -608,8 +607,8 @@ impl IPAccessControlService {
         }
 
         // Check tenant-specific IP restrictions
-        if let Some(tenant_id) = tenant_id {
-            if let Some(allowed_ranges) = self.tenant_allowed_ips.get(tenant_id) {
+        if let Some(tenant_id) = tenant_id
+            && let Some(allowed_ranges) = self.tenant_allowed_ips.get(tenant_id) {
                 let ip_allowed = allowed_ranges
                     .iter()
                     .any(|range| self.ip_in_range(ip, range));
@@ -620,7 +619,6 @@ impl IPAccessControlService {
                     ));
                 }
             }
-        }
 
         Ok(IPAccessResult::allowed())
     }

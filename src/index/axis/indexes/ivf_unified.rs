@@ -1289,8 +1289,8 @@ impl UnifiedIvfIndex {
                         let collection = collection_entry
                             .read()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        if let Some(view) = collection.get(vector_id) {
-                            if let Some(vector_data) = view.as_f32() {
+                        if let Some(view) = collection.get(vector_id)
+                            && let Some(vector_data) = view.as_f32() {
                                 let distance = self
                                     .distance_compute
                                     .calculate_distance(
@@ -1301,7 +1301,6 @@ impl UnifiedIvfIndex {
                                     .rank_value;
                                 candidates.push((vector_id.clone(), distance));
                             }
-                        }
                     }
                 }
             }

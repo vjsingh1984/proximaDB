@@ -1754,19 +1754,17 @@ mod block_utils {
                 // Update min/max values for this column
                 if col_stats.min_value.is_none() {
                     col_stats.min_value = Some(value.clone());
-                } else if let Some(ref mut min_val) = col_stats.min_value {
-                    if compare_json_values(&value, min_val) == std::cmp::Ordering::Less {
+                } else if let Some(ref mut min_val) = col_stats.min_value
+                    && compare_json_values(&value, min_val) == std::cmp::Ordering::Less {
                         *min_val = value.clone();
                     }
-                }
 
                 if col_stats.max_value.is_none() {
                     col_stats.max_value = Some(value.clone());
-                } else if let Some(ref mut max_val) = col_stats.max_value {
-                    if compare_json_values(&value, max_val) == std::cmp::Ordering::Greater {
+                } else if let Some(ref mut max_val) = col_stats.max_value
+                    && compare_json_values(&value, max_val) == std::cmp::Ordering::Greater {
                         *max_val = value;
                     }
-                }
             }
         }
 

@@ -727,8 +727,7 @@ impl QuantizedVectorSchema {
             if let PhysicalFieldSpec::ProductQuantization {
                 num_subquantizers, ..
             } = &def.physical_spec
-            {
-                if self.dimension % num_subquantizers != 0 {
+                && self.dimension % num_subquantizers != 0 {
                     tracing::warn!(
                         "Dimension {} not evenly divisible by subquantizers {} for {:?}",
                         self.dimension,
@@ -736,7 +735,6 @@ impl QuantizedVectorSchema {
                         def.level
                     );
                 }
-            }
         }
 
         Ok(())

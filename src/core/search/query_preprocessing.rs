@@ -154,14 +154,13 @@ impl QueryPreprocessor {
             trace!("Acquiring cache write lock");
             let mut cache = self.cache.write();
             trace!("Cache lock acquired");
-            if let Some(cached) = cache.get(&vector_hash) {
-                if cached.distance_metric == distance_metric {
+            if let Some(cached) = cache.get(&vector_hash)
+                && cached.distance_metric == distance_metric {
                     debug!("Cache hit!");
                     self.stats.write().hits += 1;
                     trace!("Query cache hit for hash {}", vector_hash);
                     return cached.clone();
                 }
-            }
         }
         debug!("Cache miss - preprocessing query");
         trace!("Cache miss, preprocessing query");
@@ -493,70 +492,48 @@ impl QueryPreprocessor {
         if levels
             .iter()
             .any(|l| matches!(l.level_type, Some(QuantizationLevel::Binary(_))))
-        {
-            if let Some(engine) = &self.quantization_engine {
-                if let Ok(quantized) = engine
+            && let Some(engine) = &self.quantization_engine
+                && let Ok(quantized) = engine
                     .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Binary)
                     .await
-                {
-                    if let Some(storage_data) = quantized.into_iter().next() {
-                        if let Some(primary) = storage_data.primary {
+                    && let Some(storage_data) = quantized.into_iter().next()
+                        && let Some(primary) = storage_data.primary {
                             binary = Some(Arc::new(primary.data));
                         }
-                    }
-                }
-            }
-        }
 
         if levels
             .iter()
             .any(|l| matches!(l.level_type, Some(QuantizationLevel::Scalar(_))))
-        {
-            if let Some(engine) = &self.quantization_engine {
-                if let Ok(quantized) = engine
+            && let Some(engine) = &self.quantization_engine
+                && let Ok(quantized) = engine
                     .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Int8)
                     .await
-                {
-                    if let Some(storage_data) = quantized.into_iter().next() {
-                        if let Some(primary) = storage_data.primary {
+                    && let Some(storage_data) = quantized.into_iter().next()
+                        && let Some(primary) = storage_data.primary {
                             int8 = Some(Arc::new(
                                 primary.data.into_iter().map(|b| b as i8).collect(),
                             ));
                         }
-                    }
-                }
-            }
-        }
 
-        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 4)) {
-            if let Some(engine) = &self.quantization_engine {
-                if let Ok(quantized) = engine
+        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 4))
+            && let Some(engine) = &self.quantization_engine
+                && let Ok(quantized) = engine
                     .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq4)
                 .await
-            {
-                if let Some(storage_data) = quantized.into_iter().next() {
-                    if let Some(primary) = storage_data.primary {
+                && let Some(storage_data) = quantized.into_iter().next()
+                    && let Some(primary) = storage_data.primary {
                         pq4 = Some(Arc::new(primary.data));
                     }
-                }
-            }
-            }
-        }
 
-        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 8)) {
-            if let Some(engine) = &self.quantization_engine {
-                if let Ok(quantized) = engine
+        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 8))
+            && let Some(engine) = &self.quantization_engine
+                && let Ok(quantized) = engine
                     .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq8)
                 .await
-            {
-                if let Some(storage_data) = quantized.into_iter().next() {
-                    if let Some(primary) = storage_data.primary {
+                && let Some(storage_data) = quantized.into_iter().next()
+                    && let Some(primary) = storage_data.primary {
                         pq8 = Some(Arc::new(primary.data));
                     }
-                }
-            }
-            }
-        }
 
         (binary, int8, pq4, pq8)
     }

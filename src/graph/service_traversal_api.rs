@@ -206,11 +206,10 @@ impl super::GraphOperationsService {
                 config.prefetch_budget
             );
         }
-        if let Some(stats) = &mut response.stats {
-            if stats.max_depth_reached > config.max_depth.unwrap_or(u32::MAX) {
+        if let Some(stats) = &mut response.stats
+            && stats.max_depth_reached > config.max_depth.unwrap_or(u32::MAX) {
                 debug!("Traversal limited by max_depth: {:?}", config.max_depth);
             }
-        }
         Ok(response)
     }
 
@@ -286,8 +285,8 @@ impl super::GraphOperationsService {
             _ => None,
         };
 
-        if let Some(kk) = k {
-            if kk > 1 {
+        if let Some(kk) = k
+            && kk > 1 {
                 if let Some(eng) = orion_engine {
                     let paths =
                         k_shortest_paths(eng, start_node_id, target_node_id, kk as usize, config)
@@ -303,7 +302,6 @@ impl super::GraphOperationsService {
                     return Ok(res);
                 }
             }
-        }
 
         let result = match algorithm
             .unwrap_or(crate::proto::proximadb_v1::ShortestPathAlgorithm::Dijkstra)

@@ -1345,8 +1345,8 @@ impl UnifiedStorageEngine for SwiftEngine {
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
         {
             // Try to get from vector cache first
-            if let Some(vector_cache) = orchestrator.get_vector_cache() {
-                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
+            if let Some(vector_cache) = orchestrator.get_vector_cache()
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
                     // Track cache hit for access pattern learning
                     orchestrator.pattern_tracker().track_access_async(
                         cache_key.clone(),
@@ -1354,7 +1354,6 @@ impl UnifiedStorageEngine for SwiftEngine {
                     );
                     return Ok(Some(cached_vector));
                 }
-            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(
@@ -1380,23 +1379,18 @@ impl UnifiedStorageEngine for SwiftEngine {
                 if let Some(superblock) = file
                     .superblocks
                     .get(location.superblock_idx as usize)
-                {
-                    if let Some(block) = superblock.blocks.get(location.block_idx as usize) {
-                        if let Some(record) =
+                    && let Some(block) = superblock.blocks.get(location.block_idx as usize)
+                        && let Some(record) =
                             block.records.get(location.offset_in_block as usize)
                         {
                             // Cache the result for future lookups
                             if let Some(orchestrator) =
                                 crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
-                            {
-                                if let Some(vector_cache) = orchestrator.get_vector_cache() {
+                                && let Some(vector_cache) = orchestrator.get_vector_cache() {
                                     vector_cache.put(cache_key, record.clone()).await;
                                 }
-                            }
                             return Ok(Some(record.clone()));
                         }
-                    }
-                }
             }
         }
 

@@ -181,11 +181,10 @@ where
         let mut results = Vec::new();
 
         for (key, value) in data.range(from..) {
-            if let Some(limit) = limit {
-                if results.len() >= limit {
+            if let Some(limit) = limit
+                && results.len() >= limit {
                     break;
                 }
-            }
             results.push((key.clone(), value.clone()));
         }
 

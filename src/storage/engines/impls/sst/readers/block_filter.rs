@@ -141,12 +141,11 @@ impl IntelligentBlockFilter {
         if let Some(ref target_id) = filter.target_id {
             if self.search_strategy.use_bloom_filters {
                 // Check global bloom first
-                if let Some(bloom) = global_bloom {
-                    if !bloom.might_contain_key(target_id)? {
+                if let Some(bloom) = global_bloom
+                    && !bloom.might_contain_key(target_id)? {
                         debug!("🚫 Global bloom filter: ID '{}' not in file", target_id);
                         return Ok(false);
                     }
-                }
 
                 // Check block-level bloom if available
                 if let Some(ref block_bloom_bytes) = index_entry.block_key_bloom {
@@ -172,8 +171,8 @@ impl IntelligentBlockFilter {
         }
 
         // Check range query with min/max
-        if let Some((ref _min_id, ref max_id)) = filter.id_range {
-            if self.search_strategy.use_min_max_stats {
+        if let Some((ref _min_id, ref max_id)) = filter.id_range
+            && self.search_strategy.use_min_max_stats {
                 // Block's minimum key is after our max range
                 if &index_entry.key > max_id {
                     debug!(
@@ -184,7 +183,6 @@ impl IntelligentBlockFilter {
                 }
                 // Note: We can't skip if block's max < min_id without storing max_key per block
             }
-        }
 
         // Check metadata filters with min/max statistics
         if !filter.metadata_filters.is_empty() && self.search_strategy.use_min_max_stats {
@@ -267,11 +265,10 @@ impl IntelligentBlockFilter {
 
             MetadataFilter::IsNull => {
                 // Check if there are any nulls
-                if let Some(null_count) = index_entry.metadata_null_counts.get(column) {
-                    if *null_count == 0 {
+                if let Some(null_count) = index_entry.metadata_null_counts.get(column)
+                    && *null_count == 0 {
                         return Ok(false);
                     }
-                }
             }
         }
 

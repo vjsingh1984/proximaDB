@@ -143,20 +143,18 @@ impl GlobalManifestService {
                         pending_batch.push(request);
 
                         // Force write if batch is full
-                        if pending_batch.len() >= config.max_batch_size {
-                            if let Err(e) = service.flush_pending_batch(&mut pending_batch).await {
+                        if pending_batch.len() >= config.max_batch_size
+                            && let Err(e) = service.flush_pending_batch(&mut pending_batch).await {
                                 error!("❌ Failed to flush manifest batch: {}", e);
                             }
-                        }
                     }
 
                     // Periodic batch write
                     _ = write_interval.tick() => {
-                        if !pending_batch.is_empty() {
-                            if let Err(e) = service.flush_pending_batch(&mut pending_batch).await {
+                        if !pending_batch.is_empty()
+                            && let Err(e) = service.flush_pending_batch(&mut pending_batch).await {
                                 error!("❌ Failed to flush manifest batch: {}", e);
                             }
-                        }
                     }
 
                     // Channel closed
@@ -785,14 +783,13 @@ impl GlobalManifestService {
             }
 
             // Parse max_lsn from filename: manifest_{min_lsn}_{max_lsn}.jsonl
-            if let Some(filename) = entry.url.split('/').last() {
-                if let Some(max_lsn_str) = filename
+            if let Some(filename) = entry.url.split('/').last()
+                && let Some(max_lsn_str) = filename
                     .strip_prefix("manifest_")
                     .and_then(|s| s.strip_suffix(".jsonl"))
                     .and_then(|s| s.split('_').nth(1))
-                {
-                    if let Ok(max_lsn) = max_lsn_str.parse::<u64>() {
-                        if max_lsn < safe_to_delete_before_lsn {
+                    && let Ok(max_lsn) = max_lsn_str.parse::<u64>()
+                        && max_lsn < safe_to_delete_before_lsn {
                             // Delete this segment
                             match fs.delete(&entry.url).await {
                                 Ok(_) => {
@@ -807,9 +804,6 @@ impl GlobalManifestService {
                                 }
                             }
                         }
-                    }
-                }
-            }
         }
 
         if deleted_count > 0 {

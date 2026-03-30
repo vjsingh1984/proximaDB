@@ -231,13 +231,12 @@ impl ExecutionPlanner {
 
         // Check ORDER BY for vector functions
         for order_expr in &select.order_by {
-            if let Expr::FuncCall { name, .. } = &order_expr.expr {
-                if name.to_uppercase().contains("VECTOR_SIMILARITY")
-                    || name.to_uppercase().contains("COSINE_DISTANCE")
+            if let Expr::FuncCall { name, .. } = &order_expr.expr
+                && (name.to_uppercase().contains("VECTOR_SIMILARITY")
+                    || name.to_uppercase().contains("COSINE_DISTANCE"))
                 {
                     analysis.has_vector_functions = true;
                 }
-            }
         }
 
         // Check for SKS functions in WHERE clause
@@ -441,11 +440,10 @@ impl ExecutionPlanner {
     /// Find first SKS SIMILAR occurrence in selection or order_by
     fn find_sks_similar(&self, select: &Select) -> Option<SksSimilarArgs> {
         // Validate SIMILAR field roughly against schema: ensure the field name looks like an embedding column
-        if let Some(expr) = &select.selection {
-            if let Some(sim) = self.walk_find_similar(expr) {
+        if let Some(expr) = &select.selection
+            && let Some(sim) = self.walk_find_similar(expr) {
                 return Some(sim);
             }
-        }
         for ob in &select.order_by {
             if let Some(sim) = self.walk_find_similar(&ob.expr) {
                 return Some(sim);
@@ -600,14 +598,13 @@ impl ExecutionPlanner {
             // Parameter (decode from planner params: $1, $2, ...)
             Expr::Param(ph) => {
                 // Expect $<n>
-                if let Some(n) = ph.strip_prefix('$') {
-                    if let Ok(idx) = n.parse::<usize>() {
+                if let Some(n) = ph.strip_prefix('$')
+                    && let Ok(idx) = n.parse::<usize>() {
                         let pos = idx.saturating_sub(1);
                         if let Some(pv) = self.params.as_ref().and_then(|v| v.get(pos)) {
                             return self.sql_value_to_vec(pv);
                         }
                     }
-                }
                 None
             }
             _ => {
@@ -719,8 +716,8 @@ impl ExecutionPlanner {
 
     pub(crate) fn extract_join_keys_static(expr: &Expr) -> Option<(String, String)> {
         // Support simple equality join: a.id = b.entity_id
-        if let Expr::Binary { left, op, right } = expr {
-            if matches!(op, BinaryOp::Eq) {
+        if let Expr::Binary { left, op, right } = expr
+            && matches!(op, BinaryOp::Eq) {
                 let left_key = match &**left {
                     Expr::Identifier(s) => s.clone(),
                     _ => return None,
@@ -731,7 +728,6 @@ impl ExecutionPlanner {
                 };
                 return Some((left_key, right_key));
             }
-        }
         None
     }
 
@@ -863,12 +859,11 @@ impl ExecutionPlanner {
     /// Extract query vector from ORDER BY vector similarity function
     fn extract_query_vector(&self, select: &Select) -> Result<Option<Vec<f32>>> {
         for order_expr in &select.order_by {
-            if let Expr::FuncCall { name, args } = &order_expr.expr {
-                if name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 2 {
+            if let Expr::FuncCall { name, args } = &order_expr.expr
+                && name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 2 {
                     // Extract vector from second argument (first is the vector field name)
                     return Ok(self.try_parse_query_vector(&args[1]));
                 }
-            }
         }
         Ok(None)
     }
@@ -876,14 +871,13 @@ impl ExecutionPlanner {
     /// Extract distance metric from vector similarity function
     fn extract_distance_metric(&self, select: &Select) -> Result<String> {
         for order_expr in &select.order_by {
-            if let Expr::FuncCall { name, args } = &order_expr.expr {
-                if name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 3 {
+            if let Expr::FuncCall { name, args } = &order_expr.expr
+                && name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 3 {
                     // Extract metric from third argument
                     if let Expr::Literal(crate::query::ast::Literal::String(s)) = &args[2] {
                         return Ok(s.to_lowercase());
                     }
                 }
-            }
         }
         Ok("cosine".to_string()) // Default distance metric
     }

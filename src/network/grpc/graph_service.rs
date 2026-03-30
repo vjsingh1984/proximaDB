@@ -697,15 +697,12 @@ impl GraphService for GraphServiceImpl {
             query.graph_id, query.labels
         );
         // Continuation token parsing: format "offset:<n>"
-        if query.offset.is_none() {
-            if let Some(token) = &query.continuation_token {
-                if let Some(rest) = token.strip_prefix("offset:") {
-                    if let Ok(n) = rest.parse::<u32>() {
+        if query.offset.is_none()
+            && let Some(token) = &query.continuation_token
+                && let Some(rest) = token.strip_prefix("offset:")
+                    && let Ok(n) = rest.parse::<u32>() {
                         query.offset = Some(n);
                     }
-                }
-            }
-        }
 
         match self
             .unified_handlers
@@ -734,15 +731,12 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<BatchResponse>, Status> {
         let mut query = request.into_inner();
         debug!("gRPC QueryEdges request for graph: {}", query.graph_id);
-        if query.offset.is_none() {
-            if let Some(token) = &query.continuation_token {
-                if let Some(rest) = token.strip_prefix("offset:") {
-                    if let Ok(n) = rest.parse::<u32>() {
+        if query.offset.is_none()
+            && let Some(token) = &query.continuation_token
+                && let Some(rest) = token.strip_prefix("offset:")
+                    && let Ok(n) = rest.parse::<u32>() {
                         query.offset = Some(n);
                     }
-                }
-            }
-        }
 
         match self
             .unified_handlers
@@ -822,11 +816,10 @@ impl GraphService for GraphServiceImpl {
             Ok(mut response) => {
                 info!("Successfully completed graph traversal via gRPC");
                 // Ensure execution_time_microseconds is populated if stats exist
-                if let Some(ref mut stats) = response.stats {
-                    if stats.execution_time_microseconds == 0 {
+                if let Some(ref mut stats) = response.stats
+                    && stats.execution_time_microseconds == 0 {
                         stats.execution_time_microseconds = start_time.elapsed().as_micros() as u64;
                     }
-                }
                 Ok(Response::new(response))
             }
             Err(err) => {

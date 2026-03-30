@@ -127,23 +127,21 @@ impl SparsityAnalyzer {
     /// SparsityInfo with detected characteristics
     pub fn detect_sparsity(&self, vector: &[f32], vector_id: Option<u64>) -> SparsityInfo {
         // Check cache first
-        if let Some(id) = vector_id {
-            if self.config.cache_sparsity_info {
-                if let Some(cached) = self.cache.get(&id) {
+        if let Some(id) = vector_id
+            && self.config.cache_sparsity_info
+                && let Some(cached) = self.cache.get(&id) {
                     let ttl = Duration::from_secs(self.config.cache_ttl_seconds);
                     if cached.is_valid(ttl) {
                         return cached.clone();
                     }
                 }
-            }
-        }
 
         // Perform detection
         let info = self.analyze_vector(vector, None);
 
         // Cache result
-        if let Some(id) = vector_id {
-            if self.config.cache_sparsity_info {
+        if let Some(id) = vector_id
+            && self.config.cache_sparsity_info {
                 self.cache.insert(id, info.clone());
 
                 // Evict if cache too large (simple FIFO)
@@ -156,7 +154,6 @@ impl SparsityAnalyzer {
                     }
                 }
             }
-        }
 
         info
     }

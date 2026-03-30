@@ -993,8 +993,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
         }
 
         // 🚀 INDEX UPDATES: Notify EventLog for AXIS indexing service
-        if result.success {
-            if let Some(collection_id) = &params.collection_id {
+        if result.success
+            && let Some(collection_id) = &params.collection_id {
                 // Notify EventLog so AXIS consumer can build indexes asynchronously
                 if let Some(event_log) = crate::services::events::log::event_log_service() {
                     // Use engine_type() method (OCP-compliant - no string matching)
@@ -1032,7 +1032,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     );
                 }
             }
-        }
 
         Ok(result)
     }
@@ -1379,11 +1378,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
         }
 
         // Validate timeout
-        if let Some(timeout) = params.timeout_ms {
-            if timeout == 0 {
+        if let Some(timeout) = params.timeout_ms
+            && timeout == 0 {
                 return Err(anyhow::anyhow!("Flush timeout cannot be zero"));
             }
-        }
 
         Ok(())
     }
@@ -1399,11 +1397,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
         }
 
         // Validate timeout
-        if let Some(timeout) = params.timeout_ms {
-            if timeout == 0 {
+        if let Some(timeout) = params.timeout_ms
+            && timeout == 0 {
                 return Err(anyhow::anyhow!("Compaction timeout cannot be zero"));
             }
-        }
 
         Ok(())
     }

@@ -159,13 +159,12 @@ impl SchemaContext {
                 }
             ));
 
-            if column.is_foreign_key {
-                if let (Some(ref_table), Some(ref_col)) =
+            if column.is_foreign_key
+                && let (Some(ref_table), Some(ref_col)) =
                     (&column.references_table, &column.references_column)
                 {
                     description.push_str(&format!(" -> {}.{}", ref_table, ref_col));
                 }
-            }
 
             if let Some(ref desc) = column.description {
                 description.push_str(&format!(" - {}", desc));

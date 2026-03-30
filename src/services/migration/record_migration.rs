@@ -903,8 +903,8 @@ impl RecordMigrationService {
         }
 
         // Validate vector dimensions if specified
-        if let Some(dim) = record.vector_dimension {
-            if record.vector.len() != dim as usize {
+        if let Some(dim) = record.vector_dimension
+            && record.vector.len() != dim as usize {
                 errors.push(ValidationError {
                     field: "vector".to_string(),
                     message: format!(
@@ -915,7 +915,6 @@ impl RecordMigrationService {
                     code: ValidationErrorCode::DimensionMismatch,
                 });
             }
-        }
 
         // Schema-based validation
         if let Some(schema) = schema {

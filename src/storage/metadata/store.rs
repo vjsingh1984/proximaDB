@@ -251,12 +251,11 @@ impl MetadataStore {
         tracing::debug!("🔄 Starting metadata store background tasks");
 
         // Backup task
-        if let Some(backup_config) = &self.config.backup_config {
-            if backup_config.enabled {
+        if let Some(backup_config) = &self.config.backup_config
+            && backup_config.enabled {
                 let task = self.start_backup_task(backup_config.clone()).await?;
                 self.background_tasks.push(task);
             }
-        }
 
         // Cache cleanup task
         if self.config.cache_config.enabled {

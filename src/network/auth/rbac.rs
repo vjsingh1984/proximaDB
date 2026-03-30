@@ -337,14 +337,13 @@ impl RbacService {
         match context.resource_type {
             ResourceType::Collection => {
                 // Check if user has access to specific collection
-                if let Some(collection_id) = &context.resource_id {
-                    if !self
+                if let Some(collection_id) = &context.resource_id
+                    && !self
                         .user_has_collection_access(user_id, collection_id)
                         .await
                     {
                         return Err(AuthError::AuthorizationDenied(permission));
                     }
-                }
             }
             ResourceType::System => {
                 // System operations require admin role

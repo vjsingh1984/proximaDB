@@ -391,15 +391,14 @@ impl AxisTieringManager {
 
         for (collection_id, _frequency) in collection_frequencies {
             // Check if memory-pinned
-            if let Some(constraints) = &self.config.collection_constraints {
-                if constraints
+            if let Some(constraints) = &self.config.collection_constraints
+                && constraints
                     .memory_pinned_collections
                     .contains(&collection_id)
                 {
                     debug!("Skipping memory-pinned collection {}", collection_id);
                     continue;
                 }
-            }
 
             // Demote to NVMe
             let target_tier = InfrastructureTier::NvmeSsd {
@@ -596,22 +595,19 @@ impl AxisTieringManager {
             if constraints
                 .memory_pinned_collections
                 .contains(&collection_id.to_string())
-            {
-                if !matches!(global_recommendation, InfrastructureTier::Memory) {
+                && !matches!(global_recommendation, InfrastructureTier::Memory) {
                     debug!(
                         "Collection {} is memory-pinned, keeping in mem",
                         collection_id
                     );
                     return Ok(Some(InfrastructureTier::Memory));
                 }
-            }
 
             // No-cloud collections
             if constraints
                 .no_cloud_collections
                 .contains(&collection_id.to_string())
-            {
-                if matches!(
+                && matches!(
                     global_recommendation,
                     InfrastructureTier::CloudStandard { .. }
                         | InfrastructureTier::CloudInfrequentAccess { .. }
@@ -625,18 +621,16 @@ impl AxisTieringManager {
                         mount_path: "/data".to_string(),
                     }));
                 }
-            }
 
             // Maximum tier per collection
-            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id) {
-                if self.tier_order(global_recommendation) > self.tier_order(max_tier) {
+            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id)
+                && self.tier_order(global_recommendation) > self.tier_order(max_tier) {
                     debug!(
                         "Collection {} limited to tier {:?}",
                         collection_id, max_tier
                     );
                     return Ok(Some(max_tier.clone()));
                 }
-            }
         }
 
         // Apply index type specific preferences
@@ -895,11 +889,10 @@ impl AxisTieringManager {
     ) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // Check max tier constraint
-            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id) {
-                if self.tier_order(target_tier) < self.tier_order(max_tier) {
+            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id)
+                && self.tier_order(target_tier) < self.tier_order(max_tier) {
                     return Ok(false); // Would exceed max tier
                 }
-            }
         }
         Ok(true)
     }
@@ -915,18 +908,15 @@ impl AxisTieringManager {
             if constraints
                 .memory_pinned_collections
                 .contains(&collection_id.to_string())
-            {
-                if !matches!(target_tier, InfrastructureTier::Memory) {
+                && !matches!(target_tier, InfrastructureTier::Memory) {
                     return Ok(false);
                 }
-            }
 
             // No-cloud collections cannot be demoted to cloud
             if constraints
                 .no_cloud_collections
                 .contains(&collection_id.to_string())
-            {
-                if matches!(
+                && matches!(
                     target_tier,
                     InfrastructureTier::CloudStandard { .. }
                         | InfrastructureTier::CloudInfrequentAccess { .. }
@@ -935,7 +925,6 @@ impl AxisTieringManager {
                 ) {
                     return Ok(false);
                 }
-            }
         }
         Ok(true)
     }

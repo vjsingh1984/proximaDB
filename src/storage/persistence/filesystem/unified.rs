@@ -286,16 +286,14 @@ impl FileSystem for UnifiedCachingFilesystem {
         }
 
         // Check if we can optimize with range reads
-        if self.config.io.enable_range_optimization {
-            if let Ok(metadata) = self.metadata(path).await {
-                if metadata.size
+        if self.config.io.enable_range_optimization
+            && let Ok(metadata) = self.metadata(path).await
+                && metadata.size
                     > (self.config.io.range_optimization_threshold_mb * 1024 * 1024) as u64
                 {
                     // Use range optimization for large files
                     return self.optimized_range_read(path, &metadata).await;
                 }
-            }
-        }
 
         // Fall back to regular read
         let data = self.underlying_fs.read(path).await?;
@@ -444,8 +442,8 @@ impl FileSystem for UnifiedCachingFilesystem {
                 for entry in &entries_clone {
                     if !entry.metadata.is_directory {
                         let cache_key = format!("{}:{}:{}", entry.url, collection_id, engine_type);
-                        if metadata_cache.get(&cache_key).await.is_none() {
-                            if let Ok(metadata) = underlying_fs.metadata(&entry.url).await {
+                        if metadata_cache.get(&cache_key).await.is_none()
+                            && let Ok(metadata) = underlying_fs.metadata(&entry.url).await {
                                 let cached = CachedMetadata {
                                     metadata,
                                     parquet_footer: None,
@@ -457,7 +455,6 @@ impl FileSystem for UnifiedCachingFilesystem {
                                 };
                                 metadata_cache.put(cache_key, cached).await;
                             }
-                        }
                     }
                 }
             });

@@ -378,8 +378,8 @@ impl UnifiedAuthService {
         match self.api_keys.get(api_key) {
             Some(api_key_info) => {
                 // Check if API key has expired
-                if let Some(expires_at) = api_key_info.expires_at {
-                    if Utc::now() > expires_at {
+                if let Some(expires_at) = api_key_info.expires_at
+                    && Utc::now() > expires_at {
                         return Ok(AuthenticationResult {
                             user_context: UnifiedUserContext::anonymous(),
                             auth_method: AuthMethod::ApiKey,
@@ -388,7 +388,6 @@ impl UnifiedAuthService {
                             requires_mfa: false,
                         });
                     }
-                }
 
                 let user_context = self.convert_api_key_to_unified(api_key_info.clone());
                 Ok(AuthenticationResult {
@@ -627,13 +626,12 @@ impl UnifiedAuthService {
             })
             .and_then(|ext| Some(ext.value.to_vec()));
 
-        if let (Some(aki), Some(ski)) = (&client_aki, &ca_ski) {
-            if aki != ski {
+        if let (Some(aki), Some(ski)) = (&client_aki, &ca_ski)
+            && aki != ski {
                 return Err(anyhow!(
                     "Certificate Authority Key Identifier does not match CA Subject Key Identifier"
                 ));
             }
-        }
 
         // 3. Extract Common Name from the subject
         let common_name = client_cert

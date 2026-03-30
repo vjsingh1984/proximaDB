@@ -835,13 +835,11 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         }
 
         // Check metadata filters
-        if let Some(ttl_threshold) = query_context.metadata_filters.get("ttl_threshold") {
-            if let Ok(threshold) = ttl_threshold.parse::<u64>() {
-                if parquet_metadata.footer.created_timestamp < threshold {
+        if let Some(ttl_threshold) = query_context.metadata_filters.get("ttl_threshold")
+            && let Ok(threshold) = ttl_threshold.parse::<u64>()
+                && parquet_metadata.footer.created_timestamp < threshold {
                     return true; // Entire file is expired
                 }
-            }
-        }
 
         // Check vector similarity threshold with estimated selectivity
         if let Some(threshold) = query_context.distance_threshold {

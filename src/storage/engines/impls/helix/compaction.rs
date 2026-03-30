@@ -627,11 +627,10 @@ impl LeveledCompactor {
                 for next_file in next_files {
                     if let Some((next_min, next_max)) = next_file.hilbert_range {
                         // Check for overlap
-                        if !(curr_max < next_min || curr_min > next_max) {
-                            if !files_to_compact.iter().any(|f| f.path == next_file.path) {
+                        if !(curr_max < next_min || curr_min > next_max)
+                            && !files_to_compact.iter().any(|f| f.path == next_file.path) {
                                 files_to_compact.push(next_file.clone());
                             }
-                        }
                     }
                 }
             }
@@ -716,8 +715,8 @@ impl LeveledCompactor {
 
             // Filter out expired records (physical delete during compaction)
             for record in block.records {
-                if let Some(expires_at) = record.expires_at {
-                    if expires_at as u64 <= current_time {
+                if let Some(expires_at) = record.expires_at
+                    && expires_at as u64 <= current_time {
                         // Record is expired, skip it (physical delete)
                         debug!(
                             "Filtering expired record: {} (expired at {})",
@@ -725,7 +724,6 @@ impl LeveledCompactor {
                         );
                         continue;
                     }
-                }
                 // Record is not expired or has no expiration, keep it
                 records.push(record);
             }

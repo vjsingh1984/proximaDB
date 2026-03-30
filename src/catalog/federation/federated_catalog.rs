@@ -302,11 +302,10 @@ impl FederatedCatalog {
     /// Resolve a table by fully qualified name
     pub async fn resolve_table(&self, fqn: &str) -> Result<FederatedTableInfo> {
         // Check cache first
-        if self.config.enable_metadata_cache {
-            if let Some(cached) = self.get_cached(fqn) {
+        if self.config.enable_metadata_cache
+            && let Some(cached) = self.get_cached(fqn) {
                 return Ok(cached);
             }
-        }
 
         let parts: Vec<&str> = fqn.split('.').collect();
 
@@ -341,13 +340,11 @@ impl FederatedCatalog {
         }
 
         // Try default catalog if configured
-        if let Some(ref default) = self.config.default_catalog {
-            if default != "internal" {
-                if let Ok(info) = self.resolve_in_catalog(default, &[], table).await {
+        if let Some(ref default) = self.config.default_catalog
+            && default != "internal"
+                && let Ok(info) = self.resolve_in_catalog(default, &[], table).await {
                     return Ok(info);
                 }
-            }
-        }
 
         Err(anyhow!("Table '{}' not found", table))
     }
@@ -365,11 +362,10 @@ impl FederatedCatalog {
         }
 
         // Finally try namespace.table in default catalog
-        if let Some(ref default) = self.config.default_catalog {
-            if let Ok(info) = self.resolve_in_catalog(default, &[first], second).await {
+        if let Some(ref default) = self.config.default_catalog
+            && let Ok(info) = self.resolve_in_catalog(default, &[first], second).await {
                 return Ok(info);
             }
-        }
 
         Err(anyhow!("Table '{}.{}' not found", first, second))
     }

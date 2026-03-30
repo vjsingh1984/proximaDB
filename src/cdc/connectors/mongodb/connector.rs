@@ -229,14 +229,12 @@ impl MongoDbConnector {
         if let serde_json::Value::Object(obj) = doc {
             for (key, value) in obj {
                 // Check if this is the vector field
-                if let Some(config) = collection_config {
-                    if config.vector_field.as_deref() == Some(key) {
-                        if let Some(v) = self.parse_vector(value) {
+                if let Some(config) = collection_config
+                    && config.vector_field.as_deref() == Some(key)
+                        && let Some(v) = self.parse_vector(value) {
                             vector = Some(v);
                             continue;
                         }
-                    }
-                }
 
                 // Add to metadata
                 metadata.insert(key.clone(), value.clone());

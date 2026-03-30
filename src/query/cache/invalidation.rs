@@ -274,8 +274,8 @@ impl CacheInvalidator {
         }
 
         // Handle transaction-aware invalidation
-        if self.config.transaction_aware {
-            if let Some(ref txn_id) = event.transaction_id {
+        if self.config.transaction_aware
+            && let Some(ref txn_id) = event.transaction_id {
                 // Defer invalidation until transaction commits
                 self.pending_transactions
                     .entry(txn_id.clone())
@@ -283,7 +283,6 @@ impl CacheInvalidator {
                     .push(event);
                 return 0;
             }
-        }
 
         // Check if batching is enabled
         if self.config.batch_invalidations {

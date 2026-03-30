@@ -496,8 +496,8 @@ impl UnifiedQueryOptimizer {
         Option<crate::query::rl_planner::PlannerState>,
         Option<ExecutionAction>,
     ) {
-        if let Some(rl_planner) = get_rl_planner() {
-            if rl_planner.is_enabled() {
+        if let Some(rl_planner) = get_rl_planner()
+            && rl_planner.is_enabled() {
                 let state = rl_planner.extract_state(context);
                 let action = rl_planner.select_action(&state).await;
                 trace!(
@@ -507,7 +507,6 @@ impl UnifiedQueryOptimizer {
                 );
                 return (Some(state), Some(action));
             }
-        }
         (None, None)
     }
 

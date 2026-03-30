@@ -155,8 +155,8 @@ impl QueryDecomposer {
     /// Extract vector search component from query
     fn extract_vector_component(&self, query: &str) -> Result<Option<QueryComponent>> {
         // Check for VECTOR_SIMILAR
-        if let Some(vector_similar) = self.patterns.vector_similar.as_ref() {
-            if let Some(caps) = vector_similar.captures(query) {
+        if let Some(vector_similar) = self.patterns.vector_similar.as_ref()
+            && let Some(caps) = vector_similar.captures(query) {
                 let _field = caps
                     .get(1)
                     .map(|m| m.as_str().trim())
@@ -188,7 +188,6 @@ impl QueryDecomposer {
                     dependencies: vec![],
                 }));
             }
-        }
 
         // Check for ORDER BY VECTOR_DISTANCE
         if self
@@ -258,8 +257,8 @@ impl QueryDecomposer {
         prev_component_count: usize,
     ) -> Result<Option<QueryComponent>> {
         // Check for GRAPH_TRAVERSE
-        if let Some(graph_traverse) = self.patterns.graph_traverse.as_ref() {
-            if let Some(caps) = graph_traverse.captures(query) {
+        if let Some(graph_traverse) = self.patterns.graph_traverse.as_ref()
+            && let Some(caps) = graph_traverse.captures(query) {
                 let graph_name = caps
                     .get(1)
                     .map(|m| m.as_str().trim().to_string())
@@ -304,11 +303,10 @@ impl QueryDecomposer {
                     dependencies,
                 }));
             }
-        }
 
         // Check for GRAPH_CONNECTED
-        if let Some(graph_connected) = self.patterns.graph_connected.as_ref() {
-            if let Some(caps) = graph_connected.captures(query) {
+        if let Some(graph_connected) = self.patterns.graph_connected.as_ref()
+            && let Some(caps) = graph_connected.captures(query) {
                 let graph_name = "default".to_string(); // Would need to infer from context
                 let edge_type = caps
                     .get(2)
@@ -333,7 +331,6 @@ impl QueryDecomposer {
                     dependencies: vec![],
                 }));
             }
-        }
 
         Ok(None)
     }
@@ -341,8 +338,8 @@ impl QueryDecomposer {
     /// Extract observability component from query
     fn extract_observability_component(&self, query: &str) -> Result<Option<QueryComponent>> {
         // Check for LOG_QUERY
-        if let Some(log_query) = self.patterns.log_query.as_ref() {
-            if let Some(caps) = log_query.captures(query) {
+        if let Some(log_query) = self.patterns.log_query.as_ref()
+            && let Some(caps) = log_query.captures(query) {
                 let namespace = caps
                     .get(1)
                     .map(|m| m.as_str().to_string())
@@ -368,11 +365,10 @@ impl QueryDecomposer {
                     dependencies: vec![],
                 }));
             }
-        }
 
         // Check for METRIC_AGG
-        if let Some(metric_query) = self.patterns.metric_query.as_ref() {
-            if let Some(caps) = metric_query.captures(query) {
+        if let Some(metric_query) = self.patterns.metric_query.as_ref()
+            && let Some(caps) = metric_query.captures(query) {
                 let namespace = caps
                     .get(1)
                     .map(|m| m.as_str().to_string())
@@ -421,7 +417,6 @@ impl QueryDecomposer {
                     dependencies: vec![],
                 }));
             }
-        }
 
         Ok(None)
     }
@@ -512,9 +507,9 @@ impl QueryDecomposer {
     /// Extract projection (SELECT fields)
     fn extract_projection(&self, query: &str) -> Vec<String> {
         let select_pattern = Regex::new(r"(?i)SELECT\s+(.+?)\s+FROM").ok();
-        if let Some(pattern) = select_pattern {
-            if let Some(caps) = pattern.captures(query) {
-                if let Some(fields) = caps.get(1) {
+        if let Some(pattern) = select_pattern
+            && let Some(caps) = pattern.captures(query)
+                && let Some(fields) = caps.get(1) {
                     let fields_str = fields.as_str().trim();
                     if fields_str == "*" {
                         return vec![];
@@ -525,8 +520,6 @@ impl QueryDecomposer {
                         .filter(|s| !s.is_empty())
                         .collect();
                 }
-            }
-        }
         vec![]
     }
 

@@ -331,16 +331,14 @@ impl CompactionCoordinator {
         estimated_duration: Option<Duration>,
     ) -> Result<String> {
         // Check if this is a compaction and if queue-aware mode is enabled
-        if self.config.queue_aware_compaction {
-            if let OperationType::Compaction { .. } = &operation_type {
-                if let Some(decision) = self
+        if self.config.queue_aware_compaction
+            && let OperationType::Compaction { .. } = &operation_type
+                && let Some(decision) = self
                     .evaluate_axis_aware_compaction(collection_id, &[], &operation_type)
                     .await?
                 {
                     return Err(anyhow::anyhow!("{}", decision));
                 }
-            }
-        }
 
         let operation_id = Uuid::new_v4().to_string();
 
@@ -888,8 +886,8 @@ impl CompactionOrchestrator {
         let config = engine.compaction_config();
 
         // Check Level 0 first (highest priority)
-        if let Some(level0_files) = files_by_level.get(&0) {
-            if level0_files.len() >= config.level0_threshold {
+        if let Some(level0_files) = files_by_level.get(&0)
+            && level0_files.len() >= config.level0_threshold {
                 return self
                     .create_compaction_execution(
                         engine,
@@ -902,12 +900,11 @@ impl CompactionOrchestrator {
                     .await
                     .map(Some);
             }
-        }
 
         // Check higher levels
         for level in 1..=config.max_level {
-            if let Some(level_files) = files_by_level.get(&level) {
-                if level_files.len() >= config.level_threshold {
+            if let Some(level_files) = files_by_level.get(&level)
+                && level_files.len() >= config.level_threshold {
                     // For higher levels, compact oldest file
                     let oldest_file = level_files.iter().min_by_key(|f| f.timestamp()).cloned();
 
@@ -925,7 +922,6 @@ impl CompactionOrchestrator {
                             .map(Some);
                     }
                 }
-            }
         }
 
         debug!("📋 No compaction needed for collection: {}", collection_id);

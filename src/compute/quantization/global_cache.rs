@@ -420,13 +420,12 @@ impl GlobalQuantizationCache {
                 }
             }
 
-            if let Some(key) = oldest_key {
-                if let Some((_, removed)) = self.quantized_vectors.remove(&key) {
+            if let Some(key) = oldest_key
+                && let Some((_, removed)) = self.quantized_vectors.remove(&key) {
                     let size_estimate = removed.data.len();
                     self.allocated_memory_bytes
                         .fetch_sub(size_estimate, std::sync::atomic::Ordering::Relaxed);
                 }
-            }
         }
     }
 

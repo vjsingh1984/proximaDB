@@ -429,8 +429,8 @@ impl UnifiedWALWriter {
 
     /// Flush current segment to disk
     async fn flush_current_segment(&mut self) -> anyhow::Result<()> {
-        if let Some(ref path) = self.current_segment_path {
-            if !self.current_segment_data.is_empty() {
+        if let Some(ref path) = self.current_segment_path
+            && !self.current_segment_data.is_empty() {
                 let url = format!("file://{}", path);
                 let fs = self.filesystem.get_filesystem(&url)?;
 
@@ -451,7 +451,6 @@ impl UnifiedWALWriter {
                 // Clear buffer after successful write
                 self.current_segment_data.clear();
             }
-        }
         Ok(())
     }
 

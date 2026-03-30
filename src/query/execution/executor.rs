@@ -56,12 +56,11 @@ impl VectorPool {
         vec.clear();
         if vec.capacity() > 0 && vec.capacity() < 10000 {
             // Prevent memory bloat
-            if let Ok(mut pool) = self.query_row_pool.lock() {
-                if pool.len() < 10 {
+            if let Ok(mut pool) = self.query_row_pool.lock()
+                && pool.len() < 10 {
                     // Limit pool size
                     pool.push(vec);
                 }
-            }
         }
     }
 
@@ -77,13 +76,11 @@ impl VectorPool {
     /// Return a HashMap to the pool for reuse
     pub fn return_field_map(&self, mut map: HashMap<String, serde_json::Value>) {
         map.clear();
-        if map.capacity() > 0 && map.capacity() < 100 {
-            if let Ok(mut pool) = self.field_map_pool.lock() {
-                if pool.len() < 10 {
+        if map.capacity() > 0 && map.capacity() < 100
+            && let Ok(mut pool) = self.field_map_pool.lock()
+                && pool.len() < 10 {
                     pool.push(map);
                 }
-            }
-        }
     }
 }
 
@@ -127,9 +124,9 @@ impl QueryExecutor {
             // Use public accessors instead of private fields
             let mut derived: Vec<QueryRow> = Vec::new();
             for entity_id in seeds {
-                if let Some(vec_ids) = store.get_entity_vectors(&entity_id) {
-                    if let Some(first_vec_id) = vec_ids.first() {
-                        if let Some(vec_values) = store.get_embedding(first_vec_id) {
+                if let Some(vec_ids) = store.get_entity_vectors(&entity_id)
+                    && let Some(first_vec_id) = vec_ids.first()
+                        && let Some(vec_values) = store.get_embedding(first_vec_id) {
                             let mut fields = std::collections::HashMap::new();
                             fields.insert(
                                 "id".to_string(),
@@ -149,8 +146,6 @@ impl QueryExecutor {
                             });
                             continue;
                         }
-                    }
-                }
                 let mut fields = std::collections::HashMap::new();
                 fields.insert("id".to_string(), serde_json::Value::String(entity_id));
                 derived.push(QueryRow {
@@ -531,8 +526,8 @@ impl QueryExecutor {
         };
 
         // Seed handoff: Vector → Graph when needed
-        if graph_needs_seeds && !graph_ops.is_empty() {
-            if let Some(ExecutionOperation::GraphTraversal {
+        if graph_needs_seeds && !graph_ops.is_empty()
+            && let Some(ExecutionOperation::GraphTraversal {
                 edge_types,
                 max_depth,
                 filters,
@@ -558,7 +553,6 @@ impl QueryExecutor {
                     graph_results.extend(seeded);
                 }
             }
-        }
 
         // If no vector ops but graph results exist, perform Graph → Vector seeding per plan strategy
         if vector_ops.is_empty() && !graph_results.is_empty() {
@@ -575,8 +569,8 @@ impl QueryExecutor {
                 } => vector_target_collection.clone(),
                 _ => None,
             });
-            if let Some(collection_id) = target_collection {
-                if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
+            if let Some(collection_id) = target_collection
+                && let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
                     let seeds: Vec<String> = graph_results
                         .iter()
                         .map(|r| self.extract_result_id(r))
@@ -590,9 +584,9 @@ impl QueryExecutor {
                             let mut acc: Vec<f32> = Vec::new();
                             let mut count = 0f32;
                             for entity_id in seeds.iter().take(32) {
-                                if let Some(vec_ids) = store.get_entity_vectors(entity_id) {
-                                    if let Some(first_vec_id) = vec_ids.first() {
-                                        if let Some(v) = store.get_embedding(first_vec_id) {
+                                if let Some(vec_ids) = store.get_entity_vectors(entity_id)
+                                    && let Some(first_vec_id) = vec_ids.first()
+                                        && let Some(v) = store.get_embedding(first_vec_id) {
                                             if acc.is_empty() {
                                                 acc = v.clone();
                                             } else if acc.len() == v.len() {
@@ -602,8 +596,6 @@ impl QueryExecutor {
                                             }
                                             count += 1.0;
                                         }
-                                    }
-                                }
                             }
                             if count > 0.0 {
                                 for i in 0..acc.len() {
@@ -626,9 +618,9 @@ impl QueryExecutor {
                         crate::query::execution::SeedingStrategy::PerSeed => {
                             // Run per-seed vector queries and fuse
                             for entity_id in seeds {
-                                if let Some(vec_ids) = store.get_entity_vectors(&entity_id) {
-                                    if let Some(first_vec_id) = vec_ids.first() {
-                                        if let Some(v) = store.get_embedding(first_vec_id) {
+                                if let Some(vec_ids) = store.get_entity_vectors(&entity_id)
+                                    && let Some(first_vec_id) = vec_ids.first()
+                                        && let Some(v) = store.get_embedding(first_vec_id) {
                                             let sim_rows = self
                                                 .execute_vector_search_operation(
                                                     &collection_id,
@@ -642,8 +634,6 @@ impl QueryExecutor {
                                                 .unwrap_or_default();
                                             vector_results.extend(sim_rows);
                                         }
-                                    }
-                                }
                             }
                         }
                         crate::query::execution::SeedingStrategy::None => {
@@ -651,7 +641,6 @@ impl QueryExecutor {
                         }
                     }
                 }
-            }
         }
 
         // Join or fuse
@@ -1046,12 +1035,11 @@ impl QueryExecutor {
             }
             let row_hash = hasher.finish();
 
-            if right_hashes.contains_key(&row_hash) {
-                if all || !seen_hashes.contains(&row_hash) {
+            if right_hashes.contains_key(&row_hash)
+                && (all || !seen_hashes.contains(&row_hash)) {
                     seen_hashes.insert(row_hash);
                     result.push(row.clone());
                 }
-            }
         }
 
         Ok(result)
@@ -1094,12 +1082,11 @@ impl QueryExecutor {
             }
             let row_hash = hasher.finish();
 
-            if !right_hashes.contains(&row_hash) {
-                if all || !seen_hashes.contains(&row_hash) {
+            if !right_hashes.contains(&row_hash)
+                && (all || !seen_hashes.contains(&row_hash)) {
                     seen_hashes.insert(row_hash);
                     result.push(row.clone());
                 }
-            }
         }
 
         Ok(result)
@@ -1151,11 +1138,10 @@ impl QueryExecutor {
             rows.clear();
             return;
         }
-        if let Some(lim) = limit {
-            if rows.len() > lim {
+        if let Some(lim) = limit
+            && rows.len() > lim {
                 rows.truncate(lim);
             }
-        }
     }
 
     #[allow(dead_code)]
@@ -1570,11 +1556,10 @@ impl QueryExecutor {
                         // Format timestamp fields from int64_ms to ISO 8601 strings
                         let mut formatted_fields = HashMap::new();
                         for (key, value) in &row.fields {
-                            if key.contains("timestamp")
+                            if (key.contains("timestamp")
                                 || key.contains("_at")
-                                || key.contains("time")
-                            {
-                                if let Some(timestamp_ms) = value.as_i64() {
+                                || key.contains("time"))
+                                && let Some(timestamp_ms) = value.as_i64() {
                                     let formatted =
                                         chrono::DateTime::from_timestamp_millis(timestamp_ms)
                                             .map(|dt| dt.to_rfc3339())
@@ -1584,7 +1569,6 @@ impl QueryExecutor {
                                         serde_json::Value::String(formatted),
                                     );
                                 }
-                            }
                         }
                         // Add formatted timestamp fields to the row
                         row.fields.extend(formatted_fields);

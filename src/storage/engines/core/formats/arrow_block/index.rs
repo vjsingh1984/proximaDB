@@ -176,11 +176,10 @@ impl ArrowBlockIndex {
 
             // Search within leaf's entries
             for i in leaf.start_idx..leaf.start_idx + leaf.len {
-                if let Some(entry) = self.block_entries.get(i) {
-                    if id >= entry.min_id.as_str() && id <= entry.max_id.as_str() {
+                if let Some(entry) = self.block_entries.get(i)
+                    && id >= entry.min_id.as_str() && id <= entry.max_id.as_str() {
                         return Some(entry);
                     }
-                }
             }
         } else {
             // Linear scan fallback

@@ -644,17 +644,15 @@ impl BackupCoordinator {
                 .await
                 .get(&BackupType::Incremental)
                 .cloned();
-            if let Some(ref last_id) = last_incr {
-                if let Ok(last_backup) = self.get_backup_metadata(last_id).await {
-                    if last_backup.chain_depth >= self.config.max_incremental_chain_length {
+            if let Some(ref last_id) = last_incr
+                && let Ok(last_backup) = self.get_backup_metadata(last_id).await
+                    && last_backup.chain_depth >= self.config.max_incremental_chain_length {
                         info!(
                             "📋 Incremental chain length ({}) exceeded max ({}), creating full backup",
                             last_backup.chain_depth, self.config.max_incremental_chain_length
                         );
                         return Ok(BackupType::Full);
                     }
-                }
-            }
         }
 
         Ok(options.backup_type)

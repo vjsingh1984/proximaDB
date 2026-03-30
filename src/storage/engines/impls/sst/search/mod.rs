@@ -517,11 +517,9 @@ impl SstEngine {
         if let SearchMode::Adaptive {
             threshold: _threshold,
         } = search_mode
-        {
-            if all_files.len() <= 3 {
+            && all_files.len() <= 3 {
                 return Ok(all_files);
             }
-        }
 
         // Calculate effective nprobe based on search mode and number of files
         let nprobe = search_mode.effective_nprobe(all_files.len(), all_files.len() * 1000); // Estimate 1000 vectors per file
@@ -775,11 +773,10 @@ impl SstEngine {
         // Use filesystem to list files directly
         if let Ok(mut entries) = tokio::fs::read_dir(data_dir).await {
             while let Some(entry) = entries.next_entry().await? {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.ends_with(".sst") || name.ends_with(".arrow") {
+                if let Some(name) = entry.file_name().to_str()
+                    && (name.ends_with(".sst") || name.ends_with(".arrow")) {
                         sstable_files.push(format!("{}/{}", data_dir, name));
                     }
-                }
             }
         }
 

@@ -165,13 +165,12 @@ impl CompactionManager {
                 }
 
                 // Check if compaction is needed
-                if let Ok(should_compact) = Self::should_compact(&storage_dir).await {
-                    if should_compact {
+                if let Ok(should_compact) = Self::should_compact(&storage_dir).await
+                    && should_compact {
                         info!("Triggering compaction cycle");
                         // TODO: Run actual compaction
                         // For now, this is a placeholder
                     }
-                }
             }
 
             info!("Compaction task stopped");

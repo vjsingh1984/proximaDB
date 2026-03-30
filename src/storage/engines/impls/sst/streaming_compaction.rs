@@ -153,11 +153,10 @@ impl StreamingCompactor {
 
             let _fs = self.filesystem.get_filesystem(&file_url)?;
             // Note: Using input_file directly for metadata since file_url may have different scheme
-            if let Ok(fs) = self.filesystem.get_filesystem(input_file) {
-                if let Ok(metadata) = fs.metadata(input_file).await {
+            if let Ok(fs) = self.filesystem.get_filesystem(input_file)
+                && let Ok(metadata) = fs.metadata(input_file).await {
                     total_input_size += metadata.size;
                 }
-            }
 
             // Create streaming reader - for compaction, we use unified caching filesystem
             let base_fs = self
@@ -239,8 +238,8 @@ impl StreamingCompactor {
             {
                 // Check for tombstone (expired record)
                 let now = chrono::Utc::now().timestamp() as u32;
-                if let Some(expires_at) = merge_record.record.expires_at {
-                    if expires_at <= now as i64 {
+                if let Some(expires_at) = merge_record.record.expires_at
+                    && expires_at <= now as i64 {
                         deleted_vector_ids.push(current_id.clone());
                         records_deduped += 1;
 
@@ -253,7 +252,6 @@ impl StreamingCompactor {
                         .await?;
                         continue;
                     }
-                }
 
                 // Valid record - add to output
                 output_records.push((current_id.clone(), merge_record.record.clone()));

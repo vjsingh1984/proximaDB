@@ -1439,8 +1439,8 @@ impl UnifiedStorageEngine for NovaEngine {
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
         {
             // Try to get from vector cache first
-            if let Some(vector_cache) = orchestrator.get_vector_cache() {
-                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
+            if let Some(vector_cache) = orchestrator.get_vector_cache()
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
                     // Track cache hit for access pattern learning
                     orchestrator.pattern_tracker().track_access_async(
                         cache_key.clone(),
@@ -1448,7 +1448,6 @@ impl UnifiedStorageEngine for NovaEngine {
                     );
                     return Ok(Some(cached_vector));
                 }
-            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(

@@ -310,8 +310,8 @@ impl ConsolidatedRBACManager {
         // Check cache first
         {
             let cache = self.permission_cache.read().await;
-            if let Some(user_cache) = cache.get(user_id) {
-                if let Some(entry) = user_cache.get(permission) {
+            if let Some(user_cache) = cache.get(user_id)
+                && let Some(entry) = user_cache.get(permission) {
                     let now = Utc::now();
                     let ttl = Duration::from_secs(self.config.permission_cache_ttl_minutes * 60);
 
@@ -325,7 +325,6 @@ impl ConsolidatedRBACManager {
                         return Ok(entry.allowed);
                     }
                 }
-            }
         }
 
         // Cache miss - perform actual check
@@ -604,13 +603,11 @@ impl ConsolidatedRBACManager {
         tenant_id: Option<&str>,
     ) -> Result<Option<HashSet<UnifiedPermission>>> {
         // Check tenant-specific roles first
-        if let Some(tenant_id) = tenant_id {
-            if let Some(tenant_roles) = self.tenant_roles.get(tenant_id) {
-                if let Some(role) = tenant_roles.get(role_name) {
+        if let Some(tenant_id) = tenant_id
+            && let Some(tenant_roles) = self.tenant_roles.get(tenant_id)
+                && let Some(role) = tenant_roles.get(role_name) {
                     return Ok(Some(role.permissions.clone()));
                 }
-            }
-        }
 
         // Check system-wide roles
         if let Some(role) = self.system_roles.get(role_name) {

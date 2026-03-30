@@ -133,11 +133,10 @@ impl SingleCollectionIndex {
 
         // Update secondary index
         // If name changed, remove old mapping
-        if let Some(old_name) = old_name {
-            if old_name != name {
+        if let Some(old_name) = old_name
+            && old_name != name {
                 self.name_to_uuid.remove(&old_name);
             }
-        }
         self.name_to_uuid.insert(name, uuid);
 
         // Update metrics

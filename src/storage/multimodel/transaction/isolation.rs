@@ -188,25 +188,22 @@ impl WriteSet {
     pub fn conflicts_with(&self, other: &WriteSet) -> bool {
         // Check if any writes in self conflict with writes or deletes in other
         for (store_type, ids) in &self.writes {
-            if let Some(other_writes) = other.writes.get(store_type) {
-                if !ids.is_disjoint(other_writes) {
+            if let Some(other_writes) = other.writes.get(store_type)
+                && !ids.is_disjoint(other_writes) {
                     return true;
                 }
-            }
-            if let Some(other_deletes) = other.deletes.get(store_type) {
-                if !ids.is_disjoint(other_deletes) {
+            if let Some(other_deletes) = other.deletes.get(store_type)
+                && !ids.is_disjoint(other_deletes) {
                     return true;
                 }
-            }
         }
 
         // Check if any deletes in self conflict with writes in other
         for (store_type, ids) in &self.deletes {
-            if let Some(other_writes) = other.writes.get(store_type) {
-                if !ids.is_disjoint(other_writes) {
+            if let Some(other_writes) = other.writes.get(store_type)
+                && !ids.is_disjoint(other_writes) {
                     return true;
                 }
-            }
         }
 
         false
@@ -395,8 +392,8 @@ impl IsolationManager {
         };
 
         // Add to commit history
-        if let Some(ws) = write_set {
-            if !ws.is_empty() {
+        if let Some(ws) = write_set
+            && !ws.is_empty() {
                 let mut history = self.commit_history.write().await;
                 history.push((transaction_id.to_string(), now, ws));
 
@@ -407,7 +404,6 @@ impl IsolationManager {
                     history.drain(0..drain_count);
                 }
             }
-        }
 
         // Remove snapshot
         {

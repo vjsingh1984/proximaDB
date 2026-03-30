@@ -442,14 +442,13 @@ impl MetadataMemoryIndexes {
         // Name prefix index - Remove full name only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            if let Some(config) = record.config.as_ref() {
-                if let Some(uuids) = prefix_index.get_mut(&config.name) {
+            if let Some(config) = record.config.as_ref()
+                && let Some(uuids) = prefix_index.get_mut(&config.name) {
                     uuids.retain(|uuid| uuid != &record.id);
                     if uuids.is_empty() {
                         prefix_index.remove(&config.name);
                     }
                 }
-            }
         }
 
         // Tag index
@@ -470,14 +469,13 @@ impl MetadataMemoryIndexes {
         // Size index
         {
             let mut size_index = self.size_index.write().await;
-            if let Some(stats) = &record.stats {
-                if let Some(uuids) = size_index.get_mut(&stats.data_size_bytes) {
+            if let Some(stats) = &record.stats
+                && let Some(uuids) = size_index.get_mut(&stats.data_size_bytes) {
                     uuids.retain(|uuid| uuid != &record.id);
                     if uuids.is_empty() {
                         size_index.remove(&stats.data_size_bytes);
                     }
                 }
-            }
         }
 
         // Time index

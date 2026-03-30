@@ -451,11 +451,10 @@ impl ProgressiveColumnarSearch {
                 .compute_hamming_distance(&binary_query, &binary_sketch)
                 .await?;
             // Check threshold
-            if let Some(threshold) = self.config.binary_config.distance_threshold {
-                if binary_distance > threshold {
+            if let Some(threshold) = self.config.binary_config.distance_threshold
+                && binary_distance > threshold {
                     continue;
                 }
-            }
 
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,
@@ -542,11 +541,10 @@ impl ProgressiveColumnarSearch {
                 .await?;
 
             // Check threshold
-            if let Some(threshold) = self.config.int8_config.distance_threshold {
-                if int8_distance > threshold {
+            if let Some(threshold) = self.config.int8_config.distance_threshold
+                && int8_distance > threshold {
                     continue;
                 }
-            }
 
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,
@@ -633,11 +631,10 @@ impl ProgressiveColumnarSearch {
                 .await?;
 
             // Check threshold
-            if let Some(threshold) = self.config.pq_config.distance_threshold {
-                if pq_distance > threshold {
+            if let Some(threshold) = self.config.pq_config.distance_threshold
+                && pq_distance > threshold {
                     continue;
                 }
-            }
 
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,

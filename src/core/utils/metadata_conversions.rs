@@ -207,15 +207,14 @@ pub fn validate_metadata_types(
     schema: &HashMap<String, MetadataValueType>,
 ) -> Result<()> {
     for item in metadata {
-        if let Some(expected_type) = schema.get(&item.key) {
-            if !matches_type(&item.value, expected_type) {
+        if let Some(expected_type) = schema.get(&item.key)
+            && !matches_type(&item.value, expected_type) {
                 return Err(anyhow!(
                     "Type mismatch for field '{}': expected {:?}",
                     item.key,
                     expected_type
                 ));
             }
-        }
     }
     Ok(())
 }

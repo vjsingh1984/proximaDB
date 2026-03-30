@@ -110,8 +110,8 @@ impl ObservabilityStorage {
         let mut recovered_namespaces = 0u64;
 
         for entry in entries {
-            if entry.is_observability_operation() {
-                if let UnifiedWALOperation::ObservabilityOp(op) = entry.operation {
+            if entry.is_observability_operation()
+                && let UnifiedWALOperation::ObservabilityOp(op) = entry.operation {
                     match op {
                         ObservabilityOperation::CreateNamespace {
                             namespace,
@@ -180,11 +180,10 @@ impl ObservabilityStorage {
                             span_json,
                         } => {
                             let namespaces = self.namespaces.read().await;
-                            if let Some(ns) = namespaces.get(&namespace) {
-                                if let Ok(span) = serde_json::from_str::<TraceSpan>(&span_json) {
+                            if let Some(ns) = namespaces.get(&namespace)
+                                && let Ok(span) = serde_json::from_str::<TraceSpan>(&span_json) {
                                     let _ = ns.traces.write(&span).await;
                                 }
-                            }
                         }
                         ObservabilityOperation::DeleteNamespace { namespace } => {
                             let mut namespaces = self.namespaces.write().await;
@@ -192,7 +191,6 @@ impl ObservabilityStorage {
                         }
                     }
                 }
-            }
         }
 
         info!(

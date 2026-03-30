@@ -83,8 +83,8 @@ impl LLMIntegrationEngine {
         }
 
         // Initialize Azure OpenAI provider if configured
-        if let Some(ref azure_config) = config.azure_openai_config {
-            if !azure_config.api_key.is_empty() && !azure_config.endpoint.is_empty() {
+        if let Some(ref azure_config) = config.azure_openai_config
+            && !azure_config.api_key.is_empty() && !azure_config.endpoint.is_empty() {
                 match AzureOpenAIClient::new(azure_config.clone()).await {
                     Ok(client) => {
                         providers.insert(LLMProvider::AzureOpenAI, Arc::new(client));
@@ -95,11 +95,10 @@ impl LLMIntegrationEngine {
                     }
                 }
             }
-        }
 
         // Initialize AWS Bedrock provider if configured
-        if let Some(ref bedrock_config) = config.aws_bedrock_config {
-            if !bedrock_config.model_id.is_empty() {
+        if let Some(ref bedrock_config) = config.aws_bedrock_config
+            && !bedrock_config.model_id.is_empty() {
                 match AWSBedrockClient::new(bedrock_config.clone()).await {
                     Ok(client) => {
                         providers.insert(LLMProvider::AWSBedrock, Arc::new(client));
@@ -110,7 +109,6 @@ impl LLMIntegrationEngine {
                     }
                 }
             }
-        }
 
         // Initialize Ollama provider if configured
         if let Some(ref ollama_config) = config.ollama_config {
@@ -139,8 +137,8 @@ impl LLMIntegrationEngine {
         }
 
         // Initialize HuggingFace provider if configured
-        if let Some(ref hf_config) = config.huggingface_config {
-            if !hf_config.api_key.is_empty() {
+        if let Some(ref hf_config) = config.huggingface_config
+            && !hf_config.api_key.is_empty() {
                 match HuggingFaceClient::new(hf_config.clone()).await {
                     Ok(client) => {
                         providers.insert(LLMProvider::HuggingFace, Arc::new(client));
@@ -151,7 +149,6 @@ impl LLMIntegrationEngine {
                     }
                 }
             }
-        }
 
         // Ensure at least one provider is available
         if providers.is_empty() {

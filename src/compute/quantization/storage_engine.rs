@@ -227,8 +227,8 @@ impl StorageQuantizationEngine {
         };
 
         // Train primary quantization (PQ)
-        if let Some(ref level) = self.config.primary_level {
-            if let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
+        if let Some(ref level) = self.config.primary_level
+            && let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
                 let codebook_id = format!("storage_pq_{}_{}", pq.num_subvectors, pq.bits_per_code);
 
                 info!("Training PQ codebook: {}", codebook_id);
@@ -263,7 +263,6 @@ impl StorageQuantizationEngine {
                     codebook_id, pq.num_subvectors
                 );
             }
-        }
 
         // No training needed for binary or INT8 quantization
 
@@ -963,8 +962,8 @@ impl StorageQuantizationEngine {
         }
 
         // Check if we have PQ quantization configuration and precompute distance table
-        if let Some(ref level) = self.config.primary_level {
-            if let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
+        if let Some(ref level) = self.config.primary_level
+            && let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
                 // Precompute distance table for faster PQ distance calculations
                 let _distance_table = self.precompute_pq_distance_table(
                     query,
@@ -978,7 +977,6 @@ impl StorageQuantizationEngine {
                 // Note: The distance table would be used in an optimized version of
                 // calculate_batch_distances that accepts precomputed tables
             }
-        }
 
         // Calculate distances
         // Note: Distance table optimization is prepared but the actual optimized computation

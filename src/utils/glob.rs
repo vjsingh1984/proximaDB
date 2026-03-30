@@ -429,13 +429,11 @@ impl<'a> GlobMatcher<'a> {
                 PatternElement::Star => {
                     // For simplicity, consume remaining non-matching chars
                     while text_idx < text_chars.len() {
-                        if elem_idx + 1 < alt.elements.len() {
-                            if let PatternElement::Literal(ch) = &alt.elements[elem_idx + 1] {
-                                if text_chars[text_idx] == *ch {
+                        if elem_idx + 1 < alt.elements.len()
+                            && let PatternElement::Literal(ch) = &alt.elements[elem_idx + 1]
+                                && text_chars[text_idx] == *ch {
                                     break;
                                 }
-                            }
-                        }
                         consumed += 1;
                         text_idx += 1;
                     }

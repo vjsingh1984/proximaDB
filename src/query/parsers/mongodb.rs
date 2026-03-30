@@ -972,8 +972,8 @@ impl MongoDBParser {
                         continue;
                     }
 
-                    if let JsonValue::Object(acc_obj) = acc_value {
-                        if let Some((acc_op, acc_expr)) = acc_obj.iter().next() {
+                    if let JsonValue::Object(acc_obj) = acc_value
+                        && let Some((acc_op, acc_expr)) = acc_obj.iter().next() {
                             let accumulator = match acc_op.as_str() {
                                 "$sum" => GroupAccumulator::Sum(MongoDBValue::from_json(acc_expr)),
                                 "$avg" => GroupAccumulator::Avg(MongoDBValue::from_json(acc_expr)),
@@ -995,7 +995,6 @@ impl MongoDBParser {
                             };
                             accumulators.insert(field.clone(), accumulator);
                         }
-                    }
                 }
 
                 Ok(MongoDBPipelineStage::Group {

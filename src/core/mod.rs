@@ -291,13 +291,12 @@ impl VectorRecordSerialization for VectorRecord {
         // 3. Combine zero-copy vector with fast-deserialized fields
         let mut metadata = std::collections::HashMap::new();
         for json_value in other_fields.metadata {
-            if let (Some(key), Some(value)) = (json_value.get("key"), json_value.get("value")) {
-                if let (Some(key_str), Ok(sql_value)) =
+            if let (Some(key), Some(value)) = (json_value.get("key"), json_value.get("value"))
+                && let (Some(key_str), Ok(sql_value)) =
                     (key.as_str(), serde_json::from_value(value.clone()))
                 {
                     metadata.insert(key_str.to_string(), sql_value);
                 }
-            }
         }
 
         Ok(VectorRecord {

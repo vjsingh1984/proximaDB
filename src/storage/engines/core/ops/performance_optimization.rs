@@ -43,15 +43,14 @@ impl Default for MemoryPoolConfig {
 /// Global configuration for the shared memory pool
 static MEMORY_POOL_CONFIG: Lazy<MemoryPoolConfig> = Lazy::new(|| {
     // Try to read from environment or config
-    if let Ok(size_str) = std::env::var("PROXIMADB_MEMORY_POOL_SIZE_MB") {
-        if let Ok(size) = size_str.parse::<usize>() {
+    if let Ok(size_str) = std::env::var("PROXIMADB_MEMORY_POOL_SIZE_MB")
+        && let Ok(size) = size_str.parse::<usize>() {
             tracing::info!("Using memory pool size from environment: {}MB", size);
             return MemoryPoolConfig {
                 pool_size_mb: Some(size),
                 use_smart_defaults: false,
             };
         }
-    }
     MemoryPoolConfig::default()
 });
 
@@ -311,9 +310,9 @@ impl UniversalPerformanceOptimizer {
         let _filesystem = self.filesystem_factory.get_filesystem(file_url)?;
 
         // Try local file memory mapping first (works for file:// URLs)
-        if file_url.starts_with("file://") {
-            if let Some(local_path) = file_url.strip_prefix("file://") {
-                if let Ok(file) = File::open(local_path) {
+        if file_url.starts_with("file://")
+            && let Some(local_path) = file_url.strip_prefix("file://")
+                && let Ok(file) = File::open(local_path) {
                     let mmap = Arc::new(unsafe { MmapOptions::new().map(&file)? });
 
                     // Cache for future access
@@ -328,8 +327,6 @@ impl UniversalPerformanceOptimizer {
 
                     return Ok(Some(mmap));
                 }
-            }
-        }
 
         // For cloud storage, fall back to regular I/O (memory mapping not supported)
         // This will use the data cache instead
@@ -594,14 +591,12 @@ impl UniversalPerformanceOptimizer {
             let mmap_cache = self.mmap_cache.clone();
             tokio::spawn(async move {
                 for file_url in local_files {
-                    if let Some(local_path) = file_url.strip_prefix("file://") {
-                        if let Ok(file) = File::open(local_path) {
-                            if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
+                    if let Some(local_path) = file_url.strip_prefix("file://")
+                        && let Ok(file) = File::open(local_path)
+                            && let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
                                 let mut cache = mmap_cache.write().await;
                                 cache.insert(file_url, Arc::new(mmap));
                             }
-                        }
-                    }
                 }
             });
         }
@@ -610,12 +605,11 @@ impl UniversalPerformanceOptimizer {
         if !cloud_files.is_empty() {
             tokio::spawn(async move {
                 for file_url in cloud_files {
-                    if let Ok(filesystem) = filesystem_factory.get_filesystem(&file_url) {
-                        if let Ok(data) = filesystem.read(&file_url).await {
+                    if let Ok(filesystem) = filesystem_factory.get_filesystem(&file_url)
+                        && let Ok(data) = filesystem.read(&file_url).await {
                             let mut cache = data_cache.write().await;
                             cache.insert(file_url, Arc::new(data));
                         }
-                    }
                 }
             });
         }

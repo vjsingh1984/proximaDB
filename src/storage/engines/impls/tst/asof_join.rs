@@ -75,8 +75,8 @@ impl ASOFJoin {
                 let time_diff = Duration::seconds(left_ts - right_ts);
 
                 // Check tolerance
-                if let Some(tol) = tolerance {
-                    if time_diff > tol {
+                if let Some(tol) = tolerance
+                    && time_diff > tol {
                         // Outside tolerance, no match
                         results.push(ASOFJoinResult {
                             left_record,
@@ -85,7 +85,6 @@ impl ASOFJoin {
                         });
                         continue;
                     }
-                }
 
                 results.push(ASOFJoinResult {
                     left_record,

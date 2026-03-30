@@ -484,17 +484,15 @@ impl Shard {
     pub fn may_contain_data(&self, tenant_id: Option<&str>, domain_id: Option<&str>) -> bool {
         if let Some(ref bounds) = self.metadata_bounds {
             // Check tenant filter
-            if let Some(tid) = tenant_id {
-                if !bounds.may_contain_tenant(tid) {
+            if let Some(tid) = tenant_id
+                && !bounds.may_contain_tenant(tid) {
                     return false;
                 }
-            }
             // Check domain filter
-            if let Some(did) = domain_id {
-                if !bounds.may_contain_domain(did) {
+            if let Some(did) = domain_id
+                && !bounds.may_contain_domain(did) {
                     return false;
                 }
-            }
         }
         // If no bounds or no filters, assume it might contain relevant data
         true

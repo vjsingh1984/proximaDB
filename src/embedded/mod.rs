@@ -691,8 +691,8 @@ impl EmbeddedProximaDB {
             crate::query::rl_planner::init_rl_planner(rl_config);
 
             // Try to load existing policy
-            if let Some(planner) = crate::query::rl_planner::get_rl_planner() {
-                if std::path::Path::new(&policy_path).exists() {
+            if let Some(planner) = crate::query::rl_planner::get_rl_planner()
+                && std::path::Path::new(&policy_path).exists() {
                     runtime.block_on(async {
                         match planner.load_policy(&policy_path).await {
                             Ok(()) => {
@@ -710,7 +710,6 @@ impl EmbeddedProximaDB {
                         }
                     });
                 }
-            }
 
             tracing::info!("🎯 EMBEDDED: RL Query Planner initialized");
             Some(policy_path)
@@ -2057,8 +2056,8 @@ impl EmbeddedProximaDB {
 
         self.runtime.block_on(async {
             // Step 1: Check WAL/memtable for unflushed data (most recent)
-            if let Some(write_buffer) = get_global_write_buffer_behavior() {
-                if let Ok(batches) = write_buffer.get_unflushed_batches(collection).await {
+            if let Some(write_buffer) = get_global_write_buffer_behavior()
+                && let Ok(batches) = write_buffer.get_unflushed_batches(collection).await {
                     for batch in batches {
                         for record in batch.vector_records.iter() {
                             if record.id == vector_id {
@@ -2072,7 +2071,6 @@ impl EmbeddedProximaDB {
                         }
                     }
                 }
-            }
 
             // Step 2: Search in flushed storage using the unified storage engine
             // Use a filter-based search to find the specific vector by ID
@@ -2482,8 +2480,8 @@ impl EmbeddedProximaDB {
     /// ```
     pub fn close(&self) {
         // Persist RL planner policy if enabled
-        if let Some(ref policy_path) = self.rl_policy_path {
-            if let Some(planner) = crate::query::rl_planner::get_rl_planner() {
+        if let Some(ref policy_path) = self.rl_policy_path
+            && let Some(planner) = crate::query::rl_planner::get_rl_planner() {
                 self.runtime.block_on(async {
                     match planner.save_policy(policy_path).await {
                         Ok(()) => {
@@ -2504,7 +2502,6 @@ impl EmbeddedProximaDB {
                     }
                 });
             }
-        }
 
         tracing::info!("🛑 EMBEDDED: Database closed");
     }
@@ -3626,8 +3623,8 @@ impl EmbeddedProximaDB {
 
         self.runtime.block_on(async {
             // Execute vector search if query contains vector operations and vector is provided
-            if models.contains(&"vector") {
-                if let Some(ref vector) = query_vector {
+            if models.contains(&"vector")
+                && let Some(ref vector) = query_vector {
                     // Extract collection name from query (simplified parsing)
                     if let Some(collection) = self.extract_collection_from_query(query) {
                         match self.search_internal(&collection, vector, 10).await {
@@ -3653,7 +3650,6 @@ impl EmbeddedProximaDB {
                         }
                     }
                 }
-            }
 
             // Execute document query if query contains document operations
             if models.contains(&"document") {
@@ -4446,11 +4442,10 @@ impl EmbeddedProximaDB {
                 return Some(now.timestamp_nanos_opt().unwrap_or(0));
             }
             // Parse "now-1h", "now-30m", etc.
-            if let Some(offset_str) = s.strip_prefix("now-") {
-                if let Some(duration) = Self::parse_duration(offset_str) {
+            if let Some(offset_str) = s.strip_prefix("now-")
+                && let Some(duration) = Self::parse_duration(offset_str) {
                     return Some((now - duration).timestamp_nanos_opt().unwrap_or(0));
                 }
-            }
         }
 
         None

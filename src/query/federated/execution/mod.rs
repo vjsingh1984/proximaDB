@@ -1052,11 +1052,10 @@ impl FederatedExecutor {
         }
 
         // Fast path: try direct Arrow extraction (no JSON parsing needed)
-        if nested_path.is_empty() {
-            if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
+        if nested_path.is_empty()
+            && let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
                 return Ok(vector);
             }
-        }
 
         match array.data_type() {
             DataType::Utf8 => {
@@ -1090,8 +1089,8 @@ impl FederatedExecutor {
     /// or None if it needs to fall through to the JSON parsing path.
     fn try_extract_vector_from_arrow(array: &dyn Array, row: usize) -> Option<Vec<f32>> {
         // Try FixedSizeList<Float32> first (most common for embeddings)
-        if let Some(fsl) = array.as_any().downcast_ref::<FixedSizeListArray>() {
-            if !fsl.is_null(row) {
+        if let Some(fsl) = array.as_any().downcast_ref::<FixedSizeListArray>()
+            && !fsl.is_null(row) {
                 let values = fsl.value(row);
                 if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
                     return Some(float_array.values().to_vec());
@@ -1103,11 +1102,10 @@ impl FederatedExecutor {
                     return Some(f64_array.values().iter().map(|&v| v as f32).collect());
                 }
             }
-        }
 
         // Try List<Float32>
-        if let Some(list) = array.as_any().downcast_ref::<ListArray>() {
-            if !list.is_null(row) {
+        if let Some(list) = array.as_any().downcast_ref::<ListArray>()
+            && !list.is_null(row) {
                 let values = list.value(row);
                 if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
                     return Some(float_array.values().to_vec());
@@ -1119,7 +1117,6 @@ impl FederatedExecutor {
                     return Some(f64_array.values().iter().map(|&v| v as f32).collect());
                 }
             }
-        }
 
         None
     }

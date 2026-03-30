@@ -346,8 +346,8 @@ impl CompressionMetricsTracker {
                     });
                 }
 
-                if let Some(ref q_type) = metrics.viper_quantized_type {
-                    if q_type == "pq8" && metrics.viper_quantization_reduction < 90.0 {
+                if let Some(ref q_type) = metrics.viper_quantized_type
+                    && q_type == "pq8" && metrics.viper_quantization_reduction < 90.0 {
                         recommendations.push(CompressionRecommendation {
                             recommendation_type: RecommendationType::OptimizeQuantization,
                             description: "PQ8 achieving only {:.1}% reduction. Consider PQ4 or adjusting normalization".to_string(),
@@ -355,7 +355,6 @@ impl CompressionMetricsTracker {
                             priority: RecommendationPriority::Medium,
                         });
                     }
-                }
             }
         }
 

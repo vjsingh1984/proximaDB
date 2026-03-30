@@ -144,12 +144,11 @@ impl super::GraphOperationsService {
             .insert(graph_id.to_string(), Arc::clone(&engine));
 
         // Initialize schema-derived constraints (unique, multi-unique) if present
-        if let Some(coll) = self.collection_service.get_graph(graph_id).await? {
-            if let Some(schema) = &coll.schema {
+        if let Some(coll) = self.collection_service.get_graph(graph_id).await?
+            && let Some(schema) = &coll.schema {
                 self.initialize_schema_constraints(graph_id, engine.as_ref(), schema)
                     .await?;
             }
-        }
 
         Ok(engine)
     }
@@ -178,14 +177,13 @@ impl super::GraphOperationsService {
                     continue;
                 }
                 if let Some(composite) = Self::composite_key_for_node(&node, &props_sorted) {
-                    if let Some(existing) = map.get(&composite) {
-                        if existing.value() != &node.id {
+                    if let Some(existing) = map.get(&composite)
+                        && existing.value() != &node.id {
                             return Err(ProximaDBError::InvalidInput(format!(
                                 "Existing duplicate composite value '{}' for unique {:?}",
                                 composite, uc.properties
                             )));
                         }
-                    }
                     map.insert(composite, node.id.clone());
                 }
             }

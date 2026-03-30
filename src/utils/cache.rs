@@ -357,11 +357,10 @@ where
         for (key, &node_ptr) in &self.map {
             unsafe {
                 let node = &*node_ptr;
-                if let Some(expires_at) = node.expires_at {
-                    if now > expires_at {
+                if let Some(expires_at) = node.expires_at
+                    && now > expires_at {
                         expired_keys.push(key.clone());
                     }
-                }
             }
         }
 

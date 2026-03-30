@@ -644,15 +644,14 @@ impl StreamingRowGroupIterator {
             let needs_projection = if let Some(ref columns) = self.column_projection {
                 let mut projection_indices = Vec::new();
                 for name in columns {
-                    if let Ok(field) = schema.field_with_name(name) {
-                        if let Some(index) = schema
+                    if let Ok(field) = schema.field_with_name(name)
+                        && let Some(index) = schema
                             .fields()
                             .iter()
                             .position(|f| f.name() == field.name())
                         {
                             projection_indices.push(index);
                         }
-                    }
                 }
                 if !projection_indices.is_empty() {
                     Some(parquet::arrow::ProjectionMask::leaves(

@@ -188,8 +188,8 @@ impl SyslogAdapter {
             while running.load(Ordering::Relaxed) {
                 match socket.recv_from(&mut buf).await {
                     Ok((len, _addr)) => {
-                        if let Ok(msg) = std::str::from_utf8(&buf[..len]) {
-                            if let Some(entry) = Self::parse_line(msg) {
+                        if let Ok(msg) = std::str::from_utf8(&buf[..len])
+                            && let Some(entry) = Self::parse_line(msg) {
                                 batch.push(entry);
                                 events.fetch_add(1, Ordering::Relaxed);
 
@@ -198,7 +198,6 @@ impl SyslogAdapter {
                                     batch = Vec::with_capacity(batch_size);
                                 }
                             }
-                        }
                     }
                     Err(_) => continue,
                 }

@@ -2554,11 +2554,10 @@ impl WriteAheadLogManager {
                 }
 
                 // Apply fine-grained metadata filter if specified
-                if let Some(filter_expr) = metadata_filters {
-                    if !self.evaluate_filter_on_record(vector_record, filter_expr) {
+                if let Some(filter_expr) = metadata_filters
+                    && !self.evaluate_filter_on_record(vector_record, filter_expr) {
                         continue;
                     }
-                }
 
                 // Calculate distance
                 let similarity_result = distance_calculator.calculate_distance(

@@ -120,14 +120,13 @@ impl PhysicalOperator for NodeScanOperator {
     }
 
     fn next(&mut self) -> Result<Option<ResultTuple>> {
-        if let Some(ref mut iter) = self.iterator {
-            if let Some(node) = iter.next() {
+        if let Some(ref mut iter) = self.iterator
+            && let Some(node) = iter.next() {
                 // Create result tuple with node binding
                 let mut tuple = ResultTuple::new();
                 tuple.set(self.variable_name.clone(), QueryValue::Node(node));
                 return Ok(Some(tuple));
             }
-        }
         Ok(None)
     }
 

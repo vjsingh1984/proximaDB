@@ -1663,11 +1663,10 @@ impl IvfClusteringBuilder {
     /// Helper to get vector data by ID from stored vectors
     fn vector_by_id(&self, vector_id: &str) -> Vec<f32> {
         // Look up vector by ID from the node mapping
-        if let Some(&node_idx) = self.id_to_node.get(vector_id) {
-            if (node_idx as usize) < self.vectors.len() {
+        if let Some(&node_idx) = self.id_to_node.get(vector_id)
+            && (node_idx as usize) < self.vectors.len() {
                 return self.vectors[node_idx as usize].clone();
             }
-        }
 
         // Fallback: return zero vector if not found
         // This shouldn't happen in normal operation
@@ -2674,11 +2673,10 @@ impl RaptorWriter {
 
             // Flush page when it reaches configured row page size (default 1000 for optimal HNSW I/O)
             // This minimizes wasted reads: at k=10, reads 1000 vectors for 10 results (1% efficiency)
-            if let Some(ref page) = self.current_row_page {
-                if page.rows.len() >= self.config.rowgroup_size {
+            if let Some(ref page) = self.current_row_page
+                && page.rows.len() >= self.config.rowgroup_size {
                     self.flush_row_page().await?;
                 }
-            }
         }
         Ok(())
     }
@@ -4068,8 +4066,8 @@ impl RaptorWriter {
         }
 
         // Also encode IDs from RecordBatch
-        if let Some(id_col) = batch.column_by_name("id") {
-            if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
+        if let Some(id_col) = batch.column_by_name("id")
+            && let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
                 use arrow_array::Array;
                 for i in 0..id_array.len() {
                     if !id_array.is_null(i) {
@@ -4082,17 +4080,15 @@ impl RaptorWriter {
                     }
                 }
             }
-        }
 
         // Encode timestamps if present
-        if let Some(ts_col) = batch.column_by_name("timestamp") {
-            if let Some(ts_array) = ts_col.as_any().downcast_ref::<arrow_array::Int64Array>() {
+        if let Some(ts_col) = batch.column_by_name("timestamp")
+            && let Some(ts_array) = ts_col.as_any().downcast_ref::<arrow_array::Int64Array>() {
                 for i in 0..ts_array.len() {
                     let timestamp = ts_array.value(i);
                     encoded_data.write_all(&timestamp.to_le_bytes())?;
                 }
             }
-        }
 
         Ok(encoded_data)
     }
@@ -4100,8 +4096,8 @@ impl RaptorWriter {
     fn extract_vectors_from_batch(&self, batch: &RecordBatch) -> Result<Vec<Vec<f32>>> {
         let mut vectors = Vec::new();
 
-        if let Some(vector_col) = batch.column_by_name("vector") {
-            if let Some(float_array) = vector_col
+        if let Some(vector_col) = batch.column_by_name("vector")
+            && let Some(float_array) = vector_col
                 .as_any()
                 .downcast_ref::<arrow_array::Float32Array>()
             {
@@ -4115,7 +4111,6 @@ impl RaptorWriter {
                     vectors.push(float_array.values()[start..end].to_vec());
                 }
             }
-        }
 
         Ok(vectors)
     }
@@ -4339,11 +4334,10 @@ impl RaptorWriter {
     /// This is needed for computing cross-cluster penalties in boosting
     fn get_rowgroup_cluster_id(&self, rowgroup_id: u16) -> u16 {
         // Look up from existing rowgroups if available
-        if let Some(rg) = self.row_groups.iter().find(|rg| rg.id == rowgroup_id) {
-            if let Some(ref stats) = rg.centroid_stats {
+        if let Some(rg) = self.row_groups.iter().find(|rg| rg.id == rowgroup_id)
+            && let Some(ref stats) = rg.centroid_stats {
                 return stats.cluster_id as u16;
             }
-        }
         // Fallback: use rowgroup_id as cluster_id
         // In practice, cluster assignments should be tracked properly
         rowgroup_id

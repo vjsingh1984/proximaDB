@@ -221,8 +221,8 @@ impl TraceStorage {
         let mut results = Vec::new();
 
         for trace_id in trace_ids {
-            if let Some(trace) = traces.get(trace_id) {
-                if trace.start_time_ns >= start_ns && trace.start_time_ns <= end_ns {
+            if let Some(trace) = traces.get(trace_id)
+                && trace.start_time_ns >= start_ns && trace.start_time_ns <= end_ns {
                     results.push(TraceSummary {
                         trace_id: trace.trace_id.clone(),
                         start_time_ns: trace.start_time_ns,
@@ -247,7 +247,6 @@ impl TraceStorage {
                         break;
                     }
                 }
-            }
         }
 
         Ok(results)
@@ -264,14 +263,12 @@ impl TraceStorage {
                 trace.spans.iter().map(|s| (s.span_id.clone(), s)).collect();
 
             for span in &trace.spans {
-                if !span.parent_span_id.is_empty() {
-                    if let Some(parent) = span_map.get(&span.parent_span_id) {
-                        if parent.service_name != span.service_name {
+                if !span.parent_span_id.is_empty()
+                    && let Some(parent) = span_map.get(&span.parent_span_id)
+                        && parent.service_name != span.service_name {
                             let key = (parent.service_name.clone(), span.service_name.clone());
                             *deps.entry(key).or_insert(0) += 1;
                         }
-                    }
-                }
             }
         }
 

@@ -1283,8 +1283,8 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 );
 
                 // Record backpressure event if not NONE
-                if backpressure.level != BackpressureLevel::BackpressureNone as i32 {
-                    if let Ok(level) = BackpressureLevel::try_from(backpressure.level) {
+                if backpressure.level != BackpressureLevel::BackpressureNone as i32
+                    && let Ok(level) = BackpressureLevel::try_from(backpressure.level) {
                         metrics.record_backpressure(level);
 
                         // Log significant backpressure events
@@ -1295,7 +1295,6 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                             );
                         }
                     }
-                }
 
                 // Prepare acknowledgment response
                 let response = BatchWriteStreamResponse {

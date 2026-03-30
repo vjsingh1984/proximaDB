@@ -481,11 +481,10 @@ impl DomainQueryOptimizer {
         let optimization_key = format!("{}::{}", self.domain_id, query.query_hash());
 
         // Check cache first
-        if let Some(cached) = self.performance_cache.get(&optimization_key) {
-            if !cached.is_expired() {
+        if let Some(cached) = self.performance_cache.get(&optimization_key)
+            && !cached.is_expired() {
                 return Ok(cached.optimized_query.clone());
             }
-        }
 
         // Create optimized query based on business context
         let optimized = OptimizedDomainEntityQuery {

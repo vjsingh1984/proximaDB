@@ -194,8 +194,8 @@ impl CollectionStateManager {
 
     /// Update transition progress
     pub fn update_transition_progress(&self, collection_id: &str, progress: f32) -> Result<()> {
-        if let Some(mut state) = self.states.get_mut(collection_id) {
-            if let CollectionTierState::Transitioning {
+        if let Some(mut state) = self.states.get_mut(collection_id)
+            && let CollectionTierState::Transitioning {
                 progress: ref mut p,
                 ..
             } = *state
@@ -207,7 +207,6 @@ impl CollectionStateManager {
                     progress * 100.0
                 );
             }
-        }
         Ok(())
     }
 

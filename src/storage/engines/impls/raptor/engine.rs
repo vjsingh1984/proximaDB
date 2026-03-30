@@ -925,11 +925,10 @@ impl RaptorEngine {
         // Apply filters and rerank
         let mut results = Vec::new();
         for candidate in candidates {
-            if let Some(ref filter) = filter {
-                if !self.matches_filter(&candidate, filter).await {
+            if let Some(ref filter) = filter
+                && !self.matches_filter(&candidate, filter).await {
                     continue;
                 }
-            }
             results.push(candidate);
             if results.len() >= k {
                 break;
@@ -1244,8 +1243,8 @@ impl RaptorEngine {
         if selected.is_empty() {
             debug!("SELECT_ROWGROUPS: No clusters found, using centroid-based selection");
             for rg_id in rowgroup_manager.row_group_ids() {
-                if let Some(rowgroup) = rowgroup_manager.row_group(&rg_id) {
-                    if let Some(centroid) = &rowgroup.centroid {
+                if let Some(rowgroup) = rowgroup_manager.row_group(&rg_id)
+                    && let Some(centroid) = &rowgroup.centroid {
                         // Calculate distance using distance computation engine
                         let compute = UnifiedDistanceCompute::default();
                         let distance = compute.distance(query, centroid);
@@ -1254,7 +1253,6 @@ impl RaptorEngine {
                             selected.push(rowgroup.id as u32);
                         }
                     }
-                }
             }
             debug!(
                 "SELECT_ROWGROUPS: Selected {} rowgroups from centroids",
@@ -2383,8 +2381,8 @@ impl UnifiedStorageEngine for RaptorEngine {
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
         {
             // Try to get from vector cache first
-            if let Some(vector_cache) = orchestrator.get_vector_cache() {
-                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
+            if let Some(vector_cache) = orchestrator.get_vector_cache()
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
                     // Track cache hit for access pattern learning
                     orchestrator.pattern_tracker().track_access_async(
                         cache_key.clone(),
@@ -2392,7 +2390,6 @@ impl UnifiedStorageEngine for RaptorEngine {
                     );
                     return Ok(Some(cached_vector));
                 }
-            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(

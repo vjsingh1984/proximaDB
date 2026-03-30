@@ -1077,8 +1077,8 @@ impl ViperEngine {
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
         {
             // Try to get from vector cache first (using correct cache type)
-            if let Some(vector_cache) = orchestrator.get_vector_cache() {
-                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
+            if let Some(vector_cache) = orchestrator.get_vector_cache()
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
                     // Track cache hit for access pattern learning
                     orchestrator.pattern_tracker().track_access_async(
                         cache_key.clone(),
@@ -1086,7 +1086,6 @@ impl ViperEngine {
                     );
                     return Ok(Some(cached_vector));
                 }
-            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(
@@ -1178,15 +1177,14 @@ impl ViperEngine {
                                 }
                             });
                         // Skip if expired
-                        if let Some(exp) = expires_at {
-                            if exp > 0 && exp < current_time {
+                        if let Some(exp) = expires_at
+                            && exp > 0 && exp < current_time {
                                 debug!(
                                     "Skipping expired vector {} (expired at {})",
                                     vector_id, exp
                                 );
                                 continue;
                             }
-                        }
                         // Extract vector data
                         let vector_values = vector_array.value(row_idx);
                         let vector_float_array = vector_values
@@ -1211,11 +1209,10 @@ impl ViperEngine {
                             String,
                             crate::proto::proximadb_v1::SqlValue,
                         > = HashMap::new();
-                        if let Some(extra_meta_col) = batch.column_by_name("extra_meta") {
-                            if let Some(extra_meta_list) =
+                        if let Some(extra_meta_col) = batch.column_by_name("extra_meta")
+                            && let Some(extra_meta_list) =
                                 extra_meta_col.as_any().downcast_ref::<ListArray>()
-                            {
-                                if !extra_meta_list.is_null(row_idx) {
+                                && !extra_meta_list.is_null(row_idx) {
                                     let kv_pairs = extra_meta_list.value(row_idx);
                                     if let Some(struct_array) =
                                         kv_pairs.as_any().downcast_ref::<StructArray>()
@@ -1244,8 +1241,6 @@ impl ViperEngine {
                                         }
                                     }
                                 }
-                            }
-                        }
                         // Also parse filterable metadata columns (they have their own columns)
                         for field in batch.schema().fields() {
                             let field_name = field.name();
@@ -1261,9 +1256,9 @@ impl ViperEngine {
                                     | FIELD_VERSION
                                     | FIELD_EXPIRES_AT
                                     | "extra_meta"
-                            ) {
-                                if let Some(column) = batch.column_by_name(field_name) {
-                                    if !column.is_null(row_idx) {
+                            )
+                                && let Some(column) = batch.column_by_name(field_name)
+                                    && !column.is_null(row_idx) {
                                         // Convert Arrow value to String based on data type
                                         let string_value = match field.data_type() {
                                             arrow_schema::DataType::Utf8 => {
@@ -1308,8 +1303,6 @@ impl ViperEngine {
                                             value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(string_value)),
                                         });
                                     }
-                                }
-                            }
                         }
                         // metadata_map is already HashMap<String, SqlValue> which is what VectorRecord expects
                         let record = VectorRecord {
@@ -1341,15 +1334,12 @@ impl ViperEngine {
         } // End for parquet_file in parquet_files
 
         // Update global cache with found vector before returning
-        if let Some((ref record, _, _)) = best_match {
-            if let Some(orchestrator) =
+        if let Some((ref record, _, _)) = best_match
+            && let Some(orchestrator) =
                 crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
-            {
-                if let Some(vector_cache) = orchestrator.get_vector_cache() {
+                && let Some(vector_cache) = orchestrator.get_vector_cache() {
                     let _ = vector_cache.put(cache_key, record.clone()).await;
                 }
-            }
-        }
 
         // Return the best match (highest version/newest timestamp)
         Ok(best_match.map(|(record, _, _)| record))

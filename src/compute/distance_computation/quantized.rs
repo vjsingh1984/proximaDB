@@ -644,8 +644,8 @@ impl QuantizedDistanceCalculator {
         );
 
         // Stage 1: Binary filtering (if available and quality target allows)
-        if let Some(_binary_data) = &quantized_vector.binary {
-            if current_quality < target_quality {
+        if let Some(_binary_data) = &quantized_vector.binary
+            && current_quality < target_quality {
                 let result = self
                     .compute_distance(query, quantized_vector, SelectedFormat::Binary)
                     .await?;
@@ -658,11 +658,10 @@ impl QuantizedDistanceCalculator {
                     final_distance, current_quality
                 );
             }
-        }
 
         // Stage 2: INT8 approximation (if available and needed)
-        if let Some(_int8_data) = &quantized_vector.int8 {
-            if current_quality < target_quality {
+        if let Some(_int8_data) = &quantized_vector.int8
+            && current_quality < target_quality {
                 let result = self
                     .compute_distance(query, quantized_vector, SelectedFormat::INT8)
                     .await?;
@@ -675,11 +674,10 @@ impl QuantizedDistanceCalculator {
                     final_distance, current_quality
                 );
             }
-        }
 
         // Stage 3: PQ approximation (if available and needed)
-        if let Some(_pq_data) = &quantized_vector.pq {
-            if current_quality < target_quality {
+        if let Some(_pq_data) = &quantized_vector.pq
+            && current_quality < target_quality {
                 let result = self
                     .compute_distance(query, quantized_vector, SelectedFormat::PQ)
                     .await?;
@@ -692,11 +690,10 @@ impl QuantizedDistanceCalculator {
                     final_distance, current_quality
                 );
             }
-        }
 
         // Stage 4: Full precision (if available and needed)
-        if let Some(_fp32_data) = &quantized_vector.fp32 {
-            if current_quality < target_quality {
+        if let Some(_fp32_data) = &quantized_vector.fp32
+            && current_quality < target_quality {
                 // For FP32, we need to use the distance engine directly
                 let fp32_vector = quantized_vector
                     .fp32
@@ -722,7 +719,6 @@ impl QuantizedDistanceCalculator {
                     final_distance, current_quality
                 );
             }
-        }
 
         let computation_time = start_time.elapsed().as_secs_f64() * 1_000_000.0;
 

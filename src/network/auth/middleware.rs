@@ -306,13 +306,11 @@ fn extract_resource_id(path: &str) -> Option<String> {
 
     // Look for patterns like /collections/{id}, /vectors/{id}, etc.
     for (i, segment) in path_segments.iter().enumerate() {
-        if matches!(*segment, "collections" | "vectors" | "users" | "roles") {
-            if let Some(id) = path_segments.get(i + 1) {
-                if !id.is_empty() && *id != "search" && *id != "bulk" {
+        if matches!(*segment, "collections" | "vectors" | "users" | "roles")
+            && let Some(id) = path_segments.get(i + 1)
+                && !id.is_empty() && *id != "search" && *id != "bulk" {
                     return Some(id.to_string());
                 }
-            }
-        }
     }
 
     None
@@ -655,11 +653,11 @@ pub async fn hybrid_auth_middleware<B>(
     }
 
     // First, try mTLS authentication if configured
-    if let Some(ref mtls_state) = mtls_state {
-        if mtls_state.config.enabled {
-            if let Some(cert_info) = request.extensions().get::<ClientCertificateInfo>().cloned() {
-                if cert_info.is_valid {
-                    if let Some(cn) = &cert_info.common_name {
+    if let Some(ref mtls_state) = mtls_state
+        && mtls_state.config.enabled
+            && let Some(cert_info) = request.extensions().get::<ClientCertificateInfo>().cloned()
+                && cert_info.is_valid
+                    && let Some(cn) = &cert_info.common_name {
                         // CN is valid, check against allowed patterns
                         let cn_allowed = mtls_state.config.allowed_cn_patterns.is_empty()
                             || mtls_state
@@ -689,10 +687,6 @@ pub async fn hybrid_auth_middleware<B>(
                             return Ok(next.run(request).await);
                         }
                     }
-                }
-            }
-        }
-    }
 
     // Fall back to token-based authentication
     let auth_header = extract_auth_header(&request)?;

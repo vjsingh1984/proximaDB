@@ -176,15 +176,14 @@ impl StrategyAwareReader for UnifiedSSTReader {
 
         if strategy_changed {
             // Recreate cached filesystem if strategy changed
-            if self.strategy.should_use_cache() && self.cached_filesystem.is_none() {
-                if let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
+            if self.strategy.should_use_cache() && self.cached_filesystem.is_none()
+                && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
                     self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
                         base_fs,
                         self.collection_id.clone(),
                         "sst".to_string(),
                     )));
                 }
-            }
             // Note: We should also recreate inner_reader here, but that requires &mut self throughout
         }
     }

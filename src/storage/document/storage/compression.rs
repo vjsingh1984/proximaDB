@@ -76,12 +76,11 @@ impl DocumentCompressor {
 
         // Add frequently occurring strings to dictionary
         for (s, count) in string_counts {
-            if count >= 2 && s.len() >= self.min_dict_length {
-                if !self.string_dictionary.contains_key(&s) {
+            if count >= 2 && s.len() >= self.min_dict_length
+                && !self.string_dictionary.contains_key(&s) {
                     self.string_dictionary.insert(s, self.next_dict_id);
                     self.next_dict_id += 1;
                 }
-            }
         }
     }
 
@@ -100,11 +99,10 @@ impl DocumentCompressor {
                         i += 1;
                     }
                 }
-                if i > start {
-                    if let Ok(s) = std::str::from_utf8(&doc[start..i]) {
+                if i > start
+                    && let Ok(s) = std::str::from_utf8(&doc[start..i]) {
                         *counts.entry(s.to_string()).or_insert(0) += 1;
                     }
-                }
             }
             i += 1;
         }

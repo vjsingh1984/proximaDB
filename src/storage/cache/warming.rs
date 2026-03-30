@@ -218,11 +218,10 @@ impl CacheWarmer {
             // Parse cache key: "vector:collection_id:vector_id" (consistent format across all engines)
             if let Some((collection_id, vector_id)) = self.parse_vector_cache_key(&cache_key) {
                 // Check if already cached in VectorCache (not QueryCache)
-                if let Some(vector_cache) = self.cache_orchestrator.get_vector_cache() {
-                    if vector_cache.get(&cache_key).await.is_some() {
+                if let Some(vector_cache) = self.cache_orchestrator.get_vector_cache()
+                    && vector_cache.get(&cache_key).await.is_some() {
                         continue; // Already cached
                     }
-                }
 
                 // Load from storage and cache
                 if let Some(engine) = self.get_best_engine_for_collection(&collection_id) {
@@ -230,8 +229,7 @@ impl CacheWarmer {
                     if let Ok(Some(vector)) = self
                         .load_vector_with_base_path(&engine, &collection_id, &vector_id)
                         .await
-                    {
-                        if let Some(vector_cache) = self.cache_orchestrator.get_vector_cache() {
+                        && let Some(vector_cache) = self.cache_orchestrator.get_vector_cache() {
                             let _ = vector_cache.put(cache_key.clone(), vector).await;
                             warmed_count += 1;
 
@@ -243,7 +241,6 @@ impl CacheWarmer {
                                 Some(1),
                             );
                         }
-                    }
                 }
             }
         }

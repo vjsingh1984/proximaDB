@@ -1070,13 +1070,12 @@ fn quantize_to_int8(vector: &[f32]) -> Vec<i8> {
 #[allow(dead_code)]
 fn extract_vector_from_column(column: &ArrayRef, row_idx: usize) -> Result<Vec<f32>> {
     // Try Float32Array first
-    if let Some(float_array) = column.as_any().downcast_ref::<Float32Array>() {
-        if row_idx < float_array.len() && float_array.value(row_idx).is_finite() {
+    if let Some(float_array) = column.as_any().downcast_ref::<Float32Array>()
+        && row_idx < float_array.len() && float_array.value(row_idx).is_finite() {
             // For now, return a placeholder
             // In production, would properly extract the vector
             return Ok(vec![float_array.value(row_idx); 768]);
         }
-    }
 
     // Try other formats (FixedSizeBinary, etc.)
     // Placeholder implementation

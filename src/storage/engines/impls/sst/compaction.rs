@@ -155,17 +155,13 @@ impl Compaction {
         }
 
         // Extract collection ID from path like: /path/to/collection_id/data/level0/file.sst
-        if let Some(path) = paths.first() {
-            if let Some(_parent) = path.parent() {
-                if let Some(_parent_parent) = _parent.parent() {
-                    if let Some(parent_parent_parent) = _parent_parent.parent() {
-                        if let Some(_collection_id) = parent_parent_parent.file_name() {
+        if let Some(path) = paths.first()
+            && let Some(_parent) = path.parent()
+                && let Some(_parent_parent) = _parent.parent()
+                    && let Some(parent_parent_parent) = _parent_parent.parent()
+                        && let Some(_collection_id) = parent_parent_parent.file_name() {
                             return Ok(_collection_id.to_string_lossy().to_string());
                         }
-                    }
-                }
-            }
-        }
 
         Ok("unknown".to_string())
     }

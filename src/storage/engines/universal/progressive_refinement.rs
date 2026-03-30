@@ -298,14 +298,12 @@ impl ProgressiveRefinementPipeline {
                 target_count,
                 quality_threshold,
             } = config.search_strategy
-            {
-                if current_candidates.len() <= target_count
+                && current_candidates.len() <= target_count
                     && stage_result.quality_score >= quality_threshold
                 {
                     trace!("Early termination triggered at stage {:?}", stage);
                     break;
                 }
-            }
 
             // Check if we have enough candidates
             if current_candidates.len() <= max_results {

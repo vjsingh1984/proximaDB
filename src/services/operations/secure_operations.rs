@@ -143,14 +143,13 @@ impl SecureVectorOperations {
         }
 
         // Apply field encryption if enabled
-        if security_config.field_encryption_enabled {
-            if let Some(ref encryption) = self.encryption_service {
+        if security_config.field_encryption_enabled
+            && let Some(ref encryption) = self.encryption_service {
                 for record in records.iter_mut() {
                     self.encrypt_record_fields(record, encryption, security_config)
                         .await?;
                 }
             }
-        }
 
         // Log audit event
         if security_config.audit_enabled

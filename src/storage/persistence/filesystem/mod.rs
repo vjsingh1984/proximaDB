@@ -1221,11 +1221,10 @@ impl FilesystemFactory {
             }
             "abfs" => {
                 // Container is before @ in hostname
-                if let Some(host) = parsed_url.host_str() {
-                    if let Some(at_pos) = host.find('@') {
+                if let Some(host) = parsed_url.host_str()
+                    && let Some(at_pos) = host.find('@') {
                         return Ok(Some(host[..at_pos].to_string()));
                     }
-                }
                 Ok(None)
             }
             _ => Ok(None),
@@ -1264,11 +1263,10 @@ impl FilesystemFactory {
             }
             "abfs" => {
                 // Account is after @ in hostname
-                if let Some(host) = parsed_url.host_str() {
-                    if let Some(at_pos) = host.find('@') {
+                if let Some(host) = parsed_url.host_str()
+                    && let Some(at_pos) = host.find('@') {
                         return Ok(Some(host[at_pos + 1..].to_string()));
                     }
-                }
                 Ok(None)
             }
             _ => Ok(None),

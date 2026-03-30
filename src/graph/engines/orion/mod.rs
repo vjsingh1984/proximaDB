@@ -370,8 +370,8 @@ impl OrionGraphEngine {
 
     /// Remove edge from CSR structures
     async fn remove_edge_from_csr(&self, edge: &Edge) -> Result<()> {
-        if let Some(from_index) = self.node_to_index.get(&edge.from_node_id) {
-            if let Some(to_index) = self.node_to_index.get(&edge.to_node_id) {
+        if let Some(from_index) = self.node_to_index.get(&edge.from_node_id)
+            && let Some(to_index) = self.node_to_index.get(&edge.to_node_id) {
                 // Remove from outgoing CSR
                 {
                     let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
@@ -384,7 +384,6 @@ impl OrionGraphEngine {
                     csr_in.remove_edge(*to_index, *from_index, &edge.id)?;
                 }
             }
-        }
 
         Ok(())
     }

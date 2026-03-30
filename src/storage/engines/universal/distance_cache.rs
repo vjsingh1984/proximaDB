@@ -97,8 +97,7 @@ impl DistanceTableCache {
             .cache_orchestrator
             .get(&CacheType::DistanceTable, &cache_key)
             .await
-        {
-            if let Ok(cached_table) = serde_json::from_slice::<CachedDistanceTable>(&cached_data) {
+            && let Ok(cached_table) = serde_json::from_slice::<CachedDistanceTable>(&cached_data) {
                 trace!("Cache hit for distance table");
 
                 // Update access count
@@ -118,7 +117,6 @@ impl DistanceTableCache {
 
                 return Ok(cached_table.distances);
             }
-        }
 
         // Cache miss - compute new table
         debug!("Cache miss - computing distance table");

@@ -106,11 +106,10 @@ impl TemporalQueryEngine {
         // Apply events
         for sequence in sequences {
             // Skip if before snapshot
-            if let Some(snapshot_seq) = snapshot_sequence {
-                if sequence <= snapshot_seq {
+            if let Some(snapshot_seq) = snapshot_sequence
+                && sequence <= snapshot_seq {
                     continue;
                 }
-            }
 
             // Load event
             let event_info = self.event_index.get_event_info(sequence).await?;

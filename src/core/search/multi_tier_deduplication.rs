@@ -378,8 +378,8 @@ impl MultiTierDeduplicator {
 
             // Check for early termination after each addition
             // Only terminate early if we don't require ordering
-            if !self.requires_ordering {
-                if let Some(k) = self.target_k {
+            if !self.requires_ordering
+                && let Some(k) = self.target_k {
                     let current_unique_count =
                         self.id_to_latest.len() + self.results_without_id.len();
                     if current_unique_count >= k {
@@ -392,7 +392,6 @@ impl MultiTierDeduplicator {
                         return; // Stop processing more results
                     }
                 }
-            }
         }
     }
 

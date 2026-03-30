@@ -471,8 +471,7 @@ impl ParquetReader {
                         }
                     } else if let Some(bool_array) =
                         column.as_any().downcast_ref::<arrow::array::BooleanArray>()
-                    {
-                        if !bool_array.is_null(row) {
+                        && !bool_array.is_null(row) {
                             let value = bool_array.value(row);
                             debug!(
                                 "🔍 DEBUG: Found bool metadata {}={} for row {}",
@@ -489,7 +488,6 @@ impl ParquetReader {
                                 },
                             );
                         }
-                    }
                 }
             }
 

@@ -477,9 +477,9 @@ impl SchemaEvolution for DefaultSchemaEvolution {
 
         // Check for type changes
         for col in &to_schema.columns {
-            if !col.is_deleted {
-                if let Some(old_col) = from_schema.column_by_id(col.id) {
-                    if old_col.data_type != col.data_type {
+            if !col.is_deleted
+                && let Some(old_col) = from_schema.column_by_id(col.id)
+                    && old_col.data_type != col.data_type {
                         is_online = false;
                         steps.push(MigrationStep::RewriteDataFiles {
                             affected_files: vec![], // To be filled by storage engine
@@ -493,8 +493,6 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                             }],
                         });
                     }
-                }
-            }
         }
 
         Ok(MigrationPlan {

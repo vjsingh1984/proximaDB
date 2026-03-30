@@ -92,14 +92,13 @@ impl ProtocolDetector for ArrowFlightDetector {
         let headers = request.headers();
 
         // Arrow Flight uses gRPC, so check content-type
-        if let Some(content_type) = headers.get(header::CONTENT_TYPE) {
-            if let Ok(ct) = content_type.to_str() {
+        if let Some(content_type) = headers.get(header::CONTENT_TYPE)
+            && let Ok(ct) = content_type.to_str() {
                 // Must be gRPC for Arrow Flight
                 if !ct.starts_with("application/grpc") {
                     return None;
                 }
             }
-        }
 
         // Check for Arrow-specific metadata
         // Arrow Flight often has x-arrow-flight-* headers

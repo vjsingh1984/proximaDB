@@ -445,12 +445,11 @@ impl EntityStore for ProximaEntityStore {
                 headers.get(&header_key).cloned()
             }
         };
-        if opt.is_some() {
-            if let Some(orch) = CrossCacheOrchestrator::global() {
+        if opt.is_some()
+            && let Some(orch) = CrossCacheOrchestrator::global() {
                 orch.pattern_tracker()
                     .track_access_async(header_key.clone(), CacheType::EntityHeader);
             }
-        }
         let header: EntityHeader = if let Some(bytes) = opt {
             // Deserialize header using serde_json
             match serde_json::from_slice::<(
@@ -737,11 +736,10 @@ impl EntityStore for ProximaEntityStore {
             })?;
             let mut ids = Vec::new();
             for key in headers.keys() {
-                if key.starts_with(&format!("{}:", collection_id)) {
-                    if let Some(entity_id) = key.split(':').nth(1) {
+                if key.starts_with(&format!("{}:", collection_id))
+                    && let Some(entity_id) = key.split(':').nth(1) {
                         ids.push(entity_id.to_string());
                     }
-                }
             }
             ids
         };
@@ -801,15 +799,14 @@ impl ProximaEntityStore {
 
         // Second pass: Load entities and apply detailed metadata filtering
         for entity_id in candidate_ids.into_iter().take(limit * 2) {
-            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id, true, true).await {
-                if self.entity_matches_metadata_filter(&entity, filter) {
+            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id, true, true).await
+                && self.entity_matches_metadata_filter(&entity, filter) {
                     results.push((entity, 0.0f32)); // 0.0 since no similarity scoring
 
                     if results.len() >= limit {
                         break;
                     }
                 }
-            }
         }
 
         Ok(results)
@@ -878,23 +875,20 @@ impl ProximaEntityStore {
             let mut field_found = false;
 
             // Search in typed metadata
-            if let Some(ref typed_metadata) = entity.typed_metadata {
-                if let Some(typed_field) = typed_metadata.fields.get(&clause.field) {
+            if let Some(ref typed_metadata) = entity.typed_metadata
+                && let Some(typed_field) = typed_metadata.fields.get(&clause.field) {
                     field_found = true;
                     if !self.typed_field_matches(typed_field, clause) {
                         return false;
                     }
                 }
-            }
 
             // If field not found in typed metadata, check flexible metadata
-            if !field_found {
-                if let Some(flexible_value) = entity.flexible_metadata.get(&clause.field) {
-                    if !self.sql_values_match(flexible_value, clause) {
+            if !field_found
+                && let Some(flexible_value) = entity.flexible_metadata.get(&clause.field)
+                    && !self.sql_values_match(flexible_value, clause) {
                         return false;
                     }
-                }
-            }
         }
 
         true
@@ -938,8 +932,8 @@ impl ProximaEntityStore {
                 break;
             }
 
-            if key.starts_with(&format!("{}/entity/", collection_id)) {
-                if let Some(entity_id) = key.strip_prefix(&format!("{}/entity/", collection_id)) {
+            if key.starts_with(&format!("{}/entity/", collection_id))
+                && let Some(entity_id) = key.strip_prefix(&format!("{}/entity/", collection_id)) {
                     // For now, retrieve entity and apply filters (could be optimized)
                     if let Ok(Some(entity)) = self
                         .get_entity(collection_id, entity_id, false, false)
@@ -961,7 +955,6 @@ impl ProximaEntityStore {
                         }
                     }
                 }
-            }
         }
 
         Ok(results)
@@ -1091,15 +1084,14 @@ impl ProximaEntityStore {
                                 }
                             }
 
-                            if all_match {
-                                if let Ok(Some(entity)) = self
+                            if all_match
+                                && let Ok(Some(entity)) = self
                                     .get_entity(collection_id, entity_id, false, false)
                                     .await
                                 {
                                     results.push(entity);
                                     count += 1;
                                 }
-                            }
                         }
                     }
 

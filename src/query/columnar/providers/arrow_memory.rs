@@ -165,8 +165,8 @@ impl ArrowInMemoryProvider {
         use arrow::array::{Float64Array, Int64Array, StringArray};
 
         // Handle string comparisons
-        if let Some(string_array) = column.as_any().downcast_ref::<StringArray>() {
-            if let Some(val) = value.as_str() {
+        if let Some(string_array) = column.as_any().downcast_ref::<StringArray>()
+            && let Some(val) = value.as_str() {
                 return match op {
                     ComparisonOperator::Equals => Ok(BooleanArray::from_iter(
                         (0..num_rows).map(|i| Some(string_array.value(i) == val)),
@@ -189,11 +189,10 @@ impl ArrowInMemoryProvider {
                     _ => Ok(BooleanArray::from(vec![true; num_rows])),
                 };
             }
-        }
 
         // Handle integer comparisons
-        if let Some(int_array) = column.as_any().downcast_ref::<Int64Array>() {
-            if let Some(val) = value.as_i64() {
+        if let Some(int_array) = column.as_any().downcast_ref::<Int64Array>()
+            && let Some(val) = value.as_i64() {
                 return match op {
                     ComparisonOperator::Equals => Ok(BooleanArray::from_iter(
                         (0..num_rows).map(|i| Some(int_array.value(i) == val)),
@@ -216,11 +215,10 @@ impl ArrowInMemoryProvider {
                     _ => Ok(BooleanArray::from(vec![true; num_rows])),
                 };
             }
-        }
 
         // Handle float comparisons
-        if let Some(float_array) = column.as_any().downcast_ref::<Float64Array>() {
-            if let Some(val) = value.as_f64() {
+        if let Some(float_array) = column.as_any().downcast_ref::<Float64Array>()
+            && let Some(val) = value.as_f64() {
                 return match op {
                     ComparisonOperator::Equals => {
                         Ok(BooleanArray::from_iter((0..num_rows).map(|i| {
@@ -247,7 +245,6 @@ impl ArrowInMemoryProvider {
                     _ => Ok(BooleanArray::from(vec![true; num_rows])),
                 };
             }
-        }
 
         // Default: return all true (no filtering)
         Ok(BooleanArray::from(vec![true; num_rows]))
@@ -348,11 +345,10 @@ impl ColumnarReadProvider for ArrowInMemoryProvider {
             }
 
             // Apply projection if present
-            if config.enable_projection {
-                if let Some(ref columns) = config.projection {
+            if config.enable_projection
+                && let Some(ref columns) = config.projection {
                     processed = Self::apply_projection(&processed, columns)?;
                 }
-            }
 
             if processed.num_rows() > 0 {
                 rows_matched += processed.num_rows() as u64;

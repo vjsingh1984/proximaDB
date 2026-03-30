@@ -313,11 +313,10 @@ async fn phase1_binary_filtering(
         for &b_idx in &block_indices {
             let block = &superblock.blocks[b_idx];
             // Apply metadata filter at block level
-            if let Some(f) = filter {
-                if !block_matches_filter(block, f) {
+            if let Some(f) = filter
+                && !block_matches_filter(block, f) {
                     continue;
                 }
-            }
 
             // Check each vector in block using binary sketches or fallback to direct comparison
             if let Some(ref sketches) = block.quantized_vectors {

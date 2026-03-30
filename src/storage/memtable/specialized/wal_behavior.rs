@@ -154,13 +154,12 @@ impl BatchCoordinator {
 
     /// Mark batch as flushed
     fn mark_batch_flushed(&mut self, collection_id: &str, batch_id: &str) -> Result<()> {
-        if let Some(collection_batches) = self.batches.get_mut(collection_id) {
-            if let Some(batch) = collection_batches.get_mut(batch_id) {
+        if let Some(collection_batches) = self.batches.get_mut(collection_id)
+            && let Some(batch) = collection_batches.get_mut(batch_id) {
                 batch.is_flushed = true;
                 tracing::debug!("✅ Marked batch {} as flushed", batch_id);
                 return Ok(());
             }
-        }
         Err(anyhow::anyhow!(
             "Batch {}:{} not found",
             collection_id,
@@ -913,8 +912,8 @@ impl WALBehaviorWrapper {
         let mut coordinator = self.batch_coordinator.write().await;
 
         // Remove batch from coordinator
-        if let Some(collection_batches) = coordinator.batches.get_mut(collection_id) {
-            if let Some(removed_batch) = collection_batches.remove(batch_id) {
+        if let Some(collection_batches) = coordinator.batches.get_mut(collection_id)
+            && let Some(removed_batch) = collection_batches.remove(batch_id) {
                 // Remove vector index entries for this batch
                 for vector_record in removed_batch.vector_records.iter() {
                     if !vector_record.id.is_empty() {
@@ -922,7 +921,6 @@ impl WALBehaviorWrapper {
                     }
                 }
             }
-        }
         drop(coordinator);
 
         // IMPORTANT: Also remove from the actual GlobalPartitionedMemtable

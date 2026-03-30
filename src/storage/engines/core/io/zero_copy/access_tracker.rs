@@ -365,15 +365,14 @@ impl AccessPatternTracker {
         // Update primary query type
         let max_count = stats.query_type_distribution.values().max().copied();
 
-        if let Some(max_count) = max_count {
-            if let Some((query_type, _)) = stats
+        if let Some(max_count) = max_count
+            && let Some((query_type, _)) = stats
                 .query_type_distribution
                 .iter()
                 .find(|(_, count)| **count == max_count)
             {
                 stats.primary_query_type = query_type.clone();
             }
-        }
 
         // Update recent pattern
         stats.recent_pattern.push_back(event.clone());

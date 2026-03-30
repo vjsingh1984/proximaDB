@@ -1193,11 +1193,10 @@ impl SharedServices {
         );
 
         // Apply hybrid runtime config if provided
-        if let Some(cfg) = opt_config {
-            if let Some(ref hybrid) = cfg.hybrid {
+        if let Some(cfg) = opt_config
+            && let Some(ref hybrid) = cfg.hybrid {
                 unified_handlers_instance.set_hybrid_runtime(hybrid.clone());
             }
-        }
         let unified_handlers = Arc::new(unified_handlers_instance);
         debug!("✅ SharedServices::new - UnifiedHandlers created with shared graph services");
 

@@ -590,13 +590,11 @@ impl EnvironmentDetector {
     /// Detect number of CPU cores
     async fn detect_cpu_cores(&self) -> Result<u32> {
         // Try multiple methods to detect CPU cores
-        if let Ok(output) = tokio::process::Command::new("nproc").output().await {
-            if let Ok(cores_str) = String::from_utf8(output.stdout) {
-                if let Ok(cores) = cores_str.trim().parse::<u32>() {
+        if let Ok(output) = tokio::process::Command::new("nproc").output().await
+            && let Ok(cores_str) = String::from_utf8(output.stdout)
+                && let Ok(cores) = cores_str.trim().parse::<u32>() {
                     return Ok(cores);
                 }
-            }
-        }
 
         // Fallback: Use Rust's built-in detection
         Ok(num_cpus::get() as u32)
@@ -607,13 +605,11 @@ impl EnvironmentDetector {
         // Try reading /proc/meminfo on Linux
         if let Ok(meminfo) = tokio::fs::read_to_string("/proc/meminfo").await {
             for line in meminfo.lines() {
-                if line.starts_with("MemTotal:") {
-                    if let Some(kb_str) = line.split_whitespace().nth(1) {
-                        if let Ok(kb) = kb_str.parse::<u64>() {
+                if line.starts_with("MemTotal:")
+                    && let Some(kb_str) = line.split_whitespace().nth(1)
+                        && let Ok(kb) = kb_str.parse::<u64>() {
                             return Ok((kb / 1024 / 1024) as u32); // Convert KB to GB
                         }
-                    }
-                }
             }
         }
 
@@ -635,12 +631,11 @@ impl EnvironmentDetector {
                     // Parse df output for available space
                     for line in df_output.lines().skip(1) {
                         let fields: Vec<&str> = line.split_whitespace().collect();
-                        if fields.len() >= 4 {
-                            if let Ok(available_gb) = fields[3].trim_end_matches('G').parse::<u64>()
+                        if fields.len() >= 4
+                            && let Ok(available_gb) = fields[3].trim_end_matches('G').parse::<u64>()
                             {
                                 return Ok(available_gb);
                             }
-                        }
                     }
                 }
             }

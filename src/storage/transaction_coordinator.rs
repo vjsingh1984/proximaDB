@@ -735,15 +735,14 @@ impl TransactionCoordinator {
                 for entry in entries {
                     if entry.metadata.is_directory {
                         // Check if directory is older than cutoff
-                        if let Some(created) = entry.metadata.created {
-                            if created < cutoff_time {
+                        if let Some(created) = entry.metadata.created
+                            && created < cutoff_time {
                                 let old_dir_url = format!("{}/{}", pattern_url, entry.name);
                                 if let Ok(()) = self.filesystem.delete(&old_dir_url).await {
                                     cleaned_count += 1;
                                     debug!("🧹 Cleaned orphaned staging dir: {}", old_dir_url);
                                 }
                             }
-                        }
                     }
                 }
             }

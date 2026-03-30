@@ -395,8 +395,8 @@ impl ConnectionManager {
         // Check health cache
         {
             let cache = self.health_cache.read().await;
-            if let Some(health) = cache.get(&key) {
-                if !health.is_expired(self.config.health_cache_ttl)
+            if let Some(health) = cache.get(&key)
+                && !health.is_expired(self.config.health_cache_ttl)
                     && health.status != ServingStatus::Serving
                 {
                     return Err(RpcError::new(
@@ -408,7 +408,6 @@ impl ConnectionManager {
                         ),
                     ));
                 }
-            }
         }
 
         // Get or create channel pool

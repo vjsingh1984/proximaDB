@@ -158,11 +158,10 @@ impl DecompressionCache {
                     .iter()
                     .filter_map(|(key, cached_block)| {
                         // Check if file has been modified
-                        if let Some(last_modified) = file_timestamps.get(&key.file_path) {
-                            if *last_modified > cached_block.cached_at {
+                        if let Some(last_modified) = file_timestamps.get(&key.file_path)
+                            && *last_modified > cached_block.cached_at {
                                 return Some(key.clone());
                             }
-                        }
                         None
                     })
                     .collect();

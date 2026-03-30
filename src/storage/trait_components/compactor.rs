@@ -109,11 +109,10 @@ pub trait StorageCompactor: StorageIdentity + Send + Sync {
             );
         }
 
-        if let Some(timeout) = params.timeout_ms {
-            if timeout == 0 {
+        if let Some(timeout) = params.timeout_ms
+            && timeout == 0 {
                 return Err(anyhow::anyhow!("Compaction timeout cannot be zero"));
             }
-        }
 
         Ok(())
     }
