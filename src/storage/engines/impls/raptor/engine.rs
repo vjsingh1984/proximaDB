@@ -751,7 +751,7 @@ impl RaptorEngine {
     async fn compress_data_optimized(&self, data: &[u8]) -> Result<Vec<u8>> {
         // Use the tier determined from the storage location (base_path), not data size
         // The tier was already determined in constructor from the URL
-        let tier = self.tier_config.tier.clone();
+        let tier = self.tier_config.tier;
 
         self.universal_optimizer.compress_for_tier(data, tier).await
     }
@@ -1321,7 +1321,7 @@ impl RaptorEngine {
                     .map(|d| {
                         crate::compute::distance_computation::engine::SimilarityResult::new(
                             d,
-                            distance_metric.clone(),
+                            *distance_metric,
                         )
                     })
                     .collect()
@@ -1885,7 +1885,7 @@ impl RaptorEngine {
                     .map(|d| {
                         crate::compute::distance_computation::engine::SimilarityResult::new(
                             d,
-                            distance_metric.clone(),
+                            *distance_metric,
                         )
                     })
                     .collect()

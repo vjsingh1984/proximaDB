@@ -645,7 +645,7 @@ impl WALBehaviorWrapper {
             .map(|batch_ref| {
                 // Create a new batch, handling bloom filter properly
                 let mut new_batch = WALVectorBatch {
-                    batch_id: batch_ref.batch_id.clone(),
+                    batch_id: batch_ref.batch_id,
                     vector_records: batch_ref.vector_records.clone(), // Arc clone (pointer copy)
                     timestamp: batch_ref.timestamp,
                     total_size_bytes: batch_ref.total_size_bytes,

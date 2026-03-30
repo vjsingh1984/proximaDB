@@ -102,8 +102,7 @@ impl StorageEngine {
             )
             .await
             .map_err(|e| {
-                crate::core::StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                crate::core::StorageError::DiskIO(std::io::Error::other(
                     e.to_string(),
                 ))
             })?,
@@ -680,8 +679,7 @@ impl StorageEngine {
             .storage_locations
             .choose(&mut rand::thread_rng())
             .ok_or_else(|| {
-                crate::core::StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                crate::core::StorageError::DiskIO(std::io::Error::other(
                     "No storage locations configured",
                 ))
             })?
@@ -721,8 +719,7 @@ impl StorageEngine {
                     Err(e) => {
                         // Check if already exists
                         if !fs.exists(&dir_url).await.unwrap_or(false) {
-                            return Err(crate::core::StorageError::DiskIO(std::io::Error::new(
-                                std::io::ErrorKind::Other,
+                            return Err(crate::core::StorageError::DiskIO(std::io::Error::other(
                                 format!("Failed to create directory {}: {}", dir_url, e),
                             )));
                         }

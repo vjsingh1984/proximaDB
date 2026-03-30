@@ -219,7 +219,7 @@ pub async fn parallel_search(
         let fs = filesystem.clone();
         let query = query_vector.clone();
         let query_hilbert = query_hilbert_key; // Copy Option<u64> for thread
-        let metric = distance_metric.clone();
+        let metric = distance_metric;
         let dist_compute = distance_compute.clone();
         let filter_clone = filter_expression.clone();
         let collection_clone = collection.clone();

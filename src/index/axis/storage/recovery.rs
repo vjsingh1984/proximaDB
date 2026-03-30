@@ -347,7 +347,7 @@ impl IndexRecoveryManager {
 
         // Read index data from disk
         let index_data = self.filesystem.read(disk_location).await.map_err(|e| {
-            SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+            SerializationError::Io(std::io::Error::other(e))
         })?;
 
         debug!("Read {} bytes from disk", index_data.len());
@@ -404,7 +404,7 @@ impl IndexRecoveryManager {
 
         // Read index data from cloud
         let index_data = self.filesystem.read(cloud_location).await.map_err(|e| {
-            SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+            SerializationError::Io(std::io::Error::other(e))
         })?;
 
         debug!("Read {} bytes from cloud", index_data.len());
@@ -423,14 +423,14 @@ impl IndexRecoveryManager {
                 .filesystem
                 .get_tier_url(FileStorageTier::SSD, &disk_path)
                 .map_err(|e| {
-                    SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    SerializationError::Io(std::io::Error::other(e))
                 })?;
 
             self.filesystem
                 .write(&disk_url, &index_data, None)
                 .await
                 .map_err(|e| {
-                    SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    SerializationError::Io(std::io::Error::other(e))
                 })?;
 
             // Update state to disk
@@ -438,8 +438,7 @@ impl IndexRecoveryManager {
                 .transition_to_disk(collection_id, disk_url)
                 .await
                 .map_err(|_| {
-                    SerializationError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    SerializationError::Io(std::io::Error::other(
                         "Failed to transition to disk",
                     ))
                 })?;
@@ -466,7 +465,7 @@ impl IndexRecoveryManager {
             .exists(&checkpoint_path)
             .await
             .map_err(|e| {
-                SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+                SerializationError::Io(std::io::Error::other(e))
             })?
         {
             warn!("No checkpoint found for collection {}", collection_id);
@@ -478,7 +477,7 @@ impl IndexRecoveryManager {
 
         // Read checkpoint
         let checkpoint_data = self.filesystem.read(&checkpoint_path).await.map_err(|e| {
-            SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+            SerializationError::Io(std::io::Error::other(e))
         })?;
         let checkpoint: IndexCheckpoint = bincode::deserialize(&checkpoint_data)?;
 
@@ -492,7 +491,7 @@ impl IndexRecoveryManager {
             let delta_path = format!("axis/checkpoints/{}/deltas/", collection_id);
 
             if self.filesystem.exists(&delta_path).await.map_err(|e| {
-                SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+                SerializationError::Io(std::io::Error::other(e))
             })? {
                 let deltas = self.load_deltas(&delta_path).await?;
 
@@ -540,13 +539,13 @@ impl IndexRecoveryManager {
 
         // List all delta files
         let entries = self.filesystem.list(delta_path).await.map_err(|e| {
-            SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+            SerializationError::Io(std::io::Error::other(e))
         })?;
 
         for entry in entries {
             if entry.name.ends_with(".delta") {
                 let delta_data = self.filesystem.read(&entry.url).await.map_err(|e| {
-                    SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    SerializationError::Io(std::io::Error::other(e))
                 })?;
                 let delta: IndexDelta = bincode::deserialize(&delta_data)?;
                 deltas.push(delta);
@@ -610,8 +609,7 @@ impl IndexRecoveryManager {
             .transition_to_memory(collection_id)
             .await
             .map_err(|_| {
-                SerializationError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                SerializationError::Io(std::io::Error::other(
                     "Failed to transition to mem",
                 ))
             })?;
@@ -690,7 +688,7 @@ impl IndexRecoveryManager {
             .write(&checkpoint_path, &checkpoint_data, None)
             .await
             .map_err(|e| {
-                SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+                SerializationError::Io(std::io::Error::other(e))
             })?;
 
         // Update latest link
@@ -699,7 +697,7 @@ impl IndexRecoveryManager {
             .write(&latest_path, &checkpoint_data, None)
             .await
             .map_err(|e| {
-                SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
+                SerializationError::Io(std::io::Error::other(e))
             })?;
 
         // Store checkpoint location

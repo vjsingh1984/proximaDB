@@ -236,7 +236,7 @@ impl AxisTieringIntegration {
 
             Ok(Some(AxisTierRecommendation {
                 collection_id: collection_id.to_string(),
-                current_tier: current_tier.clone(),
+                current_tier: *current_tier,
                 recommended_tier,
                 storage_tier,
                 // confidence removed -  if is_hot { 0.9 } else { 0.7 },

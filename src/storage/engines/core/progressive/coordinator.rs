@@ -200,7 +200,7 @@ impl ProgressiveSearchCoordinator {
 
             // Compute distances at this stage's quantization level
             candidates = stage
-                .compute_distances(query, candidates, distance_metric.clone())
+                .compute_distances(query, candidates, distance_metric)
                 .await?;
 
             // Filter candidates for next stage

@@ -669,7 +669,7 @@ impl AxisVectorIndex for AxisHnswIndex {
                 .layers
                 .iter()
                 .filter(|entry| entry.key().0 == layer)
-                .map(|entry| entry.key().clone())
+                .map(|entry| *entry.key())
                 .collect();
 
             for key in keys_to_update {

@@ -1253,7 +1253,7 @@ impl CrossCacheOrchestrator {
                     batch.cache_type.clone(),
                     key.clone(),
                     value.clone(),
-                    ttl.clone(),
+                    *ttl,
                 )
                 .await;
             results[idx] = Some(Vec::new()); // Indicate success

@@ -198,13 +198,13 @@ impl FormatRegistry {
 
     /// Get default internal format
     pub fn default_internal(&self) -> Option<Arc<dyn InternalFormat>> {
-        let default_type = self.default_internal.read().clone()?;
+        let default_type = (*self.default_internal.read())?;
         self.get_internal(default_type)
     }
 
     /// Get default open format
     pub fn default_open(&self) -> Option<Arc<dyn OpenTableFormat>> {
-        let default_type = self.default_open.read().clone()?;
+        let default_type = (*self.default_open.read())?;
         self.get_open(default_type)
     }
 

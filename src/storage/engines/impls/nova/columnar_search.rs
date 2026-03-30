@@ -312,7 +312,7 @@ impl NovaColumnarSearch {
             let sem = semaphore.clone();
             let tx = tx.clone();
             let query = query_vector.to_vec();
-            let metric = distance_metric.clone();
+            let metric = distance_metric;
 
             let handle = tokio::spawn(async move {
                 let _permit = sem.acquire().await.ok();
@@ -426,7 +426,7 @@ impl NovaColumnarSearch {
                 // Create distance compute instance and compute distance
                 let distance_compute =
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        distance_metric.clone(),
+                        distance_metric,
                     );
                 let distance_result = distance_compute.calculate_distance(
                     query_vector,
@@ -883,7 +883,7 @@ impl NovaColumnarSearch {
 
                 let distance_compute =
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        distance_metric.clone(),
+                        distance_metric,
                     );
                 let distances = distance_compute.batch_distance_pooled_simd(
                     query_vector,

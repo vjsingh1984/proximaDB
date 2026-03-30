@@ -1109,8 +1109,7 @@ impl Compaction {
                 .metadata(&staging_file_path.to_string_lossy())
                 .await
                 .map_err(|e| {
-                    crate::core::StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    crate::core::StorageError::DiskIO(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -1213,8 +1212,7 @@ impl Compaction {
 
             let output_path = task.output_file.to_string_lossy();
             let metadata = fs.metadata(&output_path).await.map_err(|e| {
-                crate::core::StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                crate::core::StorageError::DiskIO(std::io::Error::other(
                     e.to_string(),
                 ))
             })?;

@@ -274,7 +274,7 @@ impl WriteAheadLogDiskManager {
 
         let file_info = WalFileInfo {
             collection_id: collection_id.to_string(),
-            batch_id: batch_id.clone(),
+            batch_id: *batch_id,
             file_url: file_url.clone(),
             size_bytes: data_to_write.len() as u64,
             format,

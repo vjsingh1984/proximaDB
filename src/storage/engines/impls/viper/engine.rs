@@ -2436,7 +2436,7 @@ impl UnifiedStorageEngine for ViperEngine {
         let search_context = crate::core::search::SearchPlan {
             collection_id: collection_id.to_string(),
             collection_config: Some(crate::core::search::CollectionConfig {
-                default_distance_metric: distance_metric.clone(),
+                default_distance_metric: distance_metric,
                 vector_dimension: collection_opt
                     .as_ref()
                     .and_then(|c| c.config.as_ref())
@@ -2544,7 +2544,7 @@ impl UnifiedStorageEngine for ViperEngine {
             vector: Some(query_vector.to_vec()),
             top_k: Some(k),
             filter_expression: filter_expression.cloned(),
-            distance_metric: Some(distance_metric.clone()),
+            distance_metric: Some(distance_metric),
             filters: None,
             accuracy_threshold: None,
             include_expired: Some(false),
@@ -2580,8 +2580,8 @@ impl UnifiedStorageEngine for ViperEngine {
                 collection_id: collection_id.to_string(),
                 collection_config: collection_opt.as_ref().and_then(|c| c.config.as_ref()).map(
                     |cfg| crate::core::search::unified_interface::CollectionConfig {
-                        default_distance_metric: distance_metric.clone(),
-                        vector_dimension: dimension,
+                        default_distance_metric: distance_metric,
+                        vector_dimension: dimension as usize,
                         enable_quantization: cfg.quantization.is_some(),
                         enable_metadata_filtering: !cfg.filterable_columns.is_empty(),
                         estimated_document_count: 1000, // Default estimate
@@ -2622,7 +2622,7 @@ impl UnifiedStorageEngine for ViperEngine {
         // Get distance compute engine
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                distance_metric.clone(),
+                distance_metric,
             ),
         );
 

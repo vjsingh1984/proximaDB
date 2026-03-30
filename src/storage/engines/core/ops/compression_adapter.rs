@@ -69,7 +69,7 @@ impl UniversalCompressionAdapter {
         // Perform compression using unified implementation
         let compressed_bytes =
             self.provider
-                .compress(data, optimized_algorithm.clone(), level, context.clone())?;
+                .compress(data, optimized_algorithm, level, context.clone())?;
 
         // Record performance statistics
         let compression_time = start_time.elapsed();
@@ -78,7 +78,7 @@ impl UniversalCompressionAdapter {
             data.len(),
             compressed_size,
             compression_time,
-            optimized_algorithm.clone(),
+            optimized_algorithm,
         );
 
         Ok(CompressedData {
@@ -101,7 +101,7 @@ impl UniversalCompressionAdapter {
 
         let decompressed = self.provider.decompress(
             &compressed_data.data,
-            compressed_data.algorithm.clone(),
+            compressed_data.algorithm,
             compressed_data.context.clone(),
         )?;
 
@@ -111,7 +111,7 @@ impl UniversalCompressionAdapter {
             compressed_data.compressed_size,
             decompressed.len(),
             decompression_time,
-            compressed_data.algorithm.clone(),
+            compressed_data.algorithm,
         );
 
         Ok(decompressed)
@@ -123,7 +123,7 @@ impl UniversalCompressionAdapter {
         config: &UniversalCompressionConfig,
     ) -> Result<(CompressionAlgorithm, i32, CompressionContext)> {
         // Map algorithm (direct mapping as they use same enum)
-        let algorithm = config.primary_algorithm.clone();
+        let algorithm = config.primary_algorithm;
 
         // Map compression level
         let level = config.compression_level as i32;

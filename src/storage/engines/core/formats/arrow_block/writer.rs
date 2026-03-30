@@ -194,8 +194,7 @@ impl ArrowBlockWriter {
         // Take ownership of inner writer temporarily
         // Note: We create a temp file as placeholder - it will be replaced immediately
         let temp_file = File::create("/dev/null").map_err(|e| {
-            ArrowBlockError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            ArrowBlockError::Io(std::io::Error::other(
                 format!("Failed to create temp file: {e}"),
             ))
         })?;

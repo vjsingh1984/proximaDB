@@ -82,7 +82,7 @@ impl AccessPatternTracker {
                 read_count: 0,
                 write_count: 0,
                 metadata_count: 0,
-                last_operation: operation.clone(),
+                last_operation: operation,
                 file_size: None,
             });
 

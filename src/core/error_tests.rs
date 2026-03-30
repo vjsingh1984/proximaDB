@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn test_error_source() {
         // Test error source chain
-        let io_err = io::Error::new(io::ErrorKind::Other, "IO problem");
+        let io_err = io::Error::other("IO problem");
         let storage_err = StorageError::DiskIO(io_err);
 
         // Verify we can access the source

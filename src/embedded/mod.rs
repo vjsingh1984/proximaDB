@@ -743,8 +743,7 @@ impl EmbeddedProximaDB {
                 // Acquire exclusive lock
                 let lock = FileLockManager::new(&base_path, AccessMode::Exclusive).map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        Box::new(std::io::Error::other(
                             format!("Failed to acquire exclusive lock: {}", e),
                         ))
                     },
@@ -756,8 +755,7 @@ impl EmbeddedProximaDB {
                 // Acquire shared read lock
                 let lock = FileLockManager::new(&base_path, AccessMode::SharedRead).map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        Box::new(std::io::Error::other(
                             format!("Failed to acquire shared read lock: {}", e),
                         ))
                     },
@@ -775,8 +773,7 @@ impl EmbeddedProximaDB {
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 let election = LeaderElection::new(&base_path, &node_id).map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        Box::new(std::io::Error::other(
                             format!("Failed to initialize leader election: {}", e),
                         ))
                     },
@@ -942,8 +939,7 @@ impl EmbeddedProximaDB {
             )
             .await
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Box::new(std::io::Error::other(
                     e.to_string(),
                 ))
             })?;
@@ -1149,8 +1145,7 @@ impl EmbeddedProximaDB {
                 .create_collection(&collection_config)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -1291,7 +1286,7 @@ impl EmbeddedProximaDB {
                 .create_collection(&collection_config)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             if !response.success {
@@ -1331,8 +1326,7 @@ impl EmbeddedProximaDB {
                 .delete_collection(name)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -1419,8 +1413,7 @@ impl EmbeddedProximaDB {
                 .insert_vectors_direct(collection, records)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -1523,8 +1516,7 @@ impl EmbeddedProximaDB {
                 .unified_search_native(collection, query_vector, top_k, None, Some(config))
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -1692,8 +1684,7 @@ impl EmbeddedProximaDB {
                 .get_collection_with_tenant_context(name, None)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -1718,8 +1709,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let collections = self.collection_service.list_collections().await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -1764,8 +1754,7 @@ impl EmbeddedProximaDB {
             let base_storage_url = if let Some(loc) = self.config.storage_locations.first() {
                 loc.to_url()
             } else {
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(Box::new(std::io::Error::other(
                     "No storage locations configured",
                 )) as Box<dyn std::error::Error + Send + Sync>);
             };
@@ -1902,7 +1891,7 @@ impl EmbeddedProximaDB {
                             synchronous: true,
                             vector_records,
                             // Propagate batch IDs so the engine can report/trace flushed batches
-                            batch_ids: batches.iter().map(|b| b.batch_id.clone()).collect(),
+                            batch_ids: batches.iter().map(|b| b.batch_id).collect(),
                             collection_config: Some(collection_config),
                             ..Default::default()
                         };
@@ -2014,8 +2003,7 @@ impl EmbeddedProximaDB {
             if failed_collections.is_empty() {
                 Ok(total_bytes_written)
             } else {
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Err(Box::new(std::io::Error::other(
                     format!("Failed to flush {} collections: {:?}", failed_collections.len(), failed_collections),
                 )) as Box<dyn std::error::Error + Send + Sync>)
             }
@@ -2104,8 +2092,7 @@ impl EmbeddedProximaDB {
                     }
                 }
                 Ok(None) => Ok(None),
-                Err(e) => Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Err(e) => Err(Box::new(std::io::Error::other(
                     format!("Failed to get vector: {}", e),
                 ))
                     as Box<dyn std::error::Error + Send + Sync>),
@@ -2184,8 +2171,7 @@ impl EmbeddedProximaDB {
                 .insert_vectors_direct(collection, records)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -2252,8 +2238,7 @@ impl EmbeddedProximaDB {
                 .insert_vectors_direct(collection, records)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -2574,8 +2559,7 @@ impl EmbeddedProximaDB {
             // Gather collection states
             let collections = self.collection_service.list_collections().await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -2602,8 +2586,7 @@ impl EmbeddedProximaDB {
                 .create_checkpoint(name, current_lsn, collection_states)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -2774,8 +2757,7 @@ impl EmbeddedProximaDB {
                                 batch.vector_records.as_ref();
                             let vector_data = bincode::serialize(records).map_err(
                                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                                    Box::new(std::io::Error::new(
-                                        std::io::ErrorKind::Other,
+                                    Box::new(std::io::Error::other(
                                         e.to_string(),
                                     ))
                                 },
@@ -2800,8 +2782,7 @@ impl EmbeddedProximaDB {
                 .save_delta(path, entries, base_checkpoint, start_lsn, end_lsn)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -2839,8 +2820,7 @@ impl EmbeddedProximaDB {
             // Load the delta file
             let (header, entries) = self.checkpoint_manager.load_delta(path).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -2863,8 +2843,7 @@ impl EmbeddedProximaDB {
                             let records: Vec<crate::proto::proximadb_v1::VectorRecord> =
                                 bincode::deserialize(&vector_data).map_err(
                                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                                        Box::new(std::io::Error::new(
-                                            std::io::ErrorKind::Other,
+                                        Box::new(std::io::Error::other(
                                             e.to_string(),
                                         ))
                                     },
@@ -2877,8 +2856,7 @@ impl EmbeddedProximaDB {
                                 .insert_vectors_direct(&entry.collection_id, records)
                                 .await
                                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                                    Box::new(std::io::Error::new(
-                                        std::io::ErrorKind::Other,
+                                    Box::new(std::io::Error::other(
                                         e.to_string(),
                                     ))
                                 })?;
@@ -2904,8 +2882,7 @@ impl EmbeddedProximaDB {
                                     .insert_vectors_direct(&entry.collection_id, records)
                                     .await
                                     .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                                        Box::new(std::io::Error::new(
-                                            std::io::ErrorKind::Other,
+                                        Box::new(std::io::Error::other(
                                             e.to_string(),
                                         ))
                                     })?;
@@ -2986,8 +2963,7 @@ impl EmbeddedProximaDB {
                 .create_graph_collection(request)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3018,8 +2994,7 @@ impl EmbeddedProximaDB {
                 .await
                 .map(|inserted| inserted.len())
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })
@@ -3046,8 +3021,7 @@ impl EmbeddedProximaDB {
                 .await
                 .map(|inserted| inserted.len())
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })
@@ -3068,8 +3042,7 @@ impl EmbeddedProximaDB {
                 .get_node(graph_id, &node_id_string)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3096,8 +3069,7 @@ impl EmbeddedProximaDB {
                 .query_nodes(graph_id, node_query)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3130,8 +3102,7 @@ impl EmbeddedProximaDB {
                 .query_edges(graph_id, edge_query)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3164,8 +3135,7 @@ impl EmbeddedProximaDB {
                 .query_edges(graph_id, edge_query)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3191,8 +3161,7 @@ impl EmbeddedProximaDB {
                 .delete_node(graph_id, &node_id_string)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3211,8 +3180,7 @@ impl EmbeddedProximaDB {
 
             let proto_stats = graph_service.get_stats(graph_id).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -3285,8 +3253,7 @@ impl EmbeddedProximaDB {
 
             doc_service.create_collection(name, config).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -3338,8 +3305,7 @@ impl EmbeddedProximaDB {
                 .insert_document(collection, id, sql_object)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3381,8 +3347,7 @@ impl EmbeddedProximaDB {
                 .get_document(collection, id, None)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3450,8 +3415,7 @@ impl EmbeddedProximaDB {
                 .query_documents(collection, params)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3511,8 +3475,7 @@ impl EmbeddedProximaDB {
                 .update_document(collection, id, doc_updates, None)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -3550,8 +3513,7 @@ impl EmbeddedProximaDB {
 
             doc_service.delete_document(collection, id).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -3581,8 +3543,7 @@ impl EmbeddedProximaDB {
 
             doc_service.delete_collection(name).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -3616,8 +3577,7 @@ impl EmbeddedProximaDB {
 
             let collections = doc_service.list_collections().await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -3860,8 +3820,7 @@ impl EmbeddedProximaDB {
             .search_v1(search_request)
             .await
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Box::new(std::io::Error::other(
                     e.to_string(),
                 ))
             })?;
@@ -4107,8 +4066,7 @@ impl EmbeddedProximaDB {
 
             storage.create_namespace(name, &config).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -4189,8 +4147,7 @@ impl EmbeddedProximaDB {
             for log in proto_logs {
                 storage.write_log(namespace, &log).await.map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        Box::new(std::io::Error::other(
                             e.to_string(),
                         ))
                     },
@@ -4260,8 +4217,7 @@ impl EmbeddedProximaDB {
 
             let result = query_engine.query_logs(namespace, params).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 },
@@ -4354,8 +4310,7 @@ impl EmbeddedProximaDB {
             for metric in proto_metrics {
                 storage.write_metric(namespace, &metric).await.map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        Box::new(std::io::Error::other(
                             e.to_string(),
                         ))
                     },
@@ -4445,8 +4400,7 @@ impl EmbeddedProximaDB {
                 .aggregate_metrics(namespace, params)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         e.to_string(),
                     ))
                 })?;
@@ -4558,8 +4512,7 @@ impl EmbeddedProximaDB {
         cache
             .prepare(sql)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Box::new(std::io::Error::other(
                     e.to_string(),
                 ))
             })
@@ -4586,8 +4539,7 @@ impl EmbeddedProximaDB {
         cache
             .prepare_with_ttl(sql, Duration::from_secs(ttl_seconds))
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Box::new(std::io::Error::other(
                     e.to_string(),
                 ))
             })
@@ -4633,8 +4585,7 @@ impl EmbeddedProximaDB {
         // Get the substituted SQL
         let sql = cache.execute_sql(statement_id, &param_values).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Box::new(std::io::Error::other(
                     e.to_string(),
                 ))
             },
@@ -4675,8 +4626,7 @@ impl EmbeddedProximaDB {
         // Get the substituted SQL
         let sql = cache.execute_sql(statement_id, &param_values).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Box::new(std::io::Error::other(
                     e.to_string(),
                 ))
             },
@@ -4710,8 +4660,7 @@ impl EmbeddedProximaDB {
 
         cache.drop_statement(statement_id).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Box::new(std::io::Error::other(
                     e.to_string(),
                 ))
             },

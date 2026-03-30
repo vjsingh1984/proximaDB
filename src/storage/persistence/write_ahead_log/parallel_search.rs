@@ -73,7 +73,7 @@ impl ParallelWALSearch {
         // Use Arc for shared query vector to avoid cloning
         let query_arc = Arc::new(query_vector.to_vec());
         let filters_arc = metadata_filters.cloned();
-        let distance_metric_arc = Arc::new(distance_metric.clone());
+        let distance_metric_arc = Arc::new(*distance_metric);
 
         // Process batches in parallel using rayon
         let candidates: Vec<SearchCandidate> = batches

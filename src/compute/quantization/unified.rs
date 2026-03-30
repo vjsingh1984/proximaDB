@@ -1515,7 +1515,7 @@ impl UnifiedQuantizationEngine {
 
         // Create SimilarityResult for the final distance
         let final_distance = total_distance.sqrt();
-        Ok(SimilarityResult::new(final_distance, metric.clone()))
+        Ok(SimilarityResult::new(final_distance, *metric))
     }
 
     fn precompute_pq_distance_tables(
@@ -1567,7 +1567,7 @@ impl UnifiedQuantizationEngine {
         }
 
         let distance = total.sqrt();
-        Ok(SimilarityResult::new(distance, metric.clone()))
+        Ok(SimilarityResult::new(distance, *metric))
     }
 
     /// Calculate distance between Product Quantized vectors

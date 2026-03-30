@@ -330,7 +330,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
 
         for batch in &unflushed {
             all_vectors.extend(batch.vector_records.as_ref().iter().cloned());
-            batch_ids.push(batch.batch_id.clone());
+            batch_ids.push(batch.batch_id);
             _total_vectors += batch.vector_records.len();
             _total_bytes += batch.total_size_bytes as u64;
         }
@@ -348,7 +348,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         let flush_result = engine.do_flush(&flush_params).await?;
 
         // Mark batches as flushed
-        let batch_ids: Vec<BatchId> = unflushed.iter().map(|b| b.batch_id.clone()).collect();
+        let batch_ids: Vec<BatchId> = unflushed.iter().map(|b| b.batch_id).collect();
 
         self.memtable_manager
             .mark_batches_flushed(collection_id, &batch_ids)
@@ -375,7 +375,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             );
             let file_info = WalFileInfo {
                 collection_id: collection_id.to_string(),
-                batch_id: bid.clone(),
+                batch_id: *bid,
                 file_url: path,
                 size_bytes: 0,
                 format: SerializationFormat::ProtocolBuffers,
@@ -467,7 +467,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             for batch in unflushed_batches {
                 let file_info = WalFileInfo {
                     collection_id: collection_id.to_string(),
-                    batch_id: batch.batch_id.clone(),
+                    batch_id: batch.batch_id,
                     file_url: self.disk_manager.batch_url(
                         collection_id,
                         &batch.batch_id,

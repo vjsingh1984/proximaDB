@@ -112,7 +112,7 @@ impl DecompressionCache {
             stats: Arc::new(RwLock::new(CacheStats::default())),
             compression_caches: Arc::new(RwLock::new(HashMap::new())),
             file_timestamps: Arc::new(dashmap::DashMap::new()),
-            config: config.clone(),
+            config,
             invalidation_task: None,
         };
 
@@ -279,7 +279,7 @@ impl DecompressionCache {
             // Estimate decompression time saved based on compression algorithm
             let time_saved = Self::estimate_decompression_time(
                 cached_block.size_bytes,
-                cached_block.compression_algorithm.clone(),
+                cached_block.compression_algorithm,
             );
             stats.time_saved_us += time_saved;
             stats.bytes_saved += cached_block.size_bytes as u64;
@@ -327,7 +327,7 @@ impl DecompressionCache {
             size_bytes,
             cached_at: chrono::Utc::now().timestamp(),
             access_count: 0,
-            compression_algorithm: compression_algorithm.clone(),
+            compression_algorithm,
         };
 
         // Add to cache
@@ -341,8 +341,8 @@ impl DecompressionCache {
         if let Some(algo) = compression_algorithm {
             let mut comp_caches = self.compression_caches.write().await;
             comp_caches
-                .entry(algo.clone())
-                .or_default()
+                .entry(algo)
+                .or_insert_with(Vec::new)
                 .push(key.clone());
         }
 

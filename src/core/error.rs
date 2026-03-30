@@ -73,8 +73,7 @@ pub type ProximaDBError = VectorDBError;
 // Add conversion from FilesystemError to VectorDBError
 impl From<crate::storage::persistence::filesystem::FilesystemError> for VectorDBError {
     fn from(err: crate::storage::persistence::filesystem::FilesystemError) -> Self {
-        VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(
             err.to_string(),
         )))
     }

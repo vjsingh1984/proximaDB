@@ -1064,7 +1064,7 @@ impl VectorOperationsService {
                 filter,
                 config
                     .as_ref()
-                    .map(|c| c.optimization_goal.clone())
+                    .map(|c| c.optimization_goal)
                     .unwrap_or_default(),
             )
             .await?
@@ -1221,7 +1221,7 @@ impl VectorOperationsService {
         search_params.top_k = Some(k);
         let optimization_goal = config
             .as_ref()
-            .map(|c| c.optimization_goal.clone())
+            .map(|c| c.optimization_goal)
             .unwrap_or_default();
 
         // Extract search_mode from config (defaults to Exact for 100% recall)
@@ -1299,7 +1299,7 @@ impl VectorOperationsService {
         search_params.top_k = Some(k);
         let optimization_goal = config
             .as_ref()
-            .map(|c| c.optimization_goal.clone())
+            .map(|c| c.optimization_goal)
             .unwrap_or_default();
 
         let query_vectors = vec![query_vector.clone()];

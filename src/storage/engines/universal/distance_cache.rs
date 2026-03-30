@@ -263,7 +263,7 @@ impl DistanceTableCache {
                     query_hash: base_key.query_hash,
                     segments: base_key.segments,
                     bits,
-                    metric: base_key.metric.clone(),
+                    metric: base_key.metric,
                 });
             }
         }
@@ -275,7 +275,7 @@ impl DistanceTableCache {
                     query_hash: base_key.query_hash,
                     segments,
                     bits: base_key.bits,
-                    metric: base_key.metric.clone(),
+                    metric: base_key.metric,
                 });
             }
         }

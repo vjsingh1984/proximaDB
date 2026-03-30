@@ -804,7 +804,7 @@ impl RecoveryManager {
             force: true,
             synchronous: true,
             vector_records: vectors,
-            batch_ids: vec![file_info.batch_id.clone()],
+            batch_ids: vec![file_info.batch_id],
             ..Default::default()
         };
 

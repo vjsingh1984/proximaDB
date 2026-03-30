@@ -382,7 +382,6 @@ impl SmartExecutionStrategy {
             requires_metadata: true, // Would check if metadata is needed
             distance_metric: params
                 .distance_metric
-                .clone()
                 .unwrap_or(DistanceMetric::Cosine),
             has_runtime_hints: params.runtime_hints.is_some(),
         }

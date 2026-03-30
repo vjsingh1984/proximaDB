@@ -869,7 +869,7 @@ impl GraphService for GraphServiceImpl {
                         if end == total {
                             chunk.edges = resp.edges.clone();
                             chunk.paths = resp.paths.clone();
-                            chunk.stats = resp.stats.clone();
+                            chunk.stats = resp.stats;
                             chunk.done = true;
                         }
                         if tx.send(Ok(chunk)).await.is_err() {

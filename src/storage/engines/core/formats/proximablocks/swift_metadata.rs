@@ -723,7 +723,7 @@ mod tests {
 impl Clone for SwiftMetadata {
     fn clone(&self) -> Self {
         Self {
-            global: self.global.clone(),
+            global: self.global,
             segments: self.segments.clone(),
             variable_data: self.variable_data.clone(),
             global_bloom: parking_lot::RwLock::new(self.global_bloom.read().clone()),

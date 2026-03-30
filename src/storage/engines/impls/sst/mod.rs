@@ -1453,7 +1453,7 @@ mod compression_helpers {
         };
 
         BlockCompressionConfig {
-            algorithm: compression_algorithm.clone(),
+            algorithm: compression_algorithm,
             compression_level: config.compression_level as u8,
             enable_vector_compression: compression_algorithm != CompressionAlgorithm::None,
             enable_metadata_compression: true,
@@ -1559,7 +1559,7 @@ mod compression_helpers {
             };
 
             BlockCompressionConfig {
-                algorithm: compression_algorithm.clone(),
+                algorithm: compression_algorithm,
                 compression_level: config.level.unwrap_or(3) as u8,
                 enable_vector_compression: config.algorithm
                     != crate::proto::proximadb_v1::CompressionAlgorithm::CompressionNone as i32,

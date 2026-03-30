@@ -2500,7 +2500,7 @@ impl WriteAheadLogManager {
         );
 
         // Step 3: Create distance calculator once for efficiency
-        let distance_calculator = UnifiedDistanceCompute::new(distance_metric.clone());
+        let distance_calculator = UnifiedDistanceCompute::new(distance_metric);
 
         // Step 4: Search through filtered batches
         let mut all_results = Vec::new();

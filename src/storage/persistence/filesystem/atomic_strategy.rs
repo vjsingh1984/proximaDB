@@ -178,8 +178,7 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
         // Create parent directories if needed
         if let Some(parent) = Path::new(final_path).parent() {
             if let Err(e) = filesystem.create_dir_all(&parent.to_string_lossy()).await {
-                return Err(FilesystemError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(FilesystemError::Io(std::io::Error::other(
                     format!(
                         "Failed to create parent directory {}: {}",
                         parent.display(),
@@ -322,8 +321,7 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
 
         if let Some(parent) = final_parent {
             if let Err(e) = filesystem.create_dir_all(&parent).await {
-                return Err(FilesystemError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(FilesystemError::Io(std::io::Error::other(
                     format!("Failed to create parent directory {}: {}", parent, e),
                 )));
             }

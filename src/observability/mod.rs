@@ -1130,7 +1130,7 @@ impl ObservabilityStorageOperations for ObservabilityService {
                 log_count: stats.as_ref().map(|s| s.log_count).unwrap_or(0),
                 metric_count: stats.as_ref().map(|s| s.metric_series_count).unwrap_or(0),
                 trace_count: stats.as_ref().map(|s| s.trace_count).unwrap_or(0),
-                retention_config: state.config.retention.clone(),
+                retention_config: state.config.retention,
             });
         }
 

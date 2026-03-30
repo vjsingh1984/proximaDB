@@ -4124,7 +4124,7 @@ impl ProximaDataBlock {
         if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
             let compressed_block = compress(
                 &uncompressed_block,
-                config.algorithm.clone(),
+                config.algorithm,
                 config.compression_level as i32,
                 CompressionContext::Block,
             )
@@ -4288,7 +4288,7 @@ impl ProximaDataBlock {
         if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
             let compressed_block = compress(
                 &uncompressed_block,
-                config.algorithm.clone(),
+                config.algorithm,
                 config.compression_level as i32,
                 CompressionContext::Block,
             )

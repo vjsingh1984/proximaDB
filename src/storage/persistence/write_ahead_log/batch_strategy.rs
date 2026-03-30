@@ -982,7 +982,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 
             for batch in &unflushed_batches {
                 all_vector_records.extend(batch.vector_records.iter().cloned());
-                batch_ids.push(batch.batch_id.clone());
+                batch_ids.push(batch.batch_id);
                 // CompactBatchId doesn't have sequence_range, use a placeholder
                 marked_sequences.push((0, 0));
             }

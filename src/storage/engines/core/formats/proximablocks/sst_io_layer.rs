@@ -679,8 +679,7 @@ impl SharedSstFormatReader {
         if self.is_cloud_file(file_path) {
             // Use range request to get just 4KB bloom filter
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
-                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                     format!("Failed to get filesystem: {e}"),
                 )))
             })?;
@@ -688,8 +687,7 @@ impl SharedSstFormatReader {
                 .read_range(file_path, 0, BLOOM_FILTER_SIZE as u64)
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                         format!("Failed to read bloom filter: {e}"),
                     )))
                 })?;
@@ -732,8 +730,7 @@ impl SharedSstFormatReader {
         if self.is_cloud_file(file_path) {
             // Use range request to get just the index block
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
-                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                     format!("Failed to get filesystem: {e}"),
                 )))
             })?;
@@ -741,8 +738,7 @@ impl SharedSstFormatReader {
                 .read_range(file_path, BLOOM_FILTER_SIZE as u64, INDEX_BLOCK_SIZE as u64)
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                         format!("Failed to read index: {e}"),
                     )))
                 })?;
@@ -778,8 +774,7 @@ impl SharedSstFormatReader {
         let data = if self.is_cloud_file(file_path) {
             // Use range request to get just the block we need
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
-                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                     format!("Failed to get filesystem: {e}"),
                 )))
             })?;
@@ -787,8 +782,7 @@ impl SharedSstFormatReader {
             fs.read_range(file_path, block_info.offset, block_info.size)
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                         format!("Failed to read block from cloud: {e}"),
                     )))
                 })?
@@ -796,16 +790,14 @@ impl SharedSstFormatReader {
             // For local files, use direct read
             // The zero_copy_system handles memory mapping internally
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
-                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                     format!("Failed to get filesystem: {e}"),
                 )))
             })?;
             fs.read_range(file_path, block_info.offset, block_info.size)
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                         format!("Failed to read block: {e}"),
                     )))
                 })?
@@ -961,8 +953,7 @@ impl SharedSstFormatReader {
     ) -> Result<Arc<Vec<u8>>, ProximaDBError> {
         // Direct read for local files
         let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
-            ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                 format!("Failed to get filesystem: {e}"),
             )))
         })?;
@@ -970,8 +961,7 @@ impl SharedSstFormatReader {
             .read_range(file_path, 0, BLOOM_FILTER_SIZE as u64)
             .await
             .map_err(|e| {
-                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                     format!("Failed to read bloom filter: {e}"),
                 )))
             })?;
@@ -987,8 +977,7 @@ impl SharedSstFormatReader {
     ) -> Result<Arc<Vec<u8>>, ProximaDBError> {
         // Direct read for local files
         let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
-            ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                 format!("Failed to get filesystem: {e}"),
             )))
         })?;
@@ -996,8 +985,7 @@ impl SharedSstFormatReader {
             .read_range(file_path, BLOOM_FILTER_SIZE as u64, INDEX_BLOCK_SIZE as u64)
             .await
             .map_err(|e| {
-                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                     format!("Failed to read index: {e}"),
                 )))
             })?;

@@ -227,7 +227,7 @@ impl EngineMetadata for NovaMetadata {
 
     fn clone_box(&self) -> Box<dyn EngineMetadata> {
         Box::new(NovaMetadata {
-            footer: self.footer.clone(),
+            footer: self.footer,
             column_groups: self.column_groups.clone(),
             columns: self.columns.clone(),
             variable_data: self.variable_data.clone(),

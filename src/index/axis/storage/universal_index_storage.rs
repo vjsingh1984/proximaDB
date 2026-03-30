@@ -369,8 +369,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 // Create zero-copy system for the reader
                 // Create UnifiedCachingFilesystem for the reader
                 let base_fs = filesystem.get_filesystem("file://").map_err(|e| {
-                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
                         format!("Failed to get base filesystem: {}", e),
                     )))
                 })?;

@@ -1203,7 +1203,7 @@ impl RaptorReader {
         let kxk_matrix = self.get_kxk_matrix(file_path).await?;
 
         // Step 2: Calculate distances to all centroids from footer
-        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*metric);
         let mut centroid_distances = Vec::with_capacity(kxk_matrix.num_centroids as usize);
 
         // Get all centroids from the footer's ColumnarCentroids
@@ -1291,7 +1291,7 @@ impl RaptorReader {
             .await?;
         let ids = self.load_rowgroup_ids(&self.base_path, rowgroup_id).await?;
 
-        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*metric);
 
         // Step 1: Compute query-to-centroid distance once
         // Get the centroid for this rowgroup from footer
@@ -1433,7 +1433,7 @@ impl RaptorReader {
         // Load all centroids from footer
         let footer = self.get_footer(&self.base_path).await?;
 
-        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*metric);
         let mut all_distances = Vec::new();
 
         // Step 1: Compute distance from query to all centroids
@@ -1585,7 +1585,7 @@ impl RaptorReader {
         // Load vectors from rowgroup for distance computation
         let vectors = self.load_vectors_for_rowgroup(rowgroup_id).await?;
 
-        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*metric);
 
         // Step 1: Get rowgroup centroid and compute query-to-centroid distance
         let footer = self.get_footer(&self.base_path).await?;
@@ -2157,7 +2157,7 @@ impl RaptorReader {
             let matrix: VectorCentroidMatrix = bincode::deserialize(&decompressed)?;
 
             // Extract fields before moving matrix into Arc
-            let storage_strategy = matrix.storage_strategy.clone();
+            let storage_strategy = matrix.storage_strategy;
             let num_vectors = matrix.num_vectors;
             let num_centroids = matrix.num_centroids;
 

@@ -946,7 +946,7 @@ impl GlobalManifestService {
         let mut counts = std::collections::HashMap::new();
 
         for entry in entries.iter() {
-            *counts.entry(entry.status.clone()).or_insert(0) += 1;
+            *counts.entry(entry.status).or_insert(0) += 1;
         }
 
         counts

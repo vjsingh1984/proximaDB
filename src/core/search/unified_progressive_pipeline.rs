@@ -205,7 +205,7 @@ impl UnifiedProgressiveSearchPipeline {
             .query_preprocessor
             .preprocess(
                 query_vector,
-                distance_metric.clone(),
+                distance_metric,
                 Some(quantization_config),
             )
             .await;
@@ -553,7 +553,7 @@ impl UnifiedProgressiveSearchPipeline {
     ) -> Result<Vec<StageCandidate>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
-        let distance_compute = UnifiedDistanceCompute::new(distance_metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*distance_metric);
         let mut candidates = Vec::new();
 
         for record in records {

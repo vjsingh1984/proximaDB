@@ -479,7 +479,6 @@ impl AdvancedSearchOptimizer {
         let top_k = search_params.top_k.unwrap_or(10);
         let distance_metric = search_params
             .distance_metric
-            .clone()
             .unwrap_or(DistanceMetric::Cosine);
 
         // Phase 7: Check result cache first
@@ -804,7 +803,7 @@ impl AdvancedSearchOptimizer {
     ) -> Result<Vec<OptimizedSearchRecord>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
-        let distance_compute = UnifiedDistanceCompute::new(distance_metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*distance_metric);
         let mut results = Vec::new();
 
         for (idx, view) in batch.iter().enumerate() {
@@ -859,7 +858,7 @@ impl AdvancedSearchOptimizer {
                         records,
                         query_vector,
                         top_k,
-                        distance_metric.clone(),
+                        *distance_metric,
                         &quantization_config,
                         params.filter_expression.as_ref(),
                     )
@@ -889,7 +888,7 @@ impl AdvancedSearchOptimizer {
                         records,
                         query_vector,
                         top_k,
-                        distance_metric.clone(),
+                        *distance_metric,
                         &quantization_config,
                         params.filter_expression.as_ref(),
                     )
@@ -985,7 +984,7 @@ impl AdvancedSearchOptimizer {
             records
         };
 
-        let distance_compute = UnifiedDistanceCompute::new(distance_metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*distance_metric);
         let mut results = Vec::new();
 
         for record in filtered_records {
