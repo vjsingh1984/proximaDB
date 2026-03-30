@@ -203,45 +203,42 @@ impl RLPlannerIntegration {
     pub fn apply_action_to_plan(&self, action: &ExecutionAction, plan: &mut UnifiedExecutionPlan) {
         // Modify execution steps based on RL action
         for step in &mut plan.execution_steps {
-            match step {
-                ExecutionStep::VectorSearch {
+            if let ExecutionStep::VectorSearch {
                     execution_method,
                     candidates,
                     ..
-                } => {
-                    // Apply index strategy from action
-                    if let Some(ref strategy) = action.index_strategy {
-                        *execution_method = match strategy {
-                            super::action::IndexStrategy::HNSW { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::HNSW,
-                                }
+                } = step {
+                // Apply index strategy from action
+                if let Some(ref strategy) = action.index_strategy {
+                    *execution_method = match strategy {
+                        super::action::IndexStrategy::HNSW { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::HNSW,
                             }
-                            super::action::IndexStrategy::IVF { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::IVF,
-                                }
+                        }
+                        super::action::IndexStrategy::IVF { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::IVF,
                             }
-                            super::action::IndexStrategy::LSH { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::LSH,
-                                }
+                        }
+                        super::action::IndexStrategy::LSH { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::LSH,
                             }
-                            super::action::IndexStrategy::DirectScan => {
-                                SearchExecutionMethod::DirectFP32
-                            }
-                            _ => execution_method.clone(),
-                        };
-                    }
-
-                    // Apply search mode
-                    if let super::action::SearchModeAction::Approximate { expansion_factor } =
-                        &action.search_mode
-                    {
-                        *candidates = (*candidates as f32 * expansion_factor) as usize;
-                    }
+                        }
+                        super::action::IndexStrategy::DirectScan => {
+                            SearchExecutionMethod::DirectFP32
+                        }
+                        _ => execution_method.clone(),
+                    };
                 }
-                _ => {}
+
+                // Apply search mode
+                if let super::action::SearchModeAction::Approximate { expansion_factor } =
+                    &action.search_mode
+                {
+                    *candidates = (*candidates as f32 * expansion_factor) as usize;
+                }
             }
         }
 

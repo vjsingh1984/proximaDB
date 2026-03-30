@@ -1190,7 +1190,7 @@ impl CollectionService {
             // Enrich with metadata from collection config
             if let Some(collection) = self.collection(collection_name).await?
                 && let Some(config) = &collection.config {
-                    stats.dimension = Some(config.dimension as u32);
+                    stats.dimension = Some(config.dimension);
                 }
 
             return Ok(stats);
@@ -1204,7 +1204,7 @@ impl CollectionService {
                 stats.total_bytes = proto_stats.data_size_bytes as u64;
             }
             if let Some(config) = &collection.config {
-                stats.dimension = Some(config.dimension as u32);
+                stats.dimension = Some(config.dimension);
             }
             return Ok(stats);
         }
@@ -1338,24 +1338,21 @@ impl CollectionService {
         if let Some(config) = requested {
             // Validate compression level if specified
             if let Some(level) = config.level {
-                match CompressionAlgorithm::try_from(config.algorithm) {
-                    Ok(CompressionAlgorithm::CompressionZstd) => {
-                        if level < 1 || level > 22 {
-                            warn!("Invalid ZSTD compression level {}, using default 3", level);
-                            return Some(CompressionConfig {
-                                algorithm: config.algorithm,
-                                level: Some(3),
-                                adaptive: config.adaptive,
-                                min_ratio: config.min_ratio,
-                                enable_quantization: config.enable_quantization,
-                                quantization_type: config.quantization_type.clone(),
-                                normalization_method: config.normalization_method.clone(),
-                                block_size_kb: config.block_size_kb,
-                                dynamic_block_sizing: config.dynamic_block_sizing,
-                            });
-                        }
+                if let Ok(CompressionAlgorithm::CompressionZstd) = CompressionAlgorithm::try_from(config.algorithm) {
+                    if !(1..=22).contains(&level) {
+                        warn!("Invalid ZSTD compression level {}, using default 3", level);
+                        return Some(CompressionConfig {
+                            algorithm: config.algorithm,
+                            level: Some(3),
+                            adaptive: config.adaptive,
+                            min_ratio: config.min_ratio,
+                            enable_quantization: config.enable_quantization,
+                            quantization_type: config.quantization_type.clone(),
+                            normalization_method: config.normalization_method.clone(),
+                            block_size_kb: config.block_size_kb,
+                            dynamic_block_sizing: config.dynamic_block_sizing,
+                        });
                     }
-                    _ => {}
                 }
             }
             return Some(config.clone());

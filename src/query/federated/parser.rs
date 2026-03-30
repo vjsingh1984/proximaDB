@@ -203,14 +203,14 @@ impl FederatedParser {
             .count();
 
         // Detect cross-model joins (only when we have multiple real tables or extensions)
-        if extensions.len() > 1 || (extensions.len() >= 1 && real_target_count > 1) {
+        if extensions.len() > 1 || (!extensions.is_empty() && real_target_count > 1) {
             is_cross_model_join = true;
             query_type = QueryType::Federated;
         }
 
         // Check for JOIN with different model types
         if sql_upper.contains("JOIN") && sql_upper.contains("LATERAL")
-            && extensions.len() > 0 {
+            && !extensions.is_empty() {
                 is_cross_model_join = true;
                 query_type = QueryType::Federated;
             }

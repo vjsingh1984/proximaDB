@@ -33,7 +33,7 @@ impl UniversalCompressionAdapter {
         )?;
 
         Ok(Self {
-            provider: StandardCompression::default(),
+            provider: StandardCompression,
             hardware,
             performance_stats: CompressionPerformanceStats::default(),
         })
@@ -42,7 +42,7 @@ impl UniversalCompressionAdapter {
     /// Create adapter with specific hardware capabilities
     pub fn with_hardware(hardware: HardwareCapabilities) -> Self {
         Self {
-            provider: StandardCompression::default(),
+            provider: StandardCompression,
             hardware,
             performance_stats: CompressionPerformanceStats::default(),
         }

@@ -72,7 +72,7 @@ impl BlockCache {
         let mut size = self.current_size.write().await;
 
         // Evict if necessary
-        while *size + block_size > self.max_size && cache.len() > 0 {
+        while *size + block_size > self.max_size && !cache.is_empty() {
             if let Some((_, evicted)) = cache.pop_lru() {
                 *size -= estimate_block_size(&evicted);
             }

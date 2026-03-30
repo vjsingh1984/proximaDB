@@ -1512,9 +1512,7 @@ pub async fn comprehensive_health_check(
 ) -> ApiResult<Json<health::HealthResponse>> {
     let health_state = health::HealthState::new(state.unified_handlers.clone());
     health::health_check(axum::extract::State(health_state), query)
-        .await
-        .map_err(ApiError::from)
-}
+        .await}
 
 /// Liveness check handler
 ///
@@ -1524,9 +1522,7 @@ pub async fn liveness_check(
 ) -> ApiResult<Json<health::LivenessResponse>> {
     let health_state = health::HealthState::new(state.unified_handlers.clone());
     health::liveness_check(axum::extract::State(health_state))
-        .await
-        .map_err(ApiError::from)
-}
+        .await}
 
 /// Readiness check handler
 ///

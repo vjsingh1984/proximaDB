@@ -613,7 +613,9 @@ impl AutoScheduler {
                 let mut queue = self.pending_queue.lock().await;
 
                 // Find the highest priority operation that's ready to run
-                let ready_op = queue
+                
+
+                queue
                     .iter()
                     .position(|op| op.run_after <= now)
                     .map(|_| {
@@ -633,9 +635,7 @@ impl AutoScheduler {
                         *queue = temp;
                         found
                     })
-                    .flatten();
-
-                ready_op
+                    .flatten()
             };
 
             if let Some(mut op) = operation {

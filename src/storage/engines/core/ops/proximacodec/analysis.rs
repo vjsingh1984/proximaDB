@@ -241,7 +241,7 @@ fn analyze_jaggedness(data: &[f32]) -> f64 {
         };
 
         // Large change in delta magnitude indicates jaggedness
-        if ratio > 2.0 || ratio < 0.5 {
+        if !(0.5..=2.0).contains(&ratio) {
             direction_changes += 1;
         }
 
@@ -255,8 +255,8 @@ fn analyze_jaggedness(data: &[f32]) -> f64 {
     let jump_ratio = large_jumps as f64 / deltas.len() as f64;
 
     // Combined jaggedness score
-    let jaggedness = (change_ratio * 0.7 + jump_ratio * 0.3).min(1.0);
-    jaggedness
+    
+    (change_ratio * 0.7 + jump_ratio * 0.3).min(1.0)
 }
 
 /// Analyze outlier ratio in delta distribution

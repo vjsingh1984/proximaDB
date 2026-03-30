@@ -510,7 +510,7 @@ impl TextChunker {
         }
 
         // Validate configuration
-        if let Err(_) = self.config.validate() {
+        if self.config.validate().is_err() {
             // Fall back to simple chunking on invalid config
             return self.simple_chunk(parent_id, text);
         }

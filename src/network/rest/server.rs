@@ -623,9 +623,9 @@ impl RestServer {
             if let Some(ca) = ca_path {
                 self.start_with_mtls(cert_path, key_path, ca).await
             } else {
-                return Err(anyhow::anyhow!(
+                Err(anyhow::anyhow!(
                     "Client certificates required but CA path not provided"
-                ));
+                ))
             }
         } else {
             // Standard TLS (no client certificates)

@@ -76,7 +76,7 @@ impl RowGroupCache {
         let mut cache = self.cache.write().await;
         let mut size = self.current_size.write().await;
         // Evict if necessary
-        while *size + batch_size > self.max_size && cache.len() > 0 {
+        while *size + batch_size > self.max_size && !cache.is_empty() {
             if let Some((_, evicted)) = cache.pop_lru() {
                 *size -= estimate_batch_size(&evicted);
             }

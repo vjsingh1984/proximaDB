@@ -467,7 +467,7 @@ impl StreamingSearchEngine {
             }
         }
 
-        let pruning_effectiveness = if superblocks.len() > 0 {
+        let pruning_effectiveness = if !superblocks.is_empty() {
             (superblocks.len() - pruned_superblocks.len()) as f32 / superblocks.len() as f32
         } else {
             0.0

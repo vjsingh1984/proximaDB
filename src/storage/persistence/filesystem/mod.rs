@@ -1389,9 +1389,9 @@ impl FilesystemFactory {
                     relative_path
                 );
                 Ok(relative_path.to_string())
-            } else if url.starts_with("file:///") {
+            } else if let Some(absolute_path) = url.strip_prefix("file:///") {
                 // Absolute path: file:///absolute/path
-                let absolute_path = &url[8..]; // Remove "file:///" prefix
+                // Remove "file:///" prefix
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Absolute path: '/{}'",
                     absolute_path

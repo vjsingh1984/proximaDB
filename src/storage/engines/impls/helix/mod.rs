@@ -1357,7 +1357,7 @@ impl UnifiedStorageEngine for HelixEngine {
             if let Some(keys) = hilbert_keys {
                 // Sort by Hilbert key for spatial locality
                 let mut indexed_records: Vec<(u64, VectorRecord)> =
-                    keys.into_iter().zip(records.into_iter()).collect();
+                    keys.into_iter().zip(records).collect();
                 indexed_records.sort_by_key(|(key, _)| *key);
 
                 let sorted: Vec<VectorRecord> = indexed_records

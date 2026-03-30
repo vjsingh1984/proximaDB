@@ -1361,7 +1361,7 @@ impl EmbeddedProximaDB {
         // Convert to VectorRecord format
         let records: Vec<VectorRecord> = ids
             .into_iter()
-            .zip(vectors.into_iter())
+            .zip(vectors)
             .enumerate()
             .map(|(i, (id, vector))| {
                 let meta: std::collections::HashMap<String, SqlValue> = metadata

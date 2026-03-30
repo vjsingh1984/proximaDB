@@ -498,7 +498,7 @@ impl CompressionProvider for StandardCompression {
         // Log compression results
         match &result {
             Ok(compressed) => {
-                let ratio = if compressed.len() > 0 {
+                let ratio = if !compressed.is_empty() {
                     data.len() as f32 / compressed.len() as f32
                 } else {
                     0.0

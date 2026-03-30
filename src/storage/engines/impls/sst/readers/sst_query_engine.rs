@@ -1013,7 +1013,7 @@ impl Iterator for BlockIterator<VectorRecord> {
                     "🔍 VectorRecord STREAMING: Block data preview (first 32 bytes): {:?}",
                     &block_data[..std::cmp::min(32, block_data.len())]
                 );
-                Some(Err(anyhow::Error::from(e)))
+                Some(Err(e))
             }
         }
     }
@@ -2790,9 +2790,9 @@ impl UnifiedSstableReader {
             }
         } else {
             // Load index from disk
-            let loaded_index = self.load_index_optimized(&context.file_path).await?;
+            
             // Zero-copy system handles index caching automatically via metadata cache
-            loaded_index
+            self.load_index_optimized(&context.file_path).await?
         };
 
         // Check if block exists
@@ -4991,7 +4991,7 @@ fn filter_blocks_by_zorder(
         .collect();
 
     // Log pruning effectiveness
-    let pruned_percentage = if entries.len() > 0 {
+    let pruned_percentage = if !entries.is_empty() {
         100 - (filtered_indices.len() * 100 / entries.len())
     } else {
         0

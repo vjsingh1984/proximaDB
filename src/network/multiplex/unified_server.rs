@@ -82,7 +82,7 @@ impl Service<Request<Body>> for HyperService {
     fn call(&mut self, request: Request<Body>) -> Self::Future {
         // Convert hyper::Body to axum::body::Body for the MultiplexService
         let (parts, body) = request.into_parts();
-        let axum_body = axum::body::Body::from(body);
+        let axum_body = body;
         let request = Request::from_parts(parts, axum_body);
 
         let mut service = self.inner.clone();

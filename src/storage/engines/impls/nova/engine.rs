@@ -250,7 +250,7 @@ impl NovaEngine {
         );
 
         // Initialize compression provider directly
-        let compression_provider = StandardCompression::default();
+        let compression_provider = StandardCompression;
         // Initialize unified quantization engine from compute module
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),

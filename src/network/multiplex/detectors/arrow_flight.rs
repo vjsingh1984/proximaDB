@@ -65,9 +65,8 @@ impl ArrowFlightDetector {
         }
 
         // Alternative short path
-        if path.starts_with(FLIGHT_SERVICE_PATH_PREFIX) {
+        if let Some(method) = path.strip_prefix(FLIGHT_SERVICE_PATH_PREFIX) {
             // Extract method name
-            let method = &path[FLIGHT_SERVICE_PATH_PREFIX.len()..];
             if Self::FLIGHT_METHODS.contains(&method) {
                 return Some(DetectionResult::certain(DetectedProtocol::ArrowFlight));
             }

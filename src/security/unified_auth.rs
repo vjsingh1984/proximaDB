@@ -690,9 +690,8 @@ impl UnifiedAuthService {
     fn resolve_roles_for_cn(&self, cn: &str) -> Vec<String> {
         let mut roles = Vec::new();
         for (pattern, role) in &self.config.mtls.cn_role_mapping {
-            let matched = if pattern.starts_with('*') {
+            let matched = if let Some(suffix) = pattern.strip_prefix('*') {
                 // Leading wildcard: "*.admin" matches anything ending with ".admin"
-                let suffix = &pattern[1..];
                 cn.ends_with(suffix)
             } else if pattern.ends_with('*') {
                 // Trailing wildcard: "service-*" matches anything starting with "service-"

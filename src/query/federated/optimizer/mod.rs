@@ -3751,7 +3751,7 @@ impl CrossModelOptimizer {
                 let pruned_columns = Self::filter_output_columns(&plan.output_columns, required);
 
                 // Estimate cost reduction from reading fewer columns
-                let column_ratio = if plan.output_columns.len() > 0 {
+                let column_ratio = if !plan.output_columns.is_empty() {
                     pruned_columns.len() as f64 / plan.output_columns.len() as f64
                 } else {
                     1.0

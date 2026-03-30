@@ -485,7 +485,9 @@ async fn execute_component_with_context_full(
     let elapsed = start.elapsed();
 
     // Apply join predicates if dependencies exist
-    let result = match raw_result {
+    
+
+    match raw_result {
         Ok(mut r) => {
             r.execution_time_us = elapsed.as_micros() as u64;
 
@@ -502,9 +504,7 @@ async fn execute_component_with_context_full(
             }
         }
         Err(e) => Err(e),
-    };
-
-    result
+    }
 }
 
 /// Execute a vector search query

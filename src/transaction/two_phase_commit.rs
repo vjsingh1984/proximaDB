@@ -385,7 +385,7 @@ impl TwoPhaseCommit {
         timestamp.hash(&mut hasher);
         std::thread::current().id().hash(&mut hasher);
 
-        hasher.finish() as u64
+        hasher.finish()
     }
 
     /// Cleanup old transactions

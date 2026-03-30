@@ -285,7 +285,7 @@ impl SwiftEngine {
         );
 
         // Initialize compression provider directly
-        let compression_provider = StandardCompression::default();
+        let compression_provider = StandardCompression;
 
         // Initialize unified quantization engine from compute module
         // Use the provided distance engine instead of creating a new one
@@ -1243,7 +1243,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         // Build merged output file
         let dimension = files
             .first()
-            .map_or(0, |f| f.header.dimension as usize);
+            .map_or(0, |f| f.header.dimension);
         let mut merged_file = SwiftFile::new(
             collection_id.to_string(),
             dimension,

@@ -678,12 +678,7 @@ impl SearchCostEstimator {
             available_memory_gb: 16.0,
             cpu_cores: num_cpus::get(),
         };
-        let estimator = Self {
-            index_search_times: HashMap::new(),
-            progressive_search_times: HashMap::new(),
-            direct_search_times: HashMap::new(),
-            hardware_profile,
-        };
+        
 
         // Populate with typical performance data for immediate use
         // These would be replaced by actual benchmarks in production
@@ -756,7 +751,12 @@ impl SearchCostEstimator {
                 },
         );*/
 
-        estimator
+        Self {
+            index_search_times: HashMap::new(),
+            progressive_search_times: HashMap::new(),
+            direct_search_times: HashMap::new(),
+            hardware_profile,
+        }
     }
 }
 

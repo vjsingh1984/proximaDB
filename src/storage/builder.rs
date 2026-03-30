@@ -214,7 +214,7 @@ impl Default for StorageSystemConfig {
                 enable_zero_copy: true,
                 buffer_config: StorageBufferConfig {
                     read_buffer_size: 2 * 1024 * 1024,       // 2MB
-                    write_buffer_size: 1 * 1024 * 1024,      // 1MB
+                    write_buffer_size: 1024 * 1024,      // 1MB
                     compaction_buffer_size: 4 * 1024 * 1024, // 4MB
                 },
             },

@@ -112,8 +112,8 @@ impl WorkloadTimeSeries {
             sum_x2 += x * x;
         }
 
-        let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
-        slope
+        
+        (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
     }
 
     /// Calculate the variance of a time series
@@ -123,10 +123,9 @@ impl WorkloadTimeSeries {
         }
 
         let mean = series.iter().map(|p| p.value).sum::<f64>() / series.len() as f64;
-        let variance =
-            series.iter().map(|p| (p.value - mean).powi(2)).sum::<f64>() / series.len() as f64;
+        
 
-        variance
+        series.iter().map(|p| (p.value - mean).powi(2)).sum::<f64>() / series.len() as f64
     }
 }
 

@@ -373,7 +373,7 @@ impl DecompressionCache {
         let mut evicted_count = 0;
 
         // LRU eviction - the cache automatically evicts least recently used items
-        while freed_bytes < bytes_to_free && cache.len() > 0 {
+        while freed_bytes < bytes_to_free && !cache.is_empty() {
             // Pop the least recently used item
             if let Some((key, cached_block)) = cache.pop_lru() {
                 freed_bytes += cached_block.size_bytes;

@@ -621,7 +621,9 @@ impl AxisEventLogConsumer {
         // IVF can work with quantized data
         // PQ indexes prefer quantized data
 
-        let mode = if has_quantization != Some(Some(true)) {
+        
+
+        if has_quantization != Some(Some(true)) {
             // No quantization, must use FP32
             debug!("[AXIS Consumer] No quantization enabled, using FP32Only mode");
             ExtractionMode::Fp32Only
@@ -630,9 +632,7 @@ impl AxisEventLogConsumer {
             // In future, we can be smarter based on index type
             debug!("[AXIS Consumer] Quantization enabled, using Both mode for flexibility");
             ExtractionMode::Both
-        };
-
-        mode
+        }
     }
 
     /// Read vectors from data files using the unified VectorExtractor protocol.

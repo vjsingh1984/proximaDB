@@ -1609,7 +1609,9 @@ impl ProximaDataBlock {
     fn choose_optimal_encoding_marker(records: &[VectorRecord]) -> u8 {
         let pattern = Self::detect_vector_pattern(records);
 
-        let encoding_marker = match pattern {
+        
+
+        match pattern {
             VectorDataPattern::Empty => 0x00, // Raw encoding
             VectorDataPattern::Constant(val) => {
                 trace!(
@@ -1664,9 +1666,7 @@ impl ProximaDataBlock {
                 trace!("[PATTERN] Unknown pattern -> Using BitPacked encoding (default)");
                 0x10
             }
-        };
-
-        encoding_marker
+        }
     }
 
     /// Create encoding metadata for the chosen scheme
@@ -2701,7 +2701,7 @@ impl ProximaDataBlock {
         trace!("[DECODE] First byte: 0x{:02X}", first_byte);
 
         // Check compression/encoding status
-        let (decompressed_data, encoding_marker) = if first_byte >= 0x80 && first_byte < 0x90 {
+        let (decompressed_data, encoding_marker) = if (0x80..0x90).contains(&first_byte) {
             // This is compressed data (0x80-0x8F range)
             trace!("[DECODE] Compressed data detected");
             let algorithm = match first_byte {
@@ -2749,7 +2749,7 @@ impl ProximaDataBlock {
             };
             trace!(
                 "[DECODE] Format version: 0x{:02X}, Encoding marker: 0x{:02X}",
-                if actual_data.len() > 0 {
+                if !actual_data.is_empty() {
                     actual_data[0]
                 } else {
                     0x00
@@ -3101,7 +3101,7 @@ impl ProximaDataBlock {
 
             while values_cursor.position() < values_cursor.get_ref().len() as u64 {
                 let mut val_len_bytes = [0u8; 4];
-                if let Err(_) = values_cursor.read_exact(&mut val_len_bytes) {
+                if values_cursor.read_exact(&mut val_len_bytes).is_err() {
                     break; // End of data
                 }
                 let val_len = u32::from_le_bytes(val_len_bytes) as usize;
@@ -3111,7 +3111,7 @@ impl ProximaDataBlock {
                     sparse_values.push(None);
                 } else {
                     let mut val_bytes = vec![0u8; val_len];
-                    if let Err(_) = values_cursor.read_exact(&mut val_bytes) {
+                    if values_cursor.read_exact(&mut val_bytes).is_err() {
                         break; // Corrupted data
                     }
 

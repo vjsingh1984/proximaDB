@@ -524,12 +524,12 @@ impl RowBasedBatchOperations {
         let _parallel_batch_size = total_items / self.config.worker_threads;
 
         // Use the minimum of constraints
-        let optimal_size = memory_based_batch_size
+         // At least 1
+
+        memory_based_batch_size
             .min(_parallel_batch_size)
             .min(self.config.max_batch_size)
-            .max(1); // At least 1
-
-        optimal_size
+            .max(1)
     }
 
     /// Process batches in parallel (using concurrent futures, not spawned tasks)

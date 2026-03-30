@@ -399,7 +399,7 @@ impl HybridParquetWriter {
                 &self.file_path,
                 self.dimension,
                 self.config.base_config.clone(),
-                self.filterable_columns.as_ref().map(|v| v.as_slice()),
+                self.filterable_columns.as_deref(),
                 self.filesystem_factory.clone(),
             )?;
 
@@ -665,7 +665,7 @@ impl HybridParquetWriter {
                 &self.file_path,
                 self.dimension,
                 self.config.base_config.clone(),
-                self.filterable_columns.as_ref().map(|v| v.as_slice()), // Pass filterable columns!
+                self.filterable_columns.as_deref(), // Pass filterable columns!
                 self.filesystem_factory.clone(),
             )?);
         }

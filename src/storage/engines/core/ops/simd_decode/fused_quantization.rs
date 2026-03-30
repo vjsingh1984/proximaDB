@@ -104,7 +104,7 @@ pub fn fused_decode_binary_to_f32(
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { fused_decode_binary_neon(input, output, count, bipolar) };
+        unsafe { fused_decode_binary_neon(input, output, count, bipolar) }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -147,7 +147,7 @@ pub fn fused_decode_int4_to_f32(
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { fused_decode_int4_neon(input, output, count, params) };
+        unsafe { fused_decode_int4_neon(input, output, count, params) }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -189,7 +189,7 @@ pub fn fused_decode_int8_to_f32(
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { fused_decode_int8_neon(input, output, count, params) };
+        unsafe { fused_decode_int8_neon(input, output, count, params) }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -238,7 +238,7 @@ pub fn progressive_decode_binary_int8_f32(
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { progressive_decode_neon(input, output, count, params, bipolar) };
+        unsafe { progressive_decode_neon(input, output, count, params, bipolar) }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]

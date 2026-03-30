@@ -144,7 +144,7 @@ impl LogParser {
         let remaining = rest[15..].trim_start();
         let parts: Vec<&str> = remaining.splitn(2, ':').collect();
 
-        let (hostname, tag) = if parts.len() >= 1 {
+        let (hostname, tag) = if !parts.is_empty() {
             let host_tag: Vec<&str> = parts[0].splitn(2, ' ').collect();
             if host_tag.len() >= 2 {
                 (host_tag[0], host_tag[1])

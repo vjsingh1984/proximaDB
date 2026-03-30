@@ -457,7 +457,7 @@ impl AxisHnswIndex {
         // Build neighbor_distances from batch results
         let mut neighbor_distances: Vec<(usize, f32)> = neighbor_ids
             .into_iter()
-            .zip(distances.into_iter())
+            .zip(distances)
             .collect();
 
         // Sort by distance and keep only the closest max_m

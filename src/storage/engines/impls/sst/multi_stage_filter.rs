@@ -428,7 +428,7 @@ impl ThreeStageFilterPipeline {
             let vector_records: Vec<VectorRecord> = block
                 .records
                 .iter()
-                .map(|sst_record| sst_record.clone().into())
+                .map(|sst_record| sst_record.clone())
                 .collect();
 
             // Use batch evaluator for AND/OR support

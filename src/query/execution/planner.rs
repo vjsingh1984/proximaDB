@@ -733,24 +733,21 @@ impl ExecutionPlanner {
 
     pub(crate) fn extract_join_key_pairs_static(expr: &Expr) -> Vec<(String, String)> {
         let mut out = Vec::new();
-        match expr {
-            Expr::Binary { left, op, right } => match op {
-                BinaryOp::Eq => {
-                    if let (Some(l), Some(r)) = (
-                        Self::extract_join_keys_static(expr).map(|p| p.0),
-                        Self::extract_join_keys_static(expr).map(|p| p.1),
-                    ) {
-                        out.push((l, r));
-                    }
+        if let Expr::Binary { left, op, right } = expr { match op {
+            BinaryOp::Eq => {
+                if let (Some(l), Some(r)) = (
+                    Self::extract_join_keys_static(expr).map(|p| p.0),
+                    Self::extract_join_keys_static(expr).map(|p| p.1),
+                ) {
+                    out.push((l, r));
                 }
-                BinaryOp::And => {
-                    out.extend(Self::extract_join_key_pairs_static(left));
-                    out.extend(Self::extract_join_key_pairs_static(right));
-                }
-                _ => {}
-            },
+            }
+            BinaryOp::And => {
+                out.extend(Self::extract_join_key_pairs_static(left));
+                out.extend(Self::extract_join_key_pairs_static(right));
+            }
             _ => {}
-        }
+        } }
         out
     }
 

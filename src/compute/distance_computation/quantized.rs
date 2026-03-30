@@ -547,9 +547,7 @@ impl QuantizedDistanceCalculator {
                     query,
                     &pq_data.codes,
                     &pq_data.codebook,
-                    &crate::compute::distance_computation::DistanceMetric::from(
-                        self.config.distance_metric,
-                    ),
+                    &self.config.distance_metric,
                 );
 
                 cache_hits += 1; // PQ computation typically uses cached distance tables

@@ -241,7 +241,7 @@ impl AuditCorrelationEngine {
         info!("Correlating {} audit events", events.len());
 
         // Basic event correlation logic
-        let confidence = if events.len() > 0 { 0.85 } else { 0.0 };
+        let confidence = if !events.is_empty() { 0.85 } else { 0.0 };
 
         Ok(EventSequenceAnalysis {
             event_sequence: events.to_vec(),

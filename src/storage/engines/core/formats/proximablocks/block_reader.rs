@@ -477,7 +477,8 @@ impl ProximaBlockReader {
                             (&col_stats.min_value, &col_stats.max_value)
                         {
                             // Try numeric comparison first, fall back to string comparison
-                            let can_include = if let (Ok(val_num), Ok(min_num), Ok(max_num)) = (
+                            
+                            if let (Ok(val_num), Ok(min_num), Ok(max_num)) = (
                                 serde_json::from_value::<f64>(value.clone()),
                                 serde_json::from_value::<f64>(min_val.clone()),
                                 serde_json::from_value::<f64>(max_val.clone()),
@@ -512,8 +513,7 @@ impl ProximaBlockReader {
                             } else {
                                 // Can't compare types, conservatively include
                                 true
-                            };
-                            can_include
+                            }
                         } else {
                             true // No stats available
                         }

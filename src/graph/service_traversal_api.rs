@@ -297,7 +297,7 @@ impl super::GraphOperationsService {
                         engine.as_ref(),
                         start_node_id,
                         target_node_id,
-                        config.edge_types.as_ref().map(|v| v.as_slice()),
+                        config.edge_types.as_deref(),
                     )?;
                     return Ok(res);
                 }
@@ -314,7 +314,7 @@ impl super::GraphOperationsService {
                         engine.as_ref(),
                         start_node_id,
                         target_node_id,
-                        config.edge_types.as_ref().map(|v| v.as_slice()),
+                        config.edge_types.as_deref(),
                     )?)
                 }
             }
@@ -326,7 +326,7 @@ impl super::GraphOperationsService {
                         engine.as_ref(),
                         start_node_id,
                         target_node_id,
-                        config.edge_types.as_ref().map(|v| v.as_slice()),
+                        config.edge_types.as_deref(),
                     )?)
                 }
             }

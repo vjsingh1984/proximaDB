@@ -514,46 +514,43 @@ impl UnifiedQueryOptimizer {
     fn apply_rl_action_to_plan(&self, action: &ExecutionAction, plan: &mut UnifiedExecutionPlan) {
         // Modify execution steps based on RL action
         for step in &mut plan.execution_steps {
-            match step {
-                ExecutionStep::VectorSearch {
+            if let ExecutionStep::VectorSearch {
                     execution_method,
                     candidates,
                     ..
-                } => {
-                    // Apply index strategy from action
-                    if let Some(ref strategy) = action.index_strategy {
-                        *execution_method = match strategy {
-                            crate::query::rl_planner::IndexStrategy::HNSW { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::HNSW,
-                                }
+                } = step {
+                // Apply index strategy from action
+                if let Some(ref strategy) = action.index_strategy {
+                    *execution_method = match strategy {
+                        crate::query::rl_planner::IndexStrategy::HNSW { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::HNSW,
                             }
-                            crate::query::rl_planner::IndexStrategy::IVF { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::IVF,
-                                }
+                        }
+                        crate::query::rl_planner::IndexStrategy::IVF { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::IVF,
                             }
-                            crate::query::rl_planner::IndexStrategy::LSH { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::LSH,
-                                }
+                        }
+                        crate::query::rl_planner::IndexStrategy::LSH { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::LSH,
                             }
-                            crate::query::rl_planner::IndexStrategy::DirectScan => {
-                                SearchExecutionMethod::DirectFP32
-                            }
-                            _ => execution_method.clone(),
-                        };
-                    }
-
-                    // Apply search mode expansion factor
-                    if let crate::query::rl_planner::SearchModeAction::Approximate {
-                        expansion_factor,
-                    } = &action.search_mode
-                    {
-                        *candidates = (*candidates as f32 * expansion_factor) as usize;
-                    }
+                        }
+                        crate::query::rl_planner::IndexStrategy::DirectScan => {
+                            SearchExecutionMethod::DirectFP32
+                        }
+                        _ => execution_method.clone(),
+                    };
                 }
-                _ => {}
+
+                // Apply search mode expansion factor
+                if let crate::query::rl_planner::SearchModeAction::Approximate {
+                    expansion_factor,
+                } = &action.search_mode
+                {
+                    *candidates = (*candidates as f32 * expansion_factor) as usize;
+                }
             }
         }
 

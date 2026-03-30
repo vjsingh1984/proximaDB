@@ -566,7 +566,7 @@ impl AuditLogger {
 
         // Check time-based patterns (logins at unusual hours)
         let current_hour = Utc::now().hour();
-        if current_hour < 6 || current_hour > 22 {
+        if !(6..=22).contains(&current_hour) {
             risk_score += 0.2; // Higher risk for after-hours access
         }
 

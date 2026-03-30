@@ -172,7 +172,7 @@ impl FloydWarshallAPSP {
         {
             // NEON is always available on aarch64
             // SAFETY: NEON is guaranteed on aarch64
-            return unsafe { self.floyd_warshall_neon(dist) };
+            unsafe { self.floyd_warshall_neon(dist) }
         }
 
         #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]

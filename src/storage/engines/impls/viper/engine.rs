@@ -2562,7 +2562,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 collection_config: collection_opt.as_ref().and_then(|c| c.config.as_ref()).map(
                     |cfg| crate::core::search::unified_interface::CollectionConfig {
                         default_distance_metric: distance_metric,
-                        vector_dimension: dimension as usize,
+                        vector_dimension: dimension,
                         enable_quantization: cfg.quantization.is_some(),
                         enable_metadata_filtering: !cfg.filterable_columns.is_empty(),
                         estimated_document_count: 1000, // Default estimate
@@ -2734,7 +2734,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 );
 
                 // Log metadata details for first result (columnar-specific)
-                if i == 0 && result.metadata.len() > 0 {
+                if i == 0 && !result.metadata.is_empty() {
                     debug!(
                         "    📋 VIPER Metadata sample: {:?}",
                         result

@@ -184,7 +184,7 @@ impl SstableWriter {
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Self {
         // Initialize compression provider directly
-        let compression_provider = StandardCompression::default();
+        let compression_provider = StandardCompression;
 
         // Initialize unified quantization engine from compute module
         let distance_compute = Arc::new(
@@ -319,7 +319,7 @@ impl SstableWriter {
         compression_config: Option<CompressionConfig>,
     ) -> Self {
         // Initialize universal compression adapter
-        let compression_provider = StandardCompression::default();
+        let compression_provider = StandardCompression;
 
         // Initialize unified quantization engine from compute module
         let distance_compute = Arc::new(

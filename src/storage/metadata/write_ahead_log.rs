@@ -66,7 +66,7 @@ impl Default for MetadataWALConfig {
 
         // Separate directory from vector write buffer data
         base_config.multi_disk.data_directories =
-            vec!["./data/metadata/write_buffer".to_string().into()];
+            vec!["./data/metadata/write_buffer".to_string()];
 
         // Smaller memory limit for metadata (fewer operations than vectors)
         base_config.performance.memory_flush_size_bytes = 32 * 1024 * 1024; // 32MB size threshold

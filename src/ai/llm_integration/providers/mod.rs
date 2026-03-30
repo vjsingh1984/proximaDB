@@ -143,7 +143,7 @@ pub fn validate_request_safety(request: &LLMRequest) -> Result<(), LLMError> {
 
     // Validate temperature
     if let Some(temperature) = request.temperature
-        && (temperature < 0.0 || temperature > 2.0) {
+        && !(0.0..=2.0).contains(&temperature) {
             return Err(LLMError::InvalidRequest(
                 "Temperature must be between 0.0 and 2.0".to_string(),
             ));

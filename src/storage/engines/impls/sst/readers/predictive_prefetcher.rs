@@ -362,9 +362,9 @@ impl PredictivePrefetcher {
 
         // Get SSTable reader reference (needs to be provided via context)
         // For now, return error as we need proper SSTable reader integration
-        return Err(anyhow::anyhow!(
+        Err(anyhow::anyhow!(
             "Prefetch requires SSTable reader integration - to be implemented with UnifiedSstableReader"
-        ));
+        ))
 
         // Real implementation would be:
         // let block = self.sstable_reader.read_block(&key.file_path, key.block_index).await?;

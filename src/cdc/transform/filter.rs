@@ -378,13 +378,11 @@ impl FilterRule {
             return value.contains(inner);
         }
 
-        if pattern.starts_with('*') {
-            let suffix = &pattern[1..];
+        if let Some(suffix) = pattern.strip_prefix('*') {
             return value.ends_with(suffix);
         }
 
-        if pattern.ends_with('*') {
-            let prefix = &pattern[..pattern.len() - 1];
+        if let Some(prefix) = pattern.strip_suffix('*') {
             return value.starts_with(prefix);
         }
 

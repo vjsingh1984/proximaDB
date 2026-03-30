@@ -442,16 +442,10 @@ pub mod json_comparison {
     /// ```
     pub fn compare_json_numbers(n1: &Number, n2: &Number) -> bool {
         // Try integer comparison first (preserves precision)
-        match (n1.as_i64(), n2.as_i64()) {
-            (Some(i1), Some(i2)) => return i1 == i2,
-            _ => {}
-        }
+        if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) { return i1 == i2 }
 
         // Try unsigned integer comparison for large positive numbers
-        match (n1.as_u64(), n2.as_u64()) {
-            (Some(u1), Some(u2)) => return u1 == u2,
-            _ => {}
-        }
+        if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) { return u1 == u2 }
 
         // Fall back to float comparison with epsilon for precision
         match (n1.as_f64(), n2.as_f64()) {
@@ -478,16 +472,10 @@ pub mod json_comparison {
         match (a, b) {
             (Value::Number(n1), Value::Number(n2)) => {
                 // Try integer comparison first for precision
-                match (n1.as_i64(), n2.as_i64()) {
-                    (Some(i1), Some(i2)) => return i1.cmp(&i2),
-                    _ => {}
-                }
+                if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) { return i1.cmp(&i2) }
 
                 // Try unsigned comparison for large numbers
-                match (n1.as_u64(), n2.as_u64()) {
-                    (Some(u1), Some(u2)) => return u1.cmp(&u2),
-                    _ => {}
-                }
+                if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) { return u1.cmp(&u2) }
 
                 // Fall back to float comparison
                 let f1 = n1.as_f64();

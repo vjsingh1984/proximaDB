@@ -97,8 +97,8 @@ impl HashFunction {
                 // Box-Muller transform for normal distribution
                 let u1: f32 = rng.gen_range(0.0..1.0);
                 let u2: f32 = rng.gen_range(0.0..1.0);
-                let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
-                z0
+                
+                (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
             })
             .collect();
 
@@ -271,7 +271,7 @@ impl AxisLshIndex {
         }
 
         // Store vector in the collection-specific ZeroOverheadCollection
-        let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
+        let collection_id = self.collection_id.as_deref();
 
         // Get or create collection for this collection_id
         let collection = self
@@ -351,7 +351,7 @@ impl AxisLshIndex {
 
         // Compute actual distances for candidates
         let mut results = Vec::new();
-        let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
+        let collection_id = self.collection_id.as_deref();
 
         // Get the collection for this collection_id
         if let Some(collection) = self
@@ -396,7 +396,7 @@ impl AxisLshIndex {
     }
     /// Remove a vector from the index
     pub async fn remove(&self, id: &str) -> Result<()> {
-        let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
+        let collection_id = self.collection_id.as_deref();
 
         // Get the collection and remove the vector
         if let Some(collection) = self

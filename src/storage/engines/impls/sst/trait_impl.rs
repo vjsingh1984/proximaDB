@@ -153,7 +153,7 @@ impl UnifiedStorageEngine for SstEngine {
         if let Ok(entries) = fs.list(&storage_url).await {
             for entry in &entries {
                 if !entry.metadata.is_directory {
-                    total_bytes += entry.metadata.size as u64;
+                    total_bytes += entry.metadata.size;
                     if entry.url.ends_with(".sst") || entry.url.ends_with(".proximablock") {
                         file_count += 1;
                     }

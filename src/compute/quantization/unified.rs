@@ -522,28 +522,25 @@ impl UnifiedQuantizationEngine {
 
         if all_same {
             // Optimized batch processing for same quantization level
-            match &first_level.level_type {
-                Some(QuantizationLevel::Pq(pq)) => {
-                    if let Some(codebook_id) = &pq.codebook_id {
-                        let codebook = self
-                            .codebook_store
-                            .get_codebook(codebook_id)
-                            .await?
-                            .context("Codebook not found")?;
+            if let Some(QuantizationLevel::Pq(pq)) = &first_level.level_type {
+                if let Some(codebook_id) = &pq.codebook_id {
+                    let codebook = self
+                        .codebook_store
+                        .get_codebook(codebook_id)
+                        .await?
+                        .context("Codebook not found")?;
 
-                        // Precompute distance tables for PQ
-                        let distance_tables =
-                            self.precompute_pq_distance_tables(query, &codebook, metric)?;
+                    // Precompute distance tables for PQ
+                    let distance_tables =
+                        self.precompute_pq_distance_tables(query, &codebook, metric)?;
 
-                        for (i, quantized) in quantized_batch.iter().enumerate() {
-                            distances[i] =
-                                self.lookup_pq_distance(&quantized.data, &distance_tables, metric)?;
-                        }
-
-                        return Ok(distances);
+                    for (i, quantized) in quantized_batch.iter().enumerate() {
+                        distances[i] =
+                            self.lookup_pq_distance(&quantized.data, &distance_tables, metric)?;
                     }
+
+                    return Ok(distances);
                 }
-                _ => {}
             }
         }
 

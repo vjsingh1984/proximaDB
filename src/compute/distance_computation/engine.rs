@@ -1488,7 +1488,7 @@ impl UnifiedDistanceCompute {
 
         #[cfg(target_arch = "aarch64")]
         {
-            return 32; // NEON: Smaller batches for mobile/embedded
+            32// NEON: Smaller batches for mobile/embedded
         }
 
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]

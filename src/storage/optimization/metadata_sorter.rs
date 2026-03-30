@@ -281,7 +281,7 @@ impl SortableValue {
         }
 
         // Try to parse as float
-        if let Ok(_) = value.parse::<f64>() {
+        if value.parse::<f64>().is_ok() {
             return Self::Float(value.to_string());
         }
 

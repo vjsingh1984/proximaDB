@@ -495,13 +495,13 @@ impl TypedValueValidator {
 
     /// Validate geo point
     fn validate_geo_point(&self, latitude: f64, longitude: f64) -> ValidationResult {
-        if latitude < -90.0 || latitude > 90.0 {
+        if !(-90.0..=90.0).contains(&latitude) {
             return Err(ValidationError::InvalidFormat {
                 type_name: "geo_point".to_string(),
                 value: format!("latitude {} out of range [-90, 90]", latitude),
             });
         }
-        if longitude < -180.0 || longitude > 180.0 {
+        if !(-180.0..=180.0).contains(&longitude) {
             return Err(ValidationError::InvalidFormat {
                 type_name: "geo_point".to_string(),
                 value: format!("longitude {} out of range [-180, 180]", longitude),

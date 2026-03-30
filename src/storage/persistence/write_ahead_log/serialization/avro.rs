@@ -42,7 +42,7 @@ pub struct AvroSerializer;
 impl AvroSerializer {
     /// Create a new Avro serializer
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 }
 

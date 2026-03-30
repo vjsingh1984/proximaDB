@@ -679,7 +679,7 @@ impl SchemaInferenceService {
             const MIN_TIMESTAMP: i64 = 0;
             const MAX_TIMESTAMP: i64 = 4102444800; // 2100-01-01
 
-            return seconds >= MIN_TIMESTAMP && seconds <= MAX_TIMESTAMP;
+            return (MIN_TIMESTAMP..=MAX_TIMESTAMP).contains(&seconds);
         }
 
         false

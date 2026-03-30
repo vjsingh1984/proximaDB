@@ -244,7 +244,7 @@ impl UniversalPerformanceOptimizer {
             filesystem_factory,
             mmap_cache: Arc::new(RwLock::new(HashMap::new())),
             data_cache: Arc::new(RwLock::new(HashMap::new())),
-            compression_provider: StandardCompression::default(),
+            compression_provider: StandardCompression,
             access_patterns: Arc::new(RwLock::new(HashMap::new())),
         }
     }

@@ -13,7 +13,7 @@ pub struct ProtocolBuffersSerializer;
 impl ProtocolBuffersSerializer {
     /// Create a new Protocol Buffers serializer
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 }
 

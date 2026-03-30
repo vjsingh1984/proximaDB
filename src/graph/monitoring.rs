@@ -437,7 +437,7 @@ impl GraphMonitor {
                 metadata: metadata.clone(),
             };
 
-            if let Err(_) = sender.send(event) {
+            if sender.send(event).is_err() {
                 eprintln!("Failed to send operation metric event");
             }
         }
@@ -616,7 +616,7 @@ impl GraphMonitor {
 
         if let Some(ref sender) = self.metrics_sender {
             let event = MetricEvent::BusinessUpdate(business_metrics);
-            if let Err(_) = sender.send(event) {
+            if sender.send(event).is_err() {
                 eprintln!("Failed to send business metrics update");
             }
         }

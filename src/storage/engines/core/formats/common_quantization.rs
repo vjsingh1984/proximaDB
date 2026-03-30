@@ -350,17 +350,17 @@ impl UnifiedQuantizedFile {
     pub fn get_quantized_vectors(&self, level: &QuantizationLevel) -> Option<&[Vec<u8>]> {
         match level {
             QuantizationLevel::Binary => {
-                self.quantized_data.q_binary.as_ref().map(|v| v.as_slice())
+                self.quantized_data.q_binary.as_deref()
             }
             QuantizationLevel::Int8 =>
             // Convert i8 to u8 for unified interface
             {
                 None
             } // TODO: implement conversion
-            QuantizationLevel::PQ4 => self.quantized_data.q_pq4.as_ref().map(|v| v.as_slice()),
-            QuantizationLevel::PQ8 => self.quantized_data.q_pq8.as_ref().map(|v| v.as_slice()),
-            QuantizationLevel::PQ16 => self.quantized_data.q_pq16.as_ref().map(|v| v.as_slice()),
-            QuantizationLevel::PQ32 => self.quantized_data.q_pq32.as_ref().map(|v| v.as_slice()),
+            QuantizationLevel::PQ4 => self.quantized_data.q_pq4.as_deref(),
+            QuantizationLevel::PQ8 => self.quantized_data.q_pq8.as_deref(),
+            QuantizationLevel::PQ16 => self.quantized_data.q_pq16.as_deref(),
+            QuantizationLevel::PQ32 => self.quantized_data.q_pq32.as_deref(),
         }
     }
 

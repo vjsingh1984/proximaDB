@@ -657,11 +657,11 @@ impl UnifiedProgressiveSearchPipeline {
             SearchStage::Fp16 | SearchStage::Fp32 => 1.0,
         };
 
-        let candidates = ((current_count as f32 * selectivity) as usize)
-            .max(top_k * 3)
-            .min(self.config.max_candidates);
+        
 
-        candidates
+        ((current_count as f32 * selectivity) as usize)
+            .max(top_k * 3)
+            .min(self.config.max_candidates)
     }
 
     /// Apply metadata filter to records
@@ -846,7 +846,7 @@ impl ThresholdAdjuster {
         let mut thresholds = self.current_thresholds.write();
 
         // If results are good and we used many stages, increase selectivity
-        if results.len() > 0 && stages.len() > 2 {
+        if !results.is_empty() && stages.len() > 2 {
             thresholds.binary_selectivity = (thresholds.binary_selectivity * 0.95).max(0.05);
             thresholds.int8_selectivity = (thresholds.int8_selectivity * 0.95).max(0.1);
             thresholds.pq_selectivity = (thresholds.pq_selectivity * 0.95).max(0.15);

@@ -422,7 +422,7 @@ impl QuantizationSmartDefaults {
         // Validate progressive search thresholds
         if config.enable_progressive_search.unwrap_or(true) {
             let selectivity = config.binary_filter_selectivity.unwrap_or(0.1);
-            if selectivity < 0.0 || selectivity > 1.0 {
+            if !(0.0..=1.0).contains(&selectivity) {
                 return Err(anyhow::anyhow!(
                     "Invalid binary filter selectivity: {:?} (must be 0.0-1.0)",
                     selectivity

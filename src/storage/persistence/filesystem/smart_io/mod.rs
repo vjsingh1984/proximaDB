@@ -291,7 +291,7 @@ impl SmartIoLayer {
             "SmartIO: Coalesced {} ranges to {} ranges ({}% reduction, {} bytes in gaps)",
             ranges.len(),
             coalesced_ranges.len(),
-            if ranges.len() > 0 {
+            if !ranges.is_empty() {
                 ((ranges.len() - coalesced_ranges.len()) * 100) / ranges.len()
             } else {
                 0

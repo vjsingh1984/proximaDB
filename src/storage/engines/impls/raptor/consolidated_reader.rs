@@ -694,7 +694,7 @@ impl RaptorReader {
         }
 
         let elapsed = start_time.elapsed();
-        let efficiency = if footer.file_metadata.row_groups.len() > 0 {
+        let efficiency = if !footer.file_metadata.row_groups.is_empty() {
             100.0 * rowgroups_loaded as f64 / footer.file_metadata.row_groups.len() as f64
         } else {
             0.0

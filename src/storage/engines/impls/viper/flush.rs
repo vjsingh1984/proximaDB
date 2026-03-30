@@ -85,7 +85,7 @@ impl Flush {
         );
 
         // Initialize compression provider directly
-        let compression_provider = StandardCompression::default();
+        let compression_provider = StandardCompression;
 
         // Initialize quantization engine
         let codebook_store =

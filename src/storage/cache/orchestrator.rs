@@ -1111,14 +1111,11 @@ impl CrossCacheOrchestrator {
                 tokio::time::sleep(Duration::from_millis(100)).await;
 
                 if let Some(request) = prefetch_engine.dequeue_fetch_request().await {
-                    match request.cache_type {
-                        CacheType::Metadata => {
-                            if let Some(_cache) = &metadata_cache {
-                                // Would actually fetch and cache metadata
-                                // cache.prefetch(&request.key).await;
-                            }
+                    if request.cache_type == CacheType::Metadata {
+                        if let Some(_cache) = &metadata_cache {
+                            // Would actually fetch and cache metadata
+                            // cache.prefetch(&request.key).await;
                         }
-                        _ => {}
                     }
                 }
             }
