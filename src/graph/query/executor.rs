@@ -637,20 +637,62 @@ impl QueryExecutor {
                         }
                     }
                 }
-                _ => {
-                    // RightOuter and FullOuter: treat as LeftOuter for now
+                super::planner::JoinType::RightOuter => {
+                    for right_row in &matches {
+                        let mut merged = left_row.clone();
+                        for (k, v) in *right_row {
+                            if !merged.contains_key(k) {
+                                merged.insert(format!("right_{}", k), v.clone());
+                            }
+                        }
+                        joined.push(merged);
+                    }
+                }
+                super::planner::JoinType::FullOuter => {
                     if matches.is_empty() {
                         joined.push(left_row.clone());
                     } else {
-                        for right_row in matches {
+                        for right_row in &matches {
                             let mut merged = left_row.clone();
-                            for (k, v) in right_row {
+                            for (k, v) in *right_row {
                                 if !merged.contains_key(k) {
                                     merged.insert(format!("right_{}", k), v.clone());
                                 }
                             }
                             joined.push(merged);
                         }
+                    }
+                }
+            }
+        }
+
+        // For RightOuter and FullOuter: add unmatched right rows
+        if matches!(
+            join_type,
+            super::planner::JoinType::RightOuter | super::planner::JoinType::FullOuter
+        ) {
+            let matched_right_keys: std::collections::HashSet<String> = results
+                .iter()
+                .filter_map(|row| {
+                    row.get(left_key).map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                })
+                .collect();
+
+            for row in &results {
+                if let Some(val) = row.get(right_key) {
+                    let key_str = match val {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    if !matched_right_keys.contains(&key_str) {
+                        let mut right_only = HashMap::new();
+                        for (k, v) in row {
+                            right_only.insert(format!("right_{}", k), v.clone());
+                        }
+                        joined.push(right_only);
                     }
                 }
             }
@@ -664,7 +706,9 @@ impl QueryExecutor {
 mod tests {
     use super::*;
     use crate::graph::GraphOperationsService;
-    use crate::graph::query::planner::{CostEstimate, PlanStep, PlanStepType, QueryPlan};
+    use crate::graph::query::planner::{
+        CostEstimate, JoinType, PlanStep, PlanStepType, QueryPlan,
+    };
     use crate::utils::Uuid;
     use std::time::SystemTime;
 
@@ -959,5 +1003,74 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(limited.len(), 3);
         assert_eq!(limited[0].get("i"), Some(&serde_json::json!(5)));
+    }
+
+    fn make_join_data() -> Vec<HashMap<String, serde_json::Value>> {
+        vec![
+            HashMap::from([
+                ("id".to_string(), serde_json::json!("1")),
+                ("name".to_string(), serde_json::json!("Alice")),
+                ("dept_id".to_string(), serde_json::json!("d1")),
+            ]),
+            HashMap::from([
+                ("id".to_string(), serde_json::json!("2")),
+                ("name".to_string(), serde_json::json!("Bob")),
+                ("dept_id".to_string(), serde_json::json!("d2")),
+            ]),
+            HashMap::from([
+                ("id".to_string(), serde_json::json!("3")),
+                ("name".to_string(), serde_json::json!("Carol")),
+                ("dept_id".to_string(), serde_json::json!("d_none")),
+            ]),
+            HashMap::from([
+                ("id".to_string(), serde_json::json!("d1")),
+                ("dept_name".to_string(), serde_json::json!("Engineering")),
+            ]),
+            HashMap::from([
+                ("id".to_string(), serde_json::json!("d2")),
+                ("dept_name".to_string(), serde_json::json!("Sales")),
+            ]),
+            HashMap::from([
+                ("id".to_string(), serde_json::json!("d3")),
+                ("dept_name".to_string(), serde_json::json!("Marketing")),
+            ]),
+        ]
+    }
+
+    #[test]
+    fn test_inner_join() {
+        let executor = QueryExecutor::new(Arc::new(GraphOperationsService::new()));
+        let data = make_join_data();
+        let result = executor.execute_join(data, &JoinType::Inner, "dept_id", "id").unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_left_outer_join() {
+        let executor = QueryExecutor::new(Arc::new(GraphOperationsService::new()));
+        let data = make_join_data();
+        let result = executor.execute_join(data, &JoinType::LeftOuter, "dept_id", "id").unwrap();
+        let has_carol = result.iter().any(|r| r.get("name") == Some(&serde_json::json!("Carol")));
+        assert!(has_carol, "Left outer should keep unmatched left rows");
+    }
+
+    #[test]
+    fn test_right_outer_join() {
+        let executor = QueryExecutor::new(Arc::new(GraphOperationsService::new()));
+        let data = make_join_data();
+        let result = executor.execute_join(data, &JoinType::RightOuter, "dept_id", "id").unwrap();
+        let has_marketing = result.iter().any(|r| r.get("right_dept_name") == Some(&serde_json::json!("Marketing")));
+        assert!(has_marketing, "Right outer should include unmatched right rows");
+    }
+
+    #[test]
+    fn test_full_outer_join() {
+        let executor = QueryExecutor::new(Arc::new(GraphOperationsService::new()));
+        let data = make_join_data();
+        let result = executor.execute_join(data, &JoinType::FullOuter, "dept_id", "id").unwrap();
+        let has_carol = result.iter().any(|r| r.get("name") == Some(&serde_json::json!("Carol")));
+        let has_marketing = result.iter().any(|r| r.get("right_dept_name") == Some(&serde_json::json!("Marketing")));
+        assert!(has_carol, "Full outer should keep unmatched left rows");
+        assert!(has_marketing, "Full outer should include unmatched right rows");
     }
 }
