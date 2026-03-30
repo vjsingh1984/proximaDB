@@ -1868,7 +1868,7 @@ impl UnifiedHandlers {
             }
             serde_json::Value::Object(map) => {
                 let mut fields = std::collections::BTreeMap::new();
-                for (k, sv) in map.iter() {
+                for (k, sv) in map {
                     fields.insert(k.clone(), Self::json_to_sql_value(sv));
                 }
                 let fields_hashmap: std::collections::HashMap<

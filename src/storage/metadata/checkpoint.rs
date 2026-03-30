@@ -345,7 +345,7 @@ impl FilestoreCheckpoint {
 
         // Create a wrapper message for all collections
         let snapshot = crate::proto::proximadb_v1::CollectionSnapshot {
-            collection: collections.get(0).cloned(),
+            collection: collections.first().cloned(),
             vectors: Vec::new(),
             snapshot_timestamp: chrono::Utc::now().timestamp_micros(),
             snapshot_version: "1".to_string(),

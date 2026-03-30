@@ -385,9 +385,7 @@ impl CsrStorage {
             edge_ids_bytes: self.edge_ids.iter().map(|id| id.len()).sum::<usize>()
                 + self.edge_ids.len() * std::mem::size_of::<String>(),
             temp_edges_bytes: self
-                .temp_edges
-                .iter()
-                .map(|(_, edges)| {
+                .temp_edges.values().map(|edges| {
                     edges.len() * (std::mem::size_of::<usize>() + std::mem::size_of::<String>())
                 })
                 .sum::<usize>(),

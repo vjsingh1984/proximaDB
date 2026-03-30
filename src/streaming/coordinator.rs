@@ -341,7 +341,7 @@ impl StreamCoordinator {
         let timeout_secs = self.config.session_timeout.as_secs();
         let mut timed_out = Vec::new();
 
-        for entry in self.sessions.iter() {
+        for entry in &self.sessions {
             if entry.is_timed_out(timeout_secs) {
                 timed_out.push(entry.key().clone());
             }

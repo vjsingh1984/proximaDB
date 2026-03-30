@@ -98,7 +98,7 @@ impl SstEngine {
         let mut key_frequency: HashMap<String, usize> = HashMap::new();
 
         for vector in vectors {
-            for (key, _) in &vector.metadata {
+            for key in vector.metadata.keys() {
                 *key_frequency.entry(key.clone()).or_insert(0) += 1;
             }
         }

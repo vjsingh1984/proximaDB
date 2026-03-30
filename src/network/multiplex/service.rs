@@ -199,7 +199,7 @@ impl Service<Request<Body>> for MultiplexService {
             .version(request.version());
 
         // Copy all headers
-        for (key, value) in request.headers().iter() {
+        for (key, value) in request.headers() {
             detection_builder = detection_builder.header(key, value);
         }
         let detection_request = detection_builder

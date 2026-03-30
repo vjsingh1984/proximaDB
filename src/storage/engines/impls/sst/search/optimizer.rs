@@ -256,7 +256,7 @@ impl SearchOptimizer {
         let mut distribution = HashMap::new();
 
         for stats in self.query_stats.values() {
-            for (strategy, _) in &stats.strategy_performance {
+            for strategy in stats.strategy_performance.keys() {
                 *distribution.entry(strategy.clone()).or_insert(0) += stats.count;
             }
         }

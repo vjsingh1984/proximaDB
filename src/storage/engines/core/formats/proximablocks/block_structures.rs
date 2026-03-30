@@ -2102,7 +2102,7 @@ impl ProximaDataBlock {
         // ============ STEP 3: Build sparse metadata columns (chunk IDs, page IDs, etc.) ============
         let mut metadata_keys = HashSet::new();
         for record in &self.records {
-            for (key, _sql_value) in &record.metadata {
+            for key in record.metadata.keys() {
                 metadata_keys.insert(key.clone());
             }
         }
@@ -2544,7 +2544,7 @@ impl ProximaDataBlock {
                         }
                         FilterableDataType::FilterableBoolean => SqlValue {
                             value: Some(Value::BoolValue(
-                                payload.get(0).is_some_and(|&b| b != 0),
+                                payload.first().is_some_and(|&b| b != 0),
                             )),
                         },
                         FilterableDataType::FilterableString => {

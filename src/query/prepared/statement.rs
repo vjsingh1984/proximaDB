@@ -580,7 +580,7 @@ impl PreparedStatementCache {
         let mut oldest_access = Instant::now();
         let mut total_access_count = 0u64;
 
-        for entry in self.cache.iter() {
+        for entry in &self.cache {
             total_executions += entry.statement.execution_count;
             total_access_count += entry.access_count;
             if entry.last_accessed < oldest_access {

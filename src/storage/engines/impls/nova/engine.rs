@@ -1827,7 +1827,7 @@ impl NovaEngine {
         let mut all_results = Vec::new();
 
         // Search each NOVA file using columnar optimization
-        for _nova_file in files.iter() {
+        for _nova_file in &files {
             // Placeholder - would implement actual columnar search
             let results: Vec<(crate::proto::proximadb_v1::VectorRecord, f32)> = Vec::new();
 

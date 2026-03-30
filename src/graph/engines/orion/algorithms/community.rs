@@ -334,7 +334,7 @@ impl LouvainCommunityDetection {
         }
 
         // Compute modularity
-        for (community_id, internal_edges) in community_internal_edges.iter() {
+        for (community_id, internal_edges) in &community_internal_edges {
             let total_degree = community_total_degree
                 .get(community_id)
                 .copied()

@@ -98,7 +98,7 @@ pub fn bfs_generic(
 
     // Build simple paths from start to each visited node using parent map
     let mut paths: Vec<Vec<NodeId>> = Vec::new();
-    for n in visited.iter() {
+    for n in &visited {
         let mut path = Vec::new();
         let mut cur = n.clone();
         path.push(cur.clone());

@@ -168,8 +168,7 @@ impl ExecutionPlanner {
         if !select.joins.is_empty() {
             // Use first FROM as left side
             let left_alias = select
-                .from
-                .get(0)
+                .from.first()
                 .and_then(|t| t.alias.clone())
                 .unwrap_or_else(|| "l".to_string());
             for j in &select.joins {
@@ -760,8 +759,7 @@ impl ExecutionPlanner {
         for expr in projection {
             if let Expr::AggCall { name, args } = expr {
                 let alias = name.to_uppercase();
-                let field = args
-                    .get(0)
+                let field = args.first()
                     .and_then(|e| self.expr_to_identifier(e))
                     .unwrap_or("*".to_string());
                 let func = match alias.as_str() {

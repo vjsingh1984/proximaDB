@@ -441,7 +441,7 @@ impl CostEstimator for CostModel {
         if !pattern.properties.is_empty() {
             // Each property constraint reduces result set
             // Use histogram-based estimation if available, otherwise default to 0.1 per constraint
-            for (prop_name, _constraint) in &pattern.properties {
+            for prop_name in pattern.properties.keys() {
                 if let Some(&distinct_values) = stats.property_selectivity.get(prop_name) {
                     // Selectivity = 1 / distinct_values (assuming uniform distribution)
                     let prop_sel = if distinct_values > 0 {

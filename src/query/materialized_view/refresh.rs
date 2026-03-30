@@ -394,7 +394,7 @@ impl RefreshScheduler {
         let mut affected_views = Vec::new();
 
         // Find views that depend on this collection
-        for entry in self.scheduled_views.iter() {
+        for entry in &self.scheduled_views {
             if entry.dependencies.contains(&collection.to_string())
                 && let RefreshStrategy::OnChange { debounce } = &entry.strategy {
                     affected_views.push((entry.view_name.clone(), *debounce));
@@ -458,7 +458,7 @@ impl RefreshScheduler {
     pub async fn check_scheduled(&self) -> MaterializedViewResult<()> {
         let now = Utc::now();
 
-        for entry in self.scheduled_views.iter() {
+        for entry in &self.scheduled_views {
             if let Some(next_refresh) = entry.next_refresh
                 && now >= next_refresh {
                     let event = RefreshEvent::scheduled(&entry.view_name);
@@ -484,7 +484,7 @@ impl RefreshScheduler {
         let _now = Instant::now();
         let mut to_flush = Vec::new();
 
-        for entry in self.pending_changes.iter() {
+        for entry in &self.pending_changes {
             if entry.first_change_at.elapsed() >= entry.debounce {
                 to_flush.push((entry.key().clone(), entry.collections.clone()));
             }

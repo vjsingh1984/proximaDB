@@ -1491,7 +1491,7 @@ impl HybridQueryEngine {
         map: &std::collections::HashMap<String, crate::core::metadata_types::MetadataValue>,
     ) -> HashMap<String, String> {
         let mut out = HashMap::new();
-        for (k, v) in map.iter() {
+        for (k, v) in map {
             let s = match v {
                 crate::core::metadata_types::MetadataValue::String(s) => s.to_string(),
                 crate::core::metadata_types::MetadataValue::Number(n) => n.to_string(),

@@ -347,7 +347,7 @@ impl TimeSeriesEngine {
             .map(|cfg| Downsampler::new(cfg.clone()))
             .collect();
 
-        let compression = config.compression.clone();
+        let compression = config.compression;
 
         // Create filesystem factory
         let fs_config = FilesystemConfig::default();
@@ -1631,7 +1631,7 @@ impl Clone for TimeSeriesEngine {
             partitions: BTreeMap::new(), // Empty for clone
             active_partition: None,
             downsamplers: vec![],
-            compressor: TimeSeriesCompressor::new(self.config.compression.clone()),
+            compressor: TimeSeriesCompressor::new(self.config.compression),
             asof_join_engine: ASOFJoin::new(),
             downsampled_data: Arc::clone(&self.downsampled_data),
             filesystem_factory: {

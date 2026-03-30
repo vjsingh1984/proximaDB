@@ -999,8 +999,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
-            .map(|q| q.enabled)
-            .flatten()
+            .and_then(|q| q.enabled)
             .unwrap_or(false);
 
         if quantization_enabled {
@@ -1130,8 +1129,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                 .as_ref()
                 .and_then(|c| c.config.as_ref())
                 .and_then(|cfg| cfg.quantization.as_ref())
-                .map(|q| q.enabled)
-                .flatten()
+                .and_then(|q| q.enabled)
                 .unwrap_or(false);
 
             // Use the actual file that was written
@@ -1552,7 +1550,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             let swift_filter: Option<super::MetadataFilter> = None;
 
             let mut all_results = Vec::new();
-            for swift_file in files.iter() {
+            for swift_file in &files {
                 let file_results = swift_file
                     .search_without_index(query_vector, top_k, swift_filter.clone(), &prune_config)
                     .await?;
@@ -1632,7 +1630,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         let swift_filter: Option<super::MetadataFilter> = None;
 
         let mut all_results = Vec::new();
-        for swift_file in files.iter() {
+        for swift_file in &files {
             // Use search_without_index which applies block pruning
             let file_results = swift_file
                 .search_without_index(query_vector, top_k, swift_filter.clone(), &prune_config)
@@ -1861,7 +1859,7 @@ impl SwiftEngine {
         let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
         // Search each SWIFT file by iterating through superblocks and blocks
-        for swift_file in files.iter() {
+        for swift_file in &files {
             // Iterate through all superblocks -> blocks -> records
             for superblock in &swift_file.superblocks {
                 for block in &superblock.blocks {

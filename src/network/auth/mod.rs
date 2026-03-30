@@ -200,7 +200,7 @@ impl AuthService {
             .config
             .api_keys
             .get(api_key)
-            .ok_or_else(|| AuthError::InvalidCredentials)?;
+            .ok_or(AuthError::InvalidCredentials)?;
 
         let roles = self.rbac.get_user_roles(&api_key_info.user_id)?;
         let permissions = self.rbac.get_permissions_for_roles(&roles)?;

@@ -2527,7 +2527,7 @@ impl UnifiedSstableReader {
 
                 // Convert metadata stats for cache
                 let mut cache_metadata_stats = std::collections::HashMap::new();
-                for (key, stats) in loaded_index.metadata_stats.iter() {
+                for (key, stats) in &loaded_index.metadata_stats {
                     cache_metadata_stats.insert(
                         key.clone(),
                         crate::storage::cache::specialized::index_node_cache::MetadataStats {
@@ -4276,9 +4276,7 @@ impl UnifiedSstableReader {
                             record.id,
                             record.vector.len(),
                             record
-                                .metadata
-                                .iter()
-                                .map(|(key, _value)| key.clone())
+                                .metadata.keys().map(|key| key.clone())
                                 .collect::<Vec<_>>()
                         );
                     }

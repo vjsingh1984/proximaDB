@@ -521,7 +521,7 @@ pub async fn update_schema(
         }
 
         // Detect removed columns (only if force is set)
-        for (name, _) in &existing_columns {
+        for name in existing_columns.keys() {
             if !new_columns.contains_key(name) {
                 changes.push(SchemaChange {
                     change_type: "REMOVE_COLUMN".to_string(),
@@ -869,7 +869,7 @@ pub fn validate_schema(
             .collect();
 
         // Check for removed columns
-        for (name, _) in &existing_columns {
+        for name in existing_columns.keys() {
             if !new_columns.contains_key(name) {
                 errors.push(format!(
                     "Cannot remove column '{}' - schema evolution does not allow column removal",

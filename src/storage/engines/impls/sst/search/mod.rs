@@ -830,7 +830,7 @@ impl SstEngine {
         let mut candidates: Vec<OptimizedSearchRecord> =
             Vec::with_capacity(records.len().min(limit));
 
-        for record in records.iter() {
+        for record in &records {
             // Compute raw distance
             let raw_distance = distance_computer.distance(query_vector, &record.vector);
 

@@ -321,8 +321,7 @@ impl VectorOperationsService {
         let collection_id = req.collection_id.clone();
         let top_k = req.top_k as usize;
         let search_query = req
-            .queries
-            .get(0)
+            .queries.first()
             .ok_or_else(|| anyhow::anyhow!("No query vectors provided"))?;
         let query_vector = search_query.vector.clone();
         let include_vectors = req

@@ -825,7 +825,7 @@ impl Compaction {
         // Get current time in seconds for consistent comparison
         let current_time_secs = current_time / 1000;
 
-        for vector_record in resolved_records.iter() {
+        for vector_record in &resolved_records {
             // Tombstone detection: empty vector + expires_at in past (including 0)
             // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
             let is_tombstone = vector_record.vector.is_empty()

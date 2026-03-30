@@ -101,7 +101,7 @@ impl ProtocolDetector for ArrowFlightDetector {
 
         // Check for Arrow-specific metadata
         // Arrow Flight often has x-arrow-flight-* headers
-        for (name, _) in headers.iter() {
+        for (name, _) in headers {
             if name.as_str().starts_with("x-arrow-flight") {
                 return Some(DetectionResult::new(DetectedProtocol::ArrowFlight, 0.95));
             }
@@ -117,7 +117,7 @@ impl ProtocolDetector for ArrowFlightDetector {
 
     fn priority(&self) -> u32 {
         self.priority
-            .unwrap_or_else(|| ARROW_FLIGHT_DETECTOR_PRIORITY)
+            .unwrap_or(ARROW_FLIGHT_DETECTOR_PRIORITY)
     }
 
     fn target_protocol(&self) -> DetectedProtocol {

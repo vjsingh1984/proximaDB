@@ -670,7 +670,7 @@ impl GraphEngine for OrionGraphEngine {
 
         // Insert into memory pool
         let mut inserted_nodes = Vec::with_capacity(nodes.len());
-        for node in nodes.iter() {
+        for node in &nodes {
             let node_arc = self.memory_pool.insert_node(node.clone());
             inserted_nodes.push(node_arc);
         }
@@ -755,7 +755,7 @@ impl GraphEngine for OrionGraphEngine {
 
         // Validate endpoints first to avoid partial batch inserts
         let validate_start = std::time::Instant::now();
-        for edge in edges.iter() {
+        for edge in &edges {
             if self.memory_pool.get_node(&edge.from_node_id).is_none() {
                 return Err(ProximaDBError::InvalidInput(format!(
                     "Source node {} does not exist",
@@ -794,7 +794,7 @@ impl GraphEngine for OrionGraphEngine {
         // Insert into memory pool + metadata
         let mempool_start = std::time::Instant::now();
         let mut inserted_edges = Vec::with_capacity(edges.len());
-        for edge in edges.iter() {
+        for edge in &edges {
             let edge_arc = self.memory_pool.insert_edge(edge.clone());
             self.edge_metadata
                 .insert(edge.id.clone(), Arc::clone(&edge_arc));
@@ -808,7 +808,7 @@ impl GraphEngine for OrionGraphEngine {
         {
             use std::collections::HashSet;
             let mut unique_nodes: HashSet<&NodeId> = HashSet::with_capacity(edges.len() * 2);
-            for edge in edges.iter() {
+            for edge in &edges {
                 unique_nodes.insert(&edge.from_node_id);
                 unique_nodes.insert(&edge.to_node_id);
             }
@@ -832,7 +832,7 @@ impl GraphEngine for OrionGraphEngine {
             let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
             let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
 
-            for edge in edges.iter() {
+            for edge in &edges {
                 let from_index = *self.node_to_index.get(&edge.from_node_id).ok_or_else(|| {
                     ProximaDBError::InvalidInput(format!("Node {} not found", edge.from_node_id))
                 })?;

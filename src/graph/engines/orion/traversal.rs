@@ -1706,7 +1706,7 @@ pub async fn has_cycle(engine: &OrionGraphEngine) -> Result<bool> {
         Ok(false)
     }
 
-    for (nid, c) in color.clone().iter() {
+    for (nid, c) in &color.clone() {
         if *c == Color::White
             && dfs(engine, nid, &mut color)? {
                 return Ok(true);

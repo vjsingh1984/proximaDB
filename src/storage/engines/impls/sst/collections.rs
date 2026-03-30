@@ -243,7 +243,7 @@ impl SstEngine {
         let mut error_count = 0;
 
         // Clean up SST files, bloom filters, and metadata files
-        for entry in files.iter() {
+        for entry in &files {
             if entry.name.ends_with(".sst")
                 || entry.name.ends_with(".bloom")
                 || entry.name.ends_with(".meta")

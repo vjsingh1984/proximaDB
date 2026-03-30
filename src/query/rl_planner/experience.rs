@@ -265,7 +265,7 @@ impl PrioritizedExperienceBuffer {
             let target = rand::Rng::gen_range(&mut rng, 0.0..total_priority);
             let mut cumulative = 0.0;
 
-            for (exp, priority) in self.buffer.iter() {
+            for (exp, priority) in &self.buffer {
                 cumulative += priority;
                 if cumulative >= target {
                     // Importance sampling weight

@@ -415,7 +415,7 @@ impl DecompressionCache {
                 std::mem::size_of::<crate::proto::proximadb_v1::VectorRecord>()
                     + r.id.len()
                     + r.vector.len() * std::mem::size_of::<f32>()
-                    + r.metadata.iter().map(|(k, _)| k.len() + 8).sum::<usize>() // Rough metadata size
+                    + r.metadata.keys().map(|k| k.len() + 8).sum::<usize>() // Rough metadata size
             })
             .sum()
     }

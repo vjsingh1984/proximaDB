@@ -454,7 +454,7 @@ impl AccessPatternTracker {
         // Count co-occurrences
         let mut cooccurrence_counts: HashMap<(String, CacheType), usize> = HashMap::new();
 
-        for record in history.iter() {
+        for record in history {
             if record.key == key {
                 for followed in &record.followed_by {
                     let entry = cooccurrence_counts

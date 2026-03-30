@@ -1907,7 +1907,7 @@ impl GraphOperationsService {
         // Enforce composite (from,to,type) uniqueness across existing + in-batch edges
         let composite_start = std::time::Instant::now();
         let mut seen: HashSet<(String, String, String)> = HashSet::with_capacity(edges.len());
-        for edge in edges.iter() {
+        for edge in &edges {
             let key = (
                 edge.from_node_id.clone(),
                 edge.to_node_id.clone(),
@@ -1940,7 +1940,7 @@ impl GraphOperationsService {
             // Step 1: Batch fetch all nodes first (reduces lock contention)
             let mut validation_data: Vec<(Edge, Arc<Node>, Arc<Node>)> =
                 Vec::with_capacity(edges.len());
-            for edge in edges.iter() {
+            for edge in &edges {
                 if let (Some(from), Some(to)) = (
                     engine.get_node(&edge.from_node_id)?,
                     engine.get_node(&edge.to_node_id)?,
@@ -1958,7 +1958,7 @@ impl GraphOperationsService {
                 tracing::warn!(
                     "TEST MODE: Using sequential validation via PROXIMADB_SEQUENTIAL_VALIDATION=1"
                 );
-                for (edge, from, to) in validation_data.iter() {
+                for (edge, from, to) in &validation_data {
                     self.enforce_schema_on_edge(graph_id, edge, &from.labels, &to.labels)
                         .await?;
                     self.enforce_cardinality_on_edge(graph_id, edge, engine.as_ref())
@@ -1999,7 +1999,7 @@ impl GraphOperationsService {
             .fetch_add(inserted.len() as u64, Ordering::Relaxed);
         if !inserted.is_empty() {
             let mut per_type: HashMap<String, u64> = HashMap::new();
-            for e in inserted.iter() {
+            for e in &inserted {
                 *per_type.entry(e.edge_type.clone()).or_default() += 1;
             }
             for (edge_type, count) in per_type {

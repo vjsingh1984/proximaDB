@@ -170,12 +170,12 @@ impl IndexManager {
         let indexes = self.indexes.read().await;
         if let Some(collection_indexes) = indexes.get(collection) {
             // Remove from path indexes
-            for (_, index) in &collection_indexes.path_indexes {
+            for index in collection_indexes.path_indexes.values() {
                 index.remove(id)?;
             }
 
             // Remove from array indexes
-            for (_, index) in &collection_indexes.array_indexes {
+            for index in collection_indexes.array_indexes.values() {
                 index.remove(id)?;
             }
 

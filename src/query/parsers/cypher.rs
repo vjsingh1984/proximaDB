@@ -1718,10 +1718,10 @@ fn parse_optional_match_clause(input: &str) -> ParseResult<'_, (Vec<NodePattern>
                 let mut nodes = Vec::new();
                 let mut edges = Vec::new();
                 for (mut ns, mut es) in patterns {
-                    for n in ns.iter_mut() {
+                    for n in &mut ns {
                         n.optional = true;
                     }
-                    for e in es.iter_mut() {
+                    for e in &mut es {
                         e.optional = true;
                     }
                     nodes.append(&mut ns);

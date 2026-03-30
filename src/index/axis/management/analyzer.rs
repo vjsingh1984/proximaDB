@@ -558,7 +558,7 @@ impl VectorCharacteristicsAnalyzer {
             }
         }
 
-        for mean in dimension_means.iter_mut() {
+        for mean in &mut dimension_means {
             *mean /= vectors.len() as f32;
         }
 
@@ -572,7 +572,7 @@ impl VectorCharacteristicsAnalyzer {
             }
         }
 
-        for variance in dimension_variance.iter_mut() {
+        for variance in &mut dimension_variance {
             *variance /= vectors.len() as f32;
         }
 

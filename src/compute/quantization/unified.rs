@@ -1390,7 +1390,7 @@ impl UnifiedQuantizationEngine {
         let range = if max > min { max - min } else { 1.0 };
         let mut result = Vec::with_capacity(num_values);
 
-        for &byte in packed.iter() {
+        for &byte in packed {
             // Extract high nibble (first value)
             let high = (byte >> 4) as f32 / 15.0;
             result.push(min + high * range);

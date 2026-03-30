@@ -134,7 +134,7 @@ impl<'de> Deserialize<'de> for QuantizationConfig {
         };
 
         // Determine strategy based on custom_levels or explicit strategy
-        let strategy = helper.strategy.or_else(|| {
+        let strategy = helper.strategy.or({
             if !custom_levels.is_empty() {
                 Some(Strategy::CustomLevels as i32)
             } else {

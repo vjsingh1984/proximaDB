@@ -89,7 +89,7 @@ fn estimate_sql_value_size(value: &SqlValue) -> u64 {
         }
         Some(Value::ObjectValue(obj)) => {
             let mut size = 4; // object overhead
-            for (_key, v) in &obj.fields {
+            for v in obj.fields.values() {
                 size += estimate_sql_value_size(v);
             }
             size
@@ -203,7 +203,7 @@ impl PartitionedStorage {
         let mut total_bytes = 0u64;
 
         // Process each partition group with a single lock acquisition
-        for (_partition_key, partition_logs) in &grouped {
+        for partition_logs in grouped.values() {
             // Use the first entry's timestamp to get/create the partition
             let partition = self
                 .get_or_create_partition(partition_logs[0].timestamp_ns)

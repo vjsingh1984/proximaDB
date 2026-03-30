@@ -432,7 +432,7 @@ impl FieldEncryption {
     ) -> Result<HashMap<String, EncryptedField>, FieldEncryptionError> {
         let mut encrypted_fields = HashMap::new();
 
-        for (field_name, _settings) in &self.config.field_settings {
+        for field_name in self.config.field_settings.keys() {
             if let Some(value) = metadata.remove(field_name) {
                 let encrypted = self.encrypt_field(field_name, &value)?;
                 encrypted_fields.insert(field_name.clone(), encrypted);

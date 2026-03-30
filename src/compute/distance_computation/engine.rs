@@ -1595,7 +1595,7 @@ impl UnifiedDistanceCompute {
             // Prefetch next batch into L1 cache while processing current batch
             if i + 1 < chunk_vec.len() {
                 let next = chunk_vec[i + 1];
-                for v in next.iter() {
+                for v in next {
                     // Hint to the compiler that we'll access this data soon.
                     // std::arch::aarch64::_prefetch is unstable on stable Rust,
                     // so we use a volatile read of the first byte as a portable

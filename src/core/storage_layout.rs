@@ -402,7 +402,7 @@ impl StoragePathResolver {
             .base_paths
             .iter()
             .find(|bp| bp.instance_id == instance_id)
-            .ok_or_else(|| StorageLayoutError::InvalidInstance(instance_id))
+            .ok_or(StorageLayoutError::InvalidInstance(instance_id))
     }
 
     /// Get all configured paths for debugging

@@ -67,7 +67,7 @@ impl super::GraphOperationsService {
                     for s in &ls.optional_properties {
                         allowed.insert(s.as_str());
                     }
-                    for (p, _) in &ls.property_constraints {
+                    for p in ls.property_constraints.keys() {
                         allowed.insert(p.as_str());
                     }
                     for key in node.properties.keys() {
@@ -161,7 +161,7 @@ impl super::GraphOperationsService {
                 for s in &ets.optional_properties {
                     allowed.insert(s.as_str());
                 }
-                for (p, _) in &ets.property_constraints {
+                for p in ets.property_constraints.keys() {
                     allowed.insert(p.as_str());
                 }
                 for key in edge.properties.keys() {

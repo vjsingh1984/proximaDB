@@ -1685,7 +1685,7 @@ impl TextColumnReader {
                 .collect();
 
             // Replace sidecar references with actual content
-            for value in result.iter_mut() {
+            for value in &mut result {
                 if let Some(val) = value.as_ref()
                     && val.starts_with("__sidecar__:") {
                         let record_id = &val[12..];

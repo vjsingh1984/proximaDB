@@ -477,7 +477,7 @@ impl AxisClusteringEngine {
             // Average centroids
             for (cluster_idx, size) in cluster_sizes.iter().enumerate() {
                 if *size > 0 {
-                    for val in centroids[cluster_idx].iter_mut() {
+                    for val in &mut centroids[cluster_idx] {
                         *val /= *size as f32;
                     }
                 }
@@ -785,7 +785,7 @@ impl ReusableClusteringEngine for AxisClusteringEngine {
             // Average centroids
             for (cluster_idx, size) in cluster_sizes.iter().enumerate() {
                 if *size > 0 {
-                    for val in centroids[cluster_idx].iter_mut() {
+                    for val in &mut centroids[cluster_idx] {
                         *val /= *size as f32;
                     }
                 }

@@ -475,7 +475,7 @@ impl NovaColumnarSearch {
 
         // Load full records for top candidates
         let mut results = Vec::new();
-        for candidate in top_candidates.iter() {
+        for candidate in &top_candidates {
             if let Some(record) = self
                 .load_record_by_id(nova_file, &candidate.vector_id)
                 .await?

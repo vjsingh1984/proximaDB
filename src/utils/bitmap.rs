@@ -114,7 +114,7 @@ impl Container {
                 if cardinality >= 4096 {
                     // Convert to bitmap container
                     let mut bitmap = BitmapContainer::new();
-                    for value in array.values.iter() {
+                    for value in &array.values {
                         bitmap.insert(*value);
                     }
                     Container::Bitmap(bitmap)
@@ -901,7 +901,7 @@ impl RoaringBitmap {
         let mut size = 8;
 
         // For each container: 2 bytes for key, 2 bytes for cardinality minus 1, container data
-        for (_, container) in &self.containers {
+        for container in self.containers.values() {
             size += 4; // key + cardinality
 
             match container {

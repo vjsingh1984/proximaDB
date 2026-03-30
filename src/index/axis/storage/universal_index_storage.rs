@@ -331,7 +331,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 );
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
-                let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
+                let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
                     .write_sorted_records(sorted_records_iter, record_count)
                     .await?;
@@ -526,7 +526,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 records.insert(id.to_string(), record);
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
-                let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
+                let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
                     .write_sorted_records(sorted_records_iter, record_count)
                     .await?;

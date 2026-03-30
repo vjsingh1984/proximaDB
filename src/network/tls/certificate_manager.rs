@@ -556,7 +556,7 @@ impl CertificateManager {
         let duration_until_expiry = parsed
             .not_after
             .duration_since(now)
-            .unwrap_or_else(|_| Duration::ZERO);
+            .unwrap_or(Duration::ZERO);
         let days_until_expiry = duration_until_expiry.as_secs() / (24 * 60 * 60);
         let needs_renewal = days_until_expiry <= self.config.renewal_threshold_days;
 

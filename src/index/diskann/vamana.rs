@@ -241,7 +241,7 @@ impl VamanaBuilder {
         let mut candidates = Vec::new();
 
         // Use processed nodes as candidate pool
-        for &candidate in processed.iter() {
+        for &candidate in processed {
             if candidate != node {
                 let dist = self.distance_cache[node][candidate];
                 candidates.push((candidate, dist));

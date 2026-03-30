@@ -539,7 +539,7 @@ impl CompactionCoordinator {
         let mut ready_collections = Vec::new();
 
         // Check each deferred collection
-        for entry in self.deferred_compactions.iter() {
+        for entry in &self.deferred_compactions {
             let collection_id = entry.key();
             let deferred = entry.value();
 

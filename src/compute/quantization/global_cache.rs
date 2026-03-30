@@ -291,9 +291,8 @@ impl GlobalQuantizationCache {
                 // Estimate: num_subspaces * num_centroids * centroid_dimension * sizeof(f32)
                 centroids.len()
                     * 256
-                    * centroids
-                        .get(0)
-                        .and_then(|c| c.get(0))
+                    * centroids.first()
+                        .and_then(|c| c.first())
                         .map_or(0, |c| c.len())
                     * 4
             }
@@ -731,7 +730,7 @@ impl CodebookStore for GlobalQuantizationCache {
                 .unwrap_or("8_16")
                 .split('_')
                 .collect();
-            let bits = params.get(0).unwrap_or(&"8").parse().unwrap_or(8);
+            let bits = params.first().unwrap_or(&"8").parse().unwrap_or(8);
             let subvectors = params.get(1).unwrap_or(&"16").parse().unwrap_or(16);
             QuantizationCacheKey::pq(collection_id, bits, subvectors)
         } else if quant_details == "binary" {
@@ -766,7 +765,7 @@ impl CodebookStore for GlobalQuantizationCache {
                 .unwrap_or("8_16")
                 .split('_')
                 .collect();
-            let bits = params.get(0).unwrap_or(&"8").parse().unwrap_or(8);
+            let bits = params.first().unwrap_or(&"8").parse().unwrap_or(8);
             let subvectors = params.get(1).unwrap_or(&"16").parse().unwrap_or(16);
             QuantizationCacheKey::pq(collection_id, bits, subvectors)
         } else if quant_details == "binary" {

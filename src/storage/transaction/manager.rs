@@ -476,7 +476,7 @@ impl MultiModelTransactionManager {
 
         // Send prepare to all participants
         let mut all_prepared = true;
-        for (store_id, _participant) in &participants {
+        for store_id in participants.keys() {
             // In a real implementation, this would call the actual store
             // For now, simulate successful prepare
             let vote = self.prepare_participant(tx_id, store_id).await?;
@@ -517,7 +517,7 @@ impl MultiModelTransactionManager {
             .cloned()
             .unwrap_or_default();
 
-        for (store_id, _participant) in &participants {
+        for store_id in participants.keys() {
             self.commit_participant(tx_id, store_id).await?;
         }
 
@@ -579,7 +579,7 @@ impl MultiModelTransactionManager {
             .cloned()
             .unwrap_or_default();
 
-        for (store_id, _participant) in &participants {
+        for store_id in participants.keys() {
             self.rollback_participant(tx_id, store_id).await?;
         }
 

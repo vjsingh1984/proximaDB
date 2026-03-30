@@ -1559,7 +1559,7 @@ impl SstableWriter {
 
         for block in data_blocks {
             for record in &block.records {
-                for (key, _sql_value) in &record.metadata {
+                for key in record.metadata.keys() {
                     metadata_columns.insert(key.clone());
                 }
             }

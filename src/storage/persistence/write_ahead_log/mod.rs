@@ -2330,8 +2330,7 @@ impl WriteAheadLogManager {
                                 eprintln!("⚠️ DEBUG: No storage_assignment in collection");
                                 self.config
                                     .multi_disk
-                                    .data_directories
-                                    .get(0)
+                                    .data_directories.first()
                                     .cloned()
                                     .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
                             }
@@ -2340,8 +2339,7 @@ impl WriteAheadLogManager {
                             eprintln!("⚠️ DEBUG: Collection lookup failed, using fallback");
                             self.config
                                 .multi_disk
-                                .data_directories
-                                .get(0)
+                                .data_directories.first()
                                 .cloned()
                                 .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
                         }
@@ -2349,8 +2347,7 @@ impl WriteAheadLogManager {
                 } else {
                     self.config
                         .multi_disk
-                        .data_directories
-                        .get(0)
+                        .data_directories.first()
                         .cloned()
                         .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
                 }

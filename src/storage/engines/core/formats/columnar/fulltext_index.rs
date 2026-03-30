@@ -1045,7 +1045,7 @@ impl FullTextIndex {
 
         // Remove from inverted index
         let mut empty_terms = Vec::new();
-        for (term, posting_list) in self.inverted_index.iter_mut() {
+        for (term, posting_list) in &mut self.inverted_index {
             if let Some(idx) = posting_list
                 .postings
                 .iter()
@@ -1284,7 +1284,7 @@ impl FullTextIndex {
     /// Recompute statistics from scratch
     fn recompute_statistics(&mut self) {
         self.statistics = TextStatistics::default();
-        for (_, meta) in &self.documents {
+        for meta in self.documents.values() {
             self.statistics.update_after_add(meta.token_count);
         }
         self.statistics

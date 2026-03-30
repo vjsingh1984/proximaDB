@@ -547,7 +547,7 @@ async fn execute_vector_search(
                     // Build metadata from the search result
                     let mut metadata = HashMap::new();
                     // metadata is a HashMap<String, SqlValue>, iterate over it
-                    for (k, v) in r.metadata.iter() {
+                    for (k, v) in &r.metadata {
                         metadata.insert(k.clone(), format!("{:?}", v));
                     }
 

@@ -590,7 +590,7 @@ impl ArrowFileRequest {
             // TD-007: unwrap_or_else with safe fallback - if compression enum can't be
             // serialized (shouldn't happen in normal operation), use Null as fallback
             ticket_data["compression"] =
-                serde_json::to_value(compression).unwrap_or_else(|_| serde_json::Value::Null);
+                serde_json::to_value(compression).unwrap_or(serde_json::Value::Null);
         }
 
         Ticket {

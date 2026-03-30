@@ -362,7 +362,7 @@ impl DiskCsrStorage {
         }
 
         // Write buffered edges to memory-mapped files
-        for (_from_idx, edges) in self.write_buffer.iter() {
+        for (_from_idx, edges) in &self.write_buffer {
             // Calculate offset in targets array for this node's edges
             // This is a simplified implementation - production would need more sophisticated offset management
 

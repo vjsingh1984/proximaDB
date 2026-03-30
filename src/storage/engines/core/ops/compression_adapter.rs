@@ -334,7 +334,7 @@ impl UniversalCompressionAdapter {
             }
         }
 
-        best_algorithm.or_else(|| Some(CompressionAlgorithm::Snappy))
+        best_algorithm.or(Some(CompressionAlgorithm::Snappy))
     }
 
     /// Score algorithms for data characteristics

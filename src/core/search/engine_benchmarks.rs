@@ -651,13 +651,13 @@ pub mod engine_specific {
 impl SearchCostEstimator {
     pub fn update_from_benchmarks(&mut self, results: &EngineBenchmarkResults) {
         // Update direct search times
-        for (_category, _stats) in &results.direct_search_stats {
+        for _stats in results.direct_search_stats.values() {
             // TODO: Need to add insert_direct_stats method to SearchCostEstimator
             // self.insert_direct_stats(category.clone(), stats.clone());
         }
 
         // Update progressive search times
-        for (_level, _stats) in &results.progressive_search_stats {
+        for _stats in results.progressive_search_stats.values() {
             // TODO: Need to add insert_progressive_stats method to SearchCostEstimator
             // self.insert_progressive_stats(level.clone(), stats.clone());
         }

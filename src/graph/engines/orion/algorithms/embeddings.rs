@@ -250,7 +250,7 @@ impl Node2VecEmbeddings {
         let mut embeddings = vec![vec![0.0f32; self.embedding_dim]; node_count];
         let mut rng = rand::thread_rng();
 
-        for node_embedding in embeddings.iter_mut() {
+        for node_embedding in &mut embeddings {
             for dim in node_embedding.iter_mut() {
                 let random_val: f32 = rng.r#gen();
                 *dim = (random_val - 0.5) / self.embedding_dim as f32;
@@ -300,7 +300,7 @@ impl Node2VecEmbeddings {
         }
 
         // Normalize embeddings
-        for node_embedding in embeddings.iter_mut() {
+        for node_embedding in &mut embeddings {
             let norm: f32 = node_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
             if norm > 0.0 {
                 for dim in node_embedding.iter_mut() {

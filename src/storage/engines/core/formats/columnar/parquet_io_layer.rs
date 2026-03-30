@@ -763,7 +763,7 @@ impl LocalDiskCache {
         let mut files_to_remove = Vec::new();
 
         // Find all cached files for this collection
-        for entry in self.cached_row_groups.iter() {
+        for entry in &self.cached_row_groups {
             if entry.key().contains(collection_id) {
                 files_to_remove.push(entry.key().clone());
             }

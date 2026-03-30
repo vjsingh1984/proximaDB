@@ -443,7 +443,7 @@ impl GraphOperationsService {
 
         let mut scores_vec: Vec<(String, f64)> = result.scores.into_iter().collect();
         scores_vec.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or_else(|| {
+            b.1.partial_cmp(&a.1).unwrap_or({
                 // If either score is NaN, treat them as equal
                 std::cmp::Ordering::Equal
             })

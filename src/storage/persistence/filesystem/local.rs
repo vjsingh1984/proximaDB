@@ -349,8 +349,7 @@ impl LocalFileSystem {
         let to_datetime = |time: std::io::Result<std::time::SystemTime>| {
             time.ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos()))
-                .flatten()
+                .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos()))
         };
 
         FileMetadata {

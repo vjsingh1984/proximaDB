@@ -875,7 +875,7 @@ impl SwiftFile {
         }
 
         // Populate superblock AdaCurve codes (use average of block codes)
-        for (sb_id, codes) in superblock_codes.iter() {
+        for (sb_id, codes) in &superblock_codes {
             if let Some(superblock) = self.superblocks.get_mut(*sb_id) {
                 let avg_code = if codes.is_empty() {
                     0

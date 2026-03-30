@@ -564,7 +564,7 @@ impl IvfClusteringBuilder {
         tracing::info!(
             "✅ Centroid distance matrix built: {}×{} (enables O(1) inter-centroid lookups)",
             centroid_distances.len(),
-            centroid_distances.get(0).map_or(0, |row| row.len())
+            centroid_distances.first().map_or(0, |row| row.len())
         );
 
         // Step 5: Phase 3 - Apply sophisticated 5-component boosting using AXIS infrastructure
@@ -1674,7 +1674,7 @@ impl IvfClusteringBuilder {
             "Vector {} not found in storage, returning zero vector",
             vector_id
         );
-        vec![0.0; self.centroids.get(0).map_or(768, |c| c.vector.len())]
+        vec![0.0; self.centroids.first().map_or(768, |c| c.vector.len())]
     }
 }
 

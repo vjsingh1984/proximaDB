@@ -923,7 +923,7 @@ pub async fn search_helix_sstable(
         let block = ProximaDataBlock::deserialize(block_data, collection)?;
 
         // Search within block
-        for record in block.records.iter() {
+        for record in &block.records {
             // Apply type-safe filter if present
             if let Some(filter_expr) = filter_expression {
                 let matches = crate::core::search::sql_value_filter::evaluate_filter(
