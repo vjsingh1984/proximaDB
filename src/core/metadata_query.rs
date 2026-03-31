@@ -161,8 +161,8 @@ impl MetadataQueryEngine {
             ComparisonOperator::NotIn => {
                 self.array_operation(field_value, &field_query.value, false)
             }
-            ComparisonOperator::Exists => Ok(field_value.map_or(false, |v| !v.is_null())),
-            ComparisonOperator::NotExists => Ok(field_value.map_or(true, |v| v.is_null())),
+            ComparisonOperator::Exists => Ok(field_value.is_some_and(|v| !v.is_null())),
+            ComparisonOperator::NotExists => Ok(field_value.is_none_or(|v| v.is_null())),
             ComparisonOperator::Regex => {
                 self.regex_operation(&field_query.field, field_value, &field_query.value)
             }

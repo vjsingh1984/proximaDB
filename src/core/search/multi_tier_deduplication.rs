@@ -428,7 +428,7 @@ impl MultiTierDeduplicator {
                 && candidate
                     .vector_record
                     .expires_at
-                    .map_or(false, |e| e <= current_time_secs);
+                    .is_some_and(|e| e <= current_time_secs);
             if is_tombstone {
                 tombstones_filtered += 1;
                 tracing::debug!(
@@ -446,7 +446,7 @@ impl MultiTierDeduplicator {
                 && candidate
                     .vector_record
                     .expires_at
-                    .map_or(false, |e| e <= current_time_secs);
+                    .is_some_and(|e| e <= current_time_secs);
             if !is_tombstone {
                 final_results.push(candidate);
             } else {

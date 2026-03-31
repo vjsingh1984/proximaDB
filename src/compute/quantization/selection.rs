@@ -28,7 +28,7 @@ impl QuantizationSelector {
             "flush" | "compact" => true, // Write operations benefit from persistent codebooks
             "search" | "query" => {
                 // Large collections benefit from persistent codebooks
-                collection_size.map_or(false, |size| size > 1000)
+                collection_size.is_some_and(|size| size > 1000)
             }
             _ => false, // Default to stateless for unknown operations
         }
