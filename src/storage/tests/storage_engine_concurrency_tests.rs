@@ -14,7 +14,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::SystemTime;
     use tokio::task::JoinSet;
-    use tracing::{debug, info};
+    use tracing::debug;
 
     async fn create_test_engine() -> (Arc<StorageEngine>, std::path::PathBuf) {
         // Create a unique directory name to avoid conflicts between concurrent tests

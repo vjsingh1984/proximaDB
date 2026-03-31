@@ -5,14 +5,11 @@
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
 
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::results::OptimizedSearchRecord;
-    use crate::proto::proximadb_v1::MetadataItem;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,

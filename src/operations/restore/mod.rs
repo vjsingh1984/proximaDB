@@ -507,7 +507,7 @@ pub struct ValidationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::operations::backup::{BackupManager, BackupType};
+    use crate::operations::backup::BackupType;
     use tempfile::TempDir;
 
     #[tokio::test]

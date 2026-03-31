@@ -435,7 +435,7 @@ async fn test_progressive_search() {
 /// Test zone maps for dimension-level pruning
 #[tokio::test]
 async fn test_zone_maps() {
-    use crate::storage::engines::impls::helix::zone_maps::{ZoneMap, ZoneMapBuilder};
+    use crate::storage::engines::impls::helix::zone_maps::ZoneMapBuilder;
 
     // Create test vectors with known patterns
     let vectors = create_test_vectors(500, 32);

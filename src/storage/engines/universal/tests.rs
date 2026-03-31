@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::Arc;
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::engines::universal::adapter::{

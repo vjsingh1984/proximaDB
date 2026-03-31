@@ -16,7 +16,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     BatchId, BincodeSerializationStrategy, WALBatchStrategy, WALConfig,
 };
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Counter for generating unique test paths
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);

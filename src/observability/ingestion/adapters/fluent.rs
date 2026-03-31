@@ -301,7 +301,6 @@ impl InputAdapter for FluentAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmp_serde::to_vec;
     use tokio::sync::mpsc;
 
     #[test]
