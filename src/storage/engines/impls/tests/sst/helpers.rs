@@ -30,7 +30,7 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{Collection, CollectionConfig, MetadataItem, VectorRecord};
 use crate::storage::engines::impls::sst::readers::sst_query_engine::CollectionContext;
 use crate::storage::engines::impls::sst::{SstEngine, SstRecord, UnifiedSstableReader};
-use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory, UnifiedCachingFilesystem};
 // manifest module is not exposed - tests may need refactoring
 // use crate::storage::engines::impls::sst::manifest::SstManifest;
 use crate::core::BloomFilterConfig;

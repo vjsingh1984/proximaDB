@@ -1400,6 +1400,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
 
     // Helper functions for tests
     fn create_default_unified_tier_policy() -> UnifiedTierPolicy {

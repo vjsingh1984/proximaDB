@@ -509,8 +509,7 @@ mod tests {
         assert!(!is_health_endpoint("/api/v1/collections"));
         assert!(!is_health_endpoint("/metrics"));
         assert!(!is_health_endpoint("/"));
-        assert!(!is_health_endpoint("/healthcheck")); // starts with /health but it's /healthcheck
-        // Actually /healthcheck does start with "/health" so this should be true
+        assert!(is_health_endpoint("/healthcheck")); // starts with /health so it IS a health endpoint
     }
 
     #[test]

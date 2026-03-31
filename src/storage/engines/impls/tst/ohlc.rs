@@ -213,6 +213,7 @@ pub struct OHLCResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
 
     #[test]
     fn test_ohlc_bar_from_price() {
