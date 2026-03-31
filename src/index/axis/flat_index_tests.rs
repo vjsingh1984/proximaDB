@@ -13,7 +13,7 @@ mod tests {
     use crate::proto::proximadb_v1::VectorRecord;
     use std::collections::HashMap;
     use std::time::Instant;
-    use tracing::{debug, info};
+    use tracing::debug;
 
     fn create_test_vector(id: &str, values: Vec<f32>) -> VectorRecord {
         VectorRecord {

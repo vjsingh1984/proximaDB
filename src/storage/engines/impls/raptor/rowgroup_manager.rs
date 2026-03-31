@@ -100,7 +100,7 @@ impl RowGroups {
             optimal_size,
             quantization_engine,
             // Note: simd_encoder removed - encoding now done via ProximaCodec
-            compression_config: compression_config,
+            compression_config,
             config,
         })
     }

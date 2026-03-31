@@ -132,7 +132,6 @@ impl PartialOrd for ShuffleKey {
             (ShuffleKey::Float(_), ShuffleKey::Integer(_)) => Some(std::cmp::Ordering::Greater),
             (ShuffleKey::Float(_), ShuffleKey::Composite(_)) => Some(std::cmp::Ordering::Less),
             (ShuffleKey::Composite(_), _) => Some(std::cmp::Ordering::Greater),
-            (_, ShuffleKey::Composite(_)) => Some(std::cmp::Ordering::Less),
         }
     }
 }

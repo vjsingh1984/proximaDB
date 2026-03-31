@@ -536,7 +536,6 @@ impl CatalogBulkWriteService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::datatypes::{Field, Schema};
 
     #[test]
     fn test_catalog_bulk_write_config_default() {

@@ -478,7 +478,7 @@ pub struct PipelineStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Float32Array, Int32Array, StringArray};
+    use arrow::array::{Float32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
 
     fn make_test_batch(num_rows: usize) -> RecordBatch {

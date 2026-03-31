@@ -6,7 +6,7 @@
 //! which can achieve 10:1 compression ratios for typical workloads.
 
 use serde::{Deserialize, Serialize};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read};
 
 /// Bit writer for Gorilla compression
 struct BitWriter {

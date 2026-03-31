@@ -224,7 +224,6 @@ impl EngineCompactionConfig {
                 EngineSpecificConfig::RAPTOR(RaptorCompactionConfig::default())
             }
             StorageEngineType::TST => EngineSpecificConfig::VIPER(ViperCompactionConfig::default()),
-            _ => EngineSpecificConfig::VIPER(ViperCompactionConfig::default()),
         };
 
         Self {

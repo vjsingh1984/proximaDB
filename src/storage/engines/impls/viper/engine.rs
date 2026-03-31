@@ -573,12 +573,12 @@ impl ViperEngine {
             compaction,
             flush_manager,
             // ml_clustering_engine, // Moved to AXIS
-            utilities: utilities,
+            utilities,
             // Search engine removed - using IntegratedSearchOptimizer
             stats: Arc::new(EngineStats::default()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             _storage_quantization_engine: storage_quantization_engine,
-            fallback_quantization_engine: fallback_quantization_engine,
+            fallback_quantization_engine,
             universal_optimizer,
             orchestrator: None,
             axis_manager: None, // AXIS manager will be set externally if available

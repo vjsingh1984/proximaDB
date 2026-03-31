@@ -7,7 +7,7 @@
 //! - Permission inheritance (wildcards)
 //! - Multi-tenant isolation
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -16,7 +16,7 @@ use tokio;
 use crate::query::unified::{
     ast::{
         DataModel, DistanceMetric, DocumentQueryExpr, GraphTraversalExpr, LogQueryExpr,
-        MetricQueryExpr, ModelOperation, MultiModelQuery, QueryComponent, StartNodeSpec,
+        ModelOperation, MultiModelQuery, QueryComponent, StartNodeSpec,
         TraversalDirection, VectorSearchExpr, VectorSearchParams,
     },
     executor::ParallelExecutor,

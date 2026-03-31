@@ -376,7 +376,6 @@ pub struct SubgraphInput {
 }
 
 /// Common algorithm output types
-
 /// Maps node identifiers to their centrality scores.
 pub type CentralityScores = HashMap<String, f64>;
 /// Maps node identifiers to their community/cluster assignments.

@@ -68,7 +68,6 @@ impl FlushHandlerFactory {
             super::compaction_utils::StorageEngineType::TST => {
                 Box::new(SstFlushHandlerAdapter::new())
             }
-            _ => Box::new(SstFlushHandlerAdapter::new()),
         }
     }
 }

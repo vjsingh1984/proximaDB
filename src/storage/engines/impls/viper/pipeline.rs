@@ -2011,7 +2011,7 @@ impl ParquetFlusher {
     ) -> Result<Self> {
         Ok(Self {
             config,
-            filesystem: filesystem,
+            filesystem,
             stats: Arc::new(RwLock::new(FlushingStats::default())),
             _writer_pool: writer_pool,
         })
@@ -3544,7 +3544,7 @@ impl WriterPool {
     async fn new(_pool_size: usize, _factory: Arc<DefaultParquetWriterFactory>) -> Result<Self> {
         Ok(Self {
             _writers: Arc::new(Mutex::new(Vec::new())),
-            _pool_size: _pool_size,
+            _pool_size,
             _writer_factory: _factory,
         })
     }

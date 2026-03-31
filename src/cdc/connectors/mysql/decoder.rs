@@ -448,9 +448,9 @@ impl BinlogEvent {
     /// Get the event type for CDC conversion
     pub fn event_type(&self) -> Option<BinlogEventType> {
         match self {
-            BinlogEvent::WriteRows(_) => Some(BinlogEventType::WRITE_ROWS_EVENT),
-            BinlogEvent::UpdateRows(_) => Some(BinlogEventType::UPDATE_ROWS_EVENT),
-            BinlogEvent::DeleteRows(_) => Some(BinlogEventType::DELETE_ROWS_EVENT),
+            BinlogEvent::WriteRows(_) => Some(BinlogEventType::WriteRowsEvent),
+            BinlogEvent::UpdateRows(_) => Some(BinlogEventType::UpdateRowsEvent),
+            BinlogEvent::DeleteRows(_) => Some(BinlogEventType::DeleteRowsEvent),
             _ => None,
         }
     }
@@ -576,9 +576,9 @@ fn rows_to_json(rows: &[RowData], table_map: &Option<TableMapEvent>) -> Option<s
 /// Simplified binlog event type for CDC conversion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinlogEventType {
-    WRITE_ROWS_EVENT,
-    UPDATE_ROWS_EVENT,
-    DELETE_ROWS_EVENT,
+    WriteRowsEvent,
+    UpdateRowsEvent,
+    DeleteRowsEvent,
 }
 
 /// Table map event

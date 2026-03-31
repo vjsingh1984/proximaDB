@@ -308,7 +308,6 @@ pub struct NodeAccessStats {
 
 impl GraphOperationsService {
     /// ===== PULSAR Distributed Graph Operations =====
-
     /// Create a graph with a specific engine type (ORION, PULSAR, or QUASAR)
     pub async fn create_graph_with_engine(
         &self,
@@ -424,7 +423,6 @@ impl GraphOperationsService {
     }
 
     /// ===== QUASAR Tiered Storage Operations =====
-
     /// Get QUASAR tiering statistics
     pub async fn get_quasar_stats(&self, request: GetStatsRequest) -> Result<QuasarGraphStats> {
         debug!("Getting QUASAR stats for graph: {}", request.graph_id);
@@ -493,7 +491,6 @@ impl GraphOperationsService {
     }
 
     /// ===== Helper Methods =====
-
     /// Convert proto engine type to internal engine type
     fn proto_to_engine_type(&self, proto_type: GraphEngineTypeProto) -> GraphEngineType {
         match proto_type {

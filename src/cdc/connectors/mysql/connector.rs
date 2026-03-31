@@ -645,9 +645,9 @@ async fn convert_binlog_to_change_event(
 
     // Extract operation type from binlog event
     let operation = match binlog_event.event_type() {
-        Some(super::decoder::BinlogEventType::WRITE_ROWS_EVENT) => Operation::Insert,
-        Some(super::decoder::BinlogEventType::UPDATE_ROWS_EVENT) => Operation::Update,
-        Some(super::decoder::BinlogEventType::DELETE_ROWS_EVENT) => Operation::Delete,
+        Some(super::decoder::BinlogEventType::WriteRowsEvent) => Operation::Insert,
+        Some(super::decoder::BinlogEventType::UpdateRowsEvent) => Operation::Update,
+        Some(super::decoder::BinlogEventType::DeleteRowsEvent) => Operation::Delete,
         _ => return None, // Skip other event types
     };
 
