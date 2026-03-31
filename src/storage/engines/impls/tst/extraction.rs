@@ -19,6 +19,7 @@ use crate::storage::trait_components::extractor::{
 ///
 /// Extracts vectors from time-partitioned storage.
 /// TST stores vectors chronologically with optional OHLC aggregation.
+#[allow(dead_code)]
 pub struct TstExtractor {
     /// Unified caching filesystem for file access
     filesystem: Arc<UnifiedCachingFilesystem>,

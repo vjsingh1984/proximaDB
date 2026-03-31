@@ -1280,20 +1280,22 @@ impl SstConfig {
     /// This helps demonstrate quantization clustering with smaller blocks while keeping
     /// server default at 2048KB for production performance
     pub fn test_config_256kb() -> Self {
-        let mut config = Self::default();
-        config.block_size_kb = 256; // Small blocks for quantization clustering tests
-        config.compression = "zstd".to_string(); // Zstd compression for tests
-        config.compression_level = 3; // Balanced compression level
-        config
+        Self {
+            block_size_kb: 256, // Small blocks for quantization clustering tests
+            compression: "zstd".to_string(), // Zstd compression for tests
+            compression_level: 3, // Balanced compression level
+            ..Default::default()
+        }
     }
 
     /// Create test-specific SST configuration with 512KB blocks
     pub fn test_config_512kb() -> Self {
-        let mut config = Self::default();
-        config.block_size_kb = 512;
-        config.compression = "zstd".to_string(); // Zstd compression for tests
-        config.compression_level = 3; // Balanced compression level
-        config
+        Self {
+            block_size_kb: 512,
+            compression: "zstd".to_string(), // Zstd compression for tests
+            compression_level: 3, // Balanced compression level
+            ..Default::default()
+        }
     }
 }
 

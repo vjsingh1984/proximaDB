@@ -55,10 +55,11 @@ pub struct MetadataWALConfig {
 impl Default for MetadataWALConfig {
     fn default() -> Self {
         // Optimized defaults for metadata workloads (different from vector write buffer)
-        let mut base_config = WALConfig::default();
-
-        // Use Avro for schema evolution (metadata schemas change more than vector schemas)
-        base_config.strategy_type = WriteBufferStrategyType::AvroBatch;
+        let mut base_config = WALConfig {
+            // Use Avro for schema evolution (metadata schemas change more than vector schemas)
+            strategy_type: WriteBufferStrategyType::AvroBatch,
+            ..Default::default()
+        };
 
         // Use B+Tree for sorted iteration and range queries on collection metadata
         // Better than ART since we need range scans for list operations

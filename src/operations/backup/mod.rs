@@ -20,6 +20,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
 
 /// Backup manager for creating incremental snapshots
+#[allow(dead_code)]
 pub struct BackupManager {
     /// Base path for backup storage
     base_path: PathBuf,

@@ -6,6 +6,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 
 /// Time-series query optimizer
+#[allow(dead_code)]
 pub struct TimeSeriesQueryOptimizer {
     /// Enable query caching
     enable_cache: bool,

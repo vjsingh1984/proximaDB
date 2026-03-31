@@ -82,6 +82,7 @@ impl FluentAdapter {
     }
 
     /// Parse MessagePack-encoded forward message
+    #[allow(dead_code)]
     fn parse_forward_message(&self, data: &[u8]) -> Result<Vec<LogEntry>> {
         use rmp_serde::from_slice;
         use serde::{Deserialize, Serialize};

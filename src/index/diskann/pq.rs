@@ -154,6 +154,7 @@ impl PQVectors {
 /// Product Quantization encoder/decoder
 pub struct PQEncoder {
     config: PQConfig,
+    #[allow(dead_code)]
     distance_compute: UnifiedDistanceCompute,
 }
 

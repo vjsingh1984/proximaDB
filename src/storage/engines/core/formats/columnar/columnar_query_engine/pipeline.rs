@@ -256,6 +256,7 @@ impl PipelineOperator for ScoreOperator {
 
 /// Pipeline breaker that consumes all input, maintains a bounded priority queue,
 /// and produces a single output chunk with the top-k results.
+#[allow(dead_code)]
 pub struct TopKOperator {
     input: Box<dyn PipelineOperator>,
     queue: BoundedPriorityQueue,

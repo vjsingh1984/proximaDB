@@ -967,6 +967,7 @@ impl TimeSeriesEngine {
     /// - "timestamp >= X AND timestamp <= Y"
     /// - "timestamp BETWEEN X AND Y"
     /// - "timestamp > X" (end is now)
+    #[allow(dead_code)]
     fn parse_time_range_from_filter(
         &self,
         filter_expr: &str,
@@ -1395,9 +1396,8 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
         Ok(result)
     }
 
+    #[allow(dead_code)]
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-        let mut result = CompactionResult::default();
-
         // Identify partitions to compact based on collection_id
         let partitions_to_compact: Vec<_> = if let Some(_collection_id) = &params.collection_id {
             self.partitions
@@ -1448,7 +1448,7 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
 
         let start_time = Utc::now();
 
-        result = CompactionResult {
+        let result = CompactionResult {
             success: true,
             collections_affected: params.collection_id.clone().into_iter().collect(),
             entries_processed: Some(entries_processed),
@@ -1497,6 +1497,7 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
 ///
 /// Iterates through time-series partitions in chronological order,
 /// yielding records that match the scan strategy.
+#[allow(dead_code)]
 struct TimeSeriesScanIterator {
     /// Reference to the time-series engine
     engine: TimeSeriesEngine,

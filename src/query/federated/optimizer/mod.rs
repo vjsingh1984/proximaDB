@@ -2357,6 +2357,7 @@ impl CrossModelOptimizer {
             .collect()
     }
 
+    #[allow(dead_code)]
     fn extract_select_columns(sql: &str) -> Vec<String> {
         Self::extract_select_items(sql)
             .into_iter()

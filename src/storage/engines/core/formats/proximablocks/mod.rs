@@ -607,8 +607,10 @@ pub mod utils {
         _expected_scale: u64,
         workload_type: WorkloadType,
     ) -> RowBasedConfig {
-        let mut config = RowBasedConfig::default();
-        config.dimension = dimension;
+        let mut config = RowBasedConfig {
+            dimension,
+            ..Default::default()
+        };
 
         match workload_type {
             WorkloadType::HighThroughputWrite => {

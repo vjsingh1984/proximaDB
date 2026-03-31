@@ -239,8 +239,10 @@ impl MetricsPersistenceLayer {
     pub async fn global_metrics(&self) -> Result<GlobalMetrics> {
         let cache = self.snapshot_cache.read().await;
 
-        let mut global = GlobalMetrics::default();
-        global.total_collections = cache.len() as i64;
+        let mut global = GlobalMetrics {
+            total_collections: cache.len() as i64,
+            ..Default::default()
+        };
 
         // Aggregate metrics from all collections
         for snapshot in cache.values() {

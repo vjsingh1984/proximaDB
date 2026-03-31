@@ -380,12 +380,13 @@ impl Flush {
             quantization: {
                 // Enable quantization for VIPER progressive search (Binary → INT8 → FP32)
                 // VIPER uses aggressive quantization for columnar analytics workloads
-                let mut qconfig = crate::proto::proximadb_v1::QuantizationConfig::default();
-                qconfig.enabled = Some(true);
-                qconfig.enable_progressive_search = Some(true);
-                qconfig.binary_filter_selectivity = Some(0.1);
-                qconfig.int8_ranking_selectivity = Some(0.3);
-                qconfig
+                crate::proto::proximadb_v1::QuantizationConfig {
+                    enabled: Some(true),
+                    enable_progressive_search: Some(true),
+                    binary_filter_selectivity: Some(0.1),
+                    int8_ranking_selectivity: Some(0.3),
+                    ..Default::default()
+                }
             },
             max_records_per_file: None,
             target_file_size_bytes: Some(128 * 1024 * 1024), // 128MB

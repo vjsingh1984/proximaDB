@@ -315,6 +315,7 @@ impl PositionStore for FilePositionStore {
 }
 
 /// In-memory position store (for testing)
+#[allow(dead_code)]
 pub struct MemoryPositionStore {
     positions: RwLock<HashMap<String, Position>>,
 }
@@ -325,6 +326,7 @@ impl Default for MemoryPositionStore {
     }
 }
 
+#[allow(dead_code)]
 impl MemoryPositionStore {
     /// Create a new memory position store
     pub fn new() -> Self {

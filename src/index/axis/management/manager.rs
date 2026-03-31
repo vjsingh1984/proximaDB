@@ -639,8 +639,10 @@ impl AxisManager {
                     .unwrap_or(DistanceMetric::DotProduct); // Default to DotProduct for compatibility with FAISS/benchmarks
 
                 // Create HNSW config with collection's distance metric
-                let mut config = AxisHnswConfig::default();
-                config.distance_metric = distance_metric;
+                let config = AxisHnswConfig {
+                    distance_metric,
+                    ..Default::default()
+                };
 
                 tracing::info!(
                     "🔗 AXIS: Creating HNSW index for collection {} with metric {:?}",

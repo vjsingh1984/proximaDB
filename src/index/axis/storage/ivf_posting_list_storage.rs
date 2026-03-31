@@ -151,9 +151,11 @@ impl PostingListStorage {
                     base_path, collection_id, cluster_id
                 );
 
-                let mut config =
-                    crate::storage::persistence::filesystem::FilesystemConfig::default();
-                config.default_fs = Some(path.clone());
+                let config =
+                    crate::storage::persistence::filesystem::FilesystemConfig {
+                        default_fs: Some(path.clone()),
+                        ..Default::default()
+                    };
                 let filesystem = Arc::new(
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -285,9 +287,11 @@ impl PostingListStorage {
                     base_path, collection_id, cluster_id
                 );
 
-                let mut config =
-                    crate::storage::persistence::filesystem::FilesystemConfig::default();
-                config.default_fs = Some(path.clone());
+                let config =
+                    crate::storage::persistence::filesystem::FilesystemConfig {
+                        default_fs: Some(path.clone()),
+                        ..Default::default()
+                    };
                 let filesystem = Arc::new(
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await

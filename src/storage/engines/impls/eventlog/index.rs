@@ -31,6 +31,7 @@ use tracing::debug;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Event index for fast lookups
+#[allow(dead_code)]
 pub struct EventIndex {
     /// Base directory for index storage
     base_dir: PathBuf,

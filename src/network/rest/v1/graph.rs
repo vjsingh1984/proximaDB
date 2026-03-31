@@ -210,6 +210,7 @@ impl From<RestEdgeQuery> for crate::proto::proximadb_v1::EdgeQuery {
 
 /// REST-compatible Node wrapper for JSON serialization
 #[derive(Debug, Serialize, Clone)]
+#[allow(dead_code)]
 struct RestNode {
     id: String,
     labels: Vec<String>,
@@ -221,6 +222,7 @@ struct RestNode {
 
 /// REST-compatible Edge wrapper for JSON serialization
 #[derive(Debug, Serialize, Clone)]
+#[allow(dead_code)]
 struct RestEdge {
     id: String,
     from_node_id: String,
@@ -234,6 +236,7 @@ struct RestEdge {
 
 /// REST-compatible EmbeddingVersion wrapper
 #[derive(Debug, Serialize, Clone)]
+#[allow(dead_code)]
 struct RestEmbeddingVersion {
     vector: Vec<f32>,
     version: String,
@@ -278,6 +281,7 @@ struct RestEmbeddingVersionInput {
 
 /// REST-compatible TraversalResponse wrapper
 #[derive(Debug, Serialize, Clone)]
+#[allow(dead_code)]
 struct RestTraversalResponse {
     nodes: Vec<RestNode>,
     edges: Vec<RestEdge>,
@@ -287,12 +291,14 @@ struct RestTraversalResponse {
 
 /// REST-compatible GraphPath wrapper
 #[derive(Debug, Serialize, Clone)]
+#[allow(dead_code)]
 struct RestGraphPath {
     node_ids: Vec<String>,
 }
 
 /// REST-compatible TraversalStats wrapper
 #[derive(Debug, Serialize, Clone)]
+#[allow(dead_code)]
 struct RestTraversalStats {
     nodes_visited: u64,
     edges_traversed: u64,
@@ -510,6 +516,7 @@ impl From<RestEdgeInput> for Edge {
     }
 }
 
+#[allow(dead_code)]
 fn convert_properties_to_json(
     props: &HashMap<String, PropertyValue>,
 ) -> HashMap<String, serde_json::Value> {
@@ -576,6 +583,7 @@ fn convert_json_to_properties(
         .collect()
 }
 
+#[allow(dead_code)]
 fn convert_property_value_to_json(prop: &PropertyValue) -> serde_json::Value {
     match &prop.value {
         Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => {

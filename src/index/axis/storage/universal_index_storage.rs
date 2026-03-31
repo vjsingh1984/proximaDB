@@ -299,9 +299,11 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         match self.storage_engine {
             StorageEngine::SST => {
                 // Write as SST
-                let mut config =
-                    crate::storage::persistence::filesystem::FilesystemConfig::default();
-                config.default_fs = Some(file_path.to_string_lossy().to_string());
+                let config =
+                    crate::storage::persistence::filesystem::FilesystemConfig {
+                        default_fs: Some(file_path.to_string_lossy().to_string()),
+                        ..Default::default()
+                    };
                 let filesystem_factory =
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -357,9 +359,11 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 if !file_path.exists() {
                     return Ok(None);
                 }
-                let mut config =
-                    crate::storage::persistence::filesystem::FilesystemConfig::default();
-                config.default_fs = Some(file_path.to_string_lossy().to_string());
+                let config =
+                    crate::storage::persistence::filesystem::FilesystemConfig {
+                        default_fs: Some(file_path.to_string_lossy().to_string()),
+                        ..Default::default()
+                    };
                 let filesystem_factory =
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await

@@ -4,6 +4,7 @@ use crate::security::unified_rbac::UnifiedUserContext;
 use super::{IdentityProvider, AuthCredentials};
 
 /// OIDC Identity Provider (Skeleton)
+#[allow(dead_code)]
 pub struct OidcProvider {
     issuer: String,
     client_id: String,

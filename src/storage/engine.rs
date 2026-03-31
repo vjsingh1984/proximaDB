@@ -887,30 +887,30 @@ impl StorageEngine {
 
                                 // Extract metadata from the first vector entry
                                 if let Some(record) = entries.first() {
-                                    let mut collection =
-                                        crate::proto::proximadb_v1::Collection::default();
-                                    collection.id = collection_id.to_string();
-                                    collection.config =
-                                        Some(crate::proto::proximadb_v1::CollectionConfig {
-                                            name: collection_id.to_string(),
-                                            dimension: record.vector.len() as u32,
-                                            distance_metric: Some(
-                                                crate::proto::proximadb_v1::DistanceMetric::Cosine
-                                                    as i32,
-                                            ),
+                                    let collection =
+                                        crate::proto::proximadb_v1::Collection {
+                                            id: collection_id.to_string(),
+                                            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                                                name: collection_id.to_string(),
+                                                dimension: record.vector.len() as u32,
+                                                distance_metric: Some(
+                                                    crate::proto::proximadb_v1::DistanceMetric::Cosine
+                                                        as i32,
+                                                ),
+                                                ..Default::default()
+                                            }),
+                                            stats: Some(crate::proto::proximadb_v1::CollectionStats {
+                                                vector_count: entries.len() as i64,
+                                                data_size_bytes: (entries.len()
+                                                    * record.vector.len()
+                                                    * 4)
+                                                    as i64,
+                                                ..Default::default()
+                                            }),
+                                            created_at: chrono::Utc::now().timestamp_micros(),
+                                            updated_at: chrono::Utc::now().timestamp_micros(),
                                             ..Default::default()
-                                        });
-                                    collection.stats =
-                                        Some(crate::proto::proximadb_v1::CollectionStats {
-                                            vector_count: entries.len() as i64,
-                                            data_size_bytes: (entries.len()
-                                                * record.vector.len()
-                                                * 4)
-                                                as i64,
-                                            ..Default::default()
-                                        });
-                                    collection.created_at = chrono::Utc::now().timestamp_micros();
-                                    collection.updated_at = chrono::Utc::now().timestamp_micros();
+                                        };
 
                                     collections_metadata
                                         .push((collection_id.to_string(), collection));

@@ -4,6 +4,7 @@ use crate::security::unified_rbac::UnifiedUserContext;
 use super::{IdentityProvider, AuthCredentials};
 
 /// LDAP Identity Provider (Skeleton)
+#[allow(dead_code)]
 pub struct LdapProvider {
     server_url: String,
     base_dn: String,

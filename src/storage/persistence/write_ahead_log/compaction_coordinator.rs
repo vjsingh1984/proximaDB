@@ -232,8 +232,10 @@ impl CompactionCoordinator {
     ) -> Result<()> {
         let mut states = self.collection_states.write().await;
         if !states.contains_key(collection_id) {
-            let mut state = CollectionCompactionState::default();
-            state.preferred_engine = preferred_engine.to_string();
+            let mut state = CollectionCompactionState {
+                preferred_engine: preferred_engine.to_string(),
+                ..Default::default()
+            };
 
             // Discover existing files to initialize proper state
             let existing_files = self

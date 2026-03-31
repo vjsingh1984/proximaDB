@@ -123,6 +123,7 @@ pub enum PageFileType {
 
 /// Cached page data
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Page {
     /// Page identifier
     id: PageId,
@@ -134,6 +135,7 @@ struct Page {
     dirty: bool,
 }
 
+#[allow(dead_code)]
 impl Page {
     fn new(id: PageId, data: Vec<u8>) -> Self {
         Self {

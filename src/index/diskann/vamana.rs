@@ -101,6 +101,7 @@ pub struct VamanaBuilder {
     num_vectors: usize,
 
     /// Vector dimension
+    #[allow(dead_code)]
     dimension: usize,
 
     /// Graph edges being built

@@ -1,6 +1,10 @@
 //! Shared support for the read-only graph query subset used by the facade and
 //! federated SQL extensions.
 
+// Module provides shared graph query infrastructure for facade and federated SQL.
+// Functions will be wired in when full graph SQL integration is complete.
+#![allow(dead_code)]
+
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

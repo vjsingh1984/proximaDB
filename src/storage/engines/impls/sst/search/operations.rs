@@ -197,17 +197,17 @@ impl SearchOperations {
                 debug!("✅ Found vector {} in {}", vector_id, file_path);
 
                 // Convert VectorRecord to OptimizedSearchRecord
-                let mut result = OptimizedSearchRecord::default();
-                result.id = record.id;
-                result.score = 1.0; // Perfect match for point lookup
-                result.vector = Some(Arc::new(record.vector));
-                result.timestamp = record.timestamp;
-                result.updated_at = record.updated_at;
-                result.expires_at = record.expires_at;
-                result.version = record.version;
-
-                // VectorRecord.metadata is already HashMap<String, SqlValue>, just clone
-                result.metadata = record.metadata;
+                let result = OptimizedSearchRecord {
+                    id: record.id,
+                    score: 1.0, // Perfect match for point lookup
+                    vector: Some(Arc::new(record.vector)),
+                    timestamp: record.timestamp,
+                    updated_at: record.updated_at,
+                    expires_at: record.expires_at,
+                    version: record.version,
+                    metadata: record.metadata,
+                    ..Default::default()
+                };
 
                 Ok(result)
             }

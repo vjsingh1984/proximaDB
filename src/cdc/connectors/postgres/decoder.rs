@@ -400,6 +400,7 @@ impl PgOutputDecoder {
 
 /// Transaction state tracking
 #[derive(Debug)]
+#[allow(dead_code)]
 struct TransactionState {
     xid: u32,
     final_lsn: u64,

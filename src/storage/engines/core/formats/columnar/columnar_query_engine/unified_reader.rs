@@ -22,6 +22,7 @@ type SearchResponse = crate::core::service_types::VectorSearchResponse;
 use super::{BranchedFilterExecutor, CacheStrategy, ParquetReader, QueryConfig};
 
 // Simple cosine similarity function for scoring
+#[allow(dead_code)]
 fn compute_cosine_similarity(a: &[f32], b: &Arc<Vec<f32>>) -> f32 {
     if a.len() != b.len() {
         return 0.0;
@@ -229,12 +230,14 @@ impl UnifiedParquetReader {
         collection_id: String,
         engine_type: String,
     ) -> Result<Self> {
-        let mut config = ReaderConfig::default();
-        config.cache_context = Some(CacheContext {
-            cached_filesystem,
-            collection_id: collection_id.clone(),
-            engine_type: engine_type.clone(),
-        });
+        let config = ReaderConfig {
+            cache_context: Some(CacheContext {
+                cached_filesystem,
+                collection_id: collection_id.clone(),
+                engine_type: engine_type.clone(),
+            }),
+            ..Default::default()
+        };
 
         Ok(Self {
             file_paths,
@@ -441,6 +444,7 @@ impl UnifiedParquetReader {
         // Initialize bounded priority queue for top-k results
         let mut priority_queue = BoundedPriorityQueue::new(search_plan.top_k);
         let mut total_records_scanned = 0;
+        #[allow(unused_assignments)]
         let mut row_groups_skipped = 0;
         let files_skipped_early = 0;
 
@@ -678,6 +682,7 @@ impl UnifiedParquetReader {
 
     /// Optimized file reading with column projection, row group filtering, and bloom filters
     /// Returns (records, row_groups_skipped)
+    #[allow(dead_code)]
     async fn read_file_with_optimization_and_filters(
         &self,
         file_path: &str,
@@ -2476,6 +2481,7 @@ impl UnifiedParquetReader {
 
     /// Check if record matches filter expression using centralized sql_value_filter
     /// This ensures consistency with SST and other engines
+    #[allow(dead_code)]
     fn matches_filter_expression(
         &self,
         record: &VectorRecord,

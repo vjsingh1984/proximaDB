@@ -30,6 +30,7 @@ use tracing::debug;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Temporal query engine for time travel
+#[allow(dead_code)]
 pub struct TemporalQueryEngine {
     /// Event index for looking up events
     event_index: Arc<EventIndex>,

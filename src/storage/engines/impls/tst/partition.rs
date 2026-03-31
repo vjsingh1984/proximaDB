@@ -243,8 +243,8 @@ impl TimePartition {
         writer.finish()?;
 
         // Update metadata
-        let mut updated_metadata = self.metadata.clone();
-        updated_metadata.last_flush = Some(chrono::Utc::now());
+        let mut _updated_metadata = self.metadata.clone();
+        _updated_metadata.last_flush = Some(chrono::Utc::now());
 
         Ok(())
     }

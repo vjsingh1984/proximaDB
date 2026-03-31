@@ -380,12 +380,9 @@ pub struct CollectionWalConfig {
 // Conversion from core config to WAL config
 impl From<&crate::core::config::WalStorageConfig> for WALConfig {
     fn from(core_config: &crate::core::config::WalStorageConfig) -> Self {
-        let mut wal_config = WALConfig::default();
-
         // WAL uses storage_locations - will be populated by caller
         // Default to a safe fallback
-        wal_config.multi_disk.data_directories = vec!["file://./data".to_string()];
-        wal_config.multi_disk.distribution_strategy = match core_config.distribution_strategy {
+        let distribution_strategy = match core_config.distribution_strategy {
             crate::core::config::WalDistributionStrategy::RoundRobin => {
                 DiskDistributionStrategy::RoundRobin
             }
@@ -394,11 +391,20 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
                 DiskDistributionStrategy::LoadBalanced
             }
         };
-        wal_config.multi_disk.collection_affinity = core_config.collection_affinity;
-
-        // Set performance thresholds
-        wal_config.performance.memory_flush_size_bytes = core_config.memory_flush_size_bytes;
-        wal_config.performance.global_flush_threshold = core_config.global_flush_threshold;
+        let mut wal_config = WALConfig {
+            multi_disk: MultiDiskConfig {
+                data_directories: vec!["file://./data".to_string()],
+                distribution_strategy,
+                collection_affinity: core_config.collection_affinity,
+                ..Default::default()
+            },
+            performance: PerformanceConfig {
+                memory_flush_size_bytes: core_config.memory_flush_size_bytes,
+                global_flush_threshold: core_config.global_flush_threshold,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         // Apply optional configuration overrides from config.toml
         if let Some(strategy_type) = &core_config.strategy_type {
@@ -461,8 +467,10 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
 impl WALConfig {
     /// Create configuration optimized for high-throughput writes
     pub fn high_throughput() -> Self {
-        let mut config = Self::default();
-        config.strategy_type = WriteBufferStrategyType::BincodeBatch; // Faster serialization
+        let mut config = Self {
+            strategy_type: WriteBufferStrategyType::BincodeBatch, // Faster serialization
+            ..Default::default()
+        };
         config.memtable.memtable_type = MemTableType::HashMap; // Fastest writes for unordered data
         config.compression.algorithm = CompressionAlgorithm::Lz4; // Faster compression
         config.performance.memory_flush_size_bytes = 256 * 1024 * 1024; // 256MB

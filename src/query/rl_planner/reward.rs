@@ -181,8 +181,10 @@ impl LatencyModel {
 impl RewardCalculator {
     /// Create new reward calculator with default goal
     pub fn new(goal: OptimizationGoal) -> Self {
-        let mut target = OptimizationTarget::default();
-        target.goal = goal;
+        let target = OptimizationTarget {
+            goal,
+            ..Default::default()
+        };
 
         Self {
             default_goal: goal,

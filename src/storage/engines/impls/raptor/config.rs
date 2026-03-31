@@ -202,57 +202,63 @@ impl Default for RaptorConfig {
 impl RaptorConfig {
     /// Configuration optimized for small k queries (k<10)
     pub fn for_small_k() -> Self {
-        let mut config = Self::default();
-        config.rowgroup_size = 500; // Minimize wasted reads
-        config.cache_size_mb = 4096; // Cache more rowgroups
-        config
+        Self {
+            rowgroup_size: 500, // Minimize wasted reads
+            cache_size_mb: 4096, // Cache more rowgroups
+            ..Default::default()
+        }
     }
 
     /// Configuration optimized for medium k queries (k~100)
     pub fn for_medium_k() -> Self {
-        let mut config = Self::default();
-        config.rowgroup_size = 2000; // Balance I/O and efficiency
-        config
+        Self {
+            rowgroup_size: 2000, // Balance I/O and efficiency
+            ..Default::default()
+        }
     }
 
     /// Configuration optimized for large k queries (k>100)
     pub fn for_large_k() -> Self {
-        let mut config = Self::default();
-        config.rowgroup_size = 5000; // Maximize throughput
-        config.enable_prefetching = true;
-        config.prefetch_size_mb = 128;
-        config
+        Self {
+            rowgroup_size: 5000, // Maximize throughput
+            enable_prefetching: true,
+            prefetch_size_mb: 128,
+            ..Default::default()
+        }
     }
 
     pub fn for_cloud() -> Self {
-        let mut config = Self::default();
-        config.enable_range_reads = true;
-        config.prefetch_size_mb = 64;
-        config.cache_size_mb = 2048;
-        config.compression = CompressionCodec::Zstd(6);
-        config.rowgroup_size = 1000; // Default for cloud
-        config
+        Self {
+            enable_range_reads: true,
+            prefetch_size_mb: 64,
+            cache_size_mb: 2048,
+            compression: CompressionCodec::Zstd(6),
+            rowgroup_size: 1000, // Default for cloud
+            ..Default::default()
+        }
     }
 
     pub fn for_local_ssd() -> Self {
-        let mut config = Self::default();
-        config.enable_range_reads = false;
-        config.prefetch_size_mb = 16;
-        config.cache_size_mb = 512;
-        config.compression = CompressionCodec::Lz4;
-        config.max_parallel_reads = 16;
-        config
+        Self {
+            enable_range_reads: false,
+            prefetch_size_mb: 16,
+            cache_size_mb: 512,
+            compression: CompressionCodec::Lz4,
+            max_parallel_reads: 16,
+            ..Default::default()
+        }
     }
 
     pub fn for_high_performance() -> Self {
-        let mut config = Self::default();
-        config.rowgroup_size = 5000;
-        config.compression = CompressionCodec::None;
-        config.enable_simd = true;
-        config.simd_lanes = 32;
-        config.cache_size_mb = 4096;
-        config.max_parallel_reads = 32;
-        config.buffer_pool_size_mb = 2048;
-        config
+        Self {
+            rowgroup_size: 5000,
+            compression: CompressionCodec::None,
+            enable_simd: true,
+            simd_lanes: 32,
+            cache_size_mb: 4096,
+            max_parallel_reads: 32,
+            buffer_pool_size_mb: 2048,
+            ..Default::default()
+        }
     }
 }

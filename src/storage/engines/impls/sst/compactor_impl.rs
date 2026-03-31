@@ -259,8 +259,10 @@ impl SstCompactor {
                 .map(|c| format!("algorithm={}, level={:?}", c.algorithm, c.level))
         );
         let start = std::time::Instant::now();
-        let mut stats = ZeroCopyCompactionStats::default();
-        stats.files_compacted = input_files.len();
+        let mut stats = ZeroCopyCompactionStats {
+            files_compacted: input_files.len(),
+            ..Default::default()
+        };
 
         info!(
             "🚀 Starting zero-copy compaction of {} files to level {}",

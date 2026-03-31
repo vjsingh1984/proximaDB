@@ -36,6 +36,7 @@ impl BitWriter {
         }
     }
 
+    #[allow(dead_code)]
     fn write_bits(&mut self, bits: &[bool]) {
         for &bit in bits {
             self.write_bit(bit);
@@ -67,6 +68,7 @@ struct BitReader {
     buffer: Cursor<Vec<u8>>,
     current_byte: u8,
     bit_position: u8,
+    #[allow(dead_code)]
     bytes_remaining: usize,
 }
 

@@ -299,9 +299,11 @@ impl UnifiedColumnarCompaction {
             .unwrap_or(DistanceMetric::Cosine);
 
         // Create storage quantization config based on collection settings
-        let mut config = StorageQuantizationConfig::default();
-        config.distance_metric = distance_metric;
-        config.enable_hardware_acceleration = true;
+        let mut config = StorageQuantizationConfig {
+            distance_metric,
+            enable_hardware_acceleration: true,
+            ..Default::default()
+        };
 
         // Determine which quantization levels to generate
         let quantization_config = collection_config

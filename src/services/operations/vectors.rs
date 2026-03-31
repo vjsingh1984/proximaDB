@@ -1212,8 +1212,10 @@ impl VectorOperationsService {
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
-        let mut search_params = crate::query::unified_query_optimizer::SearchParams::default();
-        search_params.top_k = Some(k);
+        let search_params = crate::query::unified_query_optimizer::SearchParams {
+            top_k: Some(k),
+            ..Default::default()
+        };
         let optimization_goal = config
             .as_ref()
             .map(|c| c.optimization_goal)
@@ -1290,8 +1292,10 @@ impl VectorOperationsService {
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
-        let mut search_params = crate::query::unified_query_optimizer::SearchParams::default();
-        search_params.top_k = Some(k);
+        let search_params = crate::query::unified_query_optimizer::SearchParams {
+            top_k: Some(k),
+            ..Default::default()
+        };
         let optimization_goal = config
             .as_ref()
             .map(|c| c.optimization_goal)

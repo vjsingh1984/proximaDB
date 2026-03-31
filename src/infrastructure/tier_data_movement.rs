@@ -249,8 +249,10 @@ impl TierDataMovement {
         debug!("Reading {} vectors from SST at {}", ids.len(), path);
 
         // Use SSTable reader to load vectors
-        let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        config.default_fs = Some(path.clone());
+        let config = crate::storage::persistence::filesystem::FilesystemConfig {
+            default_fs: Some(path.clone()),
+            ..Default::default()
+        };
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
@@ -291,8 +293,10 @@ impl TierDataMovement {
         debug!("Writing {} vectors to SST at {}", vectors.len(), path);
 
         // Use SSTable writer to store vectors
-        let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        config.default_fs = Some(path.clone());
+        let config = crate::storage::persistence::filesystem::FilesystemConfig {
+            default_fs: Some(path.clone()),
+            ..Default::default()
+        };
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
@@ -330,8 +334,10 @@ impl TierDataMovement {
         debug!("Reading {} vectors from VIPER at {}", ids.len(), path);
 
         // Use Parquet reader to load vectors
-        let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        config.default_fs = Some(path.clone());
+        let config = crate::storage::persistence::filesystem::FilesystemConfig {
+            default_fs: Some(path.clone()),
+            ..Default::default()
+        };
         let _filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await

@@ -87,6 +87,7 @@ pub struct DistributedQueryStrategy {
     /// Local node ID
     local_node_id: String,
     /// Strategy configuration
+    #[allow(dead_code)]
     config: DistributedStrategyConfig,
 }
 

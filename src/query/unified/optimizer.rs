@@ -156,8 +156,10 @@ impl QueryOptimizer {
 
     /// Create without plan caching (for testing or low-memory environments)
     pub fn without_cache() -> Self {
-        let mut config = OptimizerConfig::default();
-        config.enable_plan_cache = false;
+        let config = OptimizerConfig {
+            enable_plan_cache: false,
+            ..Default::default()
+        };
         Self::new(config)
     }
 
