@@ -5643,7 +5643,7 @@ mod tests {
         let builder = super::BloomFilterBuilder::new(0.01);
         let bloom = builder.build().unwrap();
         // Empty bloom should still be valid
-        assert!(bloom.num_bits > 0 || bloom.num_bits == 0); // just ensure no panic
+        assert!(bloom.size_bits > 0 || bloom.size_bits == 0); // just ensure no panic
     }
 
     #[test]

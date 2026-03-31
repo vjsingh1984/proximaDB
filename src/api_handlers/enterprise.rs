@@ -318,42 +318,59 @@ impl EnterpriseAPIHandler {
 /// Enterprise API response wrapper
 #[derive(Debug, Clone)]
 pub struct EnterpriseApiResponse<T> {
+    /// Whether the operation succeeded.
     pub success: bool,
+    /// Response payload.
     pub data: T,
+    /// Audit and tracking metadata.
     pub enterprise_metadata: EnterpriseApiMetadata,
 }
 
 /// Enterprise API metadata for audit and tracking
 #[derive(Debug, Clone)]
 pub struct EnterpriseApiMetadata {
+    /// Authenticated user context.
     pub user_context: EnterpriseUserContext,
+    /// When the operation was executed.
     pub operation_timestamp: DateTime<Utc>,
+    /// Unique audit trail identifier for compliance.
     pub audit_trail_id: Option<String>,
 }
 
 /// Tenant creation result
 #[derive(Debug, Clone)]
 pub struct TenantCreationResult {
+    /// The newly created tenant context.
     pub tenant_context: crate::storage::tenant::TenantContext,
+    /// Default domains provisioned for the tenant.
     pub default_domains: Vec<crate::storage::tenant::DomainContext>,
+    /// Standard RBAC roles created for the tenant.
     pub standard_roles: Vec<crate::storage::tenant::TenantRole>,
+    /// User who initiated tenant creation.
     pub created_by: String,
 }
 
 /// Domain creation result
 #[derive(Debug, Clone)]
 pub struct DomainCreationResult {
+    /// The newly created domain context.
     pub domain_context: crate::storage::tenant::DomainContext,
+    /// Business context associated with the domain.
     pub business_context: BusinessContext,
+    /// ID of the knowledge graph created for the domain.
     pub knowledge_graph_id: String,
 }
 
 /// Collection link result
 #[derive(Debug, Clone)]
 pub struct CollectionLinkResult {
+    /// Bridge mapping collection to domain.
     pub bridge: crate::storage::tenant::CollectionDomainBridge,
+    /// Parent tenant ID.
     pub tenant_id: String,
+    /// Domain the collection was linked to.
     pub domain_name: String,
+    /// ID of the linked collection.
     pub collection_id: String,
 }
 

@@ -218,6 +218,7 @@ use crate::services::operations::vectors::VectorOperationsService;
 ///
 /// **Performance Enhancement**: Uses optimized VectorOperationsService for 40-60% faster vector operations
 pub struct UnifiedHandlers {
+    /// Collection CRUD service for create/list/delete/stats.
     pub collection_service: Arc<CollectionService>,
     /// Optimized vector service with eliminated registry overhead
     pub vector_operations_service: Arc<VectorOperationsService>,
@@ -488,6 +489,7 @@ impl UnifiedHandlers {
     // /// Handle vector search operations with unified logic
     // Note: Non-v1 search handler removed. Use handle_vector_search_v1 directly.
 
+    /// Resolve a collection name or UUID to its canonical UUID, scoping to tenant if provided.
     pub async fn resolve_collection_id_for_tenant(
         &self,
         collection_identifier: &str,
@@ -526,6 +528,7 @@ impl UnifiedHandlers {
             .await
     }
 
+    /// Execute a v1 vector similarity search request.
     pub async fn handle_vector_search_v1(
         &self,
         request: crate::proto::proximadb_v1::VectorSearchRequest,
@@ -662,6 +665,7 @@ impl UnifiedHandlers {
             .await
     }
 
+    /// Execute a v1 vector batch upsert/delete request.
     pub async fn handle_vector_batch_v1(
         &self,
         request: crate::proto::proximadb_v1::VectorBatchRequest,
@@ -802,6 +806,7 @@ impl UnifiedHandlers {
         .await
     }
 
+    /// Handle a single-vector v1 operation (get, insert, update, delete).
     pub async fn handle_vector_v1(
         &self,
         collection_id: &str,
@@ -2986,8 +2991,12 @@ mod tests {
 /// SQL query result structure
 #[derive(Debug)]
 pub struct SqlQueryResult {
+    /// JSON-encoded result rows.
     pub rows: Vec<serde_json::Value>,
-    pub columns: Vec<(String, String)>, // (name, type)
+    /// Column definitions as (name, type_name) pairs.
+    pub columns: Vec<(String, String)>,
+    /// Total number of rows returned.
     pub row_count: usize,
+    /// Query execution wall-clock time in milliseconds.
     pub execution_time_ms: u64,
 }
