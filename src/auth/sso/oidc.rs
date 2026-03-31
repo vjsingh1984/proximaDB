@@ -259,11 +259,17 @@ impl OIDCIntegration {
 /// OIDC token response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OIDCTokenResponse {
+    /// OAuth2 access token for resource access.
     pub access_token: String,
+    /// OIDC ID token containing user identity claims.
     pub id_token: String,
+    /// Refresh token for obtaining new access tokens.
     pub refresh_token: Option<String>,
+    /// Token type (typically "Bearer").
     pub token_type: String,
+    /// Time in seconds until the access token expires.
     pub expires_in: u64,
+    /// Granted OAuth2 scopes.
     pub scope: String,
 }
 

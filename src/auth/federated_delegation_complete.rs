@@ -473,118 +473,188 @@ impl CompleteAzureADDelegationHandler {
 
 // Type definitions for complete federated identity delegation
 
+/// Request to execute a multi-provider enterprise delegation chain.
 #[derive(Debug, Clone)]
 pub struct EnterpriseDelegationRequest {
+    /// Unique request identifier for audit correlation.
     pub request_id: String,
+    /// Tenant context for the delegation.
     pub tenant_id: String,
+    /// Authenticated user initiating the delegation.
     pub user_context: EnterpriseUserContext,
+    /// Ordered list of delegation steps across providers.
     pub delegation_steps: Vec<DelegationStepRequest>,
+    /// Compliance framework identifiers that must be satisfied.
     pub compliance_requirements: Vec<String>,
+    /// Business justification for the delegation chain.
     pub business_justification: String,
+    /// Maximum allowed duration for the entire delegation chain.
     pub max_delegation_duration: Duration,
 }
 
+/// Single step within a multi-provider delegation chain.
 #[derive(Debug, Clone)]
 pub struct DelegationStepRequest {
+    /// Position in the delegation chain (1-based).
     pub step_number: u32,
+    /// Provider that currently holds the identity.
     pub source_provider: SSOProvider,
+    /// Provider to delegate identity to.
     pub target_provider: SSOProvider,
+    /// Type of delegation mechanism to use.
     pub delegation_type: DelegationType,
+    /// Target identity (e.g., role ARN or service principal).
     pub target_identity: String,
+    /// Business justification for this delegation step.
     pub business_justification: String,
+    /// Permissions required at the target provider.
     pub required_permissions: Vec<String>,
 }
 
+/// Type of cross-provider delegation mechanism.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DelegationType {
+    /// AWS STS AssumeRole for cross-account delegation.
     AWSAssumeRole,
+    /// Azure AD On-Behalf-Of flow for service delegation.
     AzureOnBehalfOf,
+    /// GCP Workload Identity Federation for cross-cloud access.
     GCPWorkloadIdentity,
+    /// Okta token exchange for federated identity.
     OktaTokenExchange,
 }
 
+/// Result of a complete multi-provider delegation chain execution.
 #[derive(Debug, Clone)]
 pub struct CompleteDelegationResult {
+    /// Per-provider delegation results.
     pub delegation_results: Vec<ProviderDelegationResult>,
+    /// Unified audit trail correlated across all providers.
     pub unified_audit_trail: UnifiedCrossProviderAuditTrail,
+    /// Compliance validation results for the entire chain.
     pub compliance_validation: EnterpriseDelegationComplianceValidation,
+    /// Metadata summarizing the delegation execution.
     pub enterprise_metadata: EnterpriseDelegationMetadata,
 }
 
+/// Record of a single executed delegation step.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegationStep {
+    /// Position in the delegation chain (1-based).
     pub step_number: u32,
+    /// Delegation mechanism used for this step.
     pub delegation_type: DelegationType,
+    /// Identity that initiated the delegation.
     pub source_identity: String,
+    /// Identity that was delegated to.
     pub target_identity: String,
+    /// When this delegation step was executed.
     pub delegation_timestamp: DateTime<Utc>,
+    /// Whether the delegation step succeeded.
     pub delegation_success: bool,
+    /// Provider audit event IDs for this step.
     pub audit_event_ids: Vec<String>,
 }
 
+/// Full enterprise authentication result with audit trail and user context.
 #[derive(Debug, Clone)]
 pub struct CompleteEnterpriseAuthentication {
+    /// Provider-specific authentication result.
     pub authentication_result: AuthenticationResult,
+    /// Comprehensive audit trail for compliance.
     pub complete_audit_trail: ComprehensiveAuditTrail,
+    /// Fully resolved enterprise user context with delegation chain.
     pub enterprise_user_context: CompleteEnterpriseUserContext,
 }
 
+/// Authentication result from a single SSO provider.
 #[derive(Debug, Clone)]
 pub struct AuthenticationResult {
+    /// SSO provider that performed the authentication.
     pub provider: SSOProvider,
+    /// Authenticated user identifier.
     pub user_id: String,
+    /// Resolved tenant identifier.
     pub tenant_id: String,
+    /// Delegation chain steps executed during authentication.
     pub delegation_chain: Vec<DelegationStep>,
+    /// Effective permissions after role mapping and delegation.
     pub effective_permissions: Vec<String>,
+    /// Audit trail identifier for this authentication event.
     pub audit_trail_id: String,
+    /// Compliance validation result for this authentication.
     pub compliance_validation: ComplianceValidation,
 }
 
-// Placeholder implementations for foundation implementation
+/// Enterprise SSO multi-provider token with optional delegation chain configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnterpriseSSOMToken {
+    /// SSO provider that issued this token.
     pub provider: SSOProvider,
+    /// Raw token data (e.g., JWT string).
     pub token_data: String,
+    /// Authenticated user identifier.
     pub user_id: String,
+    /// Optional AWS AssumeRole chain for cross-account delegation.
     pub assume_role_chain: Option<Vec<AssumeRoleStep>>,
+    /// Optional Azure AD On-Behalf-Of flow configuration.
     pub on_behalf_of_config: Option<OnBehalfOfConfiguration>,
+    /// Optional Azure Managed Identity ID for service-to-service auth.
     pub managed_identity_id: Option<String>,
 }
 
+/// Context for the current operation being authenticated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationContext {
+    /// Unique request identifier for tracing.
     pub request_id: String,
+    /// Operation timestamp.
     pub timestamp: DateTime<Utc>,
 }
 
+/// Enterprise user context after full delegation chain resolution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompleteEnterpriseUserContext {
+    /// Authenticated user identifier.
     pub user_id: String,
+    /// Resolved tenant identifier.
     pub tenant_id: String,
+    /// Complete delegation chain traversed during authentication.
     pub complete_delegation_chain: Vec<DelegationStep>,
+    /// Effective permissions after all delegation steps.
     pub effective_permissions: Vec<String>,
+    /// Audit trail identifier covering the entire delegation.
     pub audit_trail_id: String,
+    /// Compliance validation result for the delegation chain.
     pub compliance_validation: ComplianceValidation,
 }
 
+/// Enterprise compliance requirements that delegation chains must satisfy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplianceRequirements {
+    /// Compliance framework identifiers (e.g., "SOC2", "HIPAA").
     pub requirements: Vec<String>,
 }
 
+/// Result of compliance validation against enterprise requirements.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplianceValidation {
+    /// Compliance score (0.0 = non-compliant, 1.0 = fully compliant).
     pub overall_compliance_score: f64,
+    /// Time taken for compliance validation in milliseconds.
     pub validation_time_ms: u64,
 }
 
+/// Coordinates delegation across multiple identity providers.
 pub struct DelegationChainCoordinator;
 
 impl DelegationChainCoordinator {
+    /// Create a new delegation chain coordinator.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Execute a multi-provider delegation chain and return per-provider results.
     pub async fn coordinate_multi_provider_delegation(
         &self,
         _request: &EnterpriseDelegationRequest,
@@ -593,13 +663,16 @@ impl DelegationChainCoordinator {
     }
 }
 
+/// Correlates audit events across multiple identity providers into a unified trail.
 pub struct UnifiedAuditCorrelator;
 
 impl UnifiedAuditCorrelator {
+    /// Create a new unified audit correlator.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Correlate audit events from delegation results into a unified cross-provider trail.
     pub async fn correlate_cross_provider_audit_events(
         &self,
         _results: &[ProviderDelegationResult],

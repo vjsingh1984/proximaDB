@@ -61,8 +61,11 @@ pub trait AxisVectorIndex: Send + Sync {
 /// Index statistics
 #[derive(Debug, Clone)]
 pub struct IndexStats {
+    /// Number of vectors currently stored in the index.
     pub vector_count: usize,
+    /// Approximate memory consumption of the index in bytes.
     pub memory_usage_bytes: usize,
+    /// Human-readable name of the index algorithm (e.g., "HNSW", "IVF").
     pub index_type: String,
 }
 

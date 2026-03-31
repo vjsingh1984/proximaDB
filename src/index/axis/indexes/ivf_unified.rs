@@ -40,11 +40,14 @@ use crate::proto::proximadb_v1::VectorRecord;
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PartitionedKey<K> {
+    /// Identifier of the collection this key belongs to.
     pub collection_id: String,
+    /// The underlying key value.
     pub key: K,
 }
 
 impl<K> PartitionedKey<K> {
+    /// Creates a new partitioned key with the given collection and key.
     pub fn new(collection_id: String, key: K) -> Self {
         Self { collection_id, key }
     }
@@ -65,12 +68,18 @@ pub enum IvfClusteringMethod {
     /// K-means++ (better initialization, more accurate)
     #[default]
     KMeansPlusPlus,
-    /// Mini-batch K-means (faster for large datasets)
-    MiniBatchKMeans { batch_size: usize },
+    /// Mini-batch K-means (faster for large datasets).
+    MiniBatchKMeans {
+        /// Number of vectors per mini-batch iteration.
+        batch_size: usize,
+    },
     /// Balanced K-means (ensures equal cluster sizes)
     BalancedKMeans,
-    /// Hierarchical K-means (for very large K)
-    HierarchicalKMeans { branching_factor: usize },
+    /// Hierarchical K-means (for very large K).
+    HierarchicalKMeans {
+        /// Number of sub-clusters at each hierarchy level.
+        branching_factor: usize,
+    },
     /// Use external clustering engine
     External(ClusteringAlgorithm),
 }
@@ -110,10 +119,10 @@ pub struct UnifiedIvfConfig {
     /// Number of training runs (for stability)
     pub n_init: usize,
 
-    // Centroid store config (inelastic)
+    /// Centroid store configuration (inelastic, always in memory).
     pub centroid_config: CentroidConfig,
 
-    // Posting list store config (elastic)
+    /// Posting list store configuration (elastic, evictable under memory pressure).
     pub posting_list_config: PostingListConfig,
 }
 
@@ -139,6 +148,7 @@ impl Default for UnifiedIvfConfig {
     }
 }
 
+/// Configuration for the inelastic centroid store that keeps cluster centers in memory.
 #[derive(Debug, Clone)]
 pub struct CentroidConfig {
     /// Centroids are never evicted
@@ -159,6 +169,7 @@ impl Default for CentroidConfig {
     }
 }
 
+/// Configuration for the elastic posting list store with eviction support.
 #[derive(Debug, Clone)]
 pub struct PostingListConfig {
     /// Posting lists can be evicted
@@ -185,12 +196,17 @@ impl Default for PostingListConfig {
     }
 }
 
+/// Memory management priority for IVF data structures.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MemoryPriority {
-    Critical, // Never evict (centroids)
-    High,     // Evict last (hot posting lists)
-    Normal,   // Standard eviction (warm posting lists)
-    Low,      // Evict first (cold posting lists)
+    /// Never evict (used for centroids).
+    Critical,
+    /// Evict last under pressure (hot posting lists).
+    High,
+    /// Standard eviction priority (warm posting lists).
+    Normal,
+    /// Evict first when memory is constrained (cold posting lists).
+    Low,
 }
 
 /// Inelastic centroid store - always in memory
@@ -410,11 +426,17 @@ impl CentroidStore {
 /// Posting list that can be tiered
 #[derive(Debug, Clone)]
 pub struct PostingList {
+    /// Identifier of the cluster this posting list belongs to.
     pub cluster_id: usize,
+    /// Vector IDs assigned to this cluster.
     pub vector_ids: Vec<String>,
-    pub vectors: Option<Vec<Vec<f32>>>, // None when on disk
-    pub quantized_vectors: Option<Vec<Vec<u8>>>, // PQ codes when enabled
-    pub last_access: u64,               // Unix timestamp
+    /// Full-precision vectors, or `None` when evicted to disk.
+    pub vectors: Option<Vec<Vec<f32>>>,
+    /// PQ-encoded vectors when product quantization is enabled.
+    pub quantized_vectors: Option<Vec<Vec<u8>>>,
+    /// Unix timestamp of the last access for eviction decisions.
+    pub last_access: u64,
+    /// Number of times this posting list has been accessed.
     pub access_count: u64,
 }
 
@@ -1678,15 +1700,24 @@ pub fn create_ivf_index_with_representation(
     )?))
 }
 
+/// Runtime statistics for a unified IVF index instance.
 #[derive(Debug, Clone)]
 pub struct IvfStats {
+    /// Collection this IVF index belongs to.
     pub collection_id: String,
+    /// Total number of indexed vectors.
     pub vector_count: usize,
+    /// Number of Voronoi clusters.
     pub cluster_count: usize,
+    /// Whether the centroids have been trained.
     pub trained: bool,
+    /// Cumulative number of search queries executed.
     pub search_count: u64,
+    /// Memory used by centroid storage in bytes.
     pub centroid_memory_bytes: usize,
+    /// Memory used by posting list storage in bytes.
     pub posting_list_memory_bytes: usize,
+    /// Total memory used by the IVF index in bytes.
     pub total_memory_bytes: usize,
 }
 

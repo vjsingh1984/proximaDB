@@ -36,25 +36,54 @@ pub struct IndexMemoryTracker {
 /// Memory status for a collection's indexes
 #[derive(Debug, Clone)]
 pub struct IndexMemoryStatus {
+    /// Collection this status belongs to.
     pub collection_id: String,
+    /// Type of index and its structural parameters.
     pub index_type: Index,
+    /// Current memory residency state of the index.
     pub memory_state: MemoryState,
+    /// Memory consumed by this index in bytes.
     pub memory_bytes: usize,
+    /// Timestamp of the last query that accessed this index.
     pub last_access: std::time::Instant,
+    /// Total number of accesses since loading.
     pub access_count: u64,
+    /// Number of times queries fell back to raw storage scan.
     pub fallback_count: u64,
+    /// Filesystem path of the serialized index on disk, if available.
     pub disk_location: Option<String>,
 }
 
 /// Types of indexes
 #[derive(Debug, Clone, PartialEq)]
 pub enum Index {
-    HNSW { layers: usize },
-    IVF { centroids: usize },
-    PQ { codebooks: usize },
+    /// HNSW graph index with the given number of navigable layers.
+    HNSW {
+        /// Number of hierarchical layers in the HNSW graph.
+        layers: usize,
+    },
+    /// IVF index with the given number of cluster centroids.
+    IVF {
+        /// Number of Voronoi cell centroids.
+        centroids: usize,
+    },
+    /// Product quantization index with the given number of codebooks.
+    PQ {
+        /// Number of PQ sub-codebooks.
+        codebooks: usize,
+    },
+    /// Flat brute-force index (no acceleration structure).
     Flat,
-    LSH { tables: usize },
-    Annoy { trees: usize },
+    /// LSH index with the given number of hash tables.
+    LSH {
+        /// Number of independent hash tables.
+        tables: usize,
+    },
+    /// Annoy tree-based index with the given number of trees.
+    Annoy {
+        /// Number of random projection trees.
+        trees: usize,
+    },
 }
 
 /// Memory residency state
@@ -63,31 +92,42 @@ pub enum MemoryState {
     /// Fully loaded in memory
     InMemory,
 
-    /// Partially loaded (e.g., only top HNSW layers or IVF centroids)
+    /// Partially loaded (e.g., only top HNSW layers or IVF centroids).
     PartiallyLoaded {
+        /// Fraction of the index currently in memory (0.0 to 100.0).
         memory_percentage: f32,
+        /// Names of index components that are loaded.
         loaded_components: Vec<String>,
     },
 
-    /// Evicted to disk
+    /// Evicted to disk.
     Evicted {
+        /// When the eviction occurred.
         eviction_time: std::time::Instant,
+        /// Reason the index was evicted from memory.
         reason: EvictionReason,
     },
 
     /// Not yet built
     NotBuilt,
 
-    /// Being loaded from disk
-    Loading { progress_percentage: f32 },
+    /// Being loaded from disk.
+    Loading {
+        /// Loading progress as a percentage (0.0 to 100.0).
+        progress_percentage: f32,
+    },
 }
 
 /// Reasons for eviction
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvictionReason {
+    /// System memory usage exceeded the configured threshold.
     MemoryPressure,
+    /// Index was not accessed recently enough to justify memory residency.
     LowAccessFrequency,
+    /// Administrator explicitly evicted this index.
     ManualEviction,
+    /// The owning collection was deleted.
     CollectionDeleted,
 }
 
@@ -306,12 +346,19 @@ impl IndexMemoryTracker {
 /// Memory usage statistics
 #[derive(Debug, Clone)]
 pub struct MemoryStats {
+    /// Current total memory used by all indexes in bytes.
     pub total_memory_bytes: usize,
+    /// Maximum memory budget for indexes in bytes.
     pub max_memory_bytes: usize,
+    /// Current usage as a percentage of the maximum.
     pub memory_usage_percentage: f64,
+    /// Number of collections fully loaded in memory.
     pub collections_in_memory: usize,
+    /// Number of collections with partially loaded indexes.
     pub collections_partial: usize,
+    /// Number of collections with evicted indexes.
     pub collections_evicted: usize,
+    /// Total number of fallback-to-raw-storage events.
     pub total_fallback_count: u64,
 }
 

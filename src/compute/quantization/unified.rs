@@ -1233,7 +1233,7 @@ impl UnifiedQuantizationEngine {
 
     /// Dequantize raw bytes back to f32 by reinterpreting 4-byte little-endian chunks.
     fn dequantize_fp32(&self, bytes: &[u8]) -> Result<Vec<f32>> {
-        if bytes.len() % 4 != 0 {
+        if !bytes.len().is_multiple_of(4) {
             anyhow::bail!("Invalid FP32 byte array length");
         }
 

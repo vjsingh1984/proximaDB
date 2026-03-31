@@ -330,8 +330,7 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
 
     fn finalize(&mut self, total_row_groups: usize) -> Result<()> {
         // Build SuperBlocks
-        let superblock_count = (total_row_groups + self.config.row_groups_per_superblock - 1)
-            / self.config.row_groups_per_superblock;
+        let superblock_count = total_row_groups.div_ceil(self.config.row_groups_per_superblock);
 
         for sb_idx in 0..superblock_count {
             let start = (sb_idx * self.config.row_groups_per_superblock) as u32;

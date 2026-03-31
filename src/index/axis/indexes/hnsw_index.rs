@@ -46,9 +46,13 @@ use crate::index::axis::zero_overhead_vector::{
 /// Memory usage statistics
 #[derive(Debug, Clone)]
 pub struct MemoryUsage {
+    /// Total memory usage across all components.
     pub total_bytes: usize,
+    /// Memory used by the HNSW graph structure (edges, layers).
     pub index_size_bytes: usize,
+    /// Memory used by stored vector data.
     pub vector_data_bytes: usize,
+    /// Memory used by auxiliary metadata (ID mappings, etc.).
     pub metadata_bytes: usize,
 }
 

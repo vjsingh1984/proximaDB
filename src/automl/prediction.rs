@@ -707,4 +707,292 @@ mod tests {
         let metrics = predictor.get_model_metrics("test").await;
         assert!(metrics.is_ok());
     }
+
+    // ============================================================
+    // Extended FeatureVector tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_feature_vector_read_write_ratios() {
+        // read_write_ratio = 1.0 => equal reads and writes
+        let fv = FeatureVector::from_characteristics(100, 64, 0.0, 1.0);
+        assert!((fv.read_ratio - 0.5).abs() < 1e-6, "Equal ratio should give 0.5 read");
+        assert!((fv.write_ratio - 0.5).abs() < 1e-6, "Equal ratio should give 0.5 write");
+    }
+
+    #[test]
+    fn test_feature_vector_read_heavy() {
+        // read_write_ratio = 99.0 => mostly reads
+        let fv = FeatureVector::from_characteristics(100, 64, 0.0, 99.0);
+        assert!(fv.read_ratio > 0.98, "High ratio should give high read_ratio, got {}", fv.read_ratio);
+        assert!(fv.write_ratio < 0.02, "High ratio should give low write_ratio, got {}", fv.write_ratio);
+    }
+
+    #[test]
+    fn test_feature_vector_write_heavy() {
+        // read_write_ratio = 0.0 => all writes
+        let fv = FeatureVector::from_characteristics(100, 64, 0.0, 0.0);
+        assert!((fv.read_ratio - 0.0).abs() < 1e-6, "Zero ratio should give 0 read_ratio");
+        assert!((fv.write_ratio - 1.0).abs() < 1e-6, "Zero ratio should give 1.0 write_ratio");
+    }
+
+    #[test]
+    fn test_feature_vector_to_array_length() {
+        let fv = FeatureVector::from_characteristics(1000, 128, 0.5, 2.0);
+        let arr = fv.to_array();
+        assert_eq!(arr.len(), 13, "Feature vector should have exactly 13 elements");
+    }
+
+    #[test]
+    fn test_feature_vector_defaults() {
+        let fv = FeatureVector::from_characteristics(500, 256, 0.3, 4.0);
+        assert_eq!(fv.query_complexity, 1.0);
+        assert_eq!(fv.batch_size, 1.0);
+        assert_eq!(fv.index_type, 0.0);
+        assert_eq!(fv.quantization_level, 0.0);
+        assert_eq!(fv.cache_size_mb, 1024.0);
+        assert_eq!(fv.cpu_cores, 4.0);
+        assert_eq!(fv.memory_gb, 8.0);
+        assert_eq!(fv.disk_type, 1.0); // SSD
+    }
+
+    #[test]
+    fn test_feature_vector_serde_roundtrip() {
+        let fv = FeatureVector::from_characteristics(10000, 768, 0.1, 10.0);
+        let json = serde_json::to_string(&fv).unwrap();
+        let deserialized: FeatureVector = serde_json::from_str(&json).unwrap();
+        assert_eq!(fv.vector_count, deserialized.vector_count);
+        assert_eq!(fv.vector_dimension, deserialized.vector_dimension);
+        assert!((fv.sparsity - deserialized.sparsity).abs() < 1e-10);
+        assert!((fv.read_ratio - deserialized.read_ratio).abs() < 1e-10);
+    }
+
+    // ============================================================
+    // TrainingDataBuffer tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_training_data_buffer_new() {
+        let buffer = TrainingDataBuffer::new();
+        assert!(buffer.get_samples().is_empty());
+    }
+
+    #[test]
+    fn test_training_data_buffer_add_and_get() {
+        let mut buffer = TrainingDataBuffer::new();
+        let sample = TrainingSample {
+            features: FeatureVector::from_characteristics(100, 64, 0.5, 1.0),
+            target: TargetMetric::QueryLatency(5.0),
+            timestamp: chrono::Utc::now(),
+        };
+        buffer.add_sample(sample, 100);
+        assert_eq!(buffer.get_samples().len(), 1);
+    }
+
+    #[test]
+    fn test_training_data_buffer_max_samples_eviction() {
+        let mut buffer = TrainingDataBuffer::new();
+        let max_samples = 5;
+        for i in 0..10 {
+            let sample = TrainingSample {
+                features: FeatureVector::from_characteristics(i * 100, 64, 0.5, 1.0),
+                target: TargetMetric::Throughput(i as f64 * 100.0),
+                timestamp: chrono::Utc::now(),
+            };
+            buffer.add_sample(sample, max_samples);
+        }
+        assert_eq!(
+            buffer.get_samples().len(),
+            max_samples,
+            "Buffer should cap at max_samples"
+        );
+        // The remaining samples should be the most recent ones (indices 5-9)
+        if let TargetMetric::Throughput(v) = &buffer.get_samples()[0].target {
+            assert!(
+                *v >= 500.0,
+                "First sample should be from later additions, got {}",
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn test_training_data_buffer_clear() {
+        let mut buffer = TrainingDataBuffer::new();
+        for _ in 0..5 {
+            let sample = TrainingSample {
+                features: FeatureVector::from_characteristics(100, 64, 0.5, 1.0),
+                target: TargetMetric::MemoryUsage(1024.0),
+                timestamp: chrono::Utc::now(),
+            };
+            buffer.add_sample(sample, 100);
+        }
+        assert_eq!(buffer.get_samples().len(), 5);
+        buffer.clear();
+        assert!(buffer.get_samples().is_empty());
+    }
+
+    // ============================================================
+    // ML Model tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_linear_regression_new() {
+        let model = LinearRegressionModel::new();
+        assert_eq!(model.coefficients.len(), 13);
+        assert_eq!(model.intercept, 0.0);
+    }
+
+    #[test]
+    fn test_linear_regression_predict_with_known_coefficients() {
+        let mut model = LinearRegressionModel::new();
+        // Set first coefficient to 0.001 (for vector_count)
+        model.coefficients[0] = 0.001;
+        model.intercept = 5.0;
+
+        let features = FeatureVector::from_characteristics(1000, 128, 0.0, 1.0);
+        let prediction = model.predict(&features);
+        // prediction = 5.0 + 0.001 * 1000 + 0*... = 6.0
+        assert!(
+            (prediction - 6.0).abs() < 1e-6,
+            "Expected ~6.0, got {}",
+            prediction
+        );
+    }
+
+    #[test]
+    fn test_linear_regression_train_simple() {
+        let mut model = LinearRegressionModel::new();
+        let samples: Vec<TrainingSample> = (0..50)
+            .map(|i| TrainingSample {
+                features: FeatureVector::from_characteristics(i * 100, 128, 0.1, 1.0),
+                target: TargetMetric::QueryLatency(i as f64 * 0.5),
+                timestamp: chrono::Utc::now(),
+            })
+            .collect();
+        model.train(&samples);
+        // After training, prediction should be somewhat correlated with input
+        let low_features = FeatureVector::from_characteristics(100, 128, 0.1, 1.0);
+        let high_features = FeatureVector::from_characteristics(4000, 128, 0.1, 1.0);
+        let low_pred = model.predict(&low_features);
+        let high_pred = model.predict(&high_features);
+        // We don't assert exact values, just that the model learned something
+        assert!(
+            low_pred.is_finite() && high_pred.is_finite(),
+            "Predictions should be finite"
+        );
+    }
+
+    #[test]
+    fn test_random_forest_empty() {
+        let model = RandomForestModel::new(10);
+        let features = FeatureVector::from_characteristics(100, 64, 0.5, 1.0);
+        assert_eq!(model.predict(&features), 0.0, "Empty forest should predict 0");
+    }
+
+    #[test]
+    fn test_random_forest_train_and_predict() {
+        let mut model = RandomForestModel::new(5);
+        let samples: Vec<TrainingSample> = (0..20)
+            .map(|_| TrainingSample {
+                features: FeatureVector::from_characteristics(1000, 128, 0.1, 1.0),
+                target: TargetMetric::QueryLatency(10.0),
+                timestamp: chrono::Utc::now(),
+            })
+            .collect();
+        model.train(&samples);
+        let features = FeatureVector::from_characteristics(1000, 128, 0.1, 1.0);
+        let prediction = model.predict(&features);
+        assert!(
+            (prediction - 10.0).abs() < 1e-6,
+            "Random forest with constant target should predict near target, got {}",
+            prediction
+        );
+    }
+
+    #[test]
+    fn test_neural_network_predict() {
+        let model = NeuralNetworkModel::new(&[13, 8, 1]);
+        let features = FeatureVector::from_characteristics(1000, 128, 0.5, 1.0);
+        let prediction = model.predict(&features);
+        assert!(prediction.is_finite(), "Neural network prediction should be finite");
+    }
+
+    #[test]
+    fn test_gradient_boosting_empty() {
+        let model = GradientBoostingModel::new(10, 0.1);
+        let features = FeatureVector::from_characteristics(100, 64, 0.5, 1.0);
+        let prediction = model.predict(&features);
+        assert_eq!(prediction, 0.0, "Empty boosting model should predict base prediction (0)");
+    }
+
+    #[test]
+    fn test_gradient_boosting_train() {
+        let mut model = GradientBoostingModel::new(5, 0.1);
+        let samples: Vec<TrainingSample> = (0..20)
+            .map(|_| TrainingSample {
+                features: FeatureVector::from_characteristics(1000, 128, 0.1, 1.0),
+                target: TargetMetric::Throughput(500.0),
+                timestamp: chrono::Utc::now(),
+            })
+            .collect();
+        model.train(&samples);
+        // After training, base_prediction should be the mean target
+        assert!(
+            (model.base_prediction - 500.0).abs() < 1e-6,
+            "Base prediction should be mean of targets, got {}",
+            model.base_prediction
+        );
+    }
+
+    #[test]
+    fn test_model_type_name() {
+        assert_eq!(
+            model_type_name(&PredictionModel::LinearRegression(LinearRegressionModel::new())),
+            "LinearRegression"
+        );
+        assert_eq!(
+            model_type_name(&PredictionModel::RandomForest(RandomForestModel::new(1))),
+            "RandomForest"
+        );
+        assert_eq!(
+            model_type_name(&PredictionModel::NeuralNetwork(NeuralNetworkModel::new(&[13, 1]))),
+            "NeuralNetwork"
+        );
+        assert_eq!(
+            model_type_name(&PredictionModel::GradientBoosting(GradientBoostingModel::new(1, 0.1))),
+            "GradientBoosting"
+        );
+    }
+
+    // ============================================================
+    // TargetMetric tests
+    // ============================================================
+
+    #[test]
+    fn test_target_metric_variants() {
+        let latency = TargetMetric::QueryLatency(5.0);
+        let throughput = TargetMetric::Throughput(1000.0);
+        let memory = TargetMetric::MemoryUsage(2048.0);
+        let build_time = TargetMetric::IndexBuildTime(30.0);
+
+        // Verify Debug works
+        assert!(format!("{:?}", latency).contains("5.0"));
+        assert!(format!("{:?}", throughput).contains("1000.0"));
+        assert!(format!("{:?}", memory).contains("2048.0"));
+        assert!(format!("{:?}", build_time).contains("30.0"));
+    }
+
+    // ============================================================
+    // PredictorConfig tests
+    // ============================================================
+
+    #[test]
+    fn test_predictor_config_default() {
+        let config = PredictorConfig::default();
+        assert_eq!(config.min_training_samples, 100);
+        assert_eq!(config.max_training_samples, 10000);
+        assert_eq!(config.update_interval_secs, 3600);
+        assert!(config.enable_online_learning);
+    }
 }

@@ -1155,7 +1155,7 @@ impl SstCompactor {
 
                     if let Ok(fs) = self.filesystem_factory.get_filesystem(collection_dir) {
                         // Create model directory
-                        let _ = futures::executor::block_on(async {
+                        futures::executor::block_on(async {
                             let _ = fs.create_dir_all(&model_dir).await;
 
                             if let Ok(data) = bincode::serialize(&model) {

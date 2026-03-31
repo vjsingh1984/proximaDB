@@ -111,9 +111,13 @@ pub struct HierarchicalConfig {
 /// Linkage criteria for hierarchical clustering
 #[derive(Debug, Clone)]
 pub enum LinkageCriterion {
+    /// Minimum distance between elements of two clusters.
     Single,
+    /// Maximum distance between elements of two clusters.
     Complete,
+    /// Average distance between all pairs across two clusters.
     Average,
+    /// Minimizes total within-cluster variance (Ward's method).
     Ward,
 }
 

@@ -391,4 +391,144 @@ mod tests {
         assert!(headers.contains(&"Content-Type".to_string()));
         assert!(headers.contains(&"Authorization".to_string()));
     }
+
+    // ============================================================
+    // Extended CORS config tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_default_is_production() {
+        let default = CorsConfig::default();
+        let production = CorsConfig::production();
+        assert_eq!(default.enabled, production.enabled);
+        assert_eq!(default.development_mode, production.development_mode);
+        assert_eq!(default.allowed_origins.len(), production.allowed_origins.len());
+        assert_eq!(default.allow_credentials, production.allow_credentials);
+    }
+
+    #[test]
+    fn test_allow_origins_multiple() {
+        let config = CorsConfig::production()
+            .allow_origins(vec!["https://a.com", "https://b.com", "https://c.com"]);
+        assert_eq!(config.allowed_origins.len(), 3);
+        assert!(config.is_origin_allowed("https://a.com"));
+        assert!(config.is_origin_allowed("https://b.com"));
+        assert!(config.is_origin_allowed("https://c.com"));
+        assert!(!config.is_origin_allowed("https://d.com"));
+    }
+
+    #[test]
+    fn test_with_credentials() {
+        let config = CorsConfig::production()
+            .allow_origin("https://app.example.com")
+            .with_credentials();
+        assert!(config.allow_credentials);
+    }
+
+    #[test]
+    fn test_validate_valid_production_config() {
+        let config = CorsConfig::production()
+            .allow_origin("https://app.example.com")
+            .allow_origin("http://localhost:3000");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_multiple_invalid_origins() {
+        let config = CorsConfig::production()
+            .allow_origin("https://valid.com")
+            .allow_origin("ftp://invalid.com"); // ftp is not http or https
+        let result = config.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CorsConfigError::InvalidOrigin(origin) => {
+                assert_eq!(origin, "ftp://invalid.com");
+            }
+            other => panic!("Expected InvalidOrigin, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_bare_domain_rejected() {
+        let config = CorsConfig::production().allow_origin("example.com");
+        assert!(matches!(
+            config.validate(),
+            Err(CorsConfigError::InvalidOrigin(_))
+        ));
+    }
+
+    #[test]
+    fn test_origin_not_allowed_in_production_without_whitelist() {
+        let config = CorsConfig::production();
+        assert!(!config.is_origin_allowed("https://any-origin.com"));
+    }
+
+    #[test]
+    fn test_development_allows_any_origin() {
+        let config = CorsConfig::development();
+        assert!(config.is_origin_allowed("https://anything.anywhere.com"));
+        assert!(config.is_origin_allowed("http://localhost:8080"));
+        assert!(config.is_origin_allowed("https://evil.attacker.com"));
+    }
+
+    #[test]
+    fn test_max_age_default() {
+        let config = CorsConfig::production();
+        assert_eq!(config.max_age_secs, 3600);
+    }
+
+    #[test]
+    fn test_default_methods_include_options() {
+        let methods = default_allowed_methods();
+        assert!(methods.contains(&"OPTIONS".to_string()));
+    }
+
+    #[test]
+    fn test_default_headers_include_request_id() {
+        let headers = default_allowed_headers();
+        assert!(headers.contains(&"X-Request-ID".to_string()));
+        assert!(headers.contains(&"X-Correlation-ID".to_string()));
+    }
+
+    #[test]
+    fn test_cors_config_error_display() {
+        let err = CorsConfigError::CredentialsWithWildcard;
+        assert!(err.to_string().contains("credentials"));
+
+        let err = CorsConfigError::InvalidOrigin("bad-origin".to_string());
+        assert!(err.to_string().contains("bad-origin"));
+
+        let err = CorsConfigError::ValidationFailed("custom reason".to_string());
+        assert!(err.to_string().contains("custom reason"));
+    }
+
+    #[test]
+    fn test_create_cors_layer_disabled() {
+        let config = CorsConfig {
+            enabled: false,
+            ..CorsConfig::production()
+        };
+        // Should not panic; creates a minimal layer
+        let _layer = create_cors_layer(&config);
+    }
+
+    #[test]
+    fn test_create_cors_layer_production_with_origins() {
+        let config = CorsConfig::production()
+            .allow_origin("https://app.example.com");
+        let _layer = create_cors_layer(&config);
+    }
+
+    #[test]
+    fn test_create_cors_layer_development() {
+        let config = CorsConfig::development();
+        let _layer = create_cors_layer(&config);
+    }
+
+    #[test]
+    fn test_create_cors_layer_no_origins() {
+        let config = CorsConfig::production();
+        // Empty origins = same-origin only
+        let _layer = create_cors_layer(&config);
+    }
 }

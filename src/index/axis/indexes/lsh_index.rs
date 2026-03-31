@@ -70,11 +70,17 @@ impl Default for AxisLshConfig {
 /// Statistics for LSH index
 #[derive(Debug, Clone, Default)]
 pub struct LshStats {
+    /// Total number of vectors stored in the LSH index.
     pub vector_count: usize,
+    /// Number of independent hash tables.
     pub table_count: usize,
+    /// Number of hash functions used per table.
     pub hash_functions_per_table: usize,
+    /// Approximate memory consumption in bytes.
     pub memory_usage_bytes: usize,
+    /// Average number of vectors per hash bucket.
     pub avg_bucket_size: f32,
+    /// Fraction of vector pairs that hash to the same bucket.
     pub collision_rate: f32,
 }
 
@@ -125,11 +131,14 @@ impl HashFunction {
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct PartitionedKey<K: Hash + Eq> {
+    /// Collection identifier for multi-tenant partitioning.
     pub collection_id: String,
+    /// The underlying key value.
     pub key: K,
 }
 
 impl<K: Hash + Eq> PartitionedKey<K> {
+    /// Creates a new partitioned key scoped to a collection.
     pub fn new(collection_id: String, key: K) -> Self {
         Self { collection_id, key }
     }

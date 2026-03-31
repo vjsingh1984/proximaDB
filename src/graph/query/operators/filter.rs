@@ -5,14 +5,18 @@
 use super::{ColumnSpec, PhysicalOperator, ResultTuple};
 use anyhow::Result;
 
-/// Filter expression for WHERE clause
+/// Filter expression for WHERE clause evaluation.
 #[derive(Debug, Clone)]
 pub enum FilterExpression {
     /// Property comparison (e.g., n.age > 25)
     Property {
+        /// Variable name the comparison applies to.
         variable: String,
+        /// Property name being compared.
         property: String,
+        /// Comparison operator to apply.
         operator: ComparisonOperator,
+        /// Value to compare against.
         value: FilterValue,
     },
     /// Logical AND
@@ -25,26 +29,39 @@ pub enum FilterExpression {
     True,
 }
 
-/// Comparison operators
+/// Comparison operators for property-based filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComparisonOperator {
+    /// Exact equality match.
     Equals,
+    /// Not-equal comparison.
     NotEquals,
+    /// Strictly greater than.
     GreaterThan,
+    /// Strictly less than.
     LessThan,
+    /// Greater than or equal to.
     GreaterEqual,
+    /// Less than or equal to.
     LessEqual,
+    /// String contains substring.
     Contains,
+    /// String starts with prefix.
     StartsWith,
+    /// String ends with suffix.
     EndsWith,
 }
 
-/// Filter value
+/// Filter value representing a typed literal for comparison.
 #[derive(Debug, Clone)]
 pub enum FilterValue {
+    /// String literal value.
     String(String),
+    /// 64-bit integer value.
     Int(i64),
+    /// 64-bit floating point value.
     Float(f64),
+    /// Boolean value.
     Bool(bool),
 }
 

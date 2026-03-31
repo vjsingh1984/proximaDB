@@ -502,7 +502,7 @@ impl RecoveryManager {
 
             let file_info = WalFileInfo {
                 collection_id: collection_id.to_string(),
-                batch_id: BatchId::from_base62(&e.batch_id).unwrap_or(BatchId::new()),
+                batch_id: BatchId::from_base62(&e.batch_id).unwrap_or_default(),
                 file_url: file_url.clone(),
                 size_bytes: e.size_bytes,
                 format,

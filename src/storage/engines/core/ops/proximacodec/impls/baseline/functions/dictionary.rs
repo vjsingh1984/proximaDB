@@ -26,9 +26,9 @@ fn encode_dictionary_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
     let mut value_to_code = HashMap::new();
 
     for &value in wire_values {
-        if !value_to_code.contains_key(&value) {
+        if let std::collections::hash_map::Entry::Vacant(e) = value_to_code.entry(value) {
             let code = dictionary.len() as u32;
-            value_to_code.insert(value, code);
+            e.insert(code);
             dictionary.push(value);
         }
     }
@@ -63,9 +63,9 @@ fn encode_dictionary_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
     let mut value_to_code = HashMap::new();
 
     for &value in wire_values {
-        if !value_to_code.contains_key(&value) {
+        if let std::collections::hash_map::Entry::Vacant(e) = value_to_code.entry(value) {
             let code = dictionary.len() as u32;
-            value_to_code.insert(value, code);
+            e.insert(code);
             dictionary.push(value);
         }
     }

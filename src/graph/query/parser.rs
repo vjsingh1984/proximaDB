@@ -52,6 +52,7 @@ type QueryResult<T> = std::result::Result<T, ProximaDBError>;
 pub struct QueryParser;
 
 impl QueryParser {
+    /// Create a new Cypher-like query parser instance.
     pub fn new() -> Self {
         QueryParser
     }

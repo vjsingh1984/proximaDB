@@ -4,17 +4,27 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
 
+/// Top-level application configuration loaded from `config.toml`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// Server identity and bind settings
     pub server: ServerConfig,
+    /// Storage engine and data layout settings
     pub storage: StorageConfig,
+    /// Raft consensus cluster settings
     pub consensus: ConsensusConfig,
+    /// REST/gRPC API settings
     pub api: ApiConfig,
+    /// Metrics and logging settings
     pub monitoring: MonitoringConfig,
+    /// Network transport configuration (optional)
     pub network: Option<NetworkConfig>,
+    /// TLS certificate and key paths (optional)
     pub tls: Option<TlsConfig>,
+    /// Hardware detection overrides (optional)
     #[allow(dead_code)]
     pub hardware: Option<HardwareConfig>,
+    /// Semantic Knowledge Store configuration (optional)
     pub sks: Option<SksConfig>,
     /// Unified security configuration (optional)
     pub security: Option<SecurityConfig>,
@@ -29,14 +39,20 @@ pub struct Config {
     pub query: Option<QueryConfig>,
 }
 
+/// TLS transport security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsConfig {
+    /// Path to the PEM-encoded TLS certificate file
     pub cert_file: Option<String>,
+    /// Path to the PEM-encoded TLS private key file
     pub key_file: Option<String>,
+    /// Whether TLS is enabled
     pub enabled: bool,
+    /// Network interface to bind the TLS listener to
     pub bind_interface: Option<String>,
 }
 
+/// Hardware acceleration configuration controlling SIMD and GPU features
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareConfig {
     /// Enable automatic hardware detection (default: true)
@@ -248,10 +264,14 @@ impl Default for CacheRuntimeConfig {
     }
 }
 
+/// Configuration for periodic cache rebalancing across cache tiers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheRebalancingConfig {
+    /// Whether automatic rebalancing is enabled
     pub enabled: bool,
+    /// Seconds between rebalancing passes
     pub interval_seconds: u64,
+    /// Minimum hit-rate below which a cache tier is considered cold
     pub min_hit_rate_threshold: f64,
 }
 
@@ -265,12 +285,18 @@ impl Default for CacheRebalancingConfig {
     }
 }
 
+/// Configuration for cache eviction policies and thresholds
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheEvictionConfig {
+    /// Whether automatic eviction is enabled
     pub enabled: bool,
+    /// Seconds between eviction checks
     pub check_interval_seconds: u64,
+    /// Number of entries to evict per batch
     pub batch_size: usize,
+    /// Memory usage percentage that triggers eviction
     pub memory_threshold_percent: u8,
+    /// Ordered list of eviction policies to apply
     pub policies: Vec<EvictionPolicyConfig>,
 }
 
@@ -301,22 +327,34 @@ impl Default for CacheEvictionConfig {
     }
 }
 
+/// Configuration for a single eviction policy (LRU, TTL, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvictionPolicyConfig {
+    /// Policy type identifier (e.g., "lru", "ttl")
     #[serde(rename = "type")]
     pub policy_type: String,
+    /// Maximum number of cached items before eviction starts
     pub max_items: Option<usize>,
+    /// Number of entries to evict at once
     pub batch_size: Option<usize>,
+    /// Maximum age in seconds before an entry expires (TTL policy)
     pub max_age_seconds: Option<u64>,
+    /// Seconds between TTL cleanup sweeps
     pub cleanup_interval_seconds: Option<u64>,
 }
 
+/// Per-cache-type memory allocation configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheTypesConfig {
+    /// Allocation for the vector data cache
     pub vector: CacheTypeConfig,
+    /// Allocation for the query result cache
     pub query: CacheTypeConfig,
+    /// Allocation for the metadata cache
     pub metadata: CacheTypeConfig,
+    /// Allocation for the index node cache
     pub index: CacheTypeConfig,
+    /// Allocation for the bitmap filter cache
     pub filter: CacheTypeConfig,
 }
 
@@ -352,19 +390,29 @@ impl Default for CacheTypesConfig {
     }
 }
 
+/// Memory allocation bounds for a single cache type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheTypeConfig {
+    /// Initial memory allocation in megabytes
     pub initial_allocation_mb: u64,
+    /// Minimum memory allocation in megabytes
     pub min_allocation_mb: u64,
+    /// Maximum memory allocation in megabytes
     pub max_allocation_mb: u64,
 }
 
+/// Configuration for proactive cache warming strategies
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheWarmingConfig {
+    /// Warming strategy names (e.g., "popularity", "time_based")
     pub strategies: Vec<String>,
+    /// Whether to warm the cache immediately on server startup
     pub warm_on_startup: bool,
+    /// Number of entries to warm per batch
     pub warm_batch_size: usize,
+    /// Minimum access count for an entry to qualify for popularity warming
     pub popularity_threshold: u32,
+    /// Lookback window in hours for time-based warming
     pub time_window_hours: u64,
 }
 
@@ -479,16 +527,22 @@ impl Default for StorageConfig {
     }
 }
 
+/// Server identity and network bind configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ServerConfig {
+    /// Unique node identifier within the cluster
     pub node_id: String,
+    /// IP address or hostname to bind the server to
     pub bind_address: String,
+    /// Primary listening port (REST/unified)
     pub port: u16,
     /// Optional gRPC port for convenience; if not set, ApiConfig.grpc_port is used
     pub grpc_port: Option<u16>,
+    /// Root directory for persistent data files
     pub data_dir: PathBuf,
 }
 
+/// Storage engine layout, WAL, compaction, and filesystem optimization settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     /// Storage locations - each can host WriteBuffer, data, and indexes
@@ -507,12 +561,15 @@ pub struct StorageConfig {
     #[serde(default)]
     pub prune_mode: Option<PruneModeConfig>,
 
-    /// Storage engine configurations
+    /// Enable memory-mapped I/O for storage engines
     pub mmap_enabled: bool,
+    /// SST (Sorted String Table) engine configuration
     pub sst_config: Option<SstConfig>,
+    /// VIPER columnar engine configuration
     pub viper_config: Option<ViperConfig>,
+    /// Global read cache size in megabytes
     pub cache_size_mb: u64,
-    // bloom_filter_bits removed - use bloom_filter_config instead
+    /// Bloom filter settings for metadata filtering
     pub bloom_filter_config: Option<BloomFilterConfig>,
 
     /// Common compaction configuration (can be overridden per engine)
@@ -530,17 +587,23 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum PruneModeConfig {
+    /// Simple pruning mode specified by a single strategy name
     Simple(String),
+    /// Advanced pruning mode with fine-grained control
     Advanced(AdvancedPruneConfig),
 }
 
 /// Advanced configuration for search pruning.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct AdvancedPruneConfig {
+    /// Pruning algorithm type (e.g., "sqrt", "log")
     #[serde(default = "default_prune_type")]
     pub r#type: String,
+    /// Minimum number of candidates to keep after pruning
     pub min_keep: Option<usize>,
+    /// Maximum number of candidates to keep after pruning
     pub max_keep: Option<usize>,
+    /// Pruning ratio controlling aggressiveness (0.0 to 1.0)
     pub ratio: Option<f32>,
 }
 

@@ -100,9 +100,12 @@ impl Default for IvfConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[derive(Default)]
 pub enum RandomProjection {
+    /// Gaussian random projection using normally-distributed vectors.
     #[default]
     Gaussian,
+    /// Binary random projection using {-1, +1} vectors.
     Binary,
+    /// Sparse random projection for memory-efficient hashing.
     Sparse,
 }
 

@@ -616,9 +616,9 @@ impl TimeSeriesEngine {
         collection_id: &str,
         partition_key: DateTime<Utc>,
     ) -> Result<()> {
-        if !self.partitions.contains_key(&partition_key) {
+        if let std::collections::btree_map::Entry::Vacant(e) = self.partitions.entry(partition_key) {
             let partition = TimePartition::new(partition_key, collection_id.to_string())?;
-            self.partitions.insert(partition_key, partition);
+            e.insert(partition);
         }
         Ok(())
     }
@@ -699,7 +699,7 @@ impl TimeSeriesEngine {
             for downsampler_config in &self.config.downsampling {
                 by_interval
                     .entry(downsampler_config.interval)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(bar);
             }
         }

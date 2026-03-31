@@ -970,4 +970,172 @@ mod tests {
         // Just verify creation succeeds
         let _ = entity_store;
     }
+
+    // ==================== EnterpriseApiResponse Generic Tests ====================
+
+    #[test]
+    fn test_enterprise_api_response_with_string_data() {
+        let user_context = crate::auth::sso::EnterpriseUserContext {
+            user_id: "test_user".to_string(),
+            tenant_id: "test_tenant".to_string(),
+            roles: vec!["admin".to_string()],
+            permissions: vec!["system_admin".to_string()],
+            sso_provider: crate::auth::sso::SSOProvider::AWSIAM,
+            session_id: "session_123".to_string(),
+        };
+
+        let response = EnterpriseApiResponse {
+            success: true,
+            data: "Operation completed".to_string(),
+            enterprise_metadata: EnterpriseApiMetadata {
+                user_context: user_context.clone(),
+                operation_timestamp: chrono::Utc::now(),
+                audit_trail_id: Some("audit_001".to_string()),
+            },
+        };
+
+        assert!(response.success);
+        assert_eq!(response.data, "Operation completed");
+        assert_eq!(
+            response.enterprise_metadata.audit_trail_id,
+            Some("audit_001".to_string())
+        );
+        assert_eq!(
+            response.enterprise_metadata.user_context.user_id,
+            "test_user"
+        );
+    }
+
+    #[test]
+    fn test_enterprise_api_response_failure_with_no_audit_trail() {
+        let user_context = crate::auth::sso::EnterpriseUserContext {
+            user_id: "user_fail".to_string(),
+            tenant_id: "tenant_fail".to_string(),
+            roles: vec![],
+            permissions: vec![],
+            sso_provider: crate::auth::sso::SSOProvider::Okta,
+            session_id: "session_fail".to_string(),
+        };
+
+        let response = EnterpriseApiResponse {
+            success: false,
+            data: 0u32,
+            enterprise_metadata: EnterpriseApiMetadata {
+                user_context,
+                operation_timestamp: chrono::Utc::now(),
+                audit_trail_id: None,
+            },
+        };
+
+        assert!(!response.success);
+        assert_eq!(response.data, 0);
+        assert!(response.enterprise_metadata.audit_trail_id.is_none());
+    }
+
+    // ==================== EnterpriseApiMetadata Tests ====================
+
+    #[test]
+    fn test_enterprise_api_metadata_timestamp_is_recent() {
+        let user_context = crate::auth::sso::EnterpriseUserContext {
+            user_id: "ts_user".to_string(),
+            tenant_id: "ts_tenant".to_string(),
+            roles: vec![],
+            permissions: vec![],
+            sso_provider: crate::auth::sso::SSOProvider::AzureAD,
+            session_id: "ts_session".to_string(),
+        };
+
+        let now = chrono::Utc::now();
+        let metadata = EnterpriseApiMetadata {
+            user_context,
+            operation_timestamp: now,
+            audit_trail_id: Some("audit_ts".to_string()),
+        };
+
+        // Timestamp should be within 1 second of now
+        let diff = (chrono::Utc::now() - metadata.operation_timestamp).num_seconds();
+        assert!(diff.abs() < 2, "Timestamp should be recent");
+    }
+
+    // ==================== Knowledge Graph Key Format Tests ====================
+
+    #[test]
+    fn test_knowledge_graph_key_format() {
+        // The handler uses format!("{tenant_id}::{domain_name}") for KG keys
+        let tenant_id = "acme_corp";
+        let domain_name = "risk_management";
+        let key = format!("{tenant_id}::{domain_name}");
+        assert_eq!(key, "acme_corp::risk_management");
+        assert!(key.contains("::"));
+    }
+
+    #[test]
+    fn test_knowledge_graph_key_with_special_chars() {
+        let tenant_id = "tenant-123";
+        let domain_name = "domain_v2.0";
+        let key = format!("{tenant_id}::{domain_name}");
+        assert_eq!(key, "tenant-123::domain_v2.0");
+    }
+
+    // ==================== Clone Trait Deep Tests ====================
+
+    #[test]
+    fn test_enterprise_api_response_clone() {
+        let user_context = crate::auth::sso::EnterpriseUserContext {
+            user_id: "clone_user".to_string(),
+            tenant_id: "clone_tenant".to_string(),
+            roles: vec!["role1".to_string()],
+            permissions: vec!["perm1".to_string()],
+            sso_provider: crate::auth::sso::SSOProvider::AWSIAM,
+            session_id: "clone_session".to_string(),
+        };
+
+        let original = EnterpriseApiResponse {
+            success: true,
+            data: "cloned_data".to_string(),
+            enterprise_metadata: EnterpriseApiMetadata {
+                user_context,
+                operation_timestamp: chrono::Utc::now(),
+                audit_trail_id: Some("clone_audit".to_string()),
+            },
+        };
+
+        let cloned = original.clone();
+        assert_eq!(original.success, cloned.success);
+        assert_eq!(original.data, cloned.data);
+        assert_eq!(
+            original.enterprise_metadata.audit_trail_id,
+            cloned.enterprise_metadata.audit_trail_id
+        );
+        assert_eq!(
+            original.enterprise_metadata.user_context.user_id,
+            cloned.enterprise_metadata.user_context.user_id
+        );
+    }
+
+    // ==================== Performance Requirements Edge Cases ====================
+
+    #[test]
+    fn test_performance_requirements_zero_latency() {
+        let requirements = crate::storage::tenant::context::PerformanceRequirements {
+            latency_requirement_ms: 0,
+            throughput_requirement_qps: 0,
+            availability_requirement: 0.0,
+        };
+
+        assert_eq!(requirements.latency_requirement_ms, 0);
+        assert_eq!(requirements.throughput_requirement_qps, 0);
+        assert!((requirements.availability_requirement - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_performance_requirements_max_availability() {
+        let requirements = crate::storage::tenant::context::PerformanceRequirements {
+            latency_requirement_ms: 1,
+            throughput_requirement_qps: 1_000_000,
+            availability_requirement: 1.0,
+        };
+
+        assert!((requirements.availability_requirement - 1.0).abs() < f64::EPSILON);
+    }
 }

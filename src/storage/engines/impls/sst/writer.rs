@@ -782,8 +782,7 @@ impl SstableWriter {
                 let block_total_size = 4 + serialized_block.len(); // length prefix + data
 
                 // Account for cache line padding
-                let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1)
-                    / CACHE_LINE_SIZE)
+                let aligned_size = serialized_block.len().div_ceil(CACHE_LINE_SIZE)
                     * CACHE_LINE_SIZE;
                 let padding = aligned_size - serialized_block.len();
                 let total_with_padding = if padding > 0 && padding < CACHE_LINE_SIZE {

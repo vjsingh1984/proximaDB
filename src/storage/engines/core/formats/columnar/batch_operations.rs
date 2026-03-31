@@ -117,7 +117,7 @@ impl ColumnarBatchOperations {
             if let Some(location) = &update.location {
                 updates_by_file
                     .entry(location.file_path.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(update);
             }
         }

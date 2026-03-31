@@ -123,7 +123,7 @@ impl SearchOptimizer {
         let stats = self
             .query_stats
             .entry(query_signature.to_string())
-            .or_insert_with(QueryStatistics::default);
+            .or_default();
 
         stats.count += 1;
         stats.last_seen = std::time::SystemTime::now();

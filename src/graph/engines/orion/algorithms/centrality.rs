@@ -127,8 +127,8 @@ impl ClosenessCentrality {
             let neighbors = csr_out.get_neighbors(current_idx).unwrap_or(&[]);
 
             for &neighbor_idx in neighbors {
-                if !distances.contains_key(&neighbor_idx) {
-                    distances.insert(neighbor_idx, current_distance + 1);
+                if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor_idx) {
+                    e.insert(current_distance + 1);
                     queue.push_back(neighbor_idx);
                 }
             }
@@ -335,8 +335,8 @@ impl HarmonicCentrality {
             let neighbors = csr_out.get_neighbors(current_idx).unwrap_or(&[]);
 
             for &neighbor_idx in neighbors {
-                if !distances.contains_key(&neighbor_idx) {
-                    distances.insert(neighbor_idx, current_distance + 1);
+                if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor_idx) {
+                    e.insert(current_distance + 1);
                     queue.push_back(neighbor_idx);
                 }
             }

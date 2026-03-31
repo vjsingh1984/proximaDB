@@ -116,7 +116,7 @@ impl Downsampler {
         for bar in bars {
             by_symbol
                 .entry(&bar.symbol)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(bar);
         }
 
@@ -130,7 +130,7 @@ impl Downsampler {
             for bar in symbol_bars {
                 let ts = bar.timestamp.timestamp_nanos_opt().unwrap_or(0) / 1_000_000_000;
                 let bucket_ts = self.config.interval.truncate_timestamp(ts);
-                buckets.entry(bucket_ts).or_insert_with(Vec::new).push(bar);
+                buckets.entry(bucket_ts).or_default().push(bar);
             }
 
             // Aggregate each bucket into OHLC
@@ -174,9 +174,9 @@ impl Downsampler {
             let bucket_ts = self.config.interval.truncate_timestamp(ts);
             by_symbol
                 .entry(&bar.symbol)
-                .or_insert_with(HashMap::new)
+                .or_default()
                 .entry(bucket_ts)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(bar.close);
         }
 
@@ -217,9 +217,9 @@ impl Downsampler {
             let bucket_ts = self.config.interval.truncate_timestamp(ts);
             by_symbol
                 .entry(&bar.symbol)
-                .or_insert_with(HashMap::new)
+                .or_default()
                 .entry(bucket_ts)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(bar);
         }
 
@@ -260,9 +260,9 @@ impl Downsampler {
             let bucket_ts = self.config.interval.truncate_timestamp(ts);
             by_symbol
                 .entry(&bar.symbol)
-                .or_insert_with(HashMap::new)
+                .or_default()
                 .entry(bucket_ts)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(bar);
         }
 
@@ -310,9 +310,9 @@ impl Downsampler {
             let bucket_ts = self.config.interval.truncate_timestamp(ts);
             by_symbol
                 .entry(&bar.symbol)
-                .or_insert_with(HashMap::new)
+                .or_default()
                 .entry(bucket_ts)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(bar);
         }
 
@@ -354,7 +354,7 @@ impl Downsampler {
             let bucket_ts = self.config.interval.truncate_timestamp(ts);
             *by_symbol
                 .entry(&bar.symbol)
-                .or_insert_with(HashMap::new)
+                .or_default()
                 .entry(bucket_ts)
                 .or_insert(0) += 1;
         }

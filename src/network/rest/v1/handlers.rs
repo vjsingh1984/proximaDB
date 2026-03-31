@@ -2028,4 +2028,255 @@ mod tests {
             .and_then(|v| v.to_str().ok());
         assert_eq!(deprecation, Some("true"));
     }
+
+    // ============================================================
+    // parse_search_request extended tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_parse_search_request_no_vector() {
+        let json = serde_json::json!({
+            "collection": "test_col"
+        });
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "test_col");
+        assert!(req.queries[0].vector.is_empty());
+        assert_eq!(req.top_k, 10); // default
+    }
+
+    #[test]
+    fn test_parse_search_request_empty_vector() {
+        let json = serde_json::json!({
+            "collection": "test_col",
+            "vector": [],
+            "top_k": 5
+        });
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert!(req.queries[0].vector.is_empty());
+        assert_eq!(req.top_k, 5);
+    }
+
+    #[test]
+    fn test_parse_search_request_collection_id_fallback() {
+        // Simple format with "collection_id" instead of "collection"
+        // but since it doesn't have "collection" key, it needs "vector" key to trigger simple format
+        let json = serde_json::json!({
+            "vector": [1.0, 2.0],
+            "collection_id": "fallback_col"
+        });
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "fallback_col");
+    }
+
+    #[test]
+    fn test_parse_search_request_invalid_json() {
+        let json = serde_json::json!("just a string");
+        let result = parse_search_request(json);
+        // Should fail because a string is not an object
+        assert!(result.is_err());
+    }
+
+    // ============================================================
+    // parse_batch_request tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_parse_batch_request_simple_format() {
+        let json = serde_json::json!({
+            "collection": "batch_col",
+            "vectors": []
+        });
+        let result = parse_batch_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "batch_col");
+        assert!(req.vectors.is_empty());
+    }
+
+    #[test]
+    fn test_parse_batch_request_proto_format() {
+        let json = serde_json::json!({
+            "collection_id": "proto_batch_col",
+            "vectors": []
+        });
+        let result = parse_batch_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "proto_batch_col");
+    }
+
+    #[test]
+    fn test_parse_batch_request_collection_id_fallback() {
+        let json = serde_json::json!({
+            "collection": "preferred_col",
+            "collection_id": "fallback_col",
+            "vectors": []
+        });
+        let result = parse_batch_request(json);
+        assert!(result.is_ok());
+        // "collection" key takes precedence in simple format
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "preferred_col");
+    }
+
+    #[test]
+    fn test_parse_batch_request_invalid() {
+        let json = serde_json::json!(42);
+        let result = parse_batch_request(json);
+        assert!(result.is_err());
+    }
+
+    // ============================================================
+    // sql_value_to_json tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_sql_value_to_json_string() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::StringValue("hello".to_string())),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!("hello"));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_number() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::NumberValue(42.5)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!(42.5));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_bool() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::BoolValue(true)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!(true));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_int64() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::Int64Value(9999)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!(9999));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_bytes() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::BytesValue(vec![0, 1, 255])),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!([0, 1, 255]));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_null() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::NullValue(0)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_sql_value_to_json_none() {
+        let val = proximadb_v1::SqlValue { value: None };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_sql_value_to_json_array() {
+        let arr = proximadb_v1::SqlArray {
+            values: vec![
+                proximadb_v1::SqlValue {
+                    value: Some(proximadb_v1::sql_value::Value::Int64Value(1)),
+                },
+                proximadb_v1::SqlValue {
+                    value: Some(proximadb_v1::sql_value::Value::Int64Value(2)),
+                },
+            ],
+        };
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::ArrayValue(arr)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!([1, 2]));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_object() {
+        let mut fields = std::collections::HashMap::new();
+        fields.insert(
+            "name".to_string(),
+            proximadb_v1::SqlValue {
+                value: Some(proximadb_v1::sql_value::Value::StringValue("Alice".to_string())),
+            },
+        );
+        fields.insert(
+            "age".to_string(),
+            proximadb_v1::SqlValue {
+                value: Some(proximadb_v1::sql_value::Value::Int64Value(30)),
+            },
+        );
+        let obj = proximadb_v1::SqlObject { fields };
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::ObjectValue(obj)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json["name"], serde_json::json!("Alice"));
+        assert_eq!(json["age"], serde_json::json!(30));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_nan_number() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::NumberValue(f64::NAN)),
+        };
+        let json = sql_value_to_json(&val);
+        // NaN cannot be represented in JSON, falls back to 0
+        assert_eq!(json, serde_json::json!(0));
+    }
+
+    // ============================================================
+    // SqlQueryRequest/SqlColumnInfo tests
+    // ============================================================
+
+    #[test]
+    fn test_sql_query_request_deserialization() {
+        let json = serde_json::json!({
+            "query": "SELECT * FROM my_collection LIMIT 10",
+            "collection": "my_collection",
+            "timeout_ms": 5000
+        });
+        let req: SqlQueryRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.query, "SELECT * FROM my_collection LIMIT 10");
+        assert_eq!(req.collection, Some("my_collection".to_string()));
+        assert_eq!(req.timeout_ms, Some(5000));
+        assert!(req.parameters.is_none());
+        assert!(req.seeding.is_none());
+    }
+
+    #[test]
+    fn test_sql_column_info_serialization() {
+        let col = SqlColumnInfo {
+            name: "embedding".to_string(),
+            data_type: "vector".to_string(),
+        };
+        let json = serde_json::to_string(&col).unwrap();
+        assert!(json.contains("embedding"));
+        assert!(json.contains("vector"));
+    }
 }

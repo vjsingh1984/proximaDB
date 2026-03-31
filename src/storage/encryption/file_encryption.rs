@@ -128,7 +128,7 @@ impl FileEncryptionLayer {
 
         let key_version = self.key_manager.current_version();
         let chunk_size = self.chunk_size;
-        let num_chunks = (plaintext.len() + chunk_size - 1) / chunk_size;
+        let num_chunks = plaintext.len().div_ceil(chunk_size);
 
         // Derive file-specific key
         let key = self.key_manager.derive_sst_key(file_path);

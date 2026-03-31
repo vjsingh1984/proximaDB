@@ -583,7 +583,7 @@ impl VectorValidator {
 
 impl TypeValidator for VectorValidator {
     fn validate(&self, value: &[u8]) -> Result<()> {
-        if value.len() % 4 != 0 {
+        if !value.len().is_multiple_of(4) {
             return Err(anyhow!("Vector byte length must be multiple of 4"));
         }
         let dimension = value.len() / 4;

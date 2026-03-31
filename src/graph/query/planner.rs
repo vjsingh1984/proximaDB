@@ -185,110 +185,168 @@ pub struct PlanStep {
     pub output_cardinality: usize,
 }
 
-/// Types of plan steps
+/// Types of plan steps in a query execution plan.
 #[derive(Debug, Clone)]
 pub enum PlanStepType {
     /// Scan all nodes with optional filter
     NodeScan {
+        /// Label constraints to filter nodes (None means all nodes).
         labels: Option<Vec<String>>,
+        /// Property-based filters applied during scan.
         property_filters: Vec<PropertyFilter>,
     },
     /// Index seek operation
     IndexSeek {
+        /// Name of the index to seek into.
         index_name: String,
+        /// Exact key value to look up.
         key_value: serde_json::Value,
     },
     /// Index scan with range
     IndexScan {
+        /// Name of the index to scan.
         index_name: String,
+        /// Lower bound of the range scan (inclusive), or None for unbounded.
         start_key: Option<serde_json::Value>,
+        /// Upper bound of the range scan (exclusive), or None for unbounded.
         end_key: Option<serde_json::Value>,
     },
     /// Graph traversal operation
     Traverse {
+        /// Traversal algorithm to use (BFS, DFS, Dijkstra, A*).
         algorithm: TraversalAlgorithm,
+        /// Maximum traversal depth, or None for unlimited.
         max_depth: Option<u32>,
+        /// Edge filters applied during traversal expansion.
         edge_filters: Vec<EdgeFilter>,
     },
     /// Join two result sets
     Join {
+        /// Type of join (Inner, LeftOuter, etc.).
         join_type: JoinType,
+        /// Join key from the left result set.
         left_key: String,
+        /// Join key from the right result set.
         right_key: String,
     },
     /// Filter results
-    Filter { condition: FilterCondition },
+    Filter {
+        /// Filter condition to evaluate against each result row.
+        condition: FilterCondition,
+    },
     /// Project/select specific fields
-    Project { fields: Vec<String> },
+    Project {
+        /// Field names to include in the output.
+        fields: Vec<String>,
+    },
     /// Sort results
-    Sort { fields: Vec<SortField> },
+    Sort {
+        /// Sort key specifications with direction.
+        fields: Vec<SortField>,
+    },
     /// Limit results
-    Limit { count: usize, offset: Option<usize> },
+    Limit {
+        /// Maximum number of results to return.
+        count: usize,
+        /// Number of results to skip before returning.
+        offset: Option<usize>,
+    },
 }
 
-/// Property filter for node selection
+/// Property filter for node selection during plan execution.
 #[derive(Debug, Clone)]
 pub struct PropertyFilter {
+    /// Name of the property to filter on.
     pub property_name: String,
+    /// Comparison operator to apply.
     pub operator: FilterOperator,
+    /// Value to compare the property against.
     pub value: serde_json::Value,
 }
 
-/// Edge filter for traversal
+/// Edge filter constraining which edges are followed during traversal.
 #[derive(Debug, Clone)]
 pub struct EdgeFilter {
+    /// Required edge type, or None to match all types.
     pub edge_type: Option<String>,
+    /// Additional property-based filters on the edge.
     pub property_filters: Vec<PropertyFilter>,
 }
 
-/// Filter operators
+/// Filter operators for property comparison in query plans.
 #[derive(Debug, Clone)]
 pub enum FilterOperator {
+    /// Exact equality match.
     Equal,
+    /// Not-equal comparison.
     NotEqual,
+    /// Strictly less than.
     LessThan,
+    /// Less than or equal to.
     LessThanOrEqual,
+    /// Strictly greater than.
     GreaterThan,
+    /// Greater than or equal to.
     GreaterThanOrEqual,
+    /// Value is in the provided set.
     In,
+    /// Value is not in the provided set.
     NotIn,
+    /// String contains substring.
     Contains,
+    /// String starts with prefix.
     StartsWith,
+    /// String ends with suffix.
     EndsWith,
+    /// Regular expression match.
     Regex,
 }
 
-/// Join types
+/// Join types for combining intermediate result sets.
 #[derive(Debug, Clone)]
 pub enum JoinType {
+    /// Inner join: only matching rows from both sides.
     Inner,
+    /// Left outer join: all rows from left, matching from right.
     LeftOuter,
+    /// Right outer join: all rows from right, matching from left.
     RightOuter,
+    /// Full outer join: all rows from both sides.
     FullOuter,
 }
 
-/// Filter conditions
+/// Filter conditions supporting boolean composition.
 #[derive(Debug, Clone)]
 pub enum FilterCondition {
+    /// Single property comparison filter.
     Simple(PropertyFilter),
+    /// Conjunction of multiple conditions (all must hold).
     And(Vec<FilterCondition>),
+    /// Disjunction of multiple conditions (at least one must hold).
     Or(Vec<FilterCondition>),
+    /// Negation of a condition.
     Not(Box<FilterCondition>),
 }
 
-/// Traversal algorithms
+/// Traversal algorithms available for graph plan steps.
 #[derive(Debug, Clone)]
 pub enum TraversalAlgorithm {
+    /// Breadth-first search traversal.
     BFS,
+    /// Depth-first search traversal.
     DFS,
+    /// Dijkstra shortest-path traversal using edge weights.
     Dijkstra,
+    /// A* heuristic-guided shortest-path traversal.
     AStar,
 }
 
-/// Sort field specification
+/// Sort field specification for ORDER BY in query plans.
 #[derive(Debug, Clone)]
 pub struct SortField {
+    /// Name of the field to sort by.
     pub field_name: String,
+    /// Whether to sort in ascending order (false = descending).
     pub ascending: bool,
 }
 
@@ -351,6 +409,7 @@ impl Default for OptimizationFlags {
 }
 
 impl CostEstimate {
+    /// Create a new cost estimate with explicit CPU, I/O, and memory cost components.
     pub fn new(cpu: f64, io: f64, memory: f64) -> Self {
         Self {
             cpu_cost: cpu,
@@ -360,10 +419,12 @@ impl CostEstimate {
         }
     }
 
+    /// Create a zero-cost estimate (all components are 0.0).
     pub fn zero() -> Self {
         Self::new(0.0, 0.0, 0.0)
     }
 
+    /// Add two cost estimates component-wise, returning the combined estimate.
     pub fn add(&self, other: &CostEstimate) -> CostEstimate {
         CostEstimate::new(
             self.cpu_cost + other.cpu_cost,

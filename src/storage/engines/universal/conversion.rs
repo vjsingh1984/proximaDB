@@ -174,7 +174,7 @@ impl FormatConverter {
         trace!("Converting {} bytes to INT8 format", data.len());
 
         // Convert based on input format detection
-        let result = if data.len() % 4 == 0 {
+        let result = if data.len().is_multiple_of(4) {
             // Assume FP32 input
             self.fp32_to_int8(data).await?
         } else {
@@ -205,7 +205,7 @@ impl FormatConverter {
         );
 
         // Convert to float first if needed
-        let float_data = if data.len() % 4 == 0 {
+        let float_data = if data.len().is_multiple_of(4) {
             self.bytes_to_fp32(data)?
         } else {
             return Err(ConversionError::InvalidParameters(
@@ -229,7 +229,7 @@ impl FormatConverter {
         trace!("Converting {} bytes to binary format", data.len());
 
         // Convert to float first
-        let float_data = if data.len() % 4 == 0 {
+        let float_data = if data.len().is_multiple_of(4) {
             self.bytes_to_fp32(data)?
         } else {
             return Err(ConversionError::InvalidParameters(
@@ -461,7 +461,7 @@ impl FormatConverter {
         segments: usize,
         bits: usize,
     ) -> ConversionResult<Vec<u8>> {
-        if data.len() % segments != 0 {
+        if !data.len().is_multiple_of(segments) {
             return Err(ConversionError::InvalidParameters(format!(
                 "Vector dimension {} not divisible by segments {}",
                 data.len(),
@@ -508,7 +508,7 @@ impl FormatConverter {
     }
 
     fn bytes_to_fp32(&self, data: &[u8]) -> ConversionResult<Vec<f32>> {
-        if data.len() % 4 != 0 {
+        if !data.len().is_multiple_of(4) {
             return Err(ConversionError::DataSizeMismatch {
                 expected: data.len() - (data.len() % 4),
                 actual: data.len(),

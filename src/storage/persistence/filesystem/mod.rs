@@ -1427,10 +1427,7 @@ impl FilesystemFactory {
         }
 
         // Add default mappings if not configured
-        if !self.tier_mapping.contains_key(&FileStorageTier::Memory) {
-            self.tier_mapping
-                .insert(FileStorageTier::Memory, "memory://".to_string());
-        }
+        self.tier_mapping.entry(FileStorageTier::Memory).or_insert_with(|| "memory://".to_string());
     }
 
     /// Get filesystem URL for a specific storage tier

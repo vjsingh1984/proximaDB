@@ -294,7 +294,7 @@ impl ContextualBanditPlanner {
         self.total_updates += 1;
 
         // Decay exploration rate over time
-        if self.total_updates % 1000 == 0 && self.exploration_rate > 0.01 {
+        if self.total_updates.is_multiple_of(1000) && self.exploration_rate > 0.01 {
             self.exploration_rate *= 0.99;
         }
     }

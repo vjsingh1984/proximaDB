@@ -450,19 +450,19 @@ impl ServerBuilder {
         );
 
         // Initialize compute engines based on hardware config
-        let _compute_system = self.initialize_compute_engines().await?;
+        self.initialize_compute_engines().await?;
         tracing::info!("✅ Compute engines initialized");
 
         // Initialize indexing system
-        let _indexing_system = self.initialize_indexing_system().await?;
+        self.initialize_indexing_system().await?;
         tracing::info!("✅ Indexing system initialized");
 
         // Initialize monitoring systems before building storage system
-        let _monitoring_system = self.initialize_monitoring_systems().await?;
+        self.initialize_monitoring_systems().await?;
         tracing::info!("✅ Monitoring systems initialized");
 
         // Initialize network layer before building storage system
-        let _network_system = self.initialize_network_layer().await?;
+        self.initialize_network_layer().await?;
         tracing::info!("✅ Network layer initialized");
 
         // Extract server config before storage builder move

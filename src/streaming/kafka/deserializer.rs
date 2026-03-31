@@ -231,7 +231,7 @@ impl MessageDeserializer {
     /// Deserialize raw bytes as vector
     fn deserialize_raw(&self, payload: &[u8]) -> Result<VectorMessage, DeserializationError> {
         // Interpret bytes as f32 array
-        if payload.len() % 4 != 0 {
+        if !payload.len().is_multiple_of(4) {
             return Err(DeserializationError::InvalidFormat(
                 "Raw payload size must be multiple of 4 bytes".to_string(),
             ));

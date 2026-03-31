@@ -1002,6 +1002,7 @@ impl GraphProfiler {
         session_id
     }
 
+    /// End a profiling session and return the collected summary, if the session exists.
     pub fn end_session(&self, session_id: &str) -> Option<ProfileSummary> {
         let session = if let Ok(mut profiles) = self.active_profiles.write() {
             profiles.remove(session_id)
@@ -1069,6 +1070,7 @@ impl GraphProfiler {
         }
     }
 
+    /// Record a timing checkpoint within an active profiling session.
     pub fn record_timing(&self, session_id: &str, checkpoint: &str, duration: Duration) {
         if let Ok(mut profiles) = self.active_profiles.write()
             && let Some(session) = profiles.get_mut(session_id) {
@@ -1076,6 +1078,7 @@ impl GraphProfiler {
             }
     }
 
+    /// Retrieve the most recent completed profiling summaries, up to the given limit.
     pub fn get_recent_summaries(&self, limit: Option<usize>) -> Vec<ProfileSummary> {
         if let Ok(completed) = self.completed_profiles.read() {
             let limit = limit.unwrap_or(completed.len());

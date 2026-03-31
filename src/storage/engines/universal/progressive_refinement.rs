@@ -686,7 +686,7 @@ impl ProgressiveRefinementPipeline {
 
     fn convert_to_fp32(&self, data: &[u8]) -> AdapterResult<Vec<f32>> {
         // Simplified conversion - assume 4 bytes per float
-        if data.len() % 4 != 0 {
+        if !data.len().is_multiple_of(4) {
             return Err(AdapterError::FormatConversion(
                 "Data length not compatible with FP32 format".to_string(),
             ));

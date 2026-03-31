@@ -184,7 +184,7 @@ impl RowBasedUtilities {
         };
 
         // Calculate padding needed for alignment
-        let padding_needed = if dimension % simd_width != 0 {
+        let padding_needed = if !dimension.is_multiple_of(simd_width) {
             simd_width - (dimension % simd_width)
         } else {
             0

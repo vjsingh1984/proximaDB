@@ -142,69 +142,106 @@ impl AvroCharacteristics {
     }
 }
 
-/// Format analysis details
+/// Format analysis details for comparing serialization formats.
 pub struct FormatAnalysis {
+    /// Human-readable format name (e.g., "Avro", "Parquet").
     pub name: &'static str,
+    /// Per-record overhead in bytes from the format's framing.
     pub overhead_bytes: usize,
+    /// Description of the field encoding strategy.
     pub field_encoding: &'static str,
+    /// Description of how null values are handled.
     pub null_handling: &'static str,
+    /// Description of how arrays are encoded.
     pub array_encoding: &'static str,
+    /// Description of how strings are encoded.
     pub string_encoding: &'static str,
+    /// Whether the format has built-in compression support.
     pub native_compression: bool,
+    /// List of supported compression codecs.
     pub compression_codecs: Vec<&'static str>,
+    /// Encoding throughput in megabytes per second.
     pub encode_speed_mb_s: f64,
+    /// Decoding throughput in megabytes per second.
     pub decode_speed_mb_s: f64,
+    /// Size ratio relative to raw data without compression.
     pub size_ratio_uncompressed: f64,
+    /// Size ratio with Snappy compression applied.
     pub size_ratio_snappy: f64,
+    /// Size ratio with Deflate compression applied.
     pub size_ratio_deflate: f64,
+    /// Size ratio with Zstandard compression applied.
     pub size_ratio_zstandard: f64,
 }
 
-/// Format comparison for cold tier
+/// Format comparison for cold tier storage selection.
 pub struct FormatComparison {
+    /// Format name being compared.
     pub format: &'static str,
+    /// Compressed size as a ratio of raw size.
     pub size_ratio: f64,
+    /// Encoding speed in MB/s.
     pub encode_speed: f64,
+    /// Decoding speed in MB/s.
     pub decode_speed: f64,
+    /// Whether the format supports schema evolution.
     pub schema_evolution: bool,
+    /// Whether the format has built-in compression.
     pub compression_built_in: bool,
-    pub cold_tier_score: u32, // 0-100
+    /// Overall suitability score for cold tier (0-100).
+    pub cold_tier_score: u32,
 }
 
-/// Tier-specific recommendations
+/// Tier-specific recommendations for storage format selection.
 pub struct TierRecommendations {
+    /// Recommended format for in-memory tier.
     pub memory: &'static str,
+    /// Recommended format for NVMe hot tier.
     pub nvme_hot: &'static str,
+    /// Recommended format for SSD warm tier.
     pub ssd_warm: &'static str,
+    /// Recommended format for HDD cool tier.
     pub hdd_cool: &'static str,
+    /// Recommended format for cloud cold storage.
     pub cloud_cold: &'static str,
+    /// Recommended format for cloud archive storage.
     pub cloud_archive: &'static str,
+    /// Rationale for each tier recommendation.
     pub rationale: Vec<&'static str>,
 }
 
 /// Avro container file format details
 pub mod avro_container {
-    /// Avro container file structure
+    /// Avro container file structure as defined by the Avro specification.
     pub struct ContainerFormat {
-        // Header
-        pub magic: [u8; 4], // "Obj" + 0x01
+        /// Magic bytes identifying the file as Avro ("Obj" + 0x01).
+        pub magic: [u8; 4],
+        /// File-level metadata including schema and codec.
         pub metadata: Metadata,
-        pub sync_marker: [u8; 16], // Random 16-byte sync
-
-        // Data blocks
+        /// Random 16-byte sync marker for block boundary detection.
+        pub sync_marker: [u8; 16],
+        /// Sequence of data blocks containing serialized records.
         pub blocks: Vec<DataBlock>,
     }
 
+    /// File-level metadata stored in the Avro container header.
     pub struct Metadata {
-        pub avro_codec: String,  // "null", "deflate", "snappy", "zstandard"
-        pub avro_schema: String, // JSON schema
+        /// Compression codec name ("null", "deflate", "snappy", "zstandard").
+        pub avro_codec: String,
+        /// JSON-encoded Avro schema for the records.
+        pub avro_schema: String,
     }
 
+    /// A single data block within the Avro container file.
     pub struct DataBlock {
-        pub count: i64,     // Number of records
-        pub size: i64,      // Size of data in bytes
-        pub data: Vec<u8>,  // Serialized + optionally compressed
-        pub sync: [u8; 16], // Sync marker
+        /// Number of records in this block.
+        pub count: i64,
+        /// Size of the serialized (and optionally compressed) data in bytes.
+        pub size: i64,
+        /// Raw serialized and optionally compressed record data.
+        pub data: Vec<u8>,
+        /// Sync marker matching the file header for block alignment.
+        pub sync: [u8; 16],
     }
 
     /// Size calculation for compressed Avro
@@ -226,6 +263,7 @@ pub mod avro_container {
 pub struct ProximaDBRecommendations;
 
 impl ProximaDBRecommendations {
+    /// Returns the updated format strategy recommendation for cold tier storage.
     pub fn updated_format_strategy() -> &'static str {
         r#"
         UPDATED RECOMMENDATION FOR COLD TIER:

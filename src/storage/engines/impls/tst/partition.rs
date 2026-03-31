@@ -101,7 +101,7 @@ impl TimePartition {
         let symbol_bars = self
             .ohlc_bars
             .entry(bar.symbol.clone())
-            .or_insert_with(BTreeMap::new);
+            .or_default();
 
         let timestamp = bar.timestamp;
         symbol_bars.insert(timestamp, bar);

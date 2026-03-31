@@ -909,7 +909,7 @@ impl QueryExecutor {
             .collect();
         for r in right {
             let key = Self::composite_key(&r.fields, right_keys, &rk_norms);
-            index.entry(key).or_insert_with(Vec::new).push(r);
+            index.entry(key).or_default().push(r);
         }
         let mut out = Vec::new();
         let lk_norms: Vec<String> = left_keys
@@ -1183,7 +1183,7 @@ impl QueryExecutor {
                     None => "".to_string(),
                 })
                 .collect();
-            groups.entry(key).or_insert_with(Vec::new).push(row);
+            groups.entry(key).or_default().push(row);
         }
 
         let mut out: Vec<QueryRow> = Vec::new();

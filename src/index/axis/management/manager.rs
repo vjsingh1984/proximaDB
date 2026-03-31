@@ -1741,33 +1741,50 @@ impl AxisManager {
 /// metadata (strategy_type, last_updated timestamp).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IndexCollectionStats {
+    /// Unique identifier of the collection.
     pub collection_id: String,
+    /// Data type strategy used for this collection's index.
     pub strategy_type: Data,
+    /// Total number of vectors indexed.
     pub total_vectors: u64,
+    /// Size of the index on disk in bytes.
     pub index_size_bytes: u64,
+    /// Timestamp of the last index update.
     pub last_updated: DateTime<Utc>,
 }
 
 /// Hybrid query combining multiple search criteria
 #[derive(Debug, Clone)]
 pub struct HybridQuery {
+    /// Target collection for the query.
     pub collection_id: String,
+    /// Optional vector similarity query component.
     pub vector_query: Option<VectorQuery>,
+    /// Metadata field filter predicates.
     pub metadata_filters: Vec<MetadataFilter>,
+    /// Exact vector ID filters for point lookups.
     pub id_filters: Vec<VectorId>,
+    /// Maximum number of results to return.
     pub top_k: usize,
-    pub include_expired: bool, // For MVCC - whether to include expired records
+    /// Whether to include MVCC-expired records in results.
+    pub include_expired: bool,
 }
 
 /// Vector query types
 #[derive(Debug, Clone)]
 pub enum VectorQuery {
+    /// Dense vector similarity query.
     Dense {
+        /// Query vector in full-precision f32 format.
         vector: Vec<f32>,
+        /// Minimum similarity score threshold for results.
         similarity_threshold: f32,
     },
+    /// Sparse vector similarity query.
     Sparse {
+        /// Sparse query vector as dimension-index to value mapping.
         vector: HashMap<u32, f32>,
+        /// Minimum similarity score threshold for results.
         similarity_threshold: f32,
     },
 }
@@ -1775,34 +1792,49 @@ pub enum VectorQuery {
 /// Metadata filter
 #[derive(Debug, Clone)]
 pub struct MetadataFilter {
+    /// Name of the metadata field to filter on.
     pub field: String,
+    /// Comparison operator for the filter.
     pub operator: FilterOperator,
+    /// Value to compare against.
     pub value: serde_json::Value,
 }
 
 /// Filter operators
 #[derive(Debug, Clone)]
 pub enum FilterOperator {
+    /// Exact equality match.
     Equals,
+    /// Not equal comparison.
     NotEquals,
+    /// Greater than comparison.
     GreaterThan,
+    /// Less than comparison.
     LessThan,
+    /// Membership in a set of values.
     In,
+    /// Exclusion from a set of values.
     NotIn,
 }
 
 /// Query result
 #[derive(Debug, Clone)]
 pub struct QueryResult {
+    /// Scored results ordered by relevance.
     pub results: Vec<ScoredResult>,
+    /// Index selection strategy that was used to execute the query.
     pub strategy_used: IndexSelectionStrategy,
+    /// Total execution time in milliseconds.
     pub execution_time_ms: u64,
 }
 
 /// Scored result with MVCC support
 #[derive(Debug, Clone)]
 pub struct ScoredResult {
+    /// Identifier of the matching vector.
     pub vector_id: VectorId,
+    /// Similarity score between the query and this result.
     pub similarity: f32,
+    /// MVCC expiration timestamp, if the record has a TTL.
     pub expires_at: Option<DateTime<Utc>>,
 }

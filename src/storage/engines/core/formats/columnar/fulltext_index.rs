@@ -986,7 +986,7 @@ impl FullTextIndex {
         for (term, positions) in term_positions {
             self.inverted_index
                 .entry(term)
-                .or_insert_with(PostingList::new)
+                .or_default()
                 .add_posting(doc_id.to_string(), positions);
         }
 
@@ -1254,9 +1254,7 @@ impl FullTextIndex {
 
         // Merge documents
         for (doc_id, meta) in other.documents {
-            if !self.documents.contains_key(&doc_id) {
-                self.documents.insert(doc_id, meta);
-            }
+            self.documents.entry(doc_id).or_insert(meta);
         }
 
         // Merge inverted index
@@ -1264,7 +1262,7 @@ impl FullTextIndex {
             let pl = self
                 .inverted_index
                 .entry(term)
-                .or_insert_with(PostingList::new);
+                .or_default();
 
             for posting in other_pl.postings {
                 if pl.get_posting(&posting.doc_id).is_none() {

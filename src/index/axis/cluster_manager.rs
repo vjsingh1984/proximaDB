@@ -6,6 +6,7 @@ use super::types::ClusterAssignment;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
+/// Manages vector clustering for IVF-style index partitioning.
 pub struct ClusterManager {
     config: ClusteringConfig,
     centroids: Vec<Vec<f32>>,
@@ -16,6 +17,7 @@ pub struct ClusterManager {
 }
 
 impl ClusterManager {
+    /// Creates a new cluster manager with the given clustering configuration.
     pub async fn new(config: ClusteringConfig) -> Result<Self> {
         // Use DistanceMetric directly, not UnifiedDistanceConfig
         let distance_calculator = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -30,6 +32,7 @@ impl ClusterManager {
         })
     }
 
+    /// Partitions vectors into clusters using the configured algorithm (e.g., k-means).
     pub async fn cluster_vectors(
         &mut self,
         vectors: &[Vec<f32>],
@@ -187,6 +190,7 @@ impl ClusterManager {
         Ok((nearest_cluster, min_distance))
     }
 
+    /// Finds the k nearest cluster centroids to the given query vector.
     pub async fn find_nearest_clusters(&self, query: &[f32], k: usize) -> Result<Vec<u32>> {
         let mut cluster_distances = Vec::new();
 
@@ -209,6 +213,7 @@ impl ClusterManager {
             .collect())
     }
 
+    /// Returns the global centroid computed across all vectors.
     pub async fn get_global_centroid(&self) -> Result<Vec<f32>> {
         Ok(self.global_centroid.clone())
     }

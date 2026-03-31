@@ -2986,6 +2986,159 @@ mod tests {
         assert_eq!(metrics.failed_count, 5);
         assert_eq!(metrics.processing_time_us, 50000);
     }
+
+    // ==================== CollectionIdCache TTL Expiry Tests ====================
+
+    #[test]
+    fn test_collection_id_cache_ttl_expiry() {
+        // Use a 0-second TTL so entries expire immediately
+        let cache = CollectionIdCache::with_ttl(Duration::from_millis(0));
+        cache.insert("key".to_string(), "value".to_string());
+
+        // Entry should be expired on next get (TTL = 0ms)
+        std::thread::sleep(Duration::from_millis(1));
+        assert!(cache.get("key").is_none(), "Expired entry should return None");
+    }
+
+    #[test]
+    fn test_collection_id_cache_fresh_entry_within_ttl() {
+        let cache = CollectionIdCache::with_ttl(Duration::from_secs(60));
+        cache.insert("fresh_key".to_string(), "fresh_value".to_string());
+
+        // Should still be valid
+        assert_eq!(cache.get("fresh_key"), Some("fresh_value".to_string()));
+    }
+
+    #[test]
+    fn test_collection_id_cache_evict_expired_via_insert() {
+        // Use tiny TTL so entries expire quickly
+        let cache = CollectionIdCache {
+            cache: std::sync::RwLock::new(HashMap::new()),
+            ttl: Duration::from_millis(0),
+            max_size: 2,
+        };
+
+        cache.insert("a".to_string(), "1".to_string());
+        cache.insert("b".to_string(), "2".to_string());
+
+        // Wait for entries to expire
+        std::thread::sleep(Duration::from_millis(1));
+
+        // Inserting a new entry should evict expired ones first
+        cache.insert("c".to_string(), "3".to_string());
+
+        // Expired entries should be gone
+        assert!(cache.get("a").is_none());
+        assert!(cache.get("b").is_none());
+        // New entry might also be expired given 0ms TTL; the important thing
+        // is that insert didn't panic and the cache didn't grow unbounded
+    }
+
+    #[test]
+    fn test_collection_id_cache_max_size_eviction() {
+        // Create a cache with max_size=3 and long TTL (entries won't expire)
+        let cache = CollectionIdCache {
+            cache: std::sync::RwLock::new(HashMap::new()),
+            ttl: Duration::from_secs(3600),
+            max_size: 3,
+        };
+
+        cache.insert("a".to_string(), "1".to_string());
+        cache.insert("b".to_string(), "2".to_string());
+        cache.insert("c".to_string(), "3".to_string());
+
+        // Cache is at max. Next insert should trigger eviction of half.
+        cache.insert("d".to_string(), "4".to_string());
+
+        // The new entry should be present
+        assert_eq!(cache.get("d"), Some("4".to_string()));
+
+        // Some old entries should have been evicted (half = 1 entry removed from 3)
+        let cache_guard = cache.cache.read().unwrap();
+        // After eviction of half (1) + insert of "d", we should have 3 entries
+        assert!(cache_guard.len() <= 3);
+    }
+
+    #[test]
+    fn test_collection_id_cache_invalidate_nonexistent() {
+        let cache = CollectionIdCache::new();
+        // Should not panic when invalidating a key that doesn't exist
+        cache.invalidate("nonexistent_key");
+        assert!(cache.get("nonexistent_key").is_none());
+    }
+
+    #[test]
+    fn test_collection_id_cache_clear_empty() {
+        let cache = CollectionIdCache::new();
+        // Clearing an empty cache should not panic
+        cache.clear();
+        assert!(cache.get("any_key").is_none());
+    }
+
+    #[test]
+    fn test_collection_id_cache_insert_same_key_updates_timestamp() {
+        let cache = CollectionIdCache::with_ttl(Duration::from_secs(60));
+        cache.insert("key".to_string(), "old_value".to_string());
+
+        // Re-insert with new value (and new timestamp)
+        cache.insert("key".to_string(), "new_value".to_string());
+
+        // Should get the new value
+        assert_eq!(cache.get("key"), Some("new_value".to_string()));
+    }
+
+    #[test]
+    fn test_collection_id_cache_invalidate_removes_all_matching_values() {
+        let cache = CollectionIdCache::new();
+        cache.insert("name_a".to_string(), "id_x".to_string());
+        cache.insert("name_b".to_string(), "id_x".to_string());
+        cache.insert("name_c".to_string(), "id_y".to_string());
+
+        // Invalidate by value "id_x" - should remove name_a and name_b
+        cache.invalidate("id_x");
+
+        assert!(cache.get("name_a").is_none());
+        assert!(cache.get("name_b").is_none());
+        // name_c maps to a different value, should remain
+        assert_eq!(cache.get("name_c"), Some("id_y".to_string()));
+    }
+
+    // ==================== generate_request_id Stress Tests ====================
+
+    #[test]
+    fn test_generate_request_id_many_unique() {
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let id = generate_request_id();
+            assert!(ids.insert(id), "Duplicate request ID generated");
+        }
+        assert_eq!(ids.len(), 1000);
+    }
+
+    #[test]
+    fn test_generate_request_id_timestamp_portion_is_hex() {
+        let id = generate_request_id();
+        let timestamp_hex = &id[..8];
+        assert!(
+            u32::from_str_radix(timestamp_hex, 16).is_ok(),
+            "Timestamp portion should be valid hex"
+        );
+    }
+
+    // ==================== COLLECTION_ID_CACHE Constants Tests ====================
+
+    #[test]
+    fn test_cache_constants() {
+        assert_eq!(COLLECTION_ID_CACHE_TTL_SECS, 300);
+        assert_eq!(COLLECTION_ID_CACHE_MAX_SIZE, 1000);
+    }
+
+    #[test]
+    fn test_collection_id_cache_default_uses_correct_ttl() {
+        let cache = CollectionIdCache::new();
+        assert_eq!(cache.ttl, Duration::from_secs(300));
+        assert_eq!(cache.max_size, 1000);
+    }
 }
 
 /// SQL query result structure

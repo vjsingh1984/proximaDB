@@ -311,22 +311,34 @@ impl SAMLIntegration {
 /// SAML authentication request
 #[derive(Debug, Clone)]
 pub struct SAMLAuthRequest {
+    /// Unique request identifier for correlation.
     pub request_id: String,
+    /// IdP destination URL for the SAML request.
     pub destination: String,
+    /// Assertion consumer service URL where the response is sent.
     pub acs_url: String,
+    /// Service provider entity ID.
     pub sp_entity_id: String,
+    /// Optional relay state for post-authentication redirect.
     pub relay_state: Option<String>,
+    /// Timestamp when the request was generated.
     pub created_at: DateTime<Utc>,
 }
 
 /// SAML assertion structure (placeholder)
 #[derive(Debug, Clone)]
 pub struct SAMLAssertion {
+    /// Unique assertion identifier.
     pub assertion_id: String,
+    /// Identity provider that issued the assertion.
     pub issuer: String,
+    /// Assertion subject (authenticated user).
     pub subject: String,
+    /// SAML attribute statements (name to multi-valued mappings).
     pub attributes: HashMap<String, Vec<String>>,
+    /// Earliest time the assertion is valid.
     pub not_before: DateTime<Utc>,
+    /// Latest time the assertion is valid.
     pub not_on_or_after: DateTime<Utc>,
 }
 

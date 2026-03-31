@@ -213,22 +213,34 @@ impl Default for AxisTieringConfig {
 /// Statistics for AXIS tiering operations
 #[derive(Debug, Clone, Default)]
 pub struct TieringStats {
+    /// Number of indexes promoted to a higher (faster) tier.
     pub promotions: u64,
+    /// Number of indexes demoted to a lower (cheaper) tier.
     pub demotions: u64,
+    /// Number of prefetch predictions that were accessed.
     pub prefetch_hits: u64,
+    /// Number of prefetch predictions that were not accessed.
     pub prefetch_misses: u64,
+    /// Total bytes moved to higher tiers.
     pub bytes_promoted: u64,
+    /// Total bytes moved to lower tiers.
     pub bytes_demoted: u64,
+    /// Timestamp of the last tiering evaluation cycle.
     pub last_evaluation: Option<Instant>,
+    /// Statistics from integration with existing infrastructure.
     pub integration_stats: IntegrationStats,
 }
 
 /// Statistics for integration with existing infrastructure
 #[derive(Debug, Clone, Default)]
 pub struct IntegrationStats {
+    /// Number of queries to the access pattern tracker.
     pub pattern_tracker_queries: u64,
+    /// Number of calls to the global tier manager.
     pub global_tier_manager_calls: u64,
+    /// Number of adaptive store read/write operations.
     pub adaptive_store_operations: u64,
+    /// Number of format conversions performed during tier transitions.
     pub format_conversions: u64,
 }
 

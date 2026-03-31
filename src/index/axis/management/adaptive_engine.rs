@@ -50,38 +50,57 @@ impl std::fmt::Debug for AdaptiveIndexEngine {
 /// Collection characteristics for strategy selection
 #[derive(Debug, Clone)]
 pub struct CollectionCharacteristics {
+    /// Unique identifier of the collection being characterized.
     pub collection_id: String,
+    /// Total number of vectors in the collection.
     pub vector_count: u64,
+    /// Average sparsity ratio of vectors (0.0 = fully dense, 1.0 = fully sparse).
     pub average_sparsity: f32,
+    /// Variance of sparsity across vectors.
     pub sparsity_variance: f32,
+    /// Per-dimension variance of vector values.
     pub dimension_variance: Vec<f32>,
+    /// Analysis of recent query patterns.
     pub query_patterns: QueryPatternAnalysis,
+    /// Current performance metrics for this collection.
     pub performance_metrics: PerformanceMetrics,
+    /// Rate of new vector insertions per second.
     pub growth_rate: f32,
+    /// Read/write access frequency metrics.
     pub access_frequency: AccessFrequencyMetrics,
+    /// Analysis of metadata field complexity.
     pub metadata_complexity: MetadataComplexity,
 }
 
 /// Query pattern analysis
 #[derive(Debug, Clone)]
 pub struct QueryPatternAnalysis {
+    /// Total number of queries analyzed.
     pub total_queries: u64,
+    /// Fraction of queries that are exact point lookups.
     pub point_query_percentage: f32,
+    /// Fraction of queries that are ANN similarity searches.
     pub similarity_search_percentage: f32,
+    /// Fraction of queries that include metadata filters.
     pub metadata_filter_percentage: f32,
+    /// Average k value requested in top-k queries.
     pub average_k: f32,
+    /// Spatial and temporal distribution of queries.
     pub query_distribution: QueryDistribution,
 }
 
 impl QueryPatternAnalysis {
+    /// Returns true if over 70% of queries are point lookups.
     pub fn primarily_point_queries(&self) -> bool {
         self.point_query_percentage > 0.7
     }
 
+    /// Returns true if over 70% of queries are similarity searches.
     pub fn primarily_similarity_search(&self) -> bool {
         self.similarity_search_percentage > 0.7
     }
 
+    /// Returns true if over 50% of queries are ANN similarity searches.
     pub fn ann_heavy(&self) -> bool {
         self.similarity_search_percentage > 0.5
     }
@@ -90,46 +109,67 @@ impl QueryPatternAnalysis {
 /// Query distribution patterns
 #[derive(Debug, Clone)]
 pub struct QueryDistribution {
+    /// Whether queries are uniformly distributed across the dataset.
     pub uniform: bool,
+    /// Fraction of queries targeting hotspot regions (0.0 to 1.0).
     pub hotspot_percentage: f32,
+    /// Detected temporal access pattern.
     pub temporal_pattern: TemporalPattern,
 }
 
 /// Temporal access patterns
 #[derive(Debug, Clone)]
 pub enum TemporalPattern {
+    /// Queries are evenly distributed over time.
     Uniform,
-    Recent,                        // Most queries for recent data
-    Periodic(std::time::Duration), // Periodic access pattern
-    Bursty,                        // Sudden bursts of activity
+    /// Most queries target recently inserted data.
+    Recent,
+    /// Queries follow a periodic cycle with the given interval.
+    Periodic(std::time::Duration),
+    /// Queries arrive in sudden bursts separated by idle periods.
+    Bursty,
 }
 
 /// Current performance metrics
 #[derive(Debug, Clone)]
 pub struct PerformanceMetrics {
+    /// Average query latency in milliseconds.
     pub average_query_latency_ms: f64,
+    /// 99th percentile query latency in milliseconds.
     pub p99_query_latency_ms: f64,
+    /// Sustained queries per second throughput.
     pub queries_per_second: f64,
+    /// On-disk index size in megabytes.
     pub index_size_mb: f64,
+    /// In-memory usage of the index in megabytes.
     pub memory_usage_mb: f64,
+    /// Cache hit rate as a ratio (0.0 to 1.0).
     pub cache_hit_rate: f64,
 }
 
 /// Access frequency metrics
 #[derive(Debug, Clone)]
 pub struct AccessFrequencyMetrics {
+    /// Average read operations per second.
     pub reads_per_second: f64,
+    /// Average write operations per second.
     pub writes_per_second: f64,
+    /// Ratio of reads to writes (higher means read-heavy).
     pub read_write_ratio: f64,
+    /// Peak observed queries per second.
     pub peak_qps: f64,
 }
 
 /// Metadata complexity analysis
 #[derive(Debug, Clone)]
 pub struct MetadataComplexity {
+    /// Number of distinct metadata fields.
     pub field_count: usize,
+    /// Average cardinality (unique values) per metadata field.
     pub average_field_cardinality: f64,
+    /// Maximum nesting depth of metadata structures.
     pub nested_depth: usize,
+    /// Average filter selectivity (fraction of records matching typical filters).
     pub filter_selectivity: f64,
 }
 
@@ -142,21 +182,32 @@ pub struct IndexStrategySelector {
 /// Strategy types for different collection profiles
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum StrategyType {
+    /// Small collection with dense vectors (under 100K vectors).
     SmallDense,
+    /// Large collection with dense vectors (over 100K vectors).
     LargeDense,
+    /// Small collection with sparse vectors.
     SmallSparse,
+    /// Large collection with sparse vectors.
     LargeSparse,
+    /// Collection with mixed dense and sparse vectors.
     Mixed,
+    /// Collection dominated by metadata filter queries.
     MetadataHeavy,
+    /// Collection requiring sustained high query throughput.
     HighThroughput,
+    /// Collection used primarily for analytical batch queries.
     Analytical,
 }
 
 /// Strategy configuration template
 #[derive(Debug, Clone)]
 pub struct StrategyConfigTemplate {
+    /// The strategy type this template is for.
     pub strategy_type: StrategyType,
+    /// Optimization parameters for this strategy.
     pub optimization_config: OptimizationConfig,
+    /// Conditions under which this strategy applies.
     pub applicability_conditions: ApplicabilityConditions,
 }
 
@@ -164,19 +215,28 @@ pub struct StrategyConfigTemplate {
 #[derive(Debug, Clone)]
 #[derive(Default)]
 pub struct ApplicabilityConditions {
+    /// Minimum number of vectors for this strategy to apply.
     pub min_vector_count: Option<u64>,
+    /// Maximum number of vectors for this strategy to apply.
     pub max_vector_count: Option<u64>,
+    /// Minimum sparsity ratio for applicability.
     pub min_sparsity: Option<f32>,
+    /// Maximum sparsity ratio for applicability.
     pub max_sparsity: Option<f32>,
+    /// Required dominant query pattern for this strategy.
     pub required_query_pattern: Option<QueryPatternType>,
 }
 
 /// Query pattern types
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryPatternType {
+    /// Exact point lookups by vector ID.
     PointLookup,
+    /// Approximate nearest neighbor similarity search.
     SimilaritySearch,
+    /// Similarity search combined with metadata filters.
     FilteredSearch,
+    /// Batch analytical queries over the full dataset.
     Analytical,
 }
 
@@ -189,67 +249,92 @@ pub struct PerformancePredictor {
 
 /// ML models for performance prediction
 pub struct PredictionModels {
+    /// ML model for predicting query latency.
     pub latency_model: Option<Box<dyn LatencyPredictor + Send + Sync>>,
+    /// ML model for predicting query throughput.
     pub throughput_model: Option<Box<dyn ThroughputPredictor + Send + Sync>>,
+    /// ML model for predicting resource consumption.
     pub resource_model: Option<Box<dyn ResourcePredictor + Send + Sync>>,
 }
 
-/// Latency prediction trait
+/// Latency prediction trait for ML-based index strategy selection.
 pub trait LatencyPredictor {
+    /// Predicts latency percentiles given collection and index features.
     fn predict(&self, features: &PredictionFeatures) -> Result<LatencyPrediction>;
 }
 
-/// Throughput prediction trait
+/// Throughput prediction trait for ML-based index strategy selection.
 pub trait ThroughputPredictor {
+    /// Predicts maximum and sustainable throughput given collection features.
     fn predict(&self, features: &PredictionFeatures) -> Result<ThroughputPrediction>;
 }
 
-/// Resource usage prediction trait
+/// Resource usage prediction trait for ML-based index strategy selection.
 pub trait ResourcePredictor {
+    /// Predicts memory, CPU, and disk resource consumption.
     fn predict(&self, features: &PredictionFeatures) -> Result<ResourcePrediction>;
 }
 
 /// Features for ML prediction
 #[derive(Debug, Clone)]
 pub struct PredictionFeatures {
+    /// Number of vectors in the collection.
     pub vector_count: f64,
+    /// Average vector sparsity.
     pub sparsity: f64,
+    /// Vector dimensionality.
     pub dimension: f64,
+    /// Current query rate in queries per second.
     pub query_rate: f64,
+    /// Name of the index algorithm being evaluated.
     pub index_type: String,
 }
 
-/// Latency prediction result
+/// Latency prediction result with percentile estimates.
 #[derive(Debug, Clone)]
 pub struct LatencyPrediction {
+    /// Predicted median (p50) latency in milliseconds.
     pub p50_ms: f64,
+    /// Predicted 90th percentile latency in milliseconds.
     pub p90_ms: f64,
+    /// Predicted 99th percentile latency in milliseconds.
     pub p99_ms: f64,
 }
 
-/// Throughput prediction result
+/// Throughput prediction result.
 #[derive(Debug, Clone)]
 pub struct ThroughputPrediction {
+    /// Maximum achievable queries per second.
     pub max_qps: f64,
+    /// Sustainable queries per second under normal load.
     pub sustainable_qps: f64,
 }
 
-/// Resource usage prediction
+/// Resource consumption prediction.
 #[derive(Debug, Clone)]
 pub struct ResourcePrediction {
+    /// Predicted memory usage in megabytes.
     pub memory_mb: f64,
+    /// Predicted CPU core requirement.
     pub cpu_cores: f64,
+    /// Predicted disk usage in megabytes.
     pub disk_mb: f64,
 }
 
 /// Strategy decision record
 #[derive(Debug, Clone)]
 pub struct StrategyDecision {
+    /// Collection the decision applies to.
     pub collection_id: String,
+    /// When the decision was made.
     pub timestamp: DateTime<Utc>,
+    /// Collection characteristics at decision time.
     pub characteristics: CollectionCharacteristics,
+    /// Recommended index selection strategy.
     pub recommended_strategy: IndexSelectionStrategy,
+    /// Human-readable explanation of the decision.
     pub decision_reason: String,
+    /// Expected performance improvement ratio (e.g., 0.2 = 20% faster).
     pub expected_improvement: f64,
 }
 

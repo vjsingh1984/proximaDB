@@ -341,7 +341,7 @@ impl QuantizationSmartDefaults {
 
         // Ensure dimension is divisible by subvectors for clean splits
         let mut subvectors = optimal;
-        while dimension % subvectors != 0 && subvectors > 8 {
+        while !dimension.is_multiple_of(subvectors) && subvectors > 8 {
             subvectors -= 1;
         }
 
@@ -478,7 +478,7 @@ impl QuantizationSmartDefaults {
                         ));
                     }
 
-                    if dimension % (level.num_subvectors as usize) != 0 {
+                    if !dimension.is_multiple_of(level.num_subvectors as usize) {
                         return Err(anyhow::anyhow!(
                             "PQ level {} subvectors {} must divide dimension {} evenly",
                             index,

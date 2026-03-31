@@ -227,7 +227,7 @@ impl ArrowProtoCodec {
 
     /// Deserialize f32 vector from binary (little-endian)
     fn deserialize_vector(bytes: &[u8]) -> Result<Vec<f32>> {
-        if bytes.len() % 4 != 0 {
+        if !bytes.len().is_multiple_of(4) {
             return Err(anyhow::anyhow!("Invalid vector binary data length"));
         }
 

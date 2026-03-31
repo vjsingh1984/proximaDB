@@ -31,37 +31,59 @@ pub struct AWSIAMIntegration {
 /// AWS token data structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AWSTokenData {
+    /// JWT subject claim (user identifier).
     pub sub: String,
+    /// JWT audience claim.
     pub aud: String,
+    /// JWT issuer claim.
     pub iss: String,
+    /// JWT expiration timestamp (Unix epoch seconds).
     pub exp: i64,
+    /// JWT issued-at timestamp (Unix epoch seconds).
     pub iat: i64,
+    /// AWS IAM role ARN from the token.
     pub role_arn: String,
+    /// AWS account ID that owns the identity.
     pub account_id: String,
+    /// Preferred username from Cognito or custom claims.
     pub preferred_username: Option<String>,
+    /// User email address from token claims.
     pub email: Option<String>,
+    /// Cognito user pool groups the user belongs to.
     pub cognito_groups: Vec<String>,
+    /// Custom tenant ID claim for multi-tenant routing.
     pub custom_tenant_id: Option<String>,
+    /// Raw JWT token string for STS operations.
     pub raw_token: String,
 }
 
 /// AWS credentials from STS
 #[derive(Debug, Clone)]
 pub struct AWSCredentials {
+    /// AWS access key ID from STS.
     pub access_key_id: String,
+    /// AWS secret access key from STS.
     pub secret_access_key: String,
+    /// Temporary session token for assumed-role sessions.
     pub session_token: Option<String>,
+    /// Credential expiration timestamp.
     pub expiration: Option<DateTime<Utc>>,
+    /// ARN of the assumed IAM role.
     pub role_arn: String,
+    /// Identity of the user who assumed the role.
     pub assumed_role_user: String,
 }
 
 /// AWS user context for enterprise integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AWSUserContext {
+    /// ARN of the IAM role.
     pub role_arn: String,
+    /// Identity of the user who assumed the role.
     pub assumed_role_user: String,
+    /// AWS account ID.
     pub account_id: String,
+    /// AWS region where the authentication occurred.
     pub region: String,
 }
 
@@ -435,10 +457,15 @@ impl AWSIAMIntegration {
 /// AWS user information resolved from token
 #[derive(Debug, Clone)]
 pub struct AWSUserInfo {
+    /// Full IAM user ARN.
     pub user_arn: String,
+    /// IAM user name.
     pub user_name: String,
+    /// AWS account ID.
     pub account_id: String,
+    /// ARN of the assumed role, if any.
     pub assumed_role_arn: Option<String>,
+    /// Whether MFA was used during authentication.
     pub mfa_authenticated: bool,
 }
 

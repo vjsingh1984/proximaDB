@@ -855,7 +855,7 @@ impl BincodeSerializationStrategy {
             .and_then(|name| name.strip_suffix(".bcwal"))
             .and_then(|name| name.rsplit('_').next())
             .and_then(crate::storage::BatchId::from_base62)
-            .unwrap_or_else(crate::storage::BatchId::new);
+            .unwrap_or_default();
 
         // Create WAL batch from the recovered vectors
         let batch = WALVectorBatch {

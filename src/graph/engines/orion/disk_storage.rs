@@ -346,7 +346,7 @@ impl DiskCsrStorage {
         // Add to write buffer
         self.write_buffer
             .entry(from_idx)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push((to_idx, edge_id.clone()));
 
         self.edge_set.insert((from_idx, to_idx, edge_id));

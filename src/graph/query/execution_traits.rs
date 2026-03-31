@@ -82,21 +82,29 @@ pub trait PhysicalOperator: Send + Sync {
     fn schema(&self) -> &[ColumnSpec];
 }
 
-/// Column specification for result schema
+/// Column specification for result schema describing one output column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnSpec {
+    /// Column name (typically the variable name from the query).
     pub name: String,
+    /// Data type of values in this column.
     pub value_type: ValueType,
 }
 
-/// Type of query value
+/// Type of query value produced by graph query operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueType {
+    /// Graph node value.
     Node,
+    /// Graph edge value.
     Edge,
+    /// Path (sequence of nodes and edges).
     Path,
+    /// Scalar property value (string, int, float, bool).
     Property,
+    /// List of values.
     List,
+    /// Null (absence of value).
     Null,
 }
 
@@ -203,10 +211,12 @@ impl fmt::Debug for QueryValue {
     }
 }
 
-/// Path element (node or edge in a path)
+/// Path element (node or edge in a path).
 #[derive(Debug, Clone)]
 pub enum PathElement {
+    /// A graph node in the path.
     Node(Arc<Node>),
+    /// A graph edge connecting two nodes in the path.
     Edge(Arc<Edge>),
 }
 

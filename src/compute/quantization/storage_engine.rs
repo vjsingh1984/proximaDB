@@ -249,8 +249,7 @@ impl StorageQuantizationEngine {
                         // from the codebook store after training
                         let num_centroids = 1 << pq.bits_per_code;
                         let subvector_dim =
-                            (training_vectors[0].len() + pq.num_subvectors as usize - 1)
-                                / pq.num_subvectors as usize;
+                            training_vectors[0].len().div_ceil(pq.num_subvectors as usize);
                         vec![0.0f32; num_centroids as usize * subvector_dim]
                     })
                     .collect();

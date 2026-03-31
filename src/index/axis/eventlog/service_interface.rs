@@ -21,13 +21,21 @@ pub enum ServiceMode {
     /// Embedded mode - runs within the main process
     Embedded,
 
-    /// Standalone mode - runs as separate service
-    Standalone { bind_address: String, port: u16 },
+    /// Standalone mode - runs as separate service.
+    Standalone {
+        /// Network address to bind the service to.
+        bind_address: String,
+        /// TCP port for the standalone service.
+        port: u16,
+    },
 
-    /// Distributed mode - runs across multiple nodes
+    /// Distributed mode - runs across multiple nodes.
     Distributed {
+        /// Unique identifier for this node in the cluster.
         node_id: String,
+        /// URL of the coordination service.
         coordinator_url: String,
+        /// URLs of peer nodes for state synchronization.
         peers: Vec<String>,
     },
 }
@@ -105,8 +113,9 @@ pub struct EventFilter {
     /// Collection ID filter
     pub collection_id: Option<String>,
 
-    /// Time range filter
+    /// Start of time range filter (inclusive, epoch millis).
     pub from_timestamp: Option<u64>,
+    /// End of time range filter (inclusive, epoch millis).
     pub to_timestamp: Option<u64>,
 
     /// Operation type filter
@@ -125,45 +134,67 @@ pub struct EventFilter {
 /// Event processing status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EventStatus {
+    /// Event awaiting processing.
     Pending,
+    /// Event currently being processed by an index builder.
     Processing,
+    /// Event successfully processed by all required indexes.
     Completed,
+    /// Event processing failed with an error.
     Failed,
 }
 
 /// Batch update for processed events
 #[derive(Debug, Clone)]
 pub struct ProcessedUpdate {
+    /// Identifier of the event that was processed.
     pub event_id: String,
+    /// Name of the index that processed the event.
     pub index_name: String,
+    /// Whether processing completed successfully.
     pub success: bool,
 }
 
 /// Service health information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceHealth {
+    /// Current health status of the service.
     pub status: HealthStatus,
+    /// Service mode description (embedded, standalone, distributed).
     pub mode: String,
+    /// Number of events awaiting processing.
     pub pending_events: usize,
+    /// Total number of events processed since startup.
     pub processed_events: usize,
+    /// Number of collections with active event tracking.
     pub active_collections: usize,
+    /// Seconds since the service started.
     pub uptime_seconds: u64,
+    /// Timestamp of the last successful peer sync, if applicable.
     pub last_sync: Option<u64>,
 }
 
+/// Health status classification for the event log service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HealthStatus {
+    /// Service operating normally.
     Healthy,
+    /// Service running with reduced capacity or elevated latency.
     Degraded,
+    /// Service unable to process events.
     Unhealthy,
 }
 
 /// Synchronization result for distributed mode
 #[derive(Debug, Clone)]
 pub struct SyncResult {
+    /// Number of events synchronized with the peer.
     pub events_synced: usize,
+    /// Number of conflicting events resolved during sync.
     pub conflicts_resolved: usize,
+    /// Whether the peer has events not yet seen locally.
     pub peer_ahead: bool,
+    /// Epoch timestamp of the completed synchronization.
     pub last_sync_timestamp: u64,
 }
 
@@ -321,15 +352,22 @@ pub struct EventLogClient {
     mode: ClientMode,
 }
 
+/// Transport mode for connecting to the event log service.
 pub enum ClientMode {
-    /// Direct in-process access
+    /// Direct in-process access.
     Embedded(Arc<dyn EventLogService>),
 
-    /// REST client for standalone service
-    Rest { base_url: String },
+    /// REST client for standalone service.
+    Rest {
+        /// Base URL of the standalone event log service.
+        base_url: String,
+    },
 
-    /// gRPC client for distributed service
-    Grpc { _endpoint: String },
+    /// gRPC client for distributed service.
+    Grpc {
+        /// gRPC endpoint URL for the distributed event log service.
+        _endpoint: String,
+    },
 }
 
 impl EventLogClient {

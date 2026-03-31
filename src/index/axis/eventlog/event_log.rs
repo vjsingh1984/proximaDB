@@ -51,21 +51,33 @@ pub struct IndexEvent {
     pub operation: OperationType,
 }
 
+/// Storage engine types that produce index events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StorageEngineType {
+    /// Sorted String Table engine.
     SST,
+    /// VIPER engine for high-throughput writes.
     VIPER,
+    /// NOVA engine for large-scale batch operations.
     NOVA,
+    /// RAPTOR engine for columnar analytics.
     RAPTOR,
+    /// SWIFT engine for low-latency reads.
     SWIFT,
+    /// HELIX engine for time-series workloads.
     HELIX,
+    /// TST (Ternary Search Tree) engine for text indexing.
     TST,
 }
 
+/// Type of storage operation that triggered an index event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationType {
+    /// Memtable flush to persistent storage.
     Flush,
+    /// Background compaction merging storage files.
     Compaction,
+    /// Record deletion requiring index cleanup.
     Delete,
 }
 
@@ -450,12 +462,16 @@ impl EventLogQueue {
     }
 }
 
-/// Vector extraction mode for AXIS
+/// Vector extraction mode for AXIS index building.
 #[derive(Debug, Clone)]
 pub enum ExtractionMode {
+    /// Extract only full-precision f32 vectors.
     Fp32Only,
+    /// Extract only quantized (compressed) vectors.
     QuantizedOnly,
+    /// Extract both f32 and quantized representations.
     Both,
+    /// Automatically choose extraction mode based on index requirements.
     Auto,
 }
 

@@ -1588,4 +1588,303 @@ mod tests {
             "Density at sample concentration should be positive"
         );
     }
+
+    // ============================================================
+    // Additional GaussianKDE and std_dev tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_std_dev_two_values() {
+        // std_dev of [0, 10] with sample variance: mean=5, variance = (25+25)/1 = 50, std=~7.07
+        let result = GaussianKDE::std_dev(&[0.0, 10.0]);
+        let expected = (50.0_f64).sqrt(); // ~7.071
+        assert!(
+            (result - expected).abs() < 0.01,
+            "Std dev of [0, 10] should be ~7.07, got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_std_dev_negative_values() {
+        let result = GaussianKDE::std_dev(&[-5.0, -3.0, -1.0, 1.0, 3.0, 5.0]);
+        assert!(result > 0.0, "Std dev should be positive for spread values");
+    }
+
+    #[test]
+    fn test_gaussian_kernel_large_input() {
+        // For large inputs, kernel should be very close to zero
+        let result = GaussianKDE::gaussian_kernel(10.0);
+        assert!(result < 1e-20, "Kernel at x=10 should be near zero, got {}", result);
+    }
+
+    #[test]
+    fn test_gaussian_kernel_negative_input() {
+        let result = GaussianKDE::gaussian_kernel(-2.0);
+        let expected = (-0.5 * 4.0_f64).exp() / (2.0 * std::f64::consts::PI).sqrt();
+        assert!(
+            (result - expected).abs() < 1e-10,
+            "Kernel at x=-2 should be {}, got {}",
+            expected,
+            result
+        );
+    }
+
+    #[test]
+    fn test_gaussian_kde_pdf_integrates_to_roughly_one() {
+        // For a well-behaved KDE, the PDF should integrate to approximately 1
+        let kde = GaussianKDE::new(vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        // Approximate numerical integration using trapezoidal rule
+        let n_points = 1000;
+        let x_min = -5.0;
+        let x_max = 9.0;
+        let dx = (x_max - x_min) / n_points as f64;
+        let mut integral = 0.0;
+        for i in 0..n_points {
+            let x = x_min + (i as f64 + 0.5) * dx;
+            integral += kde.pdf(x) * dx;
+        }
+        assert!(
+            (integral - 1.0).abs() < 0.05,
+            "KDE PDF should integrate to ~1.0, got {}",
+            integral
+        );
+    }
+
+    #[test]
+    fn test_gaussian_kde_bandwidth_single_value() {
+        let kde = GaussianKDE::new(vec![5.0]);
+        // Single value => std_dev = 0 => bandwidth defaults to 1.0
+        assert!(
+            (kde.bandwidth - 1.0).abs() < 1e-10,
+            "Bandwidth for single value should default to 1.0, got {}",
+            kde.bandwidth
+        );
+    }
+
+    #[test]
+    fn test_gaussian_kde_pdf_monotonic_from_peak() {
+        let kde = GaussianKDE::new(vec![0.0, 0.0, 0.0, 0.0, 0.0]);
+        // PDF should decrease as we move away from the peak
+        let pdf_0 = kde.pdf(0.0);
+        let pdf_1 = kde.pdf(1.0);
+        let pdf_2 = kde.pdf(2.0);
+        let pdf_5 = kde.pdf(5.0);
+        assert!(pdf_0 > pdf_1);
+        assert!(pdf_1 > pdf_2);
+        assert!(pdf_2 > pdf_5);
+    }
+
+    // ============================================================
+    // ProximaDBHyperparameters extended tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_hnsw_params_expected_count() {
+        let params = ProximaDBHyperparameters::hnsw_params();
+        assert_eq!(params.len(), 3, "HNSW should have M, ef_construction, ef_search");
+    }
+
+    #[test]
+    fn test_hnsw_params_m_range() {
+        let params = ProximaDBHyperparameters::hnsw_params();
+        let m_param = params.iter().find(|p| p.name == "M").unwrap();
+        if let SearchSpace::Discrete { min, max, step } = &m_param.search_space {
+            assert_eq!(*min, 8);
+            assert_eq!(*max, 64);
+            assert_eq!(*step, 4);
+        } else {
+            panic!("M parameter should have Discrete search space");
+        }
+    }
+
+    #[test]
+    fn test_hnsw_params_ef_construction_range() {
+        let params = ProximaDBHyperparameters::hnsw_params();
+        let ef_param = params.iter().find(|p| p.name == "ef_construction").unwrap();
+        if let SearchSpace::Discrete { min, max, .. } = &ef_param.search_space {
+            assert!(*min > 0, "ef_construction min should be positive");
+            assert!(*max > *min, "ef_construction max should exceed min");
+        } else {
+            panic!("ef_construction should have Discrete search space");
+        }
+    }
+
+    #[test]
+    fn test_hnsw_params_ef_search_exists() {
+        let params = ProximaDBHyperparameters::hnsw_params();
+        assert!(
+            params.iter().any(|p| p.name == "ef_search"),
+            "HNSW params should include ef_search"
+        );
+    }
+
+    #[test]
+    fn test_ivf_params_nlist_is_logscale() {
+        let params = ProximaDBHyperparameters::ivf_params();
+        let nlist_param = params.iter().find(|p| p.name == "nlist").unwrap();
+        assert!(
+            matches!(&nlist_param.search_space, SearchSpace::LogScale { .. }),
+            "nlist should use LogScale search space"
+        );
+    }
+
+    #[test]
+    fn test_ivf_params_nprobe_range() {
+        let params = ProximaDBHyperparameters::ivf_params();
+        let nprobe_param = params.iter().find(|p| p.name == "nprobe").unwrap();
+        if let SearchSpace::Discrete { min, max, .. } = &nprobe_param.search_space {
+            assert_eq!(*min, 1, "nprobe should start at 1");
+            assert!(*max >= 50, "nprobe max should be at least 50");
+        } else {
+            panic!("nprobe should have Discrete search space");
+        }
+    }
+
+    #[test]
+    fn test_quantization_params_choices() {
+        let params = ProximaDBHyperparameters::quantization_params();
+        let ql_param = params
+            .iter()
+            .find(|p| p.name == "quantization_level")
+            .unwrap();
+        if let SearchSpace::Categorical { choices } = &ql_param.search_space {
+            assert!(choices.contains(&"None".to_string()));
+            assert!(choices.contains(&"Binary".to_string()));
+            assert!(choices.contains(&"INT8".to_string()));
+            assert!(choices.len() >= 4, "Should have at least 4 quantization choices");
+        } else {
+            panic!("quantization_level should have Categorical search space");
+        }
+    }
+
+    #[test]
+    fn test_quantization_params_codebook_size() {
+        let params = ProximaDBHyperparameters::quantization_params();
+        let cb_param = params
+            .iter()
+            .find(|p| p.name == "codebook_size")
+            .unwrap();
+        if let SearchSpace::Discrete { min, max, step } = &cb_param.search_space {
+            assert_eq!(*min, 128);
+            assert_eq!(*max, 1024);
+            assert_eq!(*step, 128);
+        } else {
+            panic!("codebook_size should have Discrete search space");
+        }
+    }
+
+    // ============================================================
+    // TuningConfig and algorithm tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_tuning_algorithm_debug() {
+        let tpe = TuningAlgorithm::TPE;
+        assert!(format!("{:?}", tpe).contains("TPE"));
+
+        let random = TuningAlgorithm::Random;
+        assert!(format!("{:?}", random).contains("Random"));
+
+        let grid = TuningAlgorithm::Grid;
+        assert!(format!("{:?}", grid).contains("Grid"));
+
+        let hyperband = TuningAlgorithm::Hyperband {
+            max_iter: 27,
+            eta: 3.0,
+        };
+        assert!(format!("{:?}", hyperband).contains("27"));
+
+        let optuna = TuningAlgorithm::Optuna;
+        assert!(format!("{:?}", optuna).contains("Optuna"));
+    }
+
+    #[test]
+    fn test_hyperparameter_serde_roundtrip() {
+        let param = HyperParameter {
+            name: "learning_rate".to_string(),
+            param_type: ParameterType::Float,
+            search_space: SearchSpace::LogScale {
+                min: 0.0001,
+                max: 0.1,
+            },
+        };
+        let json = serde_json::to_string(&param).unwrap();
+        let deserialized: HyperParameter = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name, "learning_rate");
+        assert!(matches!(deserialized.param_type, ParameterType::Float));
+        if let SearchSpace::LogScale { min, max } = &deserialized.search_space {
+            assert!((min - 0.0001).abs() < 1e-10);
+            assert!((max - 0.1).abs() < 1e-10);
+        } else {
+            panic!("Expected LogScale search space after roundtrip");
+        }
+    }
+
+    #[test]
+    fn test_parameter_value_serde_roundtrip() {
+        let values = vec![
+            ParameterValue::Integer(42),
+            ParameterValue::Float(3.14),
+            ParameterValue::String("test".to_string()),
+            ParameterValue::Boolean(false),
+        ];
+        for val in &values {
+            let json = serde_json::to_string(val).unwrap();
+            let deserialized: ParameterValue = serde_json::from_str(&json).unwrap();
+            assert_eq!(format!("{:?}", val), format!("{:?}", deserialized));
+        }
+    }
+
+    #[test]
+    fn test_grid_generation_single_param() {
+        let params = vec![HyperParameter {
+            name: "x".to_string(),
+            param_type: ParameterType::Float,
+            search_space: SearchSpace::Continuous { min: 0.0, max: 1.0 },
+        }];
+
+        let tuner = HyperparameterTuner {
+            config: TuningConfig::default(),
+            parameters: Arc::new(RwLock::new(params.clone())),
+            trials: Arc::new(RwLock::new(Vec::new())),
+            best_trial: Arc::new(RwLock::new(None)),
+            algorithm: TuningAlgorithm::Grid,
+        };
+
+        let grid = tuner.generate_grid(&params).unwrap();
+        // Continuous space generates 5 grid points
+        assert_eq!(grid.len(), 5);
+    }
+
+    #[test]
+    fn test_grid_generation_logscale() {
+        let params = vec![HyperParameter {
+            name: "lr".to_string(),
+            param_type: ParameterType::Float,
+            search_space: SearchSpace::LogScale {
+                min: 0.001,
+                max: 1.0,
+            },
+        }];
+
+        let tuner = HyperparameterTuner {
+            config: TuningConfig::default(),
+            parameters: Arc::new(RwLock::new(params.clone())),
+            trials: Arc::new(RwLock::new(Vec::new())),
+            best_trial: Arc::new(RwLock::new(None)),
+            algorithm: TuningAlgorithm::Grid,
+        };
+
+        let grid = tuner.generate_grid(&params).unwrap();
+        assert_eq!(grid.len(), 5);
+
+        // Check that the first point is at min and last is at max
+        if let Some(ParameterValue::Float(first)) = grid[0].get("lr") {
+            assert!((*first - 0.001).abs() < 1e-6, "First grid point should be near min");
+        }
+        if let Some(ParameterValue::Float(last)) = grid[4].get("lr") {
+            assert!((*last - 1.0).abs() < 1e-6, "Last grid point should be near max");
+        }
+    }
 }

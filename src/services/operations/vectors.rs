@@ -1881,7 +1881,7 @@ impl VectorOperationsService {
         // Return final results or intermediate if no final step produced results
         let mut final_results = if results.is_empty() {
             // Return intermediate results directly
-            intermediate_results.unwrap_or_else(Vec::new)
+            intermediate_results.unwrap_or_default()
         } else {
             results
         };

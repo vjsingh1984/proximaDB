@@ -258,7 +258,7 @@ impl StreamingRowGroupProcessor {
                     .await
                     .map_err(|e| anyhow!("Semaphore error: {}", e))?;
                 // Reserve memory
-                let _memory_reservation = {
+                {
                     let mut tracker = memory_tracker.write().await;
                     tracker.reserve_memory(
                         &format!("rg_{}", task.row_group_id),

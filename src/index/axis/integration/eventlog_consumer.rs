@@ -54,10 +54,14 @@ impl Default for ConsumerConfig {
 // Type alias for compatibility
 pub type EventLogConsumer = AxisEventLogConsumer;
 
+/// Statistics for the event log consumer.
 #[derive(Debug, Clone, Default)]
 pub struct ConsumerStats {
+    /// Total number of events successfully processed.
     pub events_processed: u64,
+    /// Total number of events that failed processing.
     pub events_failed: u64,
+    /// Timestamp of the most recently processed event.
     pub last_processed_timestamp: Option<std::time::SystemTime>,
 }
 

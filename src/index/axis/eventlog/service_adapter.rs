@@ -22,9 +22,13 @@ use super::{
 /// Event log statistics
 #[derive(Debug, Clone)]
 pub struct EventLogStats {
+    /// Total number of events processed since service start.
     pub total_events: u64,
+    /// Number of events awaiting processing.
     pub total_pending_events: u64,
+    /// Number of collections with active event tracking.
     pub collections_tracked: usize,
+    /// Timestamp of the oldest unprocessed event, if any.
     pub oldest_event_timestamp: Option<SystemTime>,
 }
 

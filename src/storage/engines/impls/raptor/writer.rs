@@ -1983,7 +1983,7 @@ impl RaptorWriter {
                     subgroup.push(best_node);
 
                     // Log progress for large clusters
-                    if subgroup.len() % 50 == 0 {
+                    if subgroup.len().is_multiple_of(50) {
                         tracing::trace!(
                             "Building subgroup: {} vectors, best_score={:.4}",
                             subgroup.len(),

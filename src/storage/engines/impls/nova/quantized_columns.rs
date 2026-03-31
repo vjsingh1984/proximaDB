@@ -325,17 +325,17 @@ impl QuantizedColumnBuilder {
 
         // Build binary column if enabled
         if self.config.enable_binary {
-            let _ = columns.build_binary_column(&self.vectors).await?;
+            columns.build_binary_column(&self.vectors).await?;
         }
 
         // Build INT8 column if enabled
         if self.config.enable_int8 {
-            let _ = columns.build_int8_column(&self.vectors).await?;
+            columns.build_int8_column(&self.vectors).await?;
         }
 
         // Build PQ column if enabled
         if self.config.enable_pq {
-            let _ = columns
+            columns
                 .build_pq_column(
                     &self.vectors,
                     self.config.pq_segments as usize,

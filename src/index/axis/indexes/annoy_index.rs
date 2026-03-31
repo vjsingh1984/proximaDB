@@ -729,10 +729,15 @@ impl AxisVectorIndex for AxisAnnoyIndex {
 /// Annoy-specific statistics
 #[derive(Debug, Clone)]
 pub struct AnnoyStats {
+    /// Number of vectors stored in the index.
     pub vector_count: usize,
+    /// Number of random projection trees built.
     pub tree_count: usize,
+    /// Total number of nodes across all trees.
     pub total_nodes: usize,
+    /// Average depth of the projection trees.
     pub avg_tree_depth: f32,
+    /// Whether the trees have been built and the index is ready for queries.
     pub is_built: bool,
 }
 
