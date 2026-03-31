@@ -186,9 +186,13 @@ pub struct MetricsQuery {
 /// Health check response
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
+    /// Overall health status ("healthy", "degraded", "unhealthy").
     pub status: String,
+    /// Time of the health check.
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// ProximaDB version string.
     pub version: String,
+    /// Seconds since server start.
     pub uptime_seconds: f64,
 }
 

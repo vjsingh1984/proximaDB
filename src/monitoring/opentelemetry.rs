@@ -77,39 +77,58 @@ pub struct MetricsExporter {
 /// Span data for OpenTelemetry export
 #[derive(Debug, Clone)]
 pub struct SpanData {
+    /// W3C trace ID (hex-encoded 128-bit).
     pub trace_id: String,
+    /// Span ID within the trace (hex-encoded 64-bit).
     pub span_id: String,
+    /// Parent span ID, if this is a child span.
     pub parent_span_id: Option<String>,
+    /// Human-readable operation name (e.g. "vector_search").
     pub operation_name: String,
+    /// When the span started.
     pub start_time: std::time::SystemTime,
+    /// When the span ended (`None` if still in progress).
     pub end_time: Option<std::time::SystemTime>,
+    /// Key-value attributes attached to the span.
     pub attributes: HashMap<String, String>,
+    /// Final status of the span.
     pub status: SpanStatus,
 }
 
 /// Metric data for OpenTelemetry export
 #[derive(Debug, Clone)]
 pub struct MetricData {
+    /// Metric name (e.g. "proximadb.search.latency_ms").
     pub name: String,
+    /// Numeric value of the metric.
     pub value: f64,
+    /// Time the metric was recorded.
     pub timestamp: std::time::SystemTime,
+    /// Dimensional attributes (labels).
     pub attributes: HashMap<String, String>,
+    /// Whether this is a counter, gauge, or histogram.
     pub metric_type: MetricType,
 }
 
 /// Span status for tracing
 #[derive(Debug, Clone)]
 pub enum SpanStatus {
+    /// Span completed successfully.
     Ok,
+    /// Span completed with an error.
     Error(String),
+    /// Span was cancelled before completion.
     Cancelled,
 }
 
 /// Metric types for OpenTelemetry
 #[derive(Debug, Clone)]
 pub enum MetricType {
+    /// Monotonically increasing counter (e.g. total requests).
     Counter,
+    /// Point-in-time value (e.g. current memory usage).
     Gauge,
+    /// Distribution of values (e.g. latency percentiles).
     Histogram,
 }
 
