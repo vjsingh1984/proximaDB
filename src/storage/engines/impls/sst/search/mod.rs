@@ -633,8 +633,8 @@ impl SstEngine {
         match metric {
             DistanceMetric::Euclidean => {
                 let mut sum = 0.0f32;
-                for i in 0..query.len().min(centroid.len()) {
-                    let diff = query[i] - centroid[i];
+                for (q_val, c_val) in query.iter().zip(centroid.iter()) {
+                    let diff = q_val - c_val;
                     sum += diff * diff;
                 }
                 sum.sqrt()
@@ -645,10 +645,10 @@ impl SstEngine {
                 let mut dot = 0.0f32;
                 let mut norm_q = 0.0f32;
                 let mut norm_c = 0.0f32;
-                for i in 0..query.len().min(centroid.len()) {
-                    dot += query[i] * centroid[i];
-                    norm_q += query[i] * query[i];
-                    norm_c += centroid[i] * centroid[i];
+                for (q_val, c_val) in query.iter().zip(centroid.iter()) {
+                    dot += q_val * c_val;
+                    norm_q += q_val * q_val;
+                    norm_c += c_val * c_val;
                 }
                 let denom = (norm_q * norm_c).sqrt();
                 if denom > 0.0 {
@@ -660,8 +660,8 @@ impl SstEngine {
             _ => {
                 // Default to Euclidean for other metrics
                 let mut sum = 0.0f32;
-                for i in 0..query.len().min(centroid.len()) {
-                    let diff = query[i] - centroid[i];
+                for (q_val, c_val) in query.iter().zip(centroid.iter()) {
+                    let diff = q_val - c_val;
                     sum += diff * diff;
                 }
                 sum.sqrt()

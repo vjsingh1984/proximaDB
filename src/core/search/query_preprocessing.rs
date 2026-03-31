@@ -600,11 +600,11 @@ impl QueryPreprocessor {
 
         // Hash first few elements and last few for efficiency
         let sample_size = vector.len().min(16);
-        for i in 0..sample_size / 2 {
-            vector[i].to_bits().hash(&mut hasher);
+        for val in vector.iter().take(sample_size / 2) {
+            val.to_bits().hash(&mut hasher);
         }
-        for i in (vector.len().saturating_sub(sample_size / 2))..vector.len() {
-            vector[i].to_bits().hash(&mut hasher);
+        for val in vector.iter().skip(vector.len().saturating_sub(sample_size / 2)) {
+            val.to_bits().hash(&mut hasher);
         }
         vector.len().hash(&mut hasher);
 

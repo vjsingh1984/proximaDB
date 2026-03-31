@@ -601,8 +601,8 @@ mod tests {
         assert_eq!(top_3.len(), 3);
 
         // Scores should be sorted descending
-        for i in 0..top_3.len() - 1 {
-            assert!(top_3[i].1 >= top_3[i + 1].1);
+        for window in top_3.windows(2) {
+            assert!(window[0].1 >= window[1].1);
         }
     }
 

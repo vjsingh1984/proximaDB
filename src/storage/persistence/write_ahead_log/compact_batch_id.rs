@@ -279,9 +279,9 @@ mod tests {
         let ids: Vec<_> = (0..100).map(|_| CompactBatchId::new()).collect();
 
         // All IDs should be unique
-        for i in 0..ids.len() {
+        for (i, id_i) in ids.iter().enumerate() {
             for j in (i + 1)..ids.len() {
-                assert_ne!(ids[i], ids[j]);
+                assert_ne!(*id_i, ids[j]);
             }
         }
     }

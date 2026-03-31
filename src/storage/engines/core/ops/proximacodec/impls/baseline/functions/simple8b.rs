@@ -116,9 +116,8 @@ fn encode_u64_internal(values: &[u64]) -> Result<Vec<u8>> {
 /// Returns: (selector, values_packed, word)
 fn pack_word(values: &[u64]) -> Result<(u8, usize, u64)> {
     // Try selectors from smallest bit-width to largest
-    for selector in 2..16 {
-        let (count, bits) = SELECTORS[selector];
-        let count = count as usize;
+    for (selector, &(sel_count, bits)) in SELECTORS.iter().enumerate().take(16).skip(2) {
+        let count = sel_count as usize;
 
         if count == 0 || bits == 0 {
             continue;

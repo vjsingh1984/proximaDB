@@ -219,15 +219,15 @@ impl MetadataFilterAnalyzer {
                 .ok_or_else(|| anyhow!("Missing extra_meta column for filtering"))?;
 
             // Apply filter to each row
-            for row_idx in 0..num_rows {
-                if !mask[row_idx] {
+            for (row_idx, mask_val) in mask.iter_mut().enumerate().take(num_rows) {
+                if !*mask_val {
                     continue; // Already filtered out
                 }
 
                 // Extract metadata for this row and check filter
                 let passes = self.check_filter_for_row(metadata_column, row_idx, filter)?;
 
-                mask[row_idx] &= passes;
+                *mask_val &= passes;
             }
         }
 

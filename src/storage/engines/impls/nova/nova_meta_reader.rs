@@ -181,8 +181,8 @@ impl NovaMetaReader {
     fn vector_in_bounds(&self, vector: &[f32], min_values: &[f32], max_values: &[f32]) -> bool {
         // Conservative check: allow some tolerance for floating point
         const TOLERANCE: f32 = 1e-6;
-        for i in 0..vector.len().min(min_values.len()) {
-            if vector[i] < min_values[i] - TOLERANCE || vector[i] > max_values[i] + TOLERANCE {
+        for (i, &v_val) in vector.iter().enumerate().take(min_values.len()) {
+            if v_val < min_values[i] - TOLERANCE || v_val > max_values[i] + TOLERANCE {
                 return false;
             }
         }

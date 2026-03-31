@@ -891,10 +891,10 @@ impl UnifiedDistanceCompute {
         let mut norm_a = 0.0;
         let mut norm_b = 0.0;
 
-        for i in 0..a.len() {
-            dot += a[i] * b[i];
-            norm_a += a[i] * a[i];
-            norm_b += b[i] * b[i];
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            dot += a_val * b_val;
+            norm_a += a_val * a_val;
+            norm_b += b_val * b_val;
         }
 
         if norm_a == 0.0 || norm_b == 0.0 {
@@ -1012,8 +1012,8 @@ impl UnifiedDistanceCompute {
         }
 
         let mut sum = 0.0;
-        for i in 0..a.len() {
-            let diff = a[i] - b[i];
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            let diff = a_val - b_val;
             sum += diff * diff;
         }
         sum.sqrt()
@@ -1106,8 +1106,8 @@ impl UnifiedDistanceCompute {
 
     fn dot_product_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
-        for i in 0..a.len() {
-            sum += a[i] * b[i];
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            sum += a_val * b_val;
         }
         sum
     }
@@ -1126,9 +1126,9 @@ impl UnifiedDistanceCompute {
         let mut intersection = 0.0;
         let mut union = 0.0;
 
-        for i in 0..a.len() {
-            let min_val = a[i].min(b[i]);
-            let max_val = a[i].max(b[i]);
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            let min_val = a_val.min(*b_val);
+            let max_val = a_val.max(*b_val);
             intersection += min_val;
             union += max_val;
         }
@@ -1146,16 +1146,16 @@ impl UnifiedDistanceCompute {
 
     fn compute_manhattan_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
-        for i in 0..a.len() {
-            sum += (a[i] - b[i]).abs();
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            sum += (a_val - b_val).abs();
         }
         sum
     }
 
     fn compute_hamming_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut count = 0.0;
-        for i in 0..a.len() {
-            if (a[i] - b[i]).abs() > f32::EPSILON {
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            if (a_val - b_val).abs() > f32::EPSILON {
                 count += 1.0;
             }
         }
@@ -1164,8 +1164,8 @@ impl UnifiedDistanceCompute {
 
     fn compute_chebyshev_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut max_diff = 0.0f32;
-        for i in 0..a.len() {
-            let diff = (a[i] - b[i]).abs();
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            let diff = (a_val - b_val).abs();
             max_diff = max_diff.max(diff);
         }
         max_diff
@@ -1173,18 +1173,18 @@ impl UnifiedDistanceCompute {
 
     fn compute_minkowski_scalar(&self, a: &[f32], b: &[f32], p: f32) -> f32 {
         let mut sum = 0.0;
-        for i in 0..a.len() {
-            sum += (a[i] - b[i]).abs().powf(p);
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            sum += (a_val - b_val).abs().powf(p);
         }
         sum.powf(1.0 / p)
     }
 
     fn compute_canberra_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
-        for i in 0..a.len() {
-            let denominator = a[i].abs() + b[i].abs();
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            let denominator = a_val.abs() + b_val.abs();
             if denominator > 0.0 {
-                sum += (a[i] - b[i]).abs() / denominator;
+                sum += (a_val - b_val).abs() / denominator;
             }
         }
         sum
@@ -1193,9 +1193,9 @@ impl UnifiedDistanceCompute {
     fn compute_bray_curtis_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum_diff = 0.0;
         let mut sum_total = 0.0;
-        for i in 0..a.len() {
-            sum_diff += (a[i] - b[i]).abs();
-            sum_total += a[i].abs() + b[i].abs();
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            sum_diff += (a_val - b_val).abs();
+            sum_total += a_val.abs() + b_val.abs();
         }
         if sum_total == 0.0 {
             0.0
@@ -1211,8 +1211,8 @@ impl UnifiedDistanceCompute {
 
     fn compute_hellinger_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
-        for i in 0..a.len() {
-            let sqrt_diff = a[i].sqrt() - b[i].sqrt();
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            let sqrt_diff = a_val.sqrt() - b_val.sqrt();
             sum += sqrt_diff * sqrt_diff;
         }
         (sum / 2.0).sqrt()

@@ -657,10 +657,10 @@ impl CrossModalReranker {
         let mut total_dissimilarity = 0.0;
         let mut count = 0;
 
-        for i in 0..records.len() {
-            for j in (i + 1)..records.len() {
+        for (i, record_i) in records.iter().enumerate() {
+            for record_j in records.iter().skip(i + 1) {
                 total_dissimilarity +=
-                    1.0 - self.compute_record_similarity(&records[i], &records[j]);
+                    1.0 - self.compute_record_similarity(record_i, record_j);
                 count += 1;
             }
         }

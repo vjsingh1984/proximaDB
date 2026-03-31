@@ -239,9 +239,9 @@ mod tests {
         assert_eq!(batch.len(), 10);
 
         // All should be unique
-        for i in 0..batch.len() {
+        for (i, item) in batch.iter().enumerate() {
             for j in i + 1..batch.len() {
-                assert_ne!(batch[i], batch[j]);
+                assert_ne!(*item, batch[j]);
             }
         }
     }

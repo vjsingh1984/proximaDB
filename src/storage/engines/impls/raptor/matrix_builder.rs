@@ -156,10 +156,10 @@ impl MatrixBuilder {
         // Process row by row using batch distance computation
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 
-        for i in 0..num_vectors {
+        for (i, vec_i) in vectors.iter().enumerate().take(num_vectors) {
             // Compute distances from vector i to all vectors using batch method
             let row_distances = self.distance_compute.batch_distance_pooled_simd(
-                &vectors[i],
+                vec_i,
                 &vector_refs,
                 &self.distance_metric,
             );
@@ -500,11 +500,11 @@ impl MatrixBuilder {
         match storage_strategy {
             VectorCentroidStorageStrategy::Full => {
                 // Store all P×K distances in compressed form
-                for i in 0..num_vectors {
-                    for j in 0..num_centroids {
+                for vec_i in vectors.iter() {
+                    for centroid_j in centroids.iter() {
                         let dist = self
                             .distance_compute
-                            .calculate_distance(&vectors[i], &centroids[j], &self.distance_metric)
+                            .calculate_distance(vec_i, centroid_j, &self.distance_metric)
                             .raw_value;
 
                         let quantized = ((dist * 65535.0).min(65535.0)) as u16;
@@ -522,24 +522,24 @@ impl MatrixBuilder {
                 let mut mean_distances = vec![0.0; num_centroids];
                 let mut delta_entries = Vec::new();
 
-                for j in 0..num_centroids {
+                for (mean_dist_j, centroid_j) in mean_distances.iter_mut().zip(centroids.iter()) {
                     let mut sum = 0.0;
-                    for i in 0..num_vectors {
+                    for vec_i in vectors.iter() {
                         let dist = self
                             .distance_compute
-                            .calculate_distance(&vectors[i], &centroids[j], &self.distance_metric)
+                            .calculate_distance(vec_i, centroid_j, &self.distance_metric)
                             .raw_value;
                         sum += dist;
                     }
-                    mean_distances[j] = sum / num_vectors as f32;
+                    *mean_dist_j = sum / num_vectors as f32;
                 }
 
                 // Store significant deltas
-                for i in 0..num_vectors {
-                    for j in 0..num_centroids {
+                for (i, vec_i) in vectors.iter().enumerate() {
+                    for (j, centroid_j) in centroids.iter().enumerate() {
                         let dist = self
                             .distance_compute
-                            .calculate_distance(&vectors[i], &centroids[j], &self.distance_metric)
+                            .calculate_distance(vec_i, centroid_j, &self.distance_metric)
                             .raw_value;
 
                         let delta = dist - mean_distances[j];
@@ -571,14 +571,14 @@ impl MatrixBuilder {
                     .min(num_centroids);
                 let mut sparse_entries = Vec::new();
 
-                for i in 0..num_vectors {
+                for (i, vec_i) in vectors.iter().enumerate() {
                     let mut distances: Vec<(usize, f32)> = centroids
                         .iter()
                         .enumerate()
                         .map(|(j, centroid)| {
                             let dist = self
                                 .distance_compute
-                                .calculate_distance(&vectors[i], centroid, &self.distance_metric)
+                                .calculate_distance(vec_i, centroid, &self.distance_metric)
                                 .raw_value;
                             (j, dist)
                         })

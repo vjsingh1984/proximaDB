@@ -1745,8 +1745,8 @@ impl RaptorReader {
         for i in 0..num_vectors {
             let mut vector = vec![0.0; dimension];
             // Add some variation to make it realistic
-            for j in 0..dimension {
-                vector[j] = (i as f32 + j as f32) / (num_vectors + dimension) as f32;
+            for (j, v_val) in vector.iter_mut().enumerate() {
+                *v_val = (i as f32 + j as f32) / (num_vectors + dimension) as f32;
             }
             vectors.push(vector);
         }
@@ -2943,7 +2943,7 @@ impl RaptorReader {
                 // Use P² matrix to find vectors close to this candidate
                 // This identifies local clusters of similar vectors
                 if final_candidates.len() < k * 3 {
-                    for other_idx in 0..vectors.len() {
+                    for (other_idx, other_vec) in vectors.iter().enumerate() {
                         if other_idx != candidate_idx && !seen.contains(&other_idx) {
                             // Get pre-computed distance from P² matrix
                             let intra_dist =
@@ -2955,7 +2955,7 @@ impl RaptorReader {
                                 let query_dist = distance_compute
                                     .calculate_distance(
                                         target_vector,
-                                        &vectors[other_idx],
+                                        other_vec,
                                         &DistanceMetric::Cosine,
                                     )
                                     .raw_value;
@@ -3509,14 +3509,14 @@ impl RaptorReader {
             // Small collection: pre-compute full matrix (< 1ms overhead)
             let mut distances = vec![vec![0.0f32; centroids.len()]; centroids.len()];
 
-            for i in 0..centroids.len() {
+            for (i, centroid_i) in centroids.iter().enumerate() {
                 distances[i][i] = 0.0;
 
                 for j in (i + 1)..centroids.len() {
                     let dist = self
                         .distance_compute
                         .calculate_distance(
-                            &centroids[i],
+                            centroid_i,
                             &centroids[j],
                             &DistanceMetric::Euclidean,
                         )
@@ -3967,7 +3967,7 @@ impl RaptorReader {
             vector_data.len()
         );
 
-        for dim_idx in 0..dimension {
+        for (dim_idx, column) in columns.iter_mut().enumerate().take(dimension) {
             // Read encoded column length
             let mut len_bytes = [0u8; 4];
             if let Err(e) = cursor.read_exact(&mut len_bytes) {
@@ -4012,14 +4012,14 @@ impl RaptorReader {
 
             // Decode using ProximaCodec
             let decoded = codec.decode(&encoded_data)?;
-            columns[dim_idx] = decoded;
+            *column = decoded;
         }
 
         // Transpose back to row format and create Float32Array
         let mut flat_values = Vec::with_capacity(num_rows * dimension);
         for vec_idx in 0..num_rows {
-            for dim_idx in 0..dimension {
-                flat_values.push(columns[dim_idx][vec_idx]);
+            for column in columns.iter().take(dimension) {
+                flat_values.push(column[vec_idx]);
             }
         }
 

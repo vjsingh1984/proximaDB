@@ -503,12 +503,12 @@ impl ProductQuantizer {
     pub fn asymmetric_distance(&self, query: &[f32], codes: &[u8]) -> f32 {
         let mut total_dist = 0.0;
 
-        for subspace_idx in 0..self.n_subspaces {
+        for (subspace_idx, &code_val) in codes.iter().enumerate().take(self.n_subspaces) {
             let start_idx = subspace_idx * self.subspace_dim;
             let end_idx = start_idx + self.subspace_dim;
             let subquery = &query[start_idx..end_idx];
 
-            let code = codes[subspace_idx] as usize;
+            let code = code_val as usize;
             let centroid = &self.codebooks[subspace_idx][code];
 
             total_dist += euclidean_distance(subquery, centroid);
@@ -1317,10 +1317,10 @@ impl UnifiedIvfIndex {
         }
 
         // Update correlation matrix
-        for i in 0..clusters.len() {
-            for j in i + 1..clusters.len() {
-                let cluster_i = clusters[i].0;
-                let cluster_j = clusters[j].0;
+        for (i, cluster_item_i) in clusters.iter().enumerate() {
+            for cluster_item_j in clusters.iter().skip(i + 1) {
+                let cluster_i = cluster_item_i.0;
+                let cluster_j = cluster_item_j.0;
 
                 // Update correlation score
                 self.access_correlations

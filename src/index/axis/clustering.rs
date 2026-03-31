@@ -647,11 +647,11 @@ impl AxisClusteringEngine {
 
         // Calculate average inter-cluster distance
         let mut inter_distances = Vec::new();
-        for i in 0..centroids.len() {
-            for j in (i + 1)..centroids.len() {
+        for (i, centroid_i) in centroids.iter().enumerate() {
+            for centroid_j in centroids.iter().skip(i + 1) {
                 let similarity = self.distance_compute.calculate_distance(
-                    &centroids[i],
-                    &centroids[j],
+                    centroid_i,
+                    centroid_j,
                     &self.config.distance_metric,
                 );
                 inter_distances.push(similarity.raw_value);

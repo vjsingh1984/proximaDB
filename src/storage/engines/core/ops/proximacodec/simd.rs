@@ -1584,11 +1584,8 @@ pub fn simd_double_delta_decode_f32(double_deltas: &[i64], count: usize) -> Resu
     let mut first_deltas: Vec<i64> = Vec::with_capacity(count - 1);
     first_deltas.push(first_delta);
 
-    for i in 2..double_deltas.len() {
-        let prev_delta = *first_deltas.last().ok_or_else(|| {
-            anyhow::anyhow!("DoubleDelta decode: first_deltas is empty unexpectedly")
-        })?;
-        let dd = double_deltas[i];
+    for dd in double_deltas.iter().skip(2) {
+        let prev_delta = first_deltas.last().unwrap();
         first_deltas.push(prev_delta + dd);
     }
 

@@ -308,10 +308,10 @@ fn decode_16bit_to_i64_neon(input: &[u8], output: &mut [i64]) -> Result<usize> {
         }
 
         // Handle remaining
-        for j in (chunks * 4)..count {
+        for (j, out_val) in output.iter_mut().enumerate().take(count).skip(chunks * 4) {
             let base = j * 2;
             if base + 1 < input.len() {
-                output[j] = u16::from_le_bytes([input[base], input[base + 1]]) as i64;
+                *out_val = u16::from_le_bytes([input[base], input[base + 1]]) as i64;
             }
         }
     }
@@ -352,10 +352,10 @@ fn decode_32bit_to_i64_neon(input: &[u8], output: &mut [i64]) -> Result<usize> {
         }
 
         // Handle remaining
-        for j in (chunks * 4)..count {
+        for (j, out_val) in output.iter_mut().enumerate().take(count).skip(chunks * 4) {
             let base = j * 4;
             if base + 3 < input.len() {
-                output[j] = u32::from_le_bytes([
+                *out_val = u32::from_le_bytes([
                     input[base],
                     input[base + 1],
                     input[base + 2],
@@ -389,10 +389,10 @@ fn decode_64bit_to_i64_neon(input: &[u8], output: &mut [i64]) -> Result<usize> {
         }
 
         // Handle remaining
-        for j in (chunks * 2)..count {
+        for (j, out_val) in output.iter_mut().enumerate().take(count).skip(chunks * 2) {
             let base = j * 8;
             if base + 7 < input.len() {
-                output[j] = i64::from_le_bytes([
+                *out_val = i64::from_le_bytes([
                     input[base],
                     input[base + 1],
                     input[base + 2],
@@ -484,10 +484,10 @@ fn decode_16bit_to_i32_neon(input: &[u8], output: &mut [i32]) -> Result<usize> {
         }
 
         // Handle remaining
-        for j in (chunks * 8)..count {
+        for (j, out_val) in output.iter_mut().enumerate().take(count).skip(chunks * 8) {
             let base = j * 2;
             if base + 1 < input.len() {
-                output[j] = u16::from_le_bytes([input[base], input[base + 1]]) as i32;
+                *out_val = u16::from_le_bytes([input[base], input[base + 1]]) as i32;
             }
         }
     }
@@ -516,10 +516,10 @@ fn decode_32bit_to_i32_neon(input: &[u8], output: &mut [i32]) -> Result<usize> {
         }
 
         // Handle remaining
-        for j in (chunks * 4)..count {
+        for (j, out_val) in output.iter_mut().enumerate().take(count).skip(chunks * 4) {
             let base = j * 4;
             if base + 3 < input.len() {
-                output[j] = i32::from_le_bytes([
+                *out_val = i32::from_le_bytes([
                     input[base],
                     input[base + 1],
                     input[base + 2],
@@ -550,7 +550,7 @@ fn decode_variable_bits_i64_neon(input: &[u8], bits: u8, output: &mut [i64]) -> 
         (1u64 << bits) - 1
     };
 
-    for i in 0..count {
+    for (i, out_val) in output.iter_mut().enumerate().take(count) {
         let bit_offset = i * bits_usize;
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
@@ -567,7 +567,7 @@ fn decode_variable_bits_i64_neon(input: &[u8], bits: u8, output: &mut [i64]) -> 
             }
         }
 
-        output[i] = ((value >> bit_in_byte) & mask) as i64;
+        *out_val = ((value >> bit_in_byte) & mask) as i64;
     }
 
     Ok(count)
@@ -590,7 +590,7 @@ fn decode_variable_bits_i32_neon(input: &[u8], bits: u8, output: &mut [i32]) -> 
         (1u32 << bits) - 1
     };
 
-    for i in 0..count {
+    for (i, out_val) in output.iter_mut().enumerate().take(count) {
         let bit_offset = i * bits_usize;
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
@@ -607,7 +607,7 @@ fn decode_variable_bits_i32_neon(input: &[u8], bits: u8, output: &mut [i32]) -> 
             }
         }
 
-        output[i] = (((value >> bit_in_byte) as u32) & mask) as i32;
+        *out_val = (((value >> bit_in_byte) as u32) & mask) as i32;
     }
 
     Ok(count)

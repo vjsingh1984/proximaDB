@@ -55,7 +55,7 @@ impl U512 {
         let mut result = [0u128; 4];
         let mut borrow = false;
 
-        for i in 0..4 {
+        for (i, res_val) in result.iter_mut().enumerate() {
             let (diff, new_borrow) = if borrow {
                 let (sub1, b1) = self.parts[i].overflowing_sub(1);
                 let (sub2, b2) = sub1.overflowing_sub(other.parts[i]);
@@ -64,7 +64,7 @@ impl U512 {
                 self.parts[i].overflowing_sub(other.parts[i])
             };
 
-            result[i] = diff;
+            *res_val = diff;
             borrow = new_borrow;
         }
 
@@ -80,7 +80,7 @@ impl U512 {
         let mut result = [0u128; 4];
         let mut carry = false;
 
-        for i in 0..4 {
+        for (i, res_val) in result.iter_mut().enumerate() {
             let (sum, new_carry) = if carry {
                 let (add1, c1) = self.parts[i].overflowing_add(other.parts[i]);
                 let (add2, c2) = add1.overflowing_add(1);
@@ -89,7 +89,7 @@ impl U512 {
                 self.parts[i].overflowing_add(other.parts[i])
             };
 
-            result[i] = sum;
+            *res_val = sum;
             carry = new_carry;
         }
 

@@ -427,8 +427,8 @@ impl GradientBoostingModel {
             values.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
             // Try different thresholds
-            for i in 0..values.len().saturating_sub(1) {
-                let threshold = (values[i].0 + values[i + 1].0) / 2.0;
+            for (i, window) in values.windows(2).enumerate() {
+                let threshold = (window[0].0 + window[1].0) / 2.0;
 
                 // Compute left and right means
                 let (left_sum, left_count) = values
@@ -1155,11 +1155,11 @@ impl FeatureExtractor {
         let mut overlap_sum = 0.0;
         let mut pair_count = 0;
 
-        for i in 0..id_sets.len() {
-            for j in (i + 1)..id_sets.len() {
+        for (i, id_set_i) in id_sets.iter().enumerate() {
+            for id_set_j in id_sets.iter().skip(i + 1) {
                 let intersection: std::collections::HashSet<_> =
-                    id_sets[i].intersection(&id_sets[j]).collect();
-                let union: std::collections::HashSet<_> = id_sets[i].union(&id_sets[j]).collect();
+                    id_set_i.intersection(id_set_j).collect();
+                let union: std::collections::HashSet<_> = id_set_i.union(id_set_j).collect();
 
                 if !union.is_empty() {
                     overlap_sum += intersection.len() as f64 / union.len() as f64;

@@ -118,8 +118,8 @@ impl ZoneMap {
         }
 
         // Check if query falls within min/max bounds
-        for i in 0..query_vector.len() {
-            if query_vector[i] < self.dim_min[i] || query_vector[i] > self.dim_max[i] {
+        for (i, &q_val) in query_vector.iter().enumerate() {
+            if q_val < self.dim_min[i] || q_val > self.dim_max[i] {
                 // Query is outside bounds in this dimension
                 // But we can't definitively exclude the block
                 // as nearest neighbors might still be here
@@ -138,8 +138,7 @@ impl ZoneMap {
         let mut min_distance = 0.0;
 
         // Calculate minimum possible distance to block
-        for i in 0..query_vector.len() {
-            let q = query_vector[i];
+        for (i, &q) in query_vector.iter().enumerate() {
             let min = self.dim_min[i];
             let max = self.dim_max[i];
 

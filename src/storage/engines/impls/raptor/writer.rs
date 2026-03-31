@@ -1188,8 +1188,8 @@ impl IvfClusteringBuilder {
         let mut offset = 0u32;
 
         let mut idx = 0;
-        for i in 0..k {
-            lookup_table[i] = offset;
+        for (i, lt_entry) in lookup_table.iter_mut().enumerate() {
+            *lt_entry = offset;
             for _j in (i + 1)..k {
                 let quantized = ((distances[idx] - min_distance) * scale_factor) as u16;
                 compressed_data.extend_from_slice(&quantized.to_le_bytes());

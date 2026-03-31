@@ -657,15 +657,15 @@ impl TextChunker {
         }
 
         // Look for single newline
-        for i in target..search_end {
-            if chars[i] == '\n' {
+        for (i, &ch) in chars.iter().enumerate().take(search_end).skip(target) {
+            if ch == '\n' {
                 return i + 1;
             }
         }
 
         // Look for any whitespace
-        for i in target..search_end {
-            if chars[i].is_whitespace() {
+        for (i, &ch) in chars.iter().enumerate().take(search_end).skip(target) {
+            if ch.is_whitespace() {
                 return i + 1;
             }
         }

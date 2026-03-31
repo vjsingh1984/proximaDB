@@ -1272,10 +1272,9 @@ impl InterCentroidMatrix {
         let mut min_dist = f32::MAX;
         let mut max_dist = f32::MIN;
 
-        for i in 0..k {
-            for j in (i + 1)..k {
+        for (i, dist_row) in distances.iter().enumerate().take(k) {
+            for &dist in dist_row.iter().take(k).skip(i + 1) {
                 // Only j > i (strict upper triangle)
-                let dist = distances[i][j];
                 upper_triangle_data.push(dist);
                 min_dist = min_dist.min(dist);
                 max_dist = max_dist.max(dist);
@@ -1805,9 +1804,9 @@ impl P2Matrix {
         let n = self.num_vectors as usize;
         let mut distances = vec![0.0; n];
 
-        for j in 0..n {
+        for (j, dist) in distances.iter_mut().enumerate() {
             if j != vector_idx {
-                distances[j] = self.get_distance(vector_idx, j);
+                *dist = self.get_distance(vector_idx, j);
             }
         }
 

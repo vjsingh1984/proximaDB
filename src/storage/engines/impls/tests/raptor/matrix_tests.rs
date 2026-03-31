@@ -124,9 +124,9 @@ async fn test_build_p2_matrix() -> Result<()> {
     );
     let mut distances = Vec::new();
 
-    for i in 0..vectors.len() {
+    for (i, vec_i) in vectors.iter().enumerate() {
         for j in (i + 1)..vectors.len() {
-            let dist = distance_compute.distance(&vectors[i], &vectors[j]);
+            let dist = distance_compute.distance(vec_i, &vectors[j]);
             distances.push(dist);
         }
     }
@@ -170,9 +170,9 @@ async fn test_p2_matrix_proximaencoder() -> Result<()> {
     );
     let mut distances = Vec::new();
 
-    for i in 0..vectors.len() {
+    for (i, vec_i) in vectors.iter().enumerate() {
         for j in (i + 1)..vectors.len() {
-            let dist = distance_compute.distance(&vectors[i], &vectors[j]);
+            let dist = distance_compute.distance(vec_i, &vectors[j]);
             distances.push(dist);
         }
     }
@@ -403,10 +403,10 @@ fn test_phase2_spillover_detection() {
     match pxk_matrix.storage_strategy {
         VectorCentroidStorageStrategy::Full => {
             // Check all vector-to-centroid distances
-            for v in 0..rowgroup_vectors.len() {
+            for rg_vec in &rowgroup_vectors {
                 let mut distances = Vec::new();
-                for c in 0..centroids.len() {
-                    let dist = distance_compute.distance(&rowgroup_vectors[v], &centroids[c]);
+                for (c, centroid) in centroids.iter().enumerate() {
+                    let dist = distance_compute.distance(rg_vec, centroid);
                     distances.push((c, dist));
                 }
                 distances

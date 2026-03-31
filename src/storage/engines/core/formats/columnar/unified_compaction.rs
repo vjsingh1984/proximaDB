@@ -657,8 +657,8 @@ impl UnifiedColumnarCompaction {
         for (_, (batch_idx, row_idx, _, _)) in sorted_selected {
             // Calculate absolute index in combined batch
             let mut abs_idx = row_idx as u32;
-            for i in 0..batch_idx {
-                abs_idx += batches[i].num_rows() as u32;
+            for batch in batches.iter().take(batch_idx) {
+                abs_idx += batch.num_rows() as u32;
             }
             indices_to_keep.push(abs_idx);
         }

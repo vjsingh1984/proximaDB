@@ -52,8 +52,8 @@ impl IncrementalPCA {
 
         // Update mean using Welford's algorithm
         let mut delta = vec![0.0; sample.len()];
-        for i in 0..sample.len() {
-            delta[i] = sample[i] as f64 - self.mean[i];
+        for (i, &s_val) in sample.iter().enumerate() {
+            delta[i] = s_val as f64 - self.mean[i];
             self.mean[i] += delta[i] / n;
         }
 
@@ -64,9 +64,9 @@ impl IncrementalPCA {
             .map(|(&s, &m)| s as f64 - m)
             .collect();
 
-        for i in 0..sample.len() {
-            for j in i..sample.len() {
-                self.covariance[i][j] += delta[i] * delta2[j];
+        for (i, &d_val) in delta.iter().enumerate().take(sample.len()) {
+            for (j, &d2_val) in delta2.iter().enumerate().take(sample.len()).skip(i) {
+                self.covariance[i][j] += d_val * d2_val;
             }
         }
     }
@@ -149,8 +149,8 @@ fn power_iteration(matrix: &[Vec<f64>], iterations: usize) -> Vec<f64> {
         // Multiply matrix * v
         let mut new_v = vec![0.0; dim];
         for i in 0..dim {
-            for j in 0..dim {
-                new_v[i] += matrix[i][j] * v[j];
+            for (j, &v_val) in v.iter().enumerate().take(dim) {
+                new_v[i] += matrix[i][j] * v_val;
             }
         }
 
@@ -487,10 +487,10 @@ impl ZOrderEncoder {
 
         // De-interleave bits
         for bit in 0..self.bits_per_dim {
-            for dim_idx in 0..self.dimensions {
+            for (dim_idx, q_val) in quantized.iter_mut().enumerate() {
                 let shift = bit * self.dimensions + dim_idx;
                 let bit_val = (code >> shift) & 1;
-                quantized[dim_idx] |= bit_val << bit;
+                *q_val |= bit_val << bit;
             }
         }
 
@@ -507,10 +507,10 @@ impl ZOrderEncoder {
 
         // De-interleave bits
         for bit in 0..self.bits_per_dim {
-            for dim_idx in 0..self.dimensions {
+            for (dim_idx, q_val) in quantized.iter_mut().enumerate() {
                 let shift = bit * self.dimensions + dim_idx;
                 let bit_val = (code >> shift) & 1;
-                quantized[dim_idx] |= bit_val << bit;
+                *q_val |= bit_val << bit;
             }
         }
 
@@ -527,7 +527,7 @@ impl ZOrderEncoder {
 
         // De-interleave bits from both parts
         for bit in 0..self.bits_per_dim {
-            for dim_idx in 0..self.dimensions {
+            for (dim_idx, q_val) in quantized.iter_mut().enumerate() {
                 let shift = bit * self.dimensions + dim_idx;
 
                 let bit_val = if shift < 128 {
@@ -536,7 +536,7 @@ impl ZOrderEncoder {
                     (high >> (shift - 128)) & 1
                 };
 
-                quantized[dim_idx] |= bit_val << bit;
+                *q_val |= bit_val << bit;
             }
         }
 
@@ -553,14 +553,14 @@ impl ZOrderEncoder {
 
         // De-interleave bits from all four parts
         for bit in 0..self.bits_per_dim {
-            for dim_idx in 0..self.dimensions {
+            for (dim_idx, q_val) in quantized.iter_mut().enumerate() {
                 let shift = bit * self.dimensions + dim_idx;
                 let part_idx = shift / 128;
                 let part_shift = shift % 128;
 
                 if part_idx < 4 {
                     let bit_val = (code.parts[part_idx] >> part_shift) & 1;
-                    quantized[dim_idx] |= bit_val << bit;
+                    *q_val |= bit_val << bit;
                 }
             }
         }

@@ -386,8 +386,8 @@ mod tests {
         ];
 
         // Verify ordering
-        for i in 0..levels.len() - 1 {
-            assert!(levels[i] < levels[i + 1]);
+        for window in levels.windows(2) {
+            assert!(window[0] < window[1]);
         }
     }
 

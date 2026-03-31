@@ -385,8 +385,8 @@ fn center_data(data: &DMatrix<f32>, mean: &DVector<f32>) -> DMatrix<f32> {
     let mut centered = data.clone();
     for i in 0..centered.nrows() {
         let mut row = centered.row_mut(i);
-        for j in 0..row.len() {
-            row[j] -= mean[j];
+        for (j, row_val) in row.iter_mut().enumerate() {
+            *row_val -= mean[j];
         }
     }
     centered

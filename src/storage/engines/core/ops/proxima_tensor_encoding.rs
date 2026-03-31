@@ -147,17 +147,17 @@ pub fn decode_sparse_tensor(
     let dense_vectors = if is_coo {
         // COO format decoding
         let mut row_indices = vec![0u32; nnz];
-        for i in 0..nnz {
+        for entry in row_indices.iter_mut() {
             let mut idx_bytes = [0u8; 4];
             cursor.read_exact(&mut idx_bytes)?;
-            row_indices[i] = u32::from_le_bytes(idx_bytes);
+            *entry = u32::from_le_bytes(idx_bytes);
         }
 
         let mut col_indices = vec![0u32; nnz];
-        for i in 0..nnz {
+        for entry in col_indices.iter_mut() {
             let mut idx_bytes = [0u8; 4];
             cursor.read_exact(&mut idx_bytes)?;
-            col_indices[i] = u32::from_le_bytes(idx_bytes);
+            *entry = u32::from_le_bytes(idx_bytes);
         }
 
         // Decode values
@@ -185,17 +185,17 @@ pub fn decode_sparse_tensor(
     } else {
         // CSR format decoding
         let mut row_ptrs = vec![0u32; num_vectors + 1];
-        for i in 0..=num_vectors {
+        for entry in row_ptrs.iter_mut() {
             let mut ptr_bytes = [0u8; 4];
             cursor.read_exact(&mut ptr_bytes)?;
-            row_ptrs[i] = u32::from_le_bytes(ptr_bytes);
+            *entry = u32::from_le_bytes(ptr_bytes);
         }
 
         let mut col_indices = vec![0u32; nnz];
-        for i in 0..nnz {
+        for entry in col_indices.iter_mut() {
             let mut idx_bytes = [0u8; 4];
             cursor.read_exact(&mut idx_bytes)?;
-            col_indices[i] = u32::from_le_bytes(idx_bytes);
+            *entry = u32::from_le_bytes(idx_bytes);
         }
 
         // Decode values
@@ -418,11 +418,11 @@ pub fn decode_quantized_tensor(data: &[u8]) -> Result<(Vec<f32>, usize, usize, Q
             let _subvector_dim = dimension / num_subvectors;
             let mut codebooks = vec![vec![0.0f32; codebook_size * _subvector_dim]; num_subvectors];
 
-            for subvec in 0..num_subvectors {
-                for entry in 0..codebook_size * _subvector_dim {
+            for codebook in codebooks.iter_mut() {
+                for entry in codebook.iter_mut() {
                     let mut val_bytes = [0u8; 4];
                     cursor.read_exact(&mut val_bytes)?;
-                    codebooks[subvec][entry] = f32::from_le_bytes(val_bytes);
+                    *entry = f32::from_le_bytes(val_bytes);
                 }
             }
 

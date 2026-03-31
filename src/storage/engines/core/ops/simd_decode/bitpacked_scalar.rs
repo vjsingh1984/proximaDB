@@ -76,7 +76,7 @@ impl SimdDecoder for ScalarDecoder {
         };
 
         // Decode each value
-        for i in 0..count {
+        for (i, out_val) in output.iter_mut().enumerate().take(count) {
             let bit_offset = i * bits;
             let byte_offset = bit_offset / 8;
             let bit_in_byte = bit_offset % 8;
@@ -114,7 +114,7 @@ impl SimdDecoder for ScalarDecoder {
 
             // Sign-extend if the high bit is set (for signed interpretation)
             // Note: The caller decides whether to interpret as signed or unsigned
-            output[i] = value as i64;
+            *out_val = value as i64;
         }
 
         Ok(count)
@@ -155,7 +155,7 @@ impl SimdDecoder for ScalarDecoder {
         };
 
         // Decode each value
-        for i in 0..count {
+        for (i, out_val) in output.iter_mut().enumerate().take(count) {
             let bit_offset = i * bits;
             let byte_offset = bit_offset / 8;
             let bit_in_byte = bit_offset % 8;
@@ -176,7 +176,7 @@ impl SimdDecoder for ScalarDecoder {
 
             // Shift to align and mask
             let extracted = ((value >> bit_in_byte) & (mask as u64)) as u32;
-            output[i] = extracted as i32;
+            *out_val = extracted as i32;
         }
 
         Ok(count)

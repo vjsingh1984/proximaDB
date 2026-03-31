@@ -101,8 +101,8 @@ impl FloydWarshallAPSP {
         let mut dist = vec![vec![f64::INFINITY; node_count]; node_count];
 
         // Set diagonal to 0
-        for i in 0..node_count {
-            dist[i][i] = 0.0;
+        for (i, dist_row) in dist.iter_mut().enumerate().take(node_count) {
+            dist_row[i] = 0.0;
         }
 
         // Get CSR storage for edge access
@@ -112,14 +112,14 @@ impl FloydWarshallAPSP {
             })?;
 
         // Initialize edges from CSR (O(E) operation)
-        for from_idx in 0..node_count {
+        for (from_idx, dist_row) in dist.iter_mut().enumerate().take(node_count) {
             let neighbors = csr_out.get_neighbors(from_idx).unwrap_or(&[]);
 
             for &to_idx in neighbors {
                 if to_idx < node_count {
                     // Unweighted graph: all edges have weight 1.0
                     // TODO: Support weighted graphs by looking up edge weights
-                    dist[from_idx][to_idx] = 1.0;
+                    dist_row[to_idx] = 1.0;
                 }
             }
         }
@@ -323,8 +323,8 @@ impl GraphAlgorithm for FloydWarshallAPSP {
 
         // Initialize distance matrix: diagonal = 0, others = infinity
         let mut dist = vec![vec![f64::INFINITY; node_count]; node_count];
-        for i in 0..node_count {
-            dist[i][i] = 0.0;
+        for (i, dist_row) in dist.iter_mut().enumerate().take(node_count) {
+            dist_row[i] = 0.0;
         }
 
         // Initialize edges from memory pool edge data
@@ -345,9 +345,9 @@ impl GraphAlgorithm for FloydWarshallAPSP {
 
         // Convert matrix to HashMap<(NodeId, NodeId), f64>
         let mut result = HashMap::new();
-        for i in 0..node_count {
-            for j in 0..node_count {
-                result.insert((node_ids[i].clone(), node_ids[j].clone()), dist[i][j]);
+        for (i, node_id_i) in node_ids.iter().enumerate().take(node_count) {
+            for (j, node_id_j) in node_ids.iter().enumerate().take(node_count) {
+                result.insert((node_id_i.clone(), node_id_j.clone()), dist[i][j]);
             }
         }
 
@@ -414,10 +414,10 @@ impl ParallelAlgorithm for FloydWarshallAPSP {
             ProximaDBError::Internal("Failed to acquire index_to_node read lock".to_string())
         })?;
 
-        for i in 0..node_count {
-            for j in 0..node_count {
+        for (i, dist_row) in dist.iter().enumerate().take(node_count) {
+            for (j, &dist_val) in dist_row.iter().enumerate().take(node_count) {
                 if let (Some(from_id), Some(to_id)) = (index_to_node.get(i), index_to_node.get(j)) {
-                    result.insert((from_id.clone(), to_id.clone()), dist[i][j]);
+                    result.insert((from_id.clone(), to_id.clone()), dist_val);
                 }
             }
         }

@@ -1584,8 +1584,7 @@ pub async fn k_shortest_paths(
 
     for k_i in 1..k {
         let (last_path, _last_cost) = &result_paths[k_i - 1];
-        for i in 0..last_path.len().saturating_sub(1) {
-            let spur_node = &last_path[i];
+        for (i, spur_node) in last_path.iter().enumerate().take(last_path.len().saturating_sub(1)) {
             let root_path = &last_path[..=i];
             // Exclusions: remove edges that would create same root with previous paths
             let mut exclude_edges: HashSet<(NodeId, NodeId)> = HashSet::new();

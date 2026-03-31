@@ -1123,8 +1123,8 @@ impl QuantizedDistanceCalculator {
 impl HammingLookupTable {
     fn new(hardware_caps: &HardwareCapabilities) -> Result<Self> {
         let mut hamming_weights = [0u8; 256];
-        for i in 0..256 {
-            hamming_weights[i] = (i as u8).count_ones() as u8;
+        for (i, weight) in hamming_weights.iter_mut().enumerate() {
+            *weight = (i as u8).count_ones() as u8;
         }
 
         Ok(Self {

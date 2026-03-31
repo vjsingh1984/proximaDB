@@ -27,11 +27,11 @@ impl Hilbert2DLookup {
         let mut table = [[(0u8, 0u8); 256]; 4];
 
         // Build lookup table for all orientations and 4x4 sub-grids
-        for orient in 0..4 {
+        for (orient, orient_table) in table.iter_mut().enumerate() {
             for x in 0..16u8 {
                 for y in 0..16u8 {
                     let (idx, new_orient) = Self::compute_4bit_hilbert(x, y, orient as u8);
-                    table[orient][(x as usize) * 16 + (y as usize)] = (idx, new_orient);
+                    orient_table[(x as usize) * 16 + (y as usize)] = (idx, new_orient);
                 }
             }
         }
@@ -252,8 +252,8 @@ impl HilbertCurve {
             let mut bits = 0u32;
 
             // Extract bit pattern at this level
-            for i in 0..n.min(32) {
-                if coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(n.min(32)) {
+                if coord & mask != 0 {
                     bits |= 1 << i;
                 }
             }
@@ -339,8 +339,8 @@ impl HilbertCurve {
 
             // Extract 16 bits in parallel
             let mut bits = 0u32;
-            for i in 0..16 {
-                if coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(16) {
+                if coord & mask != 0 {
                     bits |= 1 << i;
                 }
             }
@@ -399,8 +399,8 @@ impl HilbertCurve {
             let mask = 1u32 << level;
             let mut bits = 0u32;
 
-            for i in 0..32 {
-                if coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(32) {
+                if coord & mask != 0 {
                     bits |= 1 << i;
                 }
             }
@@ -426,13 +426,13 @@ impl HilbertCurve {
             let mut bits_low = 0u32;
             let mut bits_high = 0u32;
 
-            for i in 0..32 {
-                if i < coords.len() && coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(32) {
+                if coord & mask != 0 {
                     bits_low |= 1 << i;
                 }
             }
-            for i in 32..64.min(coords.len()) {
-                if coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(64).skip(32) {
+                if coord & mask != 0 {
                     bits_high |= 1 << (i - 32);
                 }
             }
@@ -485,9 +485,9 @@ impl HilbertCurve {
             _ => {
                 // General rotation based on bit pattern
                 let mask = (1u32 << self.bits_per_dim) - 1;
-                for i in 0..16 {
+                for (i, coord) in coords.iter_mut().enumerate().take(16) {
                     if bits & (1 << i) != 0 {
-                        coords[i] = !coords[i] & mask;
+                        *coord = !*coord & mask;
                     }
                 }
             }
@@ -517,9 +517,9 @@ impl HilbertCurve {
             _ => {
                 // General bit-based transformation
                 let mask = (1u32 << self.bits_per_dim) - 1;
-                for i in 0..32 {
+                for (i, coord) in coords.iter_mut().enumerate() {
                     if bits & (1 << (i % 32)) != 0 {
-                        coords[i] = !coords[i] & mask;
+                        *coord = !*coord & mask;
                     }
                 }
             }

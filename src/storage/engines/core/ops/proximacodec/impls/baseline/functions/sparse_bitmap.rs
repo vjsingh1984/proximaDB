@@ -174,7 +174,7 @@ fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> 
 
     // Read non-zero values
     let mut value_idx = 0;
-    for idx in 0..count {
+    for (idx, res_val) in result.iter_mut().enumerate() {
         let byte_idx = idx / 8;
         let bit_idx = idx % 8;
 
@@ -187,7 +187,7 @@ fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> 
                     data[offset + 2],
                     data[offset + 3],
                 ]);
-                result[idx] = val;
+                *res_val = val;
                 value_idx += 1;
             }
     }
@@ -231,7 +231,7 @@ fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> 
 
     // Read non-zero values
     let mut value_idx = 0;
-    for idx in 0..count {
+    for (idx, res_val) in result.iter_mut().enumerate() {
         let byte_idx = idx / 8;
         let bit_idx = idx % 8;
 
@@ -248,7 +248,7 @@ fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> 
                     data[offset + 6],
                     data[offset + 7],
                 ]);
-                result[idx] = val;
+                *res_val = val;
                 value_idx += 1;
             }
     }

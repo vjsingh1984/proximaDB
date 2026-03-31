@@ -706,7 +706,7 @@ impl UnifiedQuantizationEngine {
             }
 
             // Update step
-            for j in 0..k {
+            for (j, centroid_j) in centroids.iter_mut().enumerate().take(k) {
                 let mut sum = vec![0.0; dimension];
                 let mut count = 0;
 
@@ -720,7 +720,7 @@ impl UnifiedQuantizationEngine {
                 }
 
                 if count > 0 {
-                    centroids[j] = sum.iter().map(|&s| s / count as f32).collect();
+                    *centroid_j = sum.iter().map(|&s| s / count as f32).collect();
                 }
             }
 
@@ -860,8 +860,8 @@ impl UnifiedQuantizationEngine {
 
         // Convert to bytes
         let mut bytes = vec![0u8; bytes_per_code];
-        for i in 0..bytes_per_code {
-            bytes[i] = ((code >> (i * 8)) & 0xFF) as u8;
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = ((code >> (i * 8)) & 0xFF) as u8;
         }
 
         Ok(bytes)

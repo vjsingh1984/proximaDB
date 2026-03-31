@@ -68,7 +68,7 @@ impl Crc32 {
     fn generate_table() -> [u32; 256] {
         let mut table = [0u32; 256];
 
-        for i in 0..256 {
+        for (i, entry) in table.iter_mut().enumerate() {
             let mut crc = i as u32;
             for _ in 0..8 {
                 if crc & 1 == 1 {
@@ -77,7 +77,7 @@ impl Crc32 {
                     crc >>= 1;
                 }
             }
-            table[i] = crc;
+            *entry = crc;
         }
 
         table
@@ -253,7 +253,7 @@ impl Crc32c {
     fn generate_table() -> [u32; 256] {
         let mut table = [0u32; 256];
 
-        for i in 0..256 {
+        for (i, entry) in table.iter_mut().enumerate() {
             let mut crc = i as u32;
             for _ in 0..8 {
                 if crc & 1 == 1 {
@@ -262,7 +262,7 @@ impl Crc32c {
                     crc >>= 1;
                 }
             }
-            table[i] = crc;
+            *entry = crc;
         }
 
         table
@@ -303,7 +303,7 @@ use once_cell::sync::Lazy;
 
 static CRC32_TABLE: Lazy<[u32; 256]> = Lazy::new(|| {
     let mut table = [0u32; 256];
-    for i in 0..256 {
+    for (i, entry) in table.iter_mut().enumerate() {
         let mut crc = i as u32;
         for _ in 0..8 {
             if crc & 1 == 1 {
@@ -312,7 +312,7 @@ static CRC32_TABLE: Lazy<[u32; 256]> = Lazy::new(|| {
                 crc >>= 1;
             }
         }
-        table[i] = crc;
+        *entry = crc;
     }
     table
 });

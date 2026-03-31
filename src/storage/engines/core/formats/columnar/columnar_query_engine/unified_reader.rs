@@ -32,10 +32,10 @@ fn compute_cosine_similarity(a: &[f32], b: &Arc<Vec<f32>>) -> f32 {
     let mut norm_a = 0.0;
     let mut norm_b = 0.0;
 
-    for i in 0..a.len() {
-        dot_product += a[i] * b[i];
-        norm_a += a[i] * a[i];
-        norm_b += b[i] * b[i];
+    for (a_val, b_val) in a.iter().zip(b.iter()) {
+        dot_product += a_val * b_val;
+        norm_a += a_val * a_val;
+        norm_b += b_val * b_val;
     }
 
     let denom = (norm_a * norm_b).sqrt();

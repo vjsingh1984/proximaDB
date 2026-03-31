@@ -3864,8 +3864,8 @@ impl ProximaDataBlock {
             let mut group_floats = Vec::with_capacity(vectors.len() * group_dims);
 
             for vector in vectors {
-                for dim_idx in start_dim..end_dim {
-                    group_floats.push(vector[dim_idx]);
+                for val in &vector[start_dim..end_dim] {
+                    group_floats.push(*val);
                 }
             }
 
@@ -4028,8 +4028,8 @@ impl ProximaDataBlock {
             // Collect all group floats (row-wise: R0[d0-d31], R1[d0-d31], ...)
             let mut group_floats = Vec::with_capacity(vectors.len() * (end_dim - start_dim));
             for vector in vectors {
-                for dim in start_dim..end_dim {
-                    group_floats.push(vector[dim]);
+                for val in &vector[start_dim..end_dim] {
+                    group_floats.push(*val);
                 }
             }
 
@@ -5108,8 +5108,8 @@ impl ProximaDataBlock {
         let mut records = Vec::with_capacity(vector_count);
         for row_idx in 0..vector_count {
             let mut vector = Vec::with_capacity(dimension);
-            for dim_idx in 0..dimension {
-                vector.push(all_dimensions[dim_idx][row_idx]);
+            for dim_col in all_dimensions.iter().take(dimension) {
+                vector.push(dim_col[row_idx]);
             }
 
             records.push(VectorRecord {

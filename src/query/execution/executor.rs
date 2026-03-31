@@ -596,16 +596,16 @@ impl QueryExecutor {
                                             if acc.is_empty() {
                                                 acc = v.clone();
                                             } else if acc.len() == v.len() {
-                                                for i in 0..acc.len() {
-                                                    acc[i] += v[i];
+                                                for (acc_val, v_val) in acc.iter_mut().zip(v.iter()) {
+                                                    *acc_val += v_val;
                                                 }
                                             }
                                             count += 1.0;
                                         }
                             }
                             if count > 0.0 {
-                                for i in 0..acc.len() {
-                                    acc[i] /= count;
+                                for acc_val in acc.iter_mut() {
+                                    *acc_val /= count;
                                 }
                                 let sim_rows = self
                                     .execute_vector_search_operation(
