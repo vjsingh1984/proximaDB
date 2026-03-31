@@ -301,6 +301,12 @@ impl IdIndex {
     }
 }
 
+impl Default for IdIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Statistics for the ID index
 #[derive(Debug, Clone)]
 pub struct IndexStats {

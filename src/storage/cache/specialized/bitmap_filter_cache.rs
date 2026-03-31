@@ -89,6 +89,12 @@ impl FilterOptimizer {
     }
 }
 
+impl Default for FilterOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Filter component that can be cached
 pub struct FilterComponent {
     pub expression: String,
@@ -135,6 +141,12 @@ impl IncrementalUpdater {
         let mut index = self.doc_filter_index.write().await;
         index.remove(&doc_id);
         Ok(())
+    }
+}
+
+impl Default for IncrementalUpdater {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

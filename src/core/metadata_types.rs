@@ -323,6 +323,12 @@ impl TypedMetadataBuilder {
     }
 }
 
+impl Default for TypedMetadataBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -974,6 +974,12 @@ impl WALFlushCoordinator {
     }
 }
 
+impl Default for WALFlushCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Result of flushing all collections during graceful shutdown
 #[derive(Debug, Clone)]
 pub struct FlushAllResult {

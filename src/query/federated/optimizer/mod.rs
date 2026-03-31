@@ -644,6 +644,310 @@ impl AdvancedCostEstimator {
 
         points_to_scan * self.base_cost_model.row_scan_cost * partition_benefit
     }
+
+    /// Update cost model parameters from observed execution feedback.
+    /// Uses exponential moving average (alpha=0.2) to smooth parameter updates.
+    pub fn update_from_feedback(&mut self, feedback: &ExecutionFeedback) {
+        const ALPHA: f64 = 0.2; // EMA smoothing factor
+
+        if let Some(observed_cpu_per_distance) = feedback.observed_cpu_per_distance {
+            self.cpu_cycles_per_distance = self.cpu_cycles_per_distance * (1.0 - ALPHA)
+                + observed_cpu_per_distance * ALPHA;
+        }
+        if let Some(observed_io_per_page) = feedback.observed_io_per_page {
+            self.io_cost_per_page =
+                self.io_cost_per_page * (1.0 - ALPHA) + observed_io_per_page * ALPHA;
+        }
+        if let Some(observed_mem_cost) = feedback.observed_memory_cost {
+            self.memory_access_cost =
+                self.memory_access_cost * (1.0 - ALPHA) + observed_mem_cost * ALPHA;
+        }
+    }
+}
+
+// ============================================================================
+// RUNTIME STATISTICS FEEDBACK
+// ============================================================================
+
+/// Feedback from a single query execution, used to calibrate cost models
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionFeedback {
+    /// The operation key (e.g., "vector_search:embeddings:top10")
+    pub operation_key: String,
+    /// Estimated cardinality at plan time
+    pub estimated_cardinality: u64,
+    /// Actual cardinality observed at execution time
+    pub actual_cardinality: u64,
+    /// Estimated cost at plan time
+    pub estimated_cost: f64,
+    /// Actual execution latency in milliseconds
+    pub actual_latency_ms: f64,
+    /// Observed CPU cost per distance computation (if measurable)
+    pub observed_cpu_per_distance: Option<f64>,
+    /// Observed I/O cost per page read (if measurable)
+    pub observed_io_per_page: Option<f64>,
+    /// Observed memory access cost factor (if measurable)
+    pub observed_memory_cost: Option<f64>,
+    /// Number of rows scanned (for selectivity calibration)
+    pub rows_scanned: Option<u64>,
+    /// Number of I/O pages read
+    pub pages_read: Option<u64>,
+}
+
+/// Thread-safe runtime statistics collector that accumulates execution feedback
+/// and uses it to calibrate the query optimizer's cost model and cardinality estimates.
+///
+/// Usage pattern:
+/// 1. Before execution: optimizer produces a plan with estimated costs
+/// 2. After execution: caller records feedback via `record_feedback()`
+/// 3. On next optimization: calibrated estimates incorporate learned corrections
+pub struct RuntimeStatisticsCollector {
+    /// Accumulated per-operation cardinality ratios (estimated vs actual)
+    cardinality_history: parking_lot::RwLock<HashMap<String, CardinalityHistory>>,
+    /// Accumulated per-operation latency observations
+    latency_history: parking_lot::RwLock<HashMap<String, LatencyHistory>>,
+    /// Selectivity observations per filter pattern
+    selectivity_history: parking_lot::RwLock<HashMap<String, SelectivityHistory>>,
+    /// Maximum number of history entries per operation before compaction
+    max_history_per_op: usize,
+}
+
+/// Tracks cardinality estimation accuracy for a specific operation type
+#[derive(Debug, Clone)]
+struct CardinalityHistory {
+    /// Rolling ratio of actual/estimated cardinality (EMA)
+    correction_ratio: f64,
+    /// Number of observations
+    sample_count: u64,
+    /// Recent observation timestamps for decay
+    last_updated_ms: u64,
+}
+
+/// Tracks latency observations for cost model calibration
+#[derive(Debug, Clone)]
+struct LatencyHistory {
+    /// Exponential moving average of latency in ms
+    avg_latency_ms: f64,
+    /// P95 approximation (tracks the max of recent window)
+    p95_latency_ms: f64,
+    /// Number of observations
+    sample_count: u64,
+    /// Cost-to-latency ratio for this operation type
+    cost_latency_ratio: f64,
+}
+
+/// Tracks observed selectivities for filter predicates
+#[derive(Debug, Clone)]
+struct SelectivityHistory {
+    /// Rolling selectivity estimate (fraction of rows passing filter)
+    avg_selectivity: f64,
+    /// Number of observations
+    sample_count: u64,
+}
+
+impl Default for RuntimeStatisticsCollector {
+    fn default() -> Self {
+        Self::new(1000)
+    }
+}
+
+impl RuntimeStatisticsCollector {
+    /// Create a new collector with the given max history entries per operation
+    pub fn new(max_history_per_op: usize) -> Self {
+        Self {
+            cardinality_history: parking_lot::RwLock::new(HashMap::new()),
+            latency_history: parking_lot::RwLock::new(HashMap::new()),
+            selectivity_history: parking_lot::RwLock::new(HashMap::new()),
+            max_history_per_op,
+        }
+    }
+
+    /// Record execution feedback and update internal models
+    pub fn record_feedback(&self, feedback: &ExecutionFeedback) {
+        self.update_cardinality_history(feedback);
+        self.update_latency_history(feedback);
+        if let Some(rows_scanned) = feedback.rows_scanned {
+            if rows_scanned > 0 && feedback.actual_cardinality > 0 {
+                self.update_selectivity_history(
+                    &feedback.operation_key,
+                    feedback.actual_cardinality as f64 / rows_scanned as f64,
+                );
+            }
+        }
+    }
+
+    fn update_cardinality_history(&self, feedback: &ExecutionFeedback) {
+        const ALPHA: f64 = 0.3; // Faster adaptation for cardinality
+        let mut history = self.cardinality_history.write();
+
+        let ratio = if feedback.estimated_cardinality > 0 {
+            feedback.actual_cardinality as f64 / feedback.estimated_cardinality as f64
+        } else {
+            1.0
+        };
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        let entry = history
+            .entry(feedback.operation_key.clone())
+            .or_insert(CardinalityHistory {
+                correction_ratio: 1.0,
+                sample_count: 0,
+                last_updated_ms: now_ms,
+            });
+
+        entry.correction_ratio = entry.correction_ratio * (1.0 - ALPHA) + ratio * ALPHA;
+        entry.sample_count += 1;
+        entry.last_updated_ms = now_ms;
+
+        self.compact_if_needed(&mut history);
+    }
+
+    fn update_latency_history(&self, feedback: &ExecutionFeedback) {
+        const ALPHA: f64 = 0.2;
+        let mut history = self.latency_history.write();
+
+        let entry = history
+            .entry(feedback.operation_key.clone())
+            .or_insert(LatencyHistory {
+                avg_latency_ms: feedback.actual_latency_ms,
+                p95_latency_ms: feedback.actual_latency_ms,
+                sample_count: 0,
+                cost_latency_ratio: if feedback.estimated_cost > 0.0 {
+                    feedback.actual_latency_ms / feedback.estimated_cost
+                } else {
+                    1.0
+                },
+            });
+
+        entry.avg_latency_ms =
+            entry.avg_latency_ms * (1.0 - ALPHA) + feedback.actual_latency_ms * ALPHA;
+        // Approximate P95 by tracking 95th percentile via exponential max decay
+        if feedback.actual_latency_ms > entry.p95_latency_ms {
+            entry.p95_latency_ms = feedback.actual_latency_ms;
+        } else {
+            entry.p95_latency_ms =
+                entry.p95_latency_ms * 0.99 + feedback.actual_latency_ms * 0.01;
+        }
+        entry.sample_count += 1;
+        if feedback.estimated_cost > 0.0 {
+            let new_ratio = feedback.actual_latency_ms / feedback.estimated_cost;
+            entry.cost_latency_ratio =
+                entry.cost_latency_ratio * (1.0 - ALPHA) + new_ratio * ALPHA;
+        }
+    }
+
+    fn update_selectivity_history(&self, operation_key: &str, selectivity: f64) {
+        const ALPHA: f64 = 0.25;
+        let mut history = self.selectivity_history.write();
+
+        let entry = history
+            .entry(operation_key.to_string())
+            .or_insert(SelectivityHistory {
+                avg_selectivity: selectivity,
+                sample_count: 0,
+            });
+
+        entry.avg_selectivity = entry.avg_selectivity * (1.0 - ALPHA) + selectivity * ALPHA;
+        entry.sample_count += 1;
+    }
+
+    fn compact_if_needed(&self, history: &mut HashMap<String, CardinalityHistory>) {
+        if history.len() > self.max_history_per_op * 2 {
+            // Remove entries with fewest samples
+            let mut entries: Vec<_> = history
+                .iter()
+                .map(|(k, v)| (k.clone(), v.sample_count))
+                .collect();
+            entries.sort_by_key(|(_, count)| *count);
+            let to_remove = history.len() - self.max_history_per_op;
+            for (key, _) in entries.into_iter().take(to_remove) {
+                history.remove(&key);
+            }
+        }
+    }
+
+    /// Get the calibrated cardinality correction ratio for an operation
+    pub fn cardinality_correction(&self, operation_key: &str) -> Option<f64> {
+        self.cardinality_history
+            .read()
+            .get(operation_key)
+            .map(|h| h.correction_ratio)
+    }
+
+    /// Get the average observed latency for an operation
+    pub fn avg_latency(&self, operation_key: &str) -> Option<f64> {
+        self.latency_history
+            .read()
+            .get(operation_key)
+            .map(|h| h.avg_latency_ms)
+    }
+
+    /// Get the cost-to-latency ratio for translating costs to expected ms
+    pub fn cost_latency_ratio(&self, operation_key: &str) -> Option<f64> {
+        self.latency_history
+            .read()
+            .get(operation_key)
+            .map(|h| h.cost_latency_ratio)
+    }
+
+    /// Get calibrated selectivity for a filter pattern
+    pub fn calibrated_selectivity(&self, operation_key: &str) -> Option<f64> {
+        self.selectivity_history
+            .read()
+            .get(operation_key)
+            .map(|h| h.avg_selectivity)
+    }
+
+    /// Check if a cached plan should be invalidated based on performance regression.
+    /// Returns true if actual latency exceeds 3x the expected latency.
+    pub fn should_invalidate_plan(
+        &self,
+        operation_key: &str,
+        estimated_cost: f64,
+        actual_latency_ms: f64,
+    ) -> bool {
+        if let Some(ratio) = self.cost_latency_ratio(operation_key) {
+            let expected_latency = estimated_cost * ratio;
+            actual_latency_ms > expected_latency * 3.0
+        } else {
+            false
+        }
+    }
+
+    /// Generate a snapshot of all tracked statistics for diagnostics
+    pub fn snapshot(&self) -> RuntimeStatsSnapshot {
+        let cardinality = self.cardinality_history.read();
+        let latency = self.latency_history.read();
+        let selectivity = self.selectivity_history.read();
+
+        RuntimeStatsSnapshot {
+            tracked_operations: cardinality.len() + latency.len(),
+            cardinality_entries: cardinality.len(),
+            latency_entries: latency.len(),
+            selectivity_entries: selectivity.len(),
+            total_observations: cardinality.values().map(|h| h.sample_count).sum::<u64>()
+                + latency.values().map(|h| h.sample_count).sum::<u64>(),
+        }
+    }
+}
+
+/// Diagnostic snapshot of runtime statistics state
+#[derive(Debug, Clone)]
+pub struct RuntimeStatsSnapshot {
+    /// Total unique operations tracked
+    pub tracked_operations: usize,
+    /// Number of cardinality history entries
+    pub cardinality_entries: usize,
+    /// Number of latency history entries
+    pub latency_entries: usize,
+    /// Number of selectivity history entries
+    pub selectivity_entries: usize,
+    /// Total observation count across all entries
+    pub total_observations: u64,
 }
 
 // ============================================================================
@@ -1290,6 +1594,8 @@ pub struct CrossModelOptimizer {
     /// Statistics provider (optional, for enhanced cost estimation)
     #[allow(dead_code)]
     statistics_provider: Option<std::sync::Arc<dyn StatisticsProvider>>,
+    /// Runtime statistics collector for adaptive cost model tuning
+    runtime_stats: std::sync::Arc<RuntimeStatisticsCollector>,
 }
 
 impl CrossModelOptimizer {
@@ -1352,6 +1658,7 @@ impl CrossModelOptimizer {
             join_order_optimizer: JoinOrderOptimizer::new(),
             plan_cache: std::sync::Arc::new(PlanCache::default()),
             statistics_provider: None,
+            runtime_stats: std::sync::Arc::new(RuntimeStatisticsCollector::default()),
         }
     }
 
@@ -1362,6 +1669,67 @@ impl CrossModelOptimizer {
     ) -> Self {
         self.statistics_provider = Some(provider);
         self
+    }
+
+    /// Create an optimizer with a custom runtime statistics collector
+    pub fn with_runtime_stats(
+        mut self,
+        stats: std::sync::Arc<RuntimeStatisticsCollector>,
+    ) -> Self {
+        self.runtime_stats = stats;
+        self
+    }
+
+    /// Get a reference to the runtime statistics collector for sharing with executors
+    pub fn runtime_stats(&self) -> &std::sync::Arc<RuntimeStatisticsCollector> {
+        &self.runtime_stats
+    }
+
+    /// Record execution feedback and adaptively tune the cost model.
+    ///
+    /// Call this after each query execution with observed metrics.
+    /// The optimizer will:
+    /// 1. Update cardinality correction ratios
+    /// 2. Update cost model parameters (cpu, io, memory costs)
+    /// 3. Invalidate cached plans that show performance regression
+    pub fn record_execution_feedback(&mut self, feedback: ExecutionFeedback) {
+        // 1. Update runtime stats collector
+        self.runtime_stats.record_feedback(&feedback);
+
+        // 2. Update cardinality estimator with actual vs estimated
+        self.cardinality_estimator.record_actual_cardinality(
+            feedback.operation_key.clone(),
+            feedback.estimated_cardinality,
+            feedback.actual_cardinality,
+        );
+
+        // 3. Update cost model parameters from hardware observations
+        self.advanced_cost_estimator
+            .update_from_feedback(&feedback);
+
+        // 4. Invalidate cached plan if performance regressed significantly
+        if self.runtime_stats.should_invalidate_plan(
+            &feedback.operation_key,
+            feedback.estimated_cost,
+            feedback.actual_latency_ms,
+        ) {
+            // Extract the collection/target from the operation key for targeted invalidation
+            if let Some(target) = feedback.operation_key.split(':').nth(1) {
+                self.plan_cache.invalidate_for_target(target);
+            }
+        }
+    }
+
+    /// Get calibrated cardinality estimate incorporating runtime feedback
+    pub fn calibrated_cardinality(&self, operation_key: &str, base_estimate: u64) -> u64 {
+        // First check runtime stats for correction ratio
+        if let Some(correction) = self.runtime_stats.cardinality_correction(operation_key) {
+            let calibrated = (base_estimate as f64 * correction) as u64;
+            return calibrated.max(1);
+        }
+        // Fall back to cardinality estimator's historical data
+        self.cardinality_estimator
+            .calibrated_estimate(operation_key, base_estimate)
     }
 
     fn ordered_query_sources<'a>(query: &'a FederatedQuery) -> Vec<QuerySourceRef<'a>> {
@@ -5002,5 +5370,331 @@ mod tests {
     fn test_join_strategy_nested_loop_one_side_small() {
         let strategy = select_join_strategy(500, 50, true);
         assert_eq!(strategy, JoinStrategy::IndexJoin);
+    }
+
+    // ========================================================================
+    // Runtime Statistics Feedback Tests
+    // ========================================================================
+
+    #[test]
+    fn test_runtime_stats_collector_creation() {
+        let collector = RuntimeStatisticsCollector::new(500);
+        let snapshot = collector.snapshot();
+        assert_eq!(snapshot.tracked_operations, 0);
+        assert_eq!(snapshot.total_observations, 0);
+    }
+
+    #[test]
+    fn test_runtime_stats_record_single_feedback() {
+        let collector = RuntimeStatisticsCollector::default();
+        let feedback = ExecutionFeedback {
+            operation_key: "vector_search:embeddings:top10".to_string(),
+            estimated_cardinality: 10,
+            actual_cardinality: 8,
+            estimated_cost: 100.0,
+            actual_latency_ms: 12.5,
+            ..Default::default()
+        };
+
+        collector.record_feedback(&feedback);
+
+        let snapshot = collector.snapshot();
+        assert_eq!(snapshot.cardinality_entries, 1);
+        assert_eq!(snapshot.latency_entries, 1);
+
+        // Check correction ratio was recorded
+        let correction = collector
+            .cardinality_correction("vector_search:embeddings:top10")
+            .expect("correction should exist");
+        // Initial ratio=1.0, actual/est=0.8, EMA with alpha=0.3 → 1.0*0.7 + 0.8*0.3 = 0.94
+        assert!((correction - 0.94).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_runtime_stats_ema_convergence() {
+        let collector = RuntimeStatisticsCollector::default();
+
+        // Simulate 20 executions where actual is consistently 2x estimated
+        for _ in 0..20 {
+            collector.record_feedback(&ExecutionFeedback {
+                operation_key: "graph:traverse:depth3".to_string(),
+                estimated_cardinality: 100,
+                actual_cardinality: 200,
+                estimated_cost: 50.0,
+                actual_latency_ms: 25.0,
+                ..Default::default()
+            });
+        }
+
+        let correction = collector
+            .cardinality_correction("graph:traverse:depth3")
+            .expect("correction should exist after 20 observations");
+        // After 20 iterations of EMA(alpha=0.3) toward ratio=2.0, should be close to 2.0
+        assert!(
+            correction > 1.8,
+            "correction ratio should converge toward 2.0, got {}",
+            correction
+        );
+    }
+
+    #[test]
+    fn test_runtime_stats_latency_tracking() {
+        let collector = RuntimeStatisticsCollector::default();
+
+        collector.record_feedback(&ExecutionFeedback {
+            operation_key: "doc_query:users".to_string(),
+            estimated_cardinality: 50,
+            actual_cardinality: 50,
+            estimated_cost: 200.0,
+            actual_latency_ms: 15.0,
+            ..Default::default()
+        });
+
+        let avg = collector
+            .avg_latency("doc_query:users")
+            .expect("latency should be tracked");
+        assert!((avg - 15.0).abs() < 0.1);
+
+        let ratio = collector
+            .cost_latency_ratio("doc_query:users")
+            .expect("ratio should be tracked");
+        // 15.0 / 200.0 = 0.075
+        assert!((ratio - 0.075).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_runtime_stats_selectivity_tracking() {
+        let collector = RuntimeStatisticsCollector::default();
+
+        collector.record_feedback(&ExecutionFeedback {
+            operation_key: "filter:age>30".to_string(),
+            estimated_cardinality: 30,
+            actual_cardinality: 30,
+            estimated_cost: 10.0,
+            actual_latency_ms: 1.0,
+            rows_scanned: Some(100),
+            ..Default::default()
+        });
+
+        let selectivity = collector
+            .calibrated_selectivity("filter:age>30")
+            .expect("selectivity should be tracked");
+        // 30/100 = 0.3
+        assert!((selectivity - 0.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_runtime_stats_plan_invalidation_detection() {
+        let collector = RuntimeStatisticsCollector::default();
+
+        // Establish a baseline cost-to-latency ratio
+        for _ in 0..5 {
+            collector.record_feedback(&ExecutionFeedback {
+                operation_key: "vector_search:imgs".to_string(),
+                estimated_cardinality: 10,
+                actual_cardinality: 10,
+                estimated_cost: 50.0,
+                actual_latency_ms: 5.0, // ratio = 0.1
+                ..Default::default()
+            });
+        }
+
+        // Normal latency: should NOT invalidate
+        assert!(!collector.should_invalidate_plan("vector_search:imgs", 50.0, 6.0));
+
+        // 3x+ regression: should invalidate
+        // Expected = 50.0 * 0.1 = 5.0, threshold = 15.0
+        assert!(collector.should_invalidate_plan("vector_search:imgs", 50.0, 20.0));
+    }
+
+    #[test]
+    fn test_runtime_stats_unknown_operation_no_invalidation() {
+        let collector = RuntimeStatisticsCollector::default();
+        // No history for this op — should not recommend invalidation
+        assert!(!collector.should_invalidate_plan("unknown:op", 100.0, 500.0));
+    }
+
+    #[test]
+    fn test_advanced_cost_estimator_feedback_update() {
+        let mut estimator = AdvancedCostEstimator::new();
+        let initial_cpu = estimator.cpu_cycles_per_distance;
+
+        estimator.update_from_feedback(&ExecutionFeedback {
+            observed_cpu_per_distance: Some(0.005),
+            ..Default::default()
+        });
+
+        // EMA: 0.001 * 0.8 + 0.005 * 0.2 = 0.0018
+        let expected = initial_cpu * 0.8 + 0.005 * 0.2;
+        assert!(
+            (estimator.cpu_cycles_per_distance - expected).abs() < 1e-6,
+            "cpu cost should update via EMA, got {}",
+            estimator.cpu_cycles_per_distance
+        );
+    }
+
+    #[test]
+    fn test_advanced_cost_estimator_multiple_feedback_convergence() {
+        let mut estimator = AdvancedCostEstimator::new();
+
+        // Apply 50 feedbacks with observed io_cost = 2.0 (initial is 1.0)
+        for _ in 0..50 {
+            estimator.update_from_feedback(&ExecutionFeedback {
+                observed_io_per_page: Some(2.0),
+                ..Default::default()
+            });
+        }
+
+        assert!(
+            (estimator.io_cost_per_page - 2.0).abs() < 0.05,
+            "io_cost_per_page should converge to 2.0, got {}",
+            estimator.io_cost_per_page
+        );
+    }
+
+    #[test]
+    fn test_optimizer_record_execution_feedback() {
+        let mut optimizer = CrossModelOptimizer::new();
+
+        // Record feedback for a vector search
+        optimizer.record_execution_feedback(ExecutionFeedback {
+            operation_key: "vector_search:embeddings:top10".to_string(),
+            estimated_cardinality: 10,
+            actual_cardinality: 7,
+            estimated_cost: 100.0,
+            actual_latency_ms: 8.0,
+            ..Default::default()
+        });
+
+        // Calibrated cardinality should now differ from base
+        let calibrated = optimizer.calibrated_cardinality("vector_search:embeddings:top10", 10);
+        // With ratio ~0.94 (EMA from 1.0 toward 0.7): 10 * 0.94 = 9
+        assert!(
+            calibrated < 10,
+            "calibrated should be less than base, got {}",
+            calibrated
+        );
+    }
+
+    #[test]
+    fn test_optimizer_plan_invalidation_on_regression() {
+        let mut optimizer = CrossModelOptimizer::new();
+
+        // First, build up a baseline
+        for _ in 0..10 {
+            optimizer.record_execution_feedback(ExecutionFeedback {
+                operation_key: "vector_search:products:top5".to_string(),
+                estimated_cardinality: 5,
+                actual_cardinality: 5,
+                estimated_cost: 80.0,
+                actual_latency_ms: 4.0, // ratio ~0.05
+                ..Default::default()
+            });
+        }
+
+        // Cache a plan for "products"
+        let query = FederatedQuery {
+            sql: "SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 5)".to_string(),
+            query_type: QueryType::VectorSearch,
+            extensions: vec![SqlExtension::VectorSearch {
+                collection: "products".to_string(),
+                query_vector: VectorQuery::Literal(vec![0.1]),
+                top_k: 5,
+            }],
+            targets: vec![],
+            parameters: HashMap::new(),
+            is_cross_model_join: false,
+        };
+        let plan = optimizer.optimize(&query).unwrap();
+        let cache_key = PlanCacheKey::from_query(&query);
+        assert!(optimizer.plan_cache.get(&cache_key).is_some());
+
+        // Now record a massive regression
+        optimizer.record_execution_feedback(ExecutionFeedback {
+            operation_key: "vector_search:products:top5".to_string(),
+            estimated_cardinality: 5,
+            actual_cardinality: 5,
+            estimated_cost: 80.0,
+            actual_latency_ms: 500.0, // 125x regression
+            ..Default::default()
+        });
+
+        // The plan for "products" should have been invalidated
+        assert!(
+            optimizer.plan_cache.get(&cache_key).is_none(),
+            "cached plan should be invalidated after performance regression"
+        );
+    }
+
+    #[test]
+    fn test_runtime_stats_snapshot_completeness() {
+        let collector = RuntimeStatisticsCollector::new(100);
+
+        // Record various operation types
+        collector.record_feedback(&ExecutionFeedback {
+            operation_key: "op1".to_string(),
+            estimated_cardinality: 10,
+            actual_cardinality: 12,
+            estimated_cost: 50.0,
+            actual_latency_ms: 5.0,
+            rows_scanned: Some(100),
+            ..Default::default()
+        });
+        collector.record_feedback(&ExecutionFeedback {
+            operation_key: "op2".to_string(),
+            estimated_cardinality: 100,
+            actual_cardinality: 80,
+            estimated_cost: 200.0,
+            actual_latency_ms: 20.0,
+            ..Default::default()
+        });
+
+        let snap = collector.snapshot();
+        assert_eq!(snap.cardinality_entries, 2);
+        assert_eq!(snap.latency_entries, 2);
+        assert_eq!(snap.selectivity_entries, 1); // Only op1 had rows_scanned
+        assert!(snap.total_observations >= 4); // 2 cardinality + 2 latency minimum
+    }
+
+    #[test]
+    fn test_calibrated_cardinality_falls_back_to_estimator() {
+        let mut optimizer = CrossModelOptimizer::new();
+
+        // Record in the cardinality_estimator directly (bypassing runtime stats)
+        optimizer.cardinality_estimator.record_actual_cardinality(
+            "legacy:op".to_string(),
+            100,
+            50,
+        );
+
+        // Should use the cardinality estimator as fallback
+        let calibrated = optimizer.calibrated_cardinality("legacy:op", 200);
+        // ratio = 50/100 = 0.5 → 200 * 0.5 = 100
+        assert_eq!(calibrated, 100);
+    }
+
+    #[test]
+    fn test_runtime_stats_compaction() {
+        let collector = RuntimeStatisticsCollector::new(5);
+
+        // Insert more than 2 * max_history_per_op entries to trigger compaction
+        for i in 0..12 {
+            collector.record_feedback(&ExecutionFeedback {
+                operation_key: format!("op_{}", i),
+                estimated_cardinality: 10,
+                actual_cardinality: 10,
+                estimated_cost: 10.0,
+                actual_latency_ms: 1.0,
+                ..Default::default()
+            });
+        }
+
+        let snap = collector.snapshot();
+        // After compaction, cardinality entries should be <= max_history_per_op
+        assert!(
+            snap.cardinality_entries <= 5,
+            "should compact to max_history_per_op, got {}",
+            snap.cardinality_entries
+        );
     }
 }

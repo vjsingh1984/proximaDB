@@ -244,6 +244,12 @@ impl ConcurrentIdMapping {
     }
 }
 
+impl Default for ConcurrentIdMapping {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Atomic statistics tracker for index performance monitoring
 #[derive(Debug)]
 pub struct AtomicStats {

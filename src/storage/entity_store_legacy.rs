@@ -1187,6 +1187,12 @@ impl CsrRelationsStore {
     }
 }
 
+impl Default for CsrRelationsStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl RelationsStore for CsrRelationsStore {
     async fn add_relation(&self, collection_id: &str, relation: Relation) -> Result<()> {
@@ -1241,6 +1247,12 @@ impl InMemoryProvenanceRegistry {
         Self {
             map: RwLock::new(HashMap::new()),
         }
+    }
+}
+
+impl Default for InMemoryProvenanceRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

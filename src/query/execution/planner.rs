@@ -1258,6 +1258,12 @@ impl CostModel {
     }
 }
 
+impl Default for CostModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod planner_tests {
     use super::*;

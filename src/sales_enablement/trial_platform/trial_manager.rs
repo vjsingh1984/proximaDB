@@ -824,6 +824,12 @@ impl EvaluationProgress {
     }
 }
 
+impl Default for EvaluationProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngagementMetrics {
     pub fn new() -> Self {
         Self {
@@ -849,6 +855,12 @@ impl EngagementMetrics {
         }
 
         self.total_api_calls += 1;
+    }
+}
+
+impl Default for EngagementMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

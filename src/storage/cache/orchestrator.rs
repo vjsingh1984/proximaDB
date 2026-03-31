@@ -119,6 +119,12 @@ impl StringInterner {
     }
 }
 
+impl Default for StringInterner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Event for async cache access tracking
 ///
 /// ## Purpose:
@@ -863,6 +869,12 @@ impl CascadeInvalidator {
         }
 
         Ok(())
+    }
+}
+
+impl Default for CascadeInvalidator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

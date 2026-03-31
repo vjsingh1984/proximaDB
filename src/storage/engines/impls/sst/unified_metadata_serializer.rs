@@ -69,6 +69,12 @@ impl SstUnifiedMetadataSerializer {
     }
 }
 
+impl Default for SstUnifiedMetadataSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngineMetadataSerializer for SstUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
         // Try to downcast to SstCachedMetadata

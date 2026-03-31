@@ -328,6 +328,12 @@ impl QuantizationAwareCompaction {
     }
 }
 
+impl Default for QuantizationAwareCompaction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Results from quantization-aware compaction
 pub struct QuantizedCompactionResult {
     pub compacted_blocks: Vec<ProximaDataBlock>,

@@ -374,6 +374,12 @@ impl EntityAuditLogger {
     }
 }
 
+impl Default for EntityAuditLogger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Simple audit event
 #[derive(Debug, Clone)]
 pub struct EntityAuditEvent {

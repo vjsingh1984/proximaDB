@@ -30,3 +30,9 @@ impl AIShowcasePlatform {
         }
     }
 }
+
+impl Default for AIShowcasePlatform {
+    fn default() -> Self {
+        Self::new()
+    }
+}

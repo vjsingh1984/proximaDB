@@ -311,6 +311,12 @@ impl AccessPatternTracker {
     }
 }
 
+impl Default for AccessPatternTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Access frequency classification
 #[derive(Debug, Clone, PartialEq)]
 pub enum AccessFrequency {

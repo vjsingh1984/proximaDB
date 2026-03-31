@@ -6355,6 +6355,12 @@ impl IndexCache {
     }
 }
 
+impl Default for IndexCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Memory pressure levels for adaptive cache management
 #[derive(Debug, Clone, Copy)]
 pub enum MemoryPressure {

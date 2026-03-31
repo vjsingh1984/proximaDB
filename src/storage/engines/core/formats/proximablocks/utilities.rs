@@ -462,6 +462,12 @@ impl PerformanceProfiler {
     }
 }
 
+impl Default for PerformanceProfiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Data structures for utility functions
 
 #[derive(Debug, Clone)]

@@ -359,6 +359,12 @@ impl PulsarMetricsCollector {
     }
 }
 
+impl Default for PulsarMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl MetricsCollector for PulsarMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {
@@ -410,6 +416,12 @@ impl QuasarMetricsCollector {
         metrics.insert("quasar_cost_savings_percent".to_string(), 75.0);
 
         Ok(metrics)
+    }
+}
+
+impl Default for QuasarMetricsCollector {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

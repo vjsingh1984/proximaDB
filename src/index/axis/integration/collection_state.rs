@@ -493,6 +493,12 @@ impl CollectionStateManager {
     }
 }
 
+impl Default for CollectionStateManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Memory usage statistics
 #[derive(Debug, Clone)]
 pub struct MemoryUsageStats {

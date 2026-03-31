@@ -476,6 +476,12 @@ impl ThreeStageFilterPipeline {
     // Cache management should be handled at the service level if needed
 }
 
+impl Default for ThreeStageFilterPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Global row index that can reconstruct the original record
 #[derive(Debug, Clone)]
 pub struct GlobalRowIndex {

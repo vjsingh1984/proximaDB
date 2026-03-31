@@ -553,6 +553,12 @@ impl FilterProcessor {
     }
 }
 
+impl Default for FilterProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Execution plan for filters
 pub struct FilterPlan {
     // Implementation details

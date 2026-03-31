@@ -708,10 +708,22 @@ impl MigrationExecutor {
     }
 }
 
+impl Default for MigrationExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RollbackManager {
     /// Create new rollback manager
     pub fn new() -> Self {
         Self { strategies: vec![] }
+    }
+}
+
+impl Default for RollbackManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -721,6 +733,12 @@ impl MigrationProgressTracker {
         Self {
             active_migrations: Vec::new(),
         }
+    }
+}
+
+impl Default for MigrationProgressTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

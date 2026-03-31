@@ -1825,6 +1825,12 @@ impl InMemoryCodebookStore {
     }
 }
 
+impl Default for InMemoryCodebookStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl CodebookStore for InMemoryCodebookStore {
     async fn store_codebook(&self, id: &str, codebook: &Codebook) -> Result<()> {

@@ -571,6 +571,12 @@ impl WriteAheadLogManagerPoolConfigBuilder {
     }
 }
 
+impl Default for WriteAheadLogManagerPoolConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Default for WriteAheadLogManagerPoolConfig {
     fn default() -> Self {
         Self {
@@ -961,6 +967,12 @@ impl WriteAheadLogManagerRegistry {
             }
         }
         Ok(())
+    }
+}
+
+impl Default for WriteAheadLogManagerRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

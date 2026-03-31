@@ -529,6 +529,12 @@ impl ViperFactory {
     }
 }
 
+impl Default for ViperFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Complete VIPER components for a collection
 pub struct ViperComponents {
     pub configuration: ViperConfiguration,
@@ -618,6 +624,12 @@ impl ViperConfigurationBuilder {
     /// Build final configuration
     pub fn build(self) -> ViperConfiguration {
         self.config
+    }
+}
+
+impl Default for ViperConfigurationBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

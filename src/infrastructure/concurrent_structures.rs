@@ -294,6 +294,16 @@ where
     }
 }
 
+impl<K, V> Default for ConcurrentStorage<K, V>
+where
+    K: Hash + Eq + Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Access information for cache analysis
 #[derive(Debug, Clone)]
 pub struct AccessInfo {

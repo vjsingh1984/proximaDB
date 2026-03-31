@@ -37,3 +37,9 @@ impl CompetitiveIntelligence {
         }
     }
 }
+
+impl Default for CompetitiveIntelligence {
+    fn default() -> Self {
+        Self::new()
+    }
+}

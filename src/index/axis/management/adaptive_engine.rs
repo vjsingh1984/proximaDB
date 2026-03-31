@@ -626,6 +626,12 @@ impl IndexStrategySelector {
     }
 }
 
+impl Default for IndexStrategySelector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformancePredictor {
     /// Create new performance predictor
     pub async fn new() -> Result<Self> {

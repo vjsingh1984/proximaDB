@@ -37,10 +37,22 @@ impl SalesPipelineAnalytics {
     }
 }
 
+impl Default for SalesPipelineAnalytics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CustomerEngagementTracker {
     pub fn new() -> Self {
         Self {
             engagement_history: vec![],
         }
+    }
+}
+
+impl Default for CustomerEngagementTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }

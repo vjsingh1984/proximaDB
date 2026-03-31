@@ -143,6 +143,12 @@ impl TenantKnowledgeGraphRegistry {
     }
 }
 
+impl Default for TenantKnowledgeGraphRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Global registry instance
 static TENANT_REGISTRY: std::sync::OnceLock<TenantKnowledgeGraphRegistry> = std::sync::OnceLock::new();
 

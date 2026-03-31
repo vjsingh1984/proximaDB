@@ -13,6 +13,12 @@ impl StorageMetricsCollector {
     }
 }
 
+impl Default for StorageMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl MetricsCollector for StorageMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {

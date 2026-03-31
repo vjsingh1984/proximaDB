@@ -290,6 +290,12 @@ impl RbacService {
     }
 }
 
+impl Default for RbacService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Resource-based permission context
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionContext {

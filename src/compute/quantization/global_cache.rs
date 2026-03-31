@@ -477,6 +477,12 @@ impl GlobalQuantizationCache {
     }
 }
 
+impl Default for GlobalQuantizationCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Extended cache statistics
 #[derive(Debug, Clone)]
 pub struct ExtendedCacheStats {

@@ -68,6 +68,12 @@ impl QueryParser {
     }
 }
 
+impl Default for QueryParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // --- Nom Parser Combinators ---
 
 // Helper to parse identifiers (variable names, labels, property keys)

@@ -107,6 +107,12 @@ impl QueryStats {
     }
 }
 
+impl Default for QueryStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Query execution context
 #[derive(Debug)]
 pub struct QueryContext {
@@ -151,6 +157,12 @@ impl QueryContext {
     pub fn with_stats(mut self) -> Self {
         self.collect_stats = true;
         self
+    }
+}
+
+impl Default for QueryContext {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

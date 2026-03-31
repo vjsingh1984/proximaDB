@@ -137,6 +137,12 @@ impl TenantManager {
     }
 }
 
+impl Default for TenantManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Simple tenant metrics
 #[derive(Debug, Clone)]
 pub struct TenantMetrics {

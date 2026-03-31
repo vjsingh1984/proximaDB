@@ -806,3 +806,9 @@ impl ProgressiveSearchBuilder {
         ))
     }
 }
+
+impl Default for ProgressiveSearchBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}

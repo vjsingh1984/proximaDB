@@ -71,6 +71,12 @@ impl ProjectionBuilder {
     }
 }
 
+impl Default for ProjectionBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Column projection for query optimization
 pub struct ColumnProjection {
     required_columns: Vec<String>,

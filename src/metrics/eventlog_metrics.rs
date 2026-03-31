@@ -370,6 +370,12 @@ impl EventLogMetricsCollector {
     }
 }
 
+impl Default for EventLogMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Global metrics instance
 pub fn global_metrics() -> EventLogMetricsCollector {
     EventLogMetricsCollector::new()

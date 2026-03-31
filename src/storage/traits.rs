@@ -357,6 +357,12 @@ impl UnifiedMetricsCollector {
     }
 }
 
+impl Default for UnifiedMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Clone for UnifiedMetricsCollector {
     fn clone(&self) -> Self {
         Self {

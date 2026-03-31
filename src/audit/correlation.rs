@@ -295,6 +295,12 @@ impl CrossProviderEventCorrelator {
     }
 }
 
+impl Default for CrossProviderEventCorrelator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -257,6 +257,12 @@ impl CacheMetrics {
     }
 }
 
+impl Default for CacheMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Comprehensive metrics report
 #[derive(Debug, Clone)]
 pub struct MetricsReport {

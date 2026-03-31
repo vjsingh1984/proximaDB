@@ -522,6 +522,12 @@ impl LLMMetrics {
     }
 }
 
+impl Default for LLMMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Default for ProviderMetrics {
     fn default() -> Self {
         Self {

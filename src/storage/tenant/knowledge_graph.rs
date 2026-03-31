@@ -626,6 +626,12 @@ impl DomainPatternAnalyzer {
     }
 }
 
+impl Default for DomainPatternAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EntityPatternAnalysis {
     pub relevance_score: f64,

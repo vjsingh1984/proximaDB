@@ -546,6 +546,12 @@ impl AccessPatternTracker {
     }
 }
 
+impl Default for AccessPatternTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TemporalPattern {
     fn new() -> Self {
         Self {

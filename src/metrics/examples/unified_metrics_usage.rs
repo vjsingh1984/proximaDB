@@ -214,6 +214,12 @@ impl ProductionMetricsManager {
     }
 }
 
+impl Default for ProductionMetricsManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Example of integrating with cache orchestrator
 pub async fn integrate_with_cache_orchestrator() {
     // Create access pattern tracker with metrics integration

@@ -253,6 +253,12 @@ impl DomainManager {
     }
 }
 
+impl Default for DomainManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DomainEntityStore {
     fn new(domain_id: String, tenant_id: String, business_context: BusinessContext) -> Self {
         Self {
@@ -331,6 +337,12 @@ impl DomainAuditLogger {
 
         self.audit_events.insert(event.event_id.clone(), event);
         Ok(())
+    }
+}
+
+impl Default for DomainAuditLogger {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

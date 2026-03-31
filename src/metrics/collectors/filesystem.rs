@@ -804,6 +804,12 @@ impl FilesystemMetricsCollector {
     }
 }
 
+impl Default for FilesystemMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ZeroCopyMetrics {
     pub fn new() -> Self {
         Self {
@@ -873,6 +879,12 @@ impl ZeroCopyMetrics {
     }
 }
 
+impl Default for ZeroCopyMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GeneralFilesystemMetrics {
     pub fn new() -> Self {
         Self {
@@ -919,6 +931,12 @@ impl GeneralFilesystemMetrics {
             helix_bytes_read: AtomicU64::new(0),
             helix_bytes_written: AtomicU64::new(0),
         }
+    }
+}
+
+impl Default for GeneralFilesystemMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

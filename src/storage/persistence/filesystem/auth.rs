@@ -114,6 +114,12 @@ impl EnvironmentCredentialProvider {
     }
 }
 
+impl Default for EnvironmentCredentialProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl CredentialProvider for EnvironmentCredentialProvider {
     async fn get_credentials(&self) -> FsResult<AwsCredentials> {
@@ -232,6 +238,12 @@ impl InstanceMetadataProvider {
     }
 }
 
+impl Default for InstanceMetadataProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl CredentialProvider for InstanceMetadataProvider {
     async fn get_credentials(&self) -> FsResult<AwsCredentials> {
@@ -253,6 +265,12 @@ impl EcsTaskMetadataProvider {
         Self {
             http_client: reqwest::Client::new(),
         }
+    }
+}
+
+impl Default for EcsTaskMetadataProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -393,6 +411,12 @@ impl ChainCredentialProvider {
     }
 }
 
+impl Default for ChainCredentialProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl CredentialProvider for ChainCredentialProvider {
     async fn get_credentials(&self) -> FsResult<AwsCredentials> {
@@ -491,6 +515,12 @@ impl GcsApplicationDefaultProvider {
         Self {
             http_client: reqwest::Client::new(),
         }
+    }
+}
+
+impl Default for GcsApplicationDefaultProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

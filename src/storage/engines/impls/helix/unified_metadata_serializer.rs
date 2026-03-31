@@ -137,6 +137,12 @@ impl HelixUnifiedMetadataSerializer {
     }
 }
 
+impl Default for HelixUnifiedMetadataSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngineMetadataSerializer for HelixUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
         // Try to downcast to HelixCachedMetadata

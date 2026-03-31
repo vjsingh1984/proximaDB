@@ -13,6 +13,12 @@ impl QueryMetricsCollector {
     }
 }
 
+impl Default for QueryMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl MetricsCollector for QueryMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {

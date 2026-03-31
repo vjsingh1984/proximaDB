@@ -325,6 +325,12 @@ impl TierEnforcement {
     }
 }
 
+impl Default for TierEnforcement {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Enforcement result
 #[derive(Debug, Clone)]
 pub struct EnforcementResult {

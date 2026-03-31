@@ -948,6 +948,12 @@ impl GlobalMetricsCollector {
     }
 }
 
+impl Default for GlobalMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalMemory {
     pub fn new() -> Self {
         Self {
@@ -966,6 +972,12 @@ impl GlobalMemory {
         } else {
             8 * 1024 * 1024 * 1024 // Default to 8GB if detection fails
         }
+    }
+}
+
+impl Default for GlobalMemory {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1318,6 +1330,12 @@ impl GlobalTier {
         // In production, would use std::fs::metadata or sysinfo
         // Some(100 * 1024 * 1024 * 1024)  // Default 100GB
         Some(10 * 1024 * 1024 * 1024 * 1024) // 10TB
+    }
+}
+
+impl Default for GlobalTier {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

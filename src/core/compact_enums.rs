@@ -144,6 +144,12 @@ impl PackedEnums {
     }
 }
 
+impl Default for PackedEnums {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Memory savings calculation:
 /// - Original: Each enum as i32 = 4 bytes
 /// - Compact: Each enum as u8 = 1 byte  

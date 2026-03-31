@@ -203,6 +203,12 @@ impl PredicateBuilder {
     }
 }
 
+impl Default for PredicateBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Filter pushdown optimizer
 pub struct FilterPushdown {
     enable_statistics_pruning: bool,
@@ -279,6 +285,12 @@ impl FilterPushdown {
         // This would check column statistics (min/max) against filters
         // For now, return true to read all row groups
         true
+    }
+}
+
+impl Default for FilterPushdown {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

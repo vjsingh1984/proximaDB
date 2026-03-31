@@ -99,6 +99,12 @@ impl SwiftUnifiedMetadataSerializer {
     }
 }
 
+impl Default for SwiftUnifiedMetadataSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngineMetadataSerializer for SwiftUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
         // Try to downcast to SwiftCachedMetadata

@@ -267,6 +267,12 @@ impl MetricsAggregationEngine {
     }
 }
 
+impl Default for MetricsAggregationEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Trend direction
 #[derive(Debug, Clone)]
 pub enum Trend {

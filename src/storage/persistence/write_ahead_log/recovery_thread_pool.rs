@@ -145,6 +145,12 @@ impl RecoveryThreadPool {
     }
 }
 
+impl Default for RecoveryThreadPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Guard that ensures recovery resources are properly released
 #[derive(Debug)]
 pub struct RecoveryGuard<'a> {

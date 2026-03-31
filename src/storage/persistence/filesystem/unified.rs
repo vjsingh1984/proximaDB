@@ -641,3 +641,9 @@ impl UnifiedFilesystemBuilder {
         ))
     }
 }
+
+impl Default for UnifiedFilesystemBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}

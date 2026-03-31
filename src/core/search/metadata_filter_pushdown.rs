@@ -584,6 +584,12 @@ impl MetadataFilterPushdown {
     }
 }
 
+impl Default for MetadataFilterPushdown {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SelectivityEstimator {
     fn new() -> Self {
         Self {

@@ -84,6 +84,12 @@ impl VectorPool {
     }
 }
 
+impl Default for VectorPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// High-performance query executor with multi-modal support
 pub struct QueryExecutor {
     vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests

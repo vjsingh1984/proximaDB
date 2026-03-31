@@ -395,6 +395,12 @@ impl AccessPatternMetricsCollector {
     }
 }
 
+impl Default for AccessPatternMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AccessPatternMetrics {
     pub fn new() -> Self {
         Self {
@@ -419,6 +425,12 @@ impl AccessPatternMetrics {
             cache_hostile_patterns: AtomicU64::new(0),
             working_set_size_estimate: AtomicUsize::new(0),
         }
+    }
+}
+
+impl Default for AccessPatternMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -453,6 +465,12 @@ impl CorrelationTracker {
     }
 }
 
+impl Default for CorrelationTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PatternRecognitionEngine {
     pub fn new() -> Self {
         Self {
@@ -478,6 +496,12 @@ impl PatternRecognitionEngine {
 
         // Pattern detection would happen here
         // For now, just a placeholder
+    }
+}
+
+impl Default for PatternRecognitionEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

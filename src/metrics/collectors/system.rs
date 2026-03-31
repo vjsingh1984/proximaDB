@@ -29,6 +29,12 @@ impl SystemMetricsCollector {
     }
 }
 
+impl Default for SystemMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl MetricsCollector for SystemMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {

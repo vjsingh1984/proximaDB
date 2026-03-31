@@ -361,6 +361,12 @@ impl DefaultParquetWriterFactory {
     }
 }
 
+impl Default for DefaultParquetWriterFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Flush result information
 #[derive(Debug, Clone)]
 pub struct FlushResult {

@@ -45,6 +45,12 @@ impl MockCollectionService {
     }
 }
 
+impl Default for MockCollectionService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Create test vector record
 fn create_test_vector(id: &str, _collection_id: &str, dimension: usize) -> VectorRecord {
     VectorRecord {

@@ -195,6 +195,12 @@ impl MvccResolver {
     }
 }
 
+impl Default for MvccResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

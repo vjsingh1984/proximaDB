@@ -529,6 +529,12 @@ impl MetadataIndex {
     }
 }
 
+impl Default for MetadataIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

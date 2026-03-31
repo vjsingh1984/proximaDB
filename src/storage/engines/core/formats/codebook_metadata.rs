@@ -416,6 +416,12 @@ impl CodebookSerializer {
     }
 }
 
+impl Default for CodebookSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// ProximaBlock footer with codebook metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProximaBlockFooter {

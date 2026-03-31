@@ -217,6 +217,12 @@ impl AccessTracker {
     }
 }
 
+impl Default for AccessTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CacheEvictor {
     /// Create new cache evictor with unified metrics integration
     pub fn new(

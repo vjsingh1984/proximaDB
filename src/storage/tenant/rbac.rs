@@ -517,6 +517,12 @@ impl RBACEventLogger {
     }
 }
 
+impl Default for RBACEventLogger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// RBAC audit event
 #[derive(Debug, Clone)]
 pub struct RBACEvent {

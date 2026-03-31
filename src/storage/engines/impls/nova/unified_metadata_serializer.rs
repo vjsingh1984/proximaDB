@@ -102,6 +102,12 @@ impl NovaUnifiedMetadataSerializer {
     }
 }
 
+impl Default for NovaUnifiedMetadataSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngineMetadataSerializer for NovaUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
         // Try to downcast to NovaCachedMetadata

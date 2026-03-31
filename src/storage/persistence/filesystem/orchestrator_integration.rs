@@ -181,6 +181,12 @@ impl OrchestratorAwareFilesystemBuilder {
     }
 }
 
+impl Default for OrchestratorAwareFilesystemBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Helper to create engine-aware cache key
 pub fn create_cache_key(collection_id: &str, engine_type: &str, path: &str) -> String {
     format!("{}:{}:{}", path, collection_id, engine_type)

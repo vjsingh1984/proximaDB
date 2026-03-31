@@ -480,6 +480,12 @@ impl ConfigurationGenerator {
     }
 }
 
+impl Default for ConfigurationGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Enterprise configuration for deployment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnterpriseConfiguration {
@@ -521,6 +527,12 @@ pub struct KubernetesDeployer;
 impl KubernetesDeployer {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for KubernetesDeployer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -590,6 +602,12 @@ pub struct DockerDeployer;
 impl DockerDeployer {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for DockerDeployer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -701,6 +719,12 @@ impl AWSDeployer {
     }
 }
 
+impl Default for AWSDeployer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl PlatformDeployer for AWSDeployer {
     async fn deploy(
@@ -731,6 +755,12 @@ pub struct AzureDeployer;
 impl AzureDeployer {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for AzureDeployer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -925,6 +955,12 @@ impl ValidationEngine {
             details: "Performance baseline meets expectations".to_string(),
             resolution_steps: vec![],
         })
+    }
+}
+
+impl Default for ValidationEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

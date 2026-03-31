@@ -861,6 +861,12 @@ impl GraphMetricsCollector {
     }
 }
 
+impl Default for GraphMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LatencyHistogram {
     pub fn new() -> Self {
         Self {

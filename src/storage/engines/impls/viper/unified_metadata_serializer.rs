@@ -89,6 +89,12 @@ impl ViperMetadataSerializer {
     }
 }
 
+impl Default for ViperMetadataSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngineMetadataSerializer for ViperMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
         // Try to downcast to ViperCachedMetadata

@@ -974,3 +974,9 @@ impl StreamingWriterBuilder {
         }
     }
 }
+
+impl Default for StreamingWriterBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}

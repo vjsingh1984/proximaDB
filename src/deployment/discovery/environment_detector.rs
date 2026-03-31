@@ -854,6 +854,12 @@ impl KubernetesAnalyzer {
     }
 }
 
+impl Default for KubernetesAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl PlatformAnalyzer for KubernetesAnalyzer {
     async fn analyze_platform(&self) -> Result<PlatformAnalysis> {
@@ -907,6 +913,12 @@ impl AWSAnalyzer {
     }
 }
 
+impl Default for AWSAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl PlatformAnalyzer for AWSAnalyzer {
     async fn analyze_platform(&self) -> Result<PlatformAnalysis> {
@@ -926,6 +938,12 @@ pub struct AzureAnalyzer;
 impl AzureAnalyzer {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for AzureAnalyzer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -950,6 +968,12 @@ impl GCPAnalyzer {
     }
 }
 
+impl Default for GCPAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl PlatformAnalyzer for GCPAnalyzer {
     async fn analyze_platform(&self) -> Result<PlatformAnalysis> {
@@ -968,6 +992,12 @@ pub struct DockerAnalyzer;
 impl DockerAnalyzer {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for DockerAnalyzer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

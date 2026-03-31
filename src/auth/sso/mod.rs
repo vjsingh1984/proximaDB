@@ -101,6 +101,12 @@ impl SSOIntegrationManager {
     }
 }
 
+impl Default for SSOIntegrationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Cached token validation for performance
 #[derive(Debug, Clone)]
 struct CachedTokenValidation {

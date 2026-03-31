@@ -298,6 +298,12 @@ impl ModelManager {
     }
 }
 
+impl Default for ModelManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QueryProcessor {
     pub fn new(config: QueryProcessorConfig) -> Self {
         Self { config }
@@ -313,6 +319,12 @@ impl ResponseGenerator {
 impl ComplianceTracker {
     pub fn new() -> Self {
         Self { frameworks: vec![] }
+    }
+}
+
+impl Default for ComplianceTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

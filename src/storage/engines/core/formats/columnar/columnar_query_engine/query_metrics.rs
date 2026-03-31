@@ -272,3 +272,9 @@ impl StatisticsCollector {
         self.projection_timer = None;
     }
 }
+
+impl Default for StatisticsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -532,6 +532,12 @@ impl ArrowBatchReader {
     }
 }
 
+impl Default for ArrowBatchReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Predicate pushdown for efficient filtering
 pub struct PredicatePushdown {
     // Predicate evaluation cache
@@ -554,6 +560,12 @@ impl PredicatePushdown {
         // This would evaluate the filter expression on the batch
         // Simplified implementation - return all true
         Ok(vec![true; _batch.num_rows()])
+    }
+}
+
+impl Default for PredicatePushdown {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
