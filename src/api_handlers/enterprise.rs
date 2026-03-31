@@ -1,6 +1,6 @@
 //! Enterprise API handlers for multi-tenant knowledge intelligence
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use std::sync::Arc;
 use tracing::info;
 
