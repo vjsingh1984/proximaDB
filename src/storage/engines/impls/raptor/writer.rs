@@ -5477,4 +5477,185 @@ mod tests {
         let json_val = serde_json::to_value(&array).expect("Array should serialize to JSON");
         assert!(json_val.is_object()); // SqlArray serializes as an object with "values" key
     }
+
+    // ========== NEW TESTS ==========
+
+    #[test]
+    fn test_nested_object_serialization_roundtrip() {
+        use prost::Message;
+
+        let inner = SqlObject {
+            fields: vec![
+                ("nested_key".to_string(), SqlValue { value: Some(SqlVal::Int64Value(123)) }),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let outer = SqlObject {
+            fields: vec![
+                ("name".to_string(), SqlValue { value: Some(SqlVal::StringValue("outer".to_string())) }),
+                ("inner".to_string(), SqlValue { value: Some(SqlVal::ObjectValue(inner.clone())) }),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let mut buf = Vec::new();
+        outer.encode(&mut buf).unwrap();
+        let decoded = SqlObject::decode(buf.as_slice()).unwrap();
+        assert_eq!(decoded.fields.len(), 2);
+        assert!(decoded.fields.contains_key("name"));
+        assert!(decoded.fields.contains_key("inner"));
+    }
+
+    #[test]
+    fn test_empty_array_serialization_roundtrip() {
+        use prost::Message;
+
+        let array = SqlArray { values: vec![] };
+        let mut buf = Vec::new();
+        array.encode(&mut buf).unwrap();
+        let decoded = SqlArray::decode(buf.as_slice()).unwrap();
+        assert_eq!(decoded.values.len(), 0);
+    }
+
+    #[test]
+    fn test_empty_object_serialization_roundtrip() {
+        use prost::Message;
+
+        let object = SqlObject {
+            fields: std::collections::HashMap::new(),
+        };
+        let mut buf = Vec::new();
+        object.encode(&mut buf).unwrap();
+        let decoded = SqlObject::decode(buf.as_slice()).unwrap();
+        assert_eq!(decoded.fields.len(), 0);
+    }
+
+    #[test]
+    fn test_null_value_serialization_roundtrip() {
+        use prost::Message;
+
+        let null_val = SqlValue { value: Some(SqlVal::NullValue(0)) };
+        let mut buf = Vec::new();
+        null_val.encode(&mut buf).unwrap();
+        let decoded = SqlValue::decode(buf.as_slice()).unwrap();
+        assert!(matches!(decoded.value, Some(SqlVal::NullValue(_))));
+    }
+
+    #[test]
+    fn test_array_with_nulls_serialization() {
+        use prost::Message;
+
+        let array = SqlArray {
+            values: vec![
+                SqlValue { value: Some(SqlVal::StringValue("value".to_string())) },
+                SqlValue { value: Some(SqlVal::NullValue(0)) },
+                SqlValue { value: Some(SqlVal::NumberValue(3.14)) },
+            ],
+        };
+
+        let mut buf = Vec::new();
+        array.encode(&mut buf).unwrap();
+        let decoded = SqlArray::decode(buf.as_slice()).unwrap();
+        assert_eq!(decoded.values.len(), 3);
+        assert!(matches!(decoded.values[1].value, Some(SqlVal::NullValue(_))));
+    }
+
+    #[test]
+    fn test_large_int64_value_roundtrip() {
+        use prost::Message;
+
+        let val = SqlValue { value: Some(SqlVal::Int64Value(i64::MAX)) };
+        let mut buf = Vec::new();
+        val.encode(&mut buf).unwrap();
+        let decoded = SqlValue::decode(buf.as_slice()).unwrap();
+        assert_eq!(decoded.value, Some(SqlVal::Int64Value(i64::MAX)));
+
+        let val_min = SqlValue { value: Some(SqlVal::Int64Value(i64::MIN)) };
+        let mut buf2 = Vec::new();
+        val_min.encode(&mut buf2).unwrap();
+        let decoded2 = SqlValue::decode(buf2.as_slice()).unwrap();
+        assert_eq!(decoded2.value, Some(SqlVal::Int64Value(i64::MIN)));
+    }
+
+    #[test]
+    fn test_special_float_values_roundtrip() {
+        use prost::Message;
+
+        for special in [f64::INFINITY, f64::NEG_INFINITY, 0.0, -0.0] {
+            let val = SqlValue { value: Some(SqlVal::NumberValue(special)) };
+            let mut buf = Vec::new();
+            val.encode(&mut buf).unwrap();
+            let decoded = SqlValue::decode(buf.as_slice()).unwrap();
+            if let Some(SqlVal::NumberValue(v)) = decoded.value {
+                if special == 0.0 {
+                    assert!(v == 0.0);
+                } else {
+                    assert_eq!(v, special);
+                }
+            } else {
+                panic!("Expected NumberValue");
+            }
+        }
+    }
+
+    #[test]
+    fn test_metadata_bytes_empty_roundtrip() {
+        use base64::Engine;
+
+        let empty: Vec<u8> = vec![];
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&empty);
+        let decoded = base64::engine::general_purpose::STANDARD.decode(&encoded).unwrap();
+        assert_eq!(decoded, empty);
+    }
+
+    #[test]
+    fn test_metadata_bytes_large_payload() {
+        use base64::Engine;
+
+        // Simulate a 1KB metadata payload
+        let payload: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&payload);
+        let decoded = base64::engine::general_purpose::STANDARD.decode(&encoded).unwrap();
+        assert_eq!(decoded.len(), 1024);
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn test_bloom_filter_builder_new() {
+        let builder = super::BloomFilterBuilder::new(0.01);
+        assert!(builder.is_empty());
+    }
+
+    #[test]
+    fn test_bloom_filter_builder_dedup() {
+        let mut builder = super::BloomFilterBuilder::new(0.01);
+        builder.add_id("id1".to_string());
+        builder.add_id("id1".to_string()); // duplicate
+        builder.add_id("id2".to_string());
+        assert_eq!(builder.len(), 2);
+    }
+
+    #[test]
+    fn test_bloom_filter_builder_build_empty() {
+        let builder = super::BloomFilterBuilder::new(0.01);
+        let bloom = builder.build().unwrap();
+        // Empty bloom should still be valid
+        assert!(bloom.num_bits > 0 || bloom.num_bits == 0); // just ensure no panic
+    }
+
+    #[test]
+    fn test_boosting_config_defaults() {
+        let config = super::BoostingConfig::default();
+        assert!(config.alpha_own > 0.0);
+        assert!(config.alpha_inter > 0.0);
+        assert!(config.alpha_variance > 0.0);
+        assert!(config.beta_min > 0.0);
+        assert!(config.beta_max > 0.0);
+        assert!(config.beta_cross > 0.0);
+        assert!(config.boundary_threshold > 0.0);
+        assert!(!config.store_components); // default off
+    }
 }

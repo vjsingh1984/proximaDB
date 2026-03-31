@@ -58,7 +58,12 @@ pub enum ApiError {
 
     /// Vector dimension mismatch
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
-    DimensionMismatch { expected: usize, actual: usize },
+    DimensionMismatch {
+        /// The dimension the collection expects.
+        expected: usize,
+        /// The dimension that was actually provided.
+        actual: usize,
+    },
 
     /// Invalid vector data
     #[error("Invalid vector: {0}")]
@@ -142,6 +147,7 @@ pub type ApiResult<T> = Result<T, ApiError>;
 
 /// Helper trait for converting various error types to ApiError
 pub trait IntoApiError {
+    /// Convert this value into an [`ApiError`].
     fn into_api_error(self) -> ApiError;
 }
 

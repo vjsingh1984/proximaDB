@@ -407,4 +407,258 @@ mod tests {
         assert!(compound.check(&["New York".to_string(), "Electronics".to_string()]));
         assert!(!compound.check(&["Chicago".to_string(), "Toys".to_string()]));
     }
+
+    // ========== NEW TESTS ==========
+
+    #[test]
+    fn test_should_create_bloom_high_cardinality_rejected() {
+        let manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "huge_col".to_string(),
+            cardinality: 2_000_000, // Too high
+            null_ratio: 0.0,
+            access_frequency: 10_000_000,
+            selectivity: 0.1,
+            data_type: ColumnData::String,
+            bloom_benefit_score: 0.5,
+        };
+        assert!(!manager.should_create_bloom(&stats));
+    }
+
+    #[test]
+    fn test_should_create_bloom_low_cardinality_rejected() {
+        let manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "tiny_col".to_string(),
+            cardinality: 5, // Below min_cardinality (100)
+            null_ratio: 0.0,
+            access_frequency: 1000,
+            selectivity: 0.1,
+            data_type: ColumnData::Integer,
+            bloom_benefit_score: 0.5,
+        };
+        assert!(!manager.should_create_bloom(&stats));
+    }
+
+    #[test]
+    fn test_should_create_bloom_low_access_rejected() {
+        let manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "rare_col".to_string(),
+            cardinality: 500,
+            null_ratio: 0.0,
+            access_frequency: 5, // Below threshold of 10
+            selectivity: 0.1,
+            data_type: ColumnData::String,
+            bloom_benefit_score: 0.5,
+        };
+        assert!(!manager.should_create_bloom(&stats));
+    }
+
+    #[test]
+    fn test_should_create_bloom_high_selectivity_rejected() {
+        let manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "broad_col".to_string(),
+            cardinality: 500,
+            null_ratio: 0.0,
+            access_frequency: 100_000,
+            selectivity: 0.8, // Too high (> 0.5 means not selective)
+            data_type: ColumnData::String,
+            bloom_benefit_score: 0.5,
+        };
+        assert!(!manager.should_create_bloom(&stats));
+    }
+
+    #[test]
+    fn test_should_create_bloom_ideal_conditions() {
+        let manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "perfect_col".to_string(),
+            cardinality: 10_000,
+            null_ratio: 0.01,
+            access_frequency: 100_000, // cardinality_ratio = 0.1, well below 0.7
+            selectivity: 0.1,
+            data_type: ColumnData::String,
+            bloom_benefit_score: 0.9,
+        };
+        assert!(manager.should_create_bloom(&stats));
+    }
+
+    #[test]
+    fn test_optimal_size_calculation() {
+        let manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "test_col".to_string(),
+            cardinality: 10_000,
+            null_ratio: 0.0,
+            access_frequency: 50_000,
+            selectivity: 0.1,
+            data_type: ColumnData::String,
+            bloom_benefit_score: 0.5,
+        };
+        let (bits, hash_fns) = manager.calculate_optimal_size(&stats);
+        assert!(bits > 0, "Should have non-zero bits");
+        assert!(hash_fns >= 1, "Should have at least 1 hash function");
+        // With 10K items and 1% FPR, optimal bits ~ 95851
+        assert!(bits > 50_000, "Bits should be reasonable for 10K items");
+    }
+
+    #[test]
+    fn test_optimal_size_respects_memory_limit() {
+        let config = ArtusBloomConfig {
+            max_memory_per_filter: 1024, // 1KB = 8192 bits
+            ..Default::default()
+        };
+        let manager = ArtusBloomManager::new(config);
+        let stats = ArtusColumnStats {
+            column_name: "big_col".to_string(),
+            cardinality: 1_000_000,
+            null_ratio: 0.0,
+            access_frequency: 5_000_000,
+            selectivity: 0.1,
+            data_type: ColumnData::String,
+            bloom_benefit_score: 0.5,
+        };
+        let (bits, _) = manager.calculate_optimal_size(&stats);
+        assert!(bits <= 1024 * 8, "Bits {} should not exceed memory limit", bits);
+    }
+
+    #[test]
+    fn test_false_positive_rate_estimation() {
+        let mut manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "fp_test".to_string(),
+            cardinality: 1000,
+            null_ratio: 0.0,
+            access_frequency: 10_000,
+            selectivity: 0.1,
+            data_type: ColumnData::String,
+            bloom_benefit_score: 0.5,
+        };
+        manager.create_column_bloom(stats).unwrap();
+
+        if let Some(bloom) = manager.column_blooms.get("fp_test") {
+            let fp_rate = manager.estimate_false_positive_rate(bloom.as_ref(), 1000);
+            // FP rate should be a valid probability
+            assert!(fp_rate >= 0.0 && fp_rate <= 1.0, "FP rate {} out of range", fp_rate);
+        }
+    }
+
+    #[test]
+    fn test_batch_add_to_bloom() {
+        let mut manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "batch_col".to_string(),
+            cardinality: 1000,
+            null_ratio: 0.0,
+            access_frequency: 10_000,
+            selectivity: 0.1,
+            data_type: ColumnData::String,
+            bloom_benefit_score: 0.5,
+        };
+        manager.create_column_bloom(stats).unwrap();
+
+        let values: Vec<String> = (0..100).map(|i| format!("item_{}", i)).collect();
+        manager.batch_add_to_bloom("batch_col", &values);
+
+        // Check that added values are found
+        assert_eq!(manager.check_bloom("batch_col", "item_0"), Some(true));
+        assert_eq!(manager.check_bloom("batch_col", "item_99"), Some(true));
+    }
+
+    #[test]
+    fn test_check_bloom_nonexistent_column() {
+        let manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        assert_eq!(manager.check_bloom("nonexistent", "value"), None);
+    }
+
+    #[test]
+    fn test_get_bloom_stats() {
+        let mut manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "stats_col".to_string(),
+            cardinality: 500,
+            null_ratio: 0.0,
+            access_frequency: 5000,
+            selectivity: 0.2,
+            data_type: ColumnData::Integer,
+            bloom_benefit_score: 0.5,
+        };
+        manager.create_column_bloom(stats).unwrap();
+
+        let bloom_stats = manager.get_bloom_stats("stats_col");
+        assert!(bloom_stats.is_some());
+        let bs = bloom_stats.unwrap();
+        assert_eq!(bs.column, "stats_col");
+        assert!(bs.size_bytes > 0);
+        assert!(bs.num_hash_functions > 0);
+        assert_eq!(bs.false_positive_rate, 0.01);
+    }
+
+    #[test]
+    fn test_get_bloom_stats_nonexistent() {
+        let manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        assert!(manager.get_bloom_stats("nope").is_none());
+    }
+
+    #[test]
+    fn test_serialize_deserialize_blooms() {
+        let mut manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+        let stats = ArtusColumnStats {
+            column_name: "ser_col".to_string(),
+            cardinality: 1000,
+            null_ratio: 0.0,
+            access_frequency: 10_000,
+            selectivity: 0.1,
+            data_type: ColumnData::String,
+            bloom_benefit_score: 0.5,
+        };
+        manager.create_column_bloom(stats).unwrap();
+        manager.add_to_bloom("ser_col", "test_value");
+
+        let serialized = manager.serialize_blooms().unwrap();
+        assert!(serialized.contains_key("ser_col"));
+        let bytes = &serialized["ser_col"];
+        assert!(!bytes.is_empty());
+        // Verify structure: first 16 bytes are parameters
+        assert!(bytes.len() >= 16);
+    }
+
+    #[test]
+    fn test_column_data_types() {
+        // Verify all column data type variants can be used in stats
+        let types = vec![
+            ColumnData::Integer,
+            ColumnData::Float,
+            ColumnData::String,
+            ColumnData::Binary,
+            ColumnData::Boolean,
+            ColumnData::Timestamp,
+            ColumnData::Vector,
+        ];
+        for dt in types {
+            let stats = ArtusColumnStats {
+                column_name: format!("{:?}_col", dt),
+                cardinality: 500,
+                null_ratio: 0.0,
+                access_frequency: 5000,
+                selectivity: 0.1,
+                data_type: dt,
+                bloom_benefit_score: 0.5,
+            };
+            let manager = ArtusBloomManager::new(ArtusBloomConfig::default());
+            assert!(manager.should_create_bloom(&stats));
+        }
+    }
+
+    #[test]
+    fn test_artus_bloom_config_default() {
+        let config = ArtusBloomConfig::default();
+        assert_eq!(config.false_positive_rate, 0.01);
+        assert_eq!(config.min_cardinality, 100);
+        assert_eq!(config.max_memory_per_filter, 1024 * 1024);
+        assert!(config.adaptive_sizing);
+        assert!((config.auto_bloom_threshold - 0.7).abs() < 0.001);
+    }
 }

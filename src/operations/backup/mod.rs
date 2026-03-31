@@ -69,14 +69,32 @@ impl Default for BackupConfig {
 /// Backup target destination
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BackupTarget {
-    /// Local filesystem
-    Local { path: PathBuf },
-    /// Amazon S3
-    S3 { bucket: String, prefix: String },
-    /// Google Cloud Storage
-    GCS { bucket: String, prefix: String },
-    /// Azure Blob Storage
-    Azure { container: String, prefix: String },
+    /// Local filesystem backup.
+    Local {
+        /// Directory path for the backup files.
+        path: PathBuf,
+    },
+    /// Amazon S3 backup.
+    S3 {
+        /// S3 bucket name.
+        bucket: String,
+        /// Key prefix within the bucket.
+        prefix: String,
+    },
+    /// Google Cloud Storage backup.
+    GCS {
+        /// GCS bucket name.
+        bucket: String,
+        /// Object prefix within the bucket.
+        prefix: String,
+    },
+    /// Azure Blob Storage backup.
+    Azure {
+        /// Blob container name.
+        container: String,
+        /// Blob prefix within the container.
+        prefix: String,
+    },
 }
 
 /// Backup manifest containing metadata about a backup

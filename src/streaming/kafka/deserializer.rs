@@ -35,7 +35,12 @@ pub enum DeserializationError {
     /// Missing required field
     MissingField(String),
     /// Invalid vector dimension
-    InvalidDimension { expected: usize, actual: usize },
+    InvalidDimension {
+        /// Expected vector dimension.
+        expected: usize,
+        /// Actual dimension received.
+        actual: usize,
+    },
     /// Schema registry error
     SchemaRegistryError(String),
 }

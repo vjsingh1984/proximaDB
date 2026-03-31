@@ -1441,4 +1441,277 @@ mod tests {
             indices.len()
         );
     }
+
+    // ========================================================================
+    // ProgressiveSearchConfig tests
+    // ========================================================================
+
+    #[test]
+    fn test_progressive_search_config_default() {
+        let config = ProgressiveSearchConfig::default();
+        assert_eq!(config.binary_expansion, 10);
+        assert_eq!(config.int8_expansion, 5);
+        assert_eq!(config.pq_expansion, 2);
+        assert_eq!(config.binary_threshold, 100.0);
+        assert_eq!(config.int8_threshold, 50.0);
+        assert_eq!(config.pq_threshold, 10.0);
+        assert_eq!(config.max_concurrent_blocks, 10);
+        assert!(config.cache_distance_tables);
+    }
+
+    #[test]
+    fn test_progressive_search_config_custom() {
+        let config = ProgressiveSearchConfig {
+            binary_expansion: 20,
+            int8_expansion: 10,
+            pq_expansion: 5,
+            binary_threshold: 200.0,
+            int8_threshold: 100.0,
+            pq_threshold: 20.0,
+            max_concurrent_blocks: 4,
+            cache_distance_tables: false,
+        };
+        assert_eq!(config.binary_expansion, 20);
+        assert!(!config.cache_distance_tables);
+    }
+
+    // ========================================================================
+    // Candidate ordering tests
+    // ========================================================================
+
+    #[test]
+    fn test_candidate_equality() {
+        let c1 = Candidate {
+            superblock_idx: 0,
+            block_idx: 0,
+            vector_idx: 0,
+            similarity: 5.0,
+        };
+        let c2 = Candidate {
+            superblock_idx: 1,
+            block_idx: 1,
+            vector_idx: 1,
+            similarity: 5.0,
+        };
+        // Equal similarity means equal (regardless of other fields)
+        assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn test_candidate_ordering_min_heap() {
+        let mut heap = BinaryHeap::new();
+
+        // Push candidates with varying similarities
+        for sim in [50.0, 10.0, 30.0, 20.0, 40.0] {
+            heap.push(Candidate {
+                superblock_idx: 0,
+                block_idx: 0,
+                vector_idx: 0,
+                similarity: sim,
+            });
+        }
+
+        // Should pop in ascending order (min-heap behavior)
+        let mut prev = 0.0;
+        while let Some(c) = heap.pop() {
+            assert!(
+                c.similarity >= prev,
+                "Expected ascending order: {} >= {}",
+                c.similarity,
+                prev
+            );
+            prev = c.similarity;
+        }
+    }
+
+    // ========================================================================
+    // BinarySketch tests
+    // ========================================================================
+
+    #[test]
+    fn test_binary_sketch_hamming_distance_identical() {
+        let s1 = BinarySketch {
+            bits: vec![0xFF, 0x00, 0xAA],
+            dimension: 24,
+        };
+        let s2 = BinarySketch {
+            bits: vec![0xFF, 0x00, 0xAA],
+            dimension: 24,
+        };
+        assert_eq!(s1.hamming_distance(&s2), 0);
+    }
+
+    #[test]
+    fn test_binary_sketch_hamming_distance_opposite() {
+        let s1 = BinarySketch {
+            bits: vec![0x00],
+            dimension: 8,
+        };
+        let s2 = BinarySketch {
+            bits: vec![0xFF],
+            dimension: 8,
+        };
+        assert_eq!(s1.hamming_distance(&s2), 8);
+    }
+
+    #[test]
+    fn test_binary_sketch_hamming_distance_one_bit() {
+        let s1 = BinarySketch {
+            bits: vec![0b0000_0000],
+            dimension: 8,
+        };
+        let s2 = BinarySketch {
+            bits: vec![0b0000_0001],
+            dimension: 8,
+        };
+        assert_eq!(s1.hamming_distance(&s2), 1);
+    }
+
+    // ========================================================================
+    // compute_l2_distance_squared_i8 tests
+    // ========================================================================
+
+    #[test]
+    fn test_l2_distance_i8_identical() {
+        let a = vec![1i8, 2, 3];
+        let b = vec![1i8, 2, 3];
+        let dist = compute_l2_distance_squared_i8(&a, &b).unwrap();
+        assert_eq!(dist, 0.0);
+    }
+
+    #[test]
+    fn test_l2_distance_i8_simple() {
+        let a = vec![0i8, 0, 0];
+        let b = vec![3i8, 4, 0];
+        let dist = compute_l2_distance_squared_i8(&a, &b).unwrap();
+        // 3^2 + 4^2 + 0^2 = 9 + 16 = 25
+        assert_eq!(dist, 25.0);
+    }
+
+    #[test]
+    fn test_l2_distance_i8_dimension_mismatch() {
+        let a = vec![1i8, 2];
+        let b = vec![1i8, 2, 3];
+        let result = compute_l2_distance_squared_i8(&a, &b);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // AdaCurves epsilon calculation edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_calculate_adacurve_epsilon_single_code() {
+        let superblocks = vec![create_test_superblock(0, vec![1.0, 1.0], Some(5000))];
+        let epsilon = calculate_adacurve_epsilon_superblock(&superblocks);
+        // range = 5000 - 5000 = 0, 0 * 15 / 100 = 0, max(0, 1000) = 1000
+        assert_eq!(epsilon, 1000);
+    }
+
+    #[test]
+    fn test_calculate_adacurve_epsilon_mixed_codes() {
+        let superblocks = vec![
+            create_test_superblock(0, vec![0.0, 0.0], Some(100)),
+            create_test_superblock(1, vec![1.0, 1.0], None), // No code
+            create_test_superblock(2, vec![2.0, 2.0], Some(10100)),
+        ];
+        let epsilon = calculate_adacurve_epsilon_superblock(&superblocks);
+        // range = 10100 - 100 = 10000, 10000 * 15 / 100 = 1500
+        assert_eq!(epsilon, 1500);
+    }
+
+    // ========================================================================
+    // Helper function tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_distance_metric() {
+        use crate::compute::distance_computation::DistanceMetric as DM;
+        assert!(matches!(parse_distance_metric("cosine"), DM::Cosine));
+        assert!(matches!(parse_distance_metric("dot"), DM::DotProduct));
+        assert!(matches!(parse_distance_metric("dotproduct"), DM::DotProduct));
+        assert!(matches!(parse_distance_metric("manhattan"), DM::Manhattan));
+        assert!(matches!(parse_distance_metric("l1"), DM::Manhattan));
+        assert!(matches!(parse_distance_metric("hamming"), DM::Hamming));
+        assert!(matches!(parse_distance_metric("euclidean"), DM::Euclidean));
+        assert!(matches!(parse_distance_metric("COSINE"), DM::Cosine));
+        assert!(matches!(parse_distance_metric("unknown"), DM::Euclidean));
+    }
+
+    #[test]
+    fn test_compute_distance_euclidean() {
+        use crate::compute::distance_computation::DistanceMetric;
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![3.0, 4.0, 0.0];
+        let dist = compute_distance(&a, &b, &DistanceMetric::Euclidean);
+        assert!((dist - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_compute_distance_cosine_parallel() {
+        use crate::compute::distance_computation::DistanceMetric;
+        let a = vec![1.0, 0.0];
+        let b = vec![1.0, 0.0];
+        let dist = compute_distance(&a, &b, &DistanceMetric::Cosine);
+        assert!((dist - 0.0).abs() < 0.001); // Identical => cosine distance = 0
+    }
+
+    #[test]
+    fn test_compute_distance_dot_product() {
+        use crate::compute::distance_computation::DistanceMetric;
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, 5.0, 6.0];
+        let dist = compute_distance(&a, &b, &DistanceMetric::DotProduct);
+        // dot = 1*4 + 2*5 + 3*6 = 32, distance = -32
+        assert!((dist - (-32.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_compare_json_values_numbers() {
+        let a = serde_json::json!(10.0);
+        let b = serde_json::json!(5.0);
+        assert_eq!(
+            compare_json_values(&a, &b, std::cmp::Ordering::Greater),
+            Some(true)
+        );
+        assert_eq!(
+            compare_json_values(&a, &b, std::cmp::Ordering::Less),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_compare_json_values_strings() {
+        let a = serde_json::json!("banana");
+        let b = serde_json::json!("apple");
+        assert_eq!(
+            compare_json_values(&a, &b, std::cmp::Ordering::Greater),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_compare_json_values_bools() {
+        let a = serde_json::json!(true);
+        let b = serde_json::json!(true);
+        assert_eq!(
+            compare_json_values(&a, &b, std::cmp::Ordering::Equal),
+            Some(true)
+        );
+        // Booleans don't support ordering
+        assert_eq!(
+            compare_json_values(&a, &b, std::cmp::Ordering::Greater),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_compare_json_values_incompatible_types() {
+        let a = serde_json::json!(10);
+        let b = serde_json::json!("hello");
+        assert_eq!(
+            compare_json_values(&a, &b, std::cmp::Ordering::Equal),
+            None
+        );
+    }
 }

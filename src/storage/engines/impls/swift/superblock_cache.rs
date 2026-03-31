@@ -530,3 +530,244 @@ impl SwiftCacheStats {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // SwiftCacheStats tests
+    // ========================================================================
+
+    #[test]
+    fn test_cache_stats_total_hits_all_zero() {
+        let stats = SwiftCacheStats {
+            superblock_hits: 0,
+            tree_navigation_hits: 0,
+            datablock_hits: 0,
+            bloom_filter_hits: 0,
+            progressive_search_hits: 0,
+            cache_misses: 0,
+            tree_optimization_saves: 0,
+            instant_traversal_saves: 0,
+        };
+        assert_eq!(stats.total_hits(), 0);
+    }
+
+    #[test]
+    fn test_cache_stats_total_hits_sums_all_hit_types() {
+        let stats = SwiftCacheStats {
+            superblock_hits: 10,
+            tree_navigation_hits: 20,
+            datablock_hits: 30,
+            bloom_filter_hits: 40,
+            progressive_search_hits: 50,
+            cache_misses: 100,
+            tree_optimization_saves: 5,
+            instant_traversal_saves: 3,
+        };
+        // total_hits = 10 + 20 + 30 + 40 + 50 = 150
+        assert_eq!(stats.total_hits(), 150);
+    }
+
+    #[test]
+    fn test_cache_hit_rate_zero_requests() {
+        let stats = SwiftCacheStats {
+            superblock_hits: 0,
+            tree_navigation_hits: 0,
+            datablock_hits: 0,
+            bloom_filter_hits: 0,
+            progressive_search_hits: 0,
+            cache_misses: 0,
+            tree_optimization_saves: 0,
+            instant_traversal_saves: 0,
+        };
+        assert_eq!(stats.cache_hit_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_cache_hit_rate_all_hits() {
+        let stats = SwiftCacheStats {
+            superblock_hits: 100,
+            tree_navigation_hits: 0,
+            datablock_hits: 0,
+            bloom_filter_hits: 0,
+            progressive_search_hits: 0,
+            cache_misses: 0,
+            tree_optimization_saves: 0,
+            instant_traversal_saves: 0,
+        };
+        assert_eq!(stats.cache_hit_rate(), 1.0);
+    }
+
+    #[test]
+    fn test_cache_hit_rate_mixed() {
+        let stats = SwiftCacheStats {
+            superblock_hits: 30,
+            tree_navigation_hits: 20,
+            datablock_hits: 0,
+            bloom_filter_hits: 0,
+            progressive_search_hits: 0,
+            cache_misses: 50,
+            tree_optimization_saves: 0,
+            instant_traversal_saves: 0,
+        };
+        // total_hits = 50, total_requests = 100
+        assert!((stats.cache_hit_rate() - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_tree_optimization_effectiveness_zero() {
+        let stats = SwiftCacheStats {
+            superblock_hits: 0,
+            tree_navigation_hits: 0,
+            datablock_hits: 0,
+            bloom_filter_hits: 0,
+            progressive_search_hits: 0,
+            cache_misses: 0,
+            tree_optimization_saves: 0,
+            instant_traversal_saves: 0,
+        };
+        assert_eq!(stats.tree_optimization_effectiveness(), 0.0);
+    }
+
+    #[test]
+    fn test_tree_optimization_effectiveness_all_saves() {
+        let stats = SwiftCacheStats {
+            superblock_hits: 0,
+            tree_navigation_hits: 0,
+            datablock_hits: 0,
+            bloom_filter_hits: 0,
+            progressive_search_hits: 0,
+            cache_misses: 0,
+            tree_optimization_saves: 100,
+            instant_traversal_saves: 0,
+        };
+        assert_eq!(stats.tree_optimization_effectiveness(), 1.0);
+    }
+
+    #[test]
+    fn test_tree_optimization_effectiveness_mixed() {
+        let stats = SwiftCacheStats {
+            superblock_hits: 0,
+            tree_navigation_hits: 60,
+            datablock_hits: 0,
+            bloom_filter_hits: 0,
+            progressive_search_hits: 0,
+            cache_misses: 0,
+            tree_optimization_saves: 40,
+            instant_traversal_saves: 0,
+        };
+        // effectiveness = 40 / (60 + 40) = 0.4
+        assert!((stats.tree_optimization_effectiveness() - 0.4).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_cache_stats_does_not_include_optimization_in_hits() {
+        let stats = SwiftCacheStats {
+            superblock_hits: 1,
+            tree_navigation_hits: 1,
+            datablock_hits: 1,
+            bloom_filter_hits: 1,
+            progressive_search_hits: 1,
+            cache_misses: 0,
+            tree_optimization_saves: 999,
+            instant_traversal_saves: 999,
+        };
+        // tree_optimization_saves and instant_traversal_saves are NOT part of total_hits
+        assert_eq!(stats.total_hits(), 5);
+    }
+
+    // ========================================================================
+    // Data structure construction tests
+    // ========================================================================
+
+    #[test]
+    fn test_tree_path_construction() {
+        let path = TreePath {
+            path_id: "path_1".to_string(),
+            nodes: vec!["root".to_string(), "child_a".to_string(), "leaf_1".to_string()],
+            estimated_cost: 0.5,
+            success_rate: 0.95,
+            usage_frequency: 42,
+        };
+        assert_eq!(path.nodes.len(), 3);
+        assert!(path.success_rate > 0.0 && path.success_rate <= 1.0);
+    }
+
+    #[test]
+    fn test_locality_group_construction() {
+        let group = LocalityGroup {
+            group_id: "group_1".to_string(),
+            related_nodes: vec!["node_a".to_string(), "node_b".to_string()],
+            access_correlation: 0.85,
+            cache_priority: 1,
+        };
+        assert_eq!(group.related_nodes.len(), 2);
+        assert_eq!(group.cache_priority, 1);
+    }
+
+    #[test]
+    fn test_tree_optimization_hint_variants() {
+        let preload = TreeOptimizationHint::PreloadSubtree {
+            root_node: "root".to_string(),
+            depth: 3,
+        };
+        let cache_group = TreeOptimizationHint::CacheNodeGroup {
+            nodes: vec!["n1".to_string(), "n2".to_string()],
+        };
+        let rebalance = TreeOptimizationHint::RebalanceRecommendation {
+            node: "unbalanced_node".to_string(),
+            reason: "skewed subtree".to_string(),
+        };
+        let prefetch = TreeOptimizationHint::PrefetchSequence {
+            sequence: vec!["s1".to_string(), "s2".to_string(), "s3".to_string()],
+        };
+
+        // Verify enum variants are constructible (compile-time check + runtime shape)
+        assert!(matches!(preload, TreeOptimizationHint::PreloadSubtree { depth: 3, .. }));
+        assert!(matches!(cache_group, TreeOptimizationHint::CacheNodeGroup { .. }));
+        assert!(matches!(rebalance, TreeOptimizationHint::RebalanceRecommendation { .. }));
+        assert!(matches!(prefetch, TreeOptimizationHint::PrefetchSequence { .. }));
+    }
+
+    #[test]
+    fn test_optimal_tree_path_construction() {
+        let path = OptimalTreePath {
+            query_pattern: "range_scan".to_string(),
+            optimal_nodes: vec!["sb_0".to_string(), "sb_1".to_string()],
+            estimated_latency_us: 100,
+            cache_requirements: 1024 * 1024,
+            success_rate: 0.95,
+        };
+        assert_eq!(path.optimal_nodes.len(), 2);
+        assert_eq!(path.estimated_latency_us, 100);
+    }
+
+    #[test]
+    fn test_bloom_filter_variants() {
+        let key = BloomFilter::KeyFilter;
+        let metadata = BloomFilter::MetadataFilter;
+        let composite = BloomFilter::CompositeFilter;
+        let sketch = BloomFilter::SketchFilter;
+
+        assert!(matches!(key, BloomFilter::KeyFilter));
+        assert!(matches!(metadata, BloomFilter::MetadataFilter));
+        assert!(matches!(composite, BloomFilter::CompositeFilter));
+        assert!(matches!(sketch, BloomFilter::SketchFilter));
+    }
+
+    #[test]
+    fn test_quantization_level_metadata() {
+        let level = QuantizationLevelMetadata {
+            level_name: "binary".to_string(),
+            bits_per_dimension: 1,
+            accuracy_estimate: 0.85,
+            speed_multiplier: 32.0,
+            memory_usage_mb: 4,
+            availability: true,
+        };
+        assert_eq!(level.bits_per_dimension, 1);
+        assert!(level.availability);
+    }
+}

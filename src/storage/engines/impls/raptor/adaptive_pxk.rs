@@ -887,3 +887,154 @@ impl AdaptivePxKStorage {
         self.storage.memory_usage()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_determine_strategy_dense_full_small_k() {
+        // k < sqrt(d): DenseFull
+        let (strategy, coverage) = AdaptivePxKStorage::determine_strategy(5, 100);
+        assert!(matches!(strategy, PxKStrategy::DenseFull));
+        assert_eq!(coverage, 1.0);
+    }
+
+    #[test]
+    fn test_determine_strategy_dense_compressed() {
+        // sqrt(d) <= k < d/4: DenseCompressed
+        // For d=256, sqrt(d)=16, d/4=64, so k=30 should be DenseCompressed
+        let (strategy, coverage) = AdaptivePxKStorage::determine_strategy(30, 256);
+        assert!(matches!(strategy, PxKStrategy::DenseCompressed));
+        assert_eq!(coverage, 1.0);
+    }
+
+    #[test]
+    fn test_determine_strategy_sparse_coverage() {
+        // d/4 <= k < 10000: SparseCoverage
+        // For d=100, d/4=25, so k=100 should be SparseCoverage
+        let (strategy, coverage) = AdaptivePxKStorage::determine_strategy(100, 100);
+        assert!(matches!(strategy, PxKStrategy::SparseCoverage { .. }));
+        assert!(coverage > 0.0 && coverage <= 1.0);
+    }
+
+    #[test]
+    fn test_determine_strategy_learned_index() {
+        // k >= 10000: LearnedIndex
+        let (strategy, coverage) = AdaptivePxKStorage::determine_strategy(10_000, 100);
+        assert!(matches!(strategy, PxKStrategy::LearnedIndex));
+        assert_eq!(coverage, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_optimal_coverage_low_ratio() {
+        // ratio < 0.25: coverage = 1.0
+        let coverage = AdaptivePxKStorage::calculate_optimal_coverage(10, 100);
+        assert!((coverage - 1.0).abs() < 0.001, "Low ratio should give 100% coverage, got {}", coverage);
+    }
+
+    #[test]
+    fn test_calculate_optimal_coverage_medium_ratio() {
+        // 0.25 <= ratio < 1.0: linear decay from 100% to 50%
+        let coverage = AdaptivePxKStorage::calculate_optimal_coverage(50, 100);
+        assert!(coverage > 0.49 && coverage < 1.01, "Medium ratio coverage {} should be between 0.5 and 1.0", coverage);
+    }
+
+    #[test]
+    fn test_calculate_optimal_coverage_high_ratio_has_floor() {
+        // ratio >= 1.0: logarithmic decay with 10% floor
+        let coverage = AdaptivePxKStorage::calculate_optimal_coverage(5000, 100);
+        assert!(coverage >= 0.10, "Coverage should never go below 10% floor, got {}", coverage);
+    }
+
+    #[test]
+    fn test_calculate_optimal_coverage_monotonic_decrease() {
+        let d = 256;
+        let mut prev = 2.0; // Start above max
+        for k in [10, 50, 100, 200, 500, 1000, 5000] {
+            let coverage = AdaptivePxKStorage::calculate_optimal_coverage(k, d);
+            assert!(
+                coverage <= prev,
+                "Coverage should decrease: k={}, coverage={}, prev={}",
+                k, coverage, prev
+            );
+            prev = coverage;
+        }
+    }
+
+    #[test]
+    fn test_select_compression_uncompressed_low_ratio() {
+        let strategy = AdaptivePxKStorage::select_compression(10, 100, 1.0);
+        assert!(matches!(strategy, CompressionStrategy::Uncompressed));
+    }
+
+    #[test]
+    fn test_select_compression_float16_medium_ratio_high_coverage() {
+        let strategy = AdaptivePxKStorage::select_compression(50, 100, 0.9);
+        assert!(matches!(strategy, CompressionStrategy::Float16));
+    }
+
+    #[test]
+    fn test_select_compression_quantized8_medium_ratio_low_coverage() {
+        let strategy = AdaptivePxKStorage::select_compression(50, 100, 0.5);
+        assert!(matches!(strategy, CompressionStrategy::Quantized8));
+    }
+
+    #[test]
+    fn test_select_compression_quantized4_high_ratio_low_coverage() {
+        let strategy = AdaptivePxKStorage::select_compression(200, 100, 0.2);
+        assert!(matches!(strategy, CompressionStrategy::Quantized4));
+    }
+
+    #[test]
+    fn test_select_compression_delta_encoded_extreme() {
+        let strategy = AdaptivePxKStorage::select_compression(1000, 100, 0.1);
+        assert!(matches!(strategy, CompressionStrategy::DeltaEncoded));
+    }
+
+    #[test]
+    fn test_memory_usage_empty_storage() {
+        let storage = AdaptivePxKStorage::new(5, 100, 50);
+        // Empty storage should have minimal memory usage
+        let usage = storage.memory_usage();
+        // DenseFull with empty compressed_data should be 0
+        assert_eq!(usage, 0);
+    }
+
+    #[test]
+    fn test_boundary_k_zero() {
+        // k=0 should still produce a valid strategy (DenseFull since 0 < sqrt(d))
+        let (strategy, _) = AdaptivePxKStorage::determine_strategy(0, 100);
+        assert!(matches!(strategy, PxKStrategy::DenseFull));
+    }
+
+    #[test]
+    fn test_boundary_d_equals_one() {
+        // d=1: sqrt(d)=1, d/4=0
+        // k=1 >= sqrt(1)=1 and k=1 >= d/4=0, so this depends on exact boundary conditions
+        let (strategy, _) = AdaptivePxKStorage::determine_strategy(1, 1);
+        // k=1, d=1: k < sqrt(d)=1 is false, k < d/4=0 is false, k < 10000 is true
+        assert!(matches!(strategy, PxKStrategy::SparseCoverage { .. }));
+    }
+
+    #[test]
+    fn test_selection_reason_variants() {
+        // Verify all selection reason variants can be constructed
+        let reasons = vec![
+            SelectionReason::Boundary,
+            SelectionReason::Representative,
+            SelectionReason::Outlier,
+            SelectionReason::Diverse,
+            SelectionReason::Random,
+        ];
+        for reason in reasons {
+            let selection = VectorSelection {
+                vector_idx: 0,
+                selection_reason: reason,
+                importance_score: 1.0,
+            };
+            assert_eq!(selection.vector_idx, 0);
+            assert_eq!(selection.importance_score, 1.0);
+        }
+    }
+}

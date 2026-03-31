@@ -665,4 +665,283 @@ mod tests {
             .unwrap();
         assert!(matches.test(0));
     }
+
+    // ========================================================================
+    // BitSet extended tests
+    // ========================================================================
+
+    #[test]
+    fn test_bitset_empty() {
+        let bs = BitSet::new(64);
+        assert_eq!(bs.count(), 0);
+        assert!(!bs.test(0));
+        assert!(!bs.test(63));
+    }
+
+    #[test]
+    fn test_bitset_size_zero() {
+        let bs = BitSet::new(0);
+        assert_eq!(bs.count(), 0);
+        // Out-of-bounds test should return false
+        assert!(!bs.test(0));
+    }
+
+    #[test]
+    fn test_bitset_set_out_of_bounds() {
+        let mut bs = BitSet::new(10);
+        bs.set(100); // Out of bounds, should be silently ignored
+        assert_eq!(bs.count(), 0);
+    }
+
+    #[test]
+    fn test_bitset_test_out_of_bounds() {
+        let bs = BitSet::new(10);
+        assert!(!bs.test(10));
+        assert!(!bs.test(100));
+        assert!(!bs.test(usize::MAX));
+    }
+
+    #[test]
+    fn test_bitset_single_bit() {
+        let mut bs = BitSet::new(128);
+        bs.set(0);
+        assert!(bs.test(0));
+        assert!(!bs.test(1));
+        assert_eq!(bs.count(), 1);
+    }
+
+    #[test]
+    fn test_bitset_cross_word_boundary() {
+        let mut bs = BitSet::new(128);
+        bs.set(63); // Last bit of first word
+        bs.set(64); // First bit of second word
+        assert!(bs.test(63));
+        assert!(bs.test(64));
+        assert_eq!(bs.count(), 2);
+    }
+
+    #[test]
+    fn test_bitset_all_bits_set() {
+        let mut bs = BitSet::new(64);
+        for i in 0..64 {
+            bs.set(i);
+        }
+        assert_eq!(bs.count(), 64);
+    }
+
+    #[test]
+    fn test_bitset_intersect_different_sizes() {
+        let mut bs1 = BitSet::new(200);
+        let mut bs2 = BitSet::new(50);
+
+        bs1.set(10);
+        bs1.set(30);
+        bs1.set(150); // Only in bs1 (beyond bs2 size)
+
+        bs2.set(10);
+        bs2.set(40); // Only in bs2
+
+        let intersection = bs1.intersect(&bs2);
+        assert!(intersection.test(10));  // Common
+        assert!(!intersection.test(30)); // Only in bs1
+        assert!(!intersection.test(40)); // Only in bs2
+        assert_eq!(intersection.count(), 1);
+    }
+
+    #[test]
+    fn test_bitset_union_different_sizes() {
+        let mut bs1 = BitSet::new(64);
+        let mut bs2 = BitSet::new(200);
+
+        bs1.set(5);
+        bs2.set(5);
+        bs2.set(150); // Beyond bs1 size
+
+        let union = bs1.union(&bs2);
+        assert!(union.test(5));
+        assert!(union.test(150));
+        assert_eq!(union.count(), 2);
+    }
+
+    #[test]
+    fn test_bitset_intersect_empty() {
+        let bs1 = BitSet::new(100);
+        let bs2 = BitSet::new(100);
+        let intersection = bs1.intersect(&bs2);
+        assert_eq!(intersection.count(), 0);
+    }
+
+    #[test]
+    fn test_bitset_union_empty() {
+        let bs1 = BitSet::new(100);
+        let bs2 = BitSet::new(100);
+        let union = bs1.union(&bs2);
+        assert_eq!(union.count(), 0);
+    }
+
+    // ========================================================================
+    // OrderedFloat tests
+    // ========================================================================
+
+    #[test]
+    fn test_ordered_float_normal_comparison() {
+        assert!(OrderedFloat(1.0) < OrderedFloat(2.0));
+        assert!(OrderedFloat(2.0) > OrderedFloat(1.0));
+        assert_eq!(OrderedFloat(1.0), OrderedFloat(1.0));
+    }
+
+    #[test]
+    fn test_ordered_float_negative() {
+        assert!(OrderedFloat(-1.0) < OrderedFloat(0.0));
+        assert!(OrderedFloat(-2.0) < OrderedFloat(-1.0));
+    }
+
+    #[test]
+    fn test_ordered_float_nan_handling() {
+        let nan = OrderedFloat(f64::NAN);
+        let one = OrderedFloat(1.0);
+
+        // NaN is treated as greater than any non-NaN value
+        assert!(nan > one);
+        assert!(one < nan);
+
+        // NaN == NaN
+        let nan2 = OrderedFloat(f64::NAN);
+        assert_eq!(nan, nan2);
+    }
+
+    // ========================================================================
+    // OrderedValue tests
+    // ========================================================================
+
+    #[test]
+    fn test_ordered_value_null_is_smallest() {
+        assert!(OrderedValue::Null < OrderedValue::Bool(false));
+        assert!(OrderedValue::Null < OrderedValue::Number(OrderedFloat(-1000.0)));
+        assert!(OrderedValue::Null < OrderedValue::String("".to_string()));
+    }
+
+    #[test]
+    fn test_ordered_value_type_ordering() {
+        // Null < Bool < Number < String
+        assert!(OrderedValue::Null < OrderedValue::Bool(false));
+        assert!(OrderedValue::Bool(true) < OrderedValue::Number(OrderedFloat(0.0)));
+        assert!(OrderedValue::Number(OrderedFloat(999.0)) < OrderedValue::String("a".to_string()));
+    }
+
+    #[test]
+    fn test_ordered_value_bool_ordering() {
+        assert!(OrderedValue::Bool(false) < OrderedValue::Bool(true));
+        assert_eq!(OrderedValue::Bool(true), OrderedValue::Bool(true));
+    }
+
+    #[test]
+    fn test_ordered_value_number_ordering() {
+        assert!(
+            OrderedValue::Number(OrderedFloat(1.0)) < OrderedValue::Number(OrderedFloat(2.0))
+        );
+        assert_eq!(
+            OrderedValue::Number(OrderedFloat(3.14)),
+            OrderedValue::Number(OrderedFloat(3.14))
+        );
+    }
+
+    #[test]
+    fn test_ordered_value_string_ordering() {
+        assert!(OrderedValue::String("a".to_string()) < OrderedValue::String("b".to_string()));
+        assert_eq!(
+            OrderedValue::String("hello".to_string()),
+            OrderedValue::String("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ordered_value_from_json() {
+        assert_eq!(
+            OrderedValue::from(serde_json::Value::Null),
+            OrderedValue::Null
+        );
+        assert_eq!(
+            OrderedValue::from(serde_json::Value::Bool(true)),
+            OrderedValue::Bool(true)
+        );
+        assert_eq!(
+            OrderedValue::from(serde_json::json!(42.0)),
+            OrderedValue::Number(OrderedFloat(42.0))
+        );
+        assert_eq!(
+            OrderedValue::from(serde_json::Value::String("test".to_string())),
+            OrderedValue::String("test".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ordered_value_from_json_array() {
+        let arr = serde_json::json!([1, 2, 3]);
+        let ordered = OrderedValue::from(arr);
+        // Arrays fall back to string representation
+        assert!(matches!(ordered, OrderedValue::String(_)));
+    }
+
+    // ========================================================================
+    // Histogram tests
+    // ========================================================================
+
+    #[test]
+    fn test_histogram_empty() {
+        let hist = Histogram {
+            buckets: Vec::new(),
+            total_count: 0,
+        };
+        assert_eq!(hist.total_count, 0);
+        assert!(hist.buckets.is_empty());
+    }
+
+    #[test]
+    fn test_histogram_with_buckets() {
+        let hist = Histogram {
+            buckets: vec![
+                HistogramBucket {
+                    min: 0.0,
+                    max: 10.0,
+                    count: 50,
+                },
+                HistogramBucket {
+                    min: 10.0,
+                    max: 20.0,
+                    count: 30,
+                },
+                HistogramBucket {
+                    min: 20.0,
+                    max: 30.0,
+                    count: 20,
+                },
+            ],
+            total_count: 100,
+        };
+        assert_eq!(hist.buckets.len(), 3);
+        let bucket_sum: u64 = hist.buckets.iter().map(|b| b.count).sum();
+        assert_eq!(bucket_sum, hist.total_count);
+    }
+
+    // ========================================================================
+    // MetadataIndex creation tests
+    // ========================================================================
+
+    #[test]
+    fn test_metadata_index_default() {
+        let index = MetadataIndex::default();
+        assert_eq!(index.table_stats.total_records, 0);
+        assert_eq!(index.table_stats.total_blocks, 0);
+    }
+
+    #[test]
+    fn test_metadata_index_filterable_columns() {
+        let mut index = MetadataIndex::new();
+        index.filterable_columns.insert("category".to_string());
+        index.filterable_columns.insert("price".to_string());
+        assert!(index.filterable_columns.contains("category"));
+        assert!(index.filterable_columns.contains("price"));
+        assert!(!index.filterable_columns.contains("unknown"));
+    }
 }

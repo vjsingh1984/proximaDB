@@ -441,4 +441,285 @@ mod tests {
         assert_eq!(index.lookup("id_0099"), Some(99));
         assert_eq!(index.lookup("id_0100"), None);
     }
+
+    // ========================================================================
+    // IdIndex extended tests
+    // ========================================================================
+
+    #[test]
+    fn test_id_index_empty() {
+        let index = IdIndex::new();
+        assert!(index.lookup("nonexistent").is_none());
+        let stats = index.stats();
+        assert_eq!(stats.total_ids, 0);
+        assert_eq!(stats.unique_ids, 0);
+        assert_eq!(stats.tree_height, 0);
+    }
+
+    #[test]
+    fn test_id_index_default_trait() {
+        let index = IdIndex::default();
+        assert_eq!(index.stats().unique_ids, 0);
+    }
+
+    #[test]
+    fn test_id_index_single_insert_and_lookup() {
+        let index = IdIndex::new();
+        let loc = BlockLocation {
+            superblock_idx: 1,
+            block_idx: 2,
+            offset_in_block: 3,
+            size_bytes: 100,
+        };
+        index.insert("single".to_string(), loc).unwrap();
+        let result = index.lookup("single").unwrap();
+        assert_eq!(result.superblock_idx, 1);
+        assert_eq!(result.block_idx, 2);
+        assert_eq!(result.offset_in_block, 3);
+    }
+
+    #[test]
+    fn test_id_index_duplicate_handling() {
+        let index = IdIndex::new();
+        let loc1 = BlockLocation {
+            superblock_idx: 0,
+            block_idx: 0,
+            offset_in_block: 0,
+            size_bytes: 100,
+        };
+        let loc2 = BlockLocation {
+            superblock_idx: 9,
+            block_idx: 9,
+            offset_in_block: 9,
+            size_bytes: 200,
+        };
+        index.insert("dup".to_string(), loc1).unwrap();
+        index.insert("dup".to_string(), loc2).unwrap();
+
+        // Duplicate overwrites the location in the HashMap
+        let result = index.lookup("dup").unwrap();
+        assert_eq!(result.superblock_idx, 9);
+
+        let stats = index.stats();
+        // total_ids counts every insert
+        assert_eq!(stats.total_ids, 2);
+        // unique_ids only counted once for the key
+        assert_eq!(stats.unique_ids, 1);
+    }
+
+    #[test]
+    fn test_id_index_batch_lookup_mixed() {
+        let index = IdIndex::new();
+        index
+            .insert(
+                "exists".to_string(),
+                BlockLocation {
+                    superblock_idx: 0,
+                    block_idx: 0,
+                    offset_in_block: 0,
+                    size_bytes: 0,
+                },
+            )
+            .unwrap();
+
+        let ids = vec![
+            "exists".to_string(),
+            "missing".to_string(),
+            "also_missing".to_string(),
+        ];
+        let results = index.lookup_batch(&ids);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].is_some());
+        assert!(results[1].is_none());
+        assert!(results[2].is_none());
+    }
+
+    #[test]
+    fn test_id_index_batch_lookup_empty() {
+        let index = IdIndex::new();
+        let results = index.lookup_batch(&[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_id_index_range_query_empty_range() {
+        let index = IdIndex::new();
+        for i in 0..10 {
+            let id = format!("id_{:04}", i);
+            index
+                .insert(
+                    id,
+                    BlockLocation {
+                        superblock_idx: 0,
+                        block_idx: 0,
+                        offset_in_block: i as u32,
+                        size_bytes: 0,
+                    },
+                )
+                .unwrap();
+        }
+        // Range that matches nothing
+        let results = index.range_query("zzzz", "zzzz_end");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_id_index_range_query_single_match() {
+        let index = IdIndex::new();
+        for i in 0..10 {
+            let id = format!("id_{:04}", i);
+            index
+                .insert(
+                    id,
+                    BlockLocation {
+                        superblock_idx: 0,
+                        block_idx: 0,
+                        offset_in_block: i as u32,
+                        size_bytes: 0,
+                    },
+                )
+                .unwrap();
+        }
+        let results = index.range_query("id_0005", "id_0005");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "id_0005");
+    }
+
+    #[test]
+    fn test_id_index_range_query_sorted_output() {
+        let index = IdIndex::new();
+        // Insert in reverse order
+        for i in (0..20).rev() {
+            let id = format!("id_{:04}", i);
+            index
+                .insert(
+                    id,
+                    BlockLocation {
+                        superblock_idx: 0,
+                        block_idx: 0,
+                        offset_in_block: i as u32,
+                        size_bytes: 0,
+                    },
+                )
+                .unwrap();
+        }
+        let results = index.range_query("id_0005", "id_0010");
+        assert_eq!(results.len(), 6);
+        // Verify sorted order
+        for i in 0..results.len() - 1 {
+            assert!(results[i].0 <= results[i + 1].0);
+        }
+    }
+
+    #[test]
+    fn test_id_index_add_convenience_method() {
+        let index = IdIndex::new();
+        index.add("test_id".to_string(), 128, 5).unwrap();
+
+        let loc = index.lookup("test_id").unwrap();
+        // block_id=128: superblock_idx=128/64=2, block_idx=128%64=0
+        assert_eq!(loc.superblock_idx, 2);
+        assert_eq!(loc.block_idx, 0);
+        assert_eq!(loc.offset_in_block, 5);
+    }
+
+    #[test]
+    fn test_id_index_large_scale_insertion() {
+        let index = IdIndex::new();
+        let n = 5000;
+        for i in 0..n {
+            let id = format!("vec_{:06}", i);
+            index
+                .insert(
+                    id,
+                    BlockLocation {
+                        superblock_idx: (i / 1000) as u32,
+                        block_idx: ((i % 1000) / 100) as u32,
+                        offset_in_block: (i % 100) as u32,
+                        size_bytes: 64,
+                    },
+                )
+                .unwrap();
+        }
+        let stats = index.stats();
+        assert_eq!(stats.unique_ids, n as u64);
+        assert!(stats.tree_height >= 1);
+        assert!(stats.memory_usage > 0);
+
+        // Spot-check lookups
+        assert!(index.lookup("vec_002500").is_some());
+        assert!(index.lookup("vec_004999").is_some());
+        assert!(index.lookup("vec_005000").is_none());
+    }
+
+    #[test]
+    fn test_id_index_tree_height_grows() {
+        let index = IdIndex::new();
+        // With order 256, a single leaf holds up to 256 entries (height=1)
+        let height_0 = index.stats().tree_height;
+        assert_eq!(height_0, 0); // Empty tree
+
+        index
+            .insert(
+                "a".to_string(),
+                BlockLocation {
+                    superblock_idx: 0,
+                    block_idx: 0,
+                    offset_in_block: 0,
+                    size_bytes: 0,
+                },
+            )
+            .unwrap();
+        let height_1 = index.stats().tree_height;
+        assert_eq!(height_1, 1); // Single leaf node
+    }
+
+    #[test]
+    fn test_record_location_block_id() {
+        let loc = BlockLocation {
+            superblock_idx: 3,
+            block_idx: 7,
+            offset_in_block: 0,
+            size_bytes: 0,
+        };
+        // block_id = superblock_idx * 64 + block_idx = 3 * 64 + 7 = 199
+        assert_eq!(loc.block_id(), 199);
+    }
+
+    #[test]
+    fn test_record_location_block_id_zero() {
+        let loc = BlockLocation {
+            superblock_idx: 0,
+            block_idx: 0,
+            offset_in_block: 0,
+            size_bytes: 0,
+        };
+        assert_eq!(loc.block_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_id_index_async_lookup() {
+        let index = IdIndex::new();
+        index
+            .insert(
+                "async_id".to_string(),
+                BlockLocation {
+                    superblock_idx: 5,
+                    block_idx: 10,
+                    offset_in_block: 42,
+                    size_bytes: 128,
+                },
+            )
+            .unwrap();
+
+        let result = index.lookup_async("async_id").await;
+        assert!(result.is_some());
+        let loc = result.unwrap();
+        assert_eq!(loc.superblock_idx, 5);
+        assert_eq!(loc.block_idx, 10);
+        assert_eq!(loc.offset_in_block, 42);
+
+        let miss = index.lookup_async("missing").await;
+        assert!(miss.is_none());
+    }
 }

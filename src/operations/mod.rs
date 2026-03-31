@@ -1,11 +1,8 @@
-// Operations module for database management tasks
-//
-// Provides:
-// - Backup/restore functionality
-// - Maintenance operations
-// - Data migration tools
+//! Database management operations — backup, restore, and maintenance.
 
+/// Incremental and full backup with S3/GCS/local targets.
 pub mod backup;
+/// Point-in-time restore from backup manifests.
 pub mod restore;
 
 // Re-export commonly used types

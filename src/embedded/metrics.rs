@@ -727,10 +727,15 @@ pub struct LatencyTimer<'a> {
 
 /// Operation type for latency timer
 pub enum OperationType {
+    /// Vector similarity search operation.
     Search,
+    /// Vector insert/upsert operation.
     Insert,
+    /// Memtable flush to persistent storage.
     Flush,
+    /// Vector deletion operation.
     Delete,
+    /// Point lookup by vector ID.
     Get,
 }
 

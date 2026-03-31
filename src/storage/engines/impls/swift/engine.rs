@@ -2035,4 +2035,152 @@ mod tests {
             &record.metadata
         ));
     }
+
+    // ========================================================================
+    // SwiftEngine metadata tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_swift_engine_name_and_version() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let engine = SwiftEngine::new().await.unwrap();
+        assert_eq!(engine.engine_name(), "SWIFT");
+        assert_eq!(engine.engine_version(), "1.0.0");
+    }
+
+    #[tokio::test]
+    async fn test_swift_engine_strategy() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let engine = SwiftEngine::new().await.unwrap();
+        assert_eq!(engine.strategy(), StorageEngineStrategy::Swift);
+    }
+
+    #[tokio::test]
+    async fn test_swift_feature_support_exhaustive() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let engine = SwiftEngine::new().await.unwrap();
+
+        // All supported features
+        let supported = [
+            "id_lookup",
+            "similarity_search",
+            "progressive_search",
+            "quantization",
+            "compression",
+            "batch_operations",
+        ];
+        for feature in &supported {
+            assert!(
+                engine.supports_feature(feature),
+                "Expected feature '{}' to be supported",
+                feature
+            );
+        }
+
+        // Unsupported features
+        let unsupported = [
+            "unknown_feature",
+            "graph_queries",
+            "full_text_search",
+            "",
+        ];
+        for feature in &unsupported {
+            assert!(
+                !engine.supports_feature(feature),
+                "Expected feature '{}' to NOT be supported",
+                feature
+            );
+        }
+    }
+
+    // ========================================================================
+    // SwiftHeader / constants tests
+    // ========================================================================
+
+    #[test]
+    fn test_swift_magic_constant() {
+        assert_eq!(super::SWIFT_MAGIC, *b"SWFT");
+    }
+
+    #[test]
+    fn test_swift_header_default() {
+        let header = super::SwiftHeader::default();
+        assert_eq!(header.magic, *b"SWFT");
+        assert_eq!(header.version, 1);
+        assert_eq!(header.distance_metric, "cosine");
+        assert_eq!(header.dimension, 0);
+        assert_eq!(header.total_records, 0);
+        assert_eq!(header.deleted_records, 0);
+        assert_eq!(header.blocks_per_superblock, 10);
+        assert_eq!(header.records_per_block, 512);
+        assert_eq!(header.compaction_level, 0);
+    }
+
+    #[test]
+    fn test_swift_header_custom() {
+        let header = super::SwiftHeader {
+            magic: super::SWIFT_MAGIC,
+            version: 2,
+            collection_id: "test_collection".to_string(),
+            timestamp: 1234567890,
+            compaction_level: 3,
+            dimension: 768,
+            distance_metric: "euclidean".to_string(),
+            quantization: Default::default(),
+            total_records: 10000,
+            deleted_records: 50,
+            superblock_count: 5,
+            blocks_per_superblock: 20,
+            records_per_block: 256,
+            superblock_offset: 8192,
+            id_index_offset: 0,
+            quantized_index_offset: 0,
+            metadata_index_offset: 0,
+            header_checksum: 0,
+            file_checksum: 0,
+        };
+        assert_eq!(header.version, 2);
+        assert_eq!(header.collection_id, "test_collection");
+        assert_eq!(header.dimension, 768);
+        assert_eq!(header.total_records, 10000);
+    }
+
+    // ========================================================================
+    // SuperBlock construction tests
+    // ========================================================================
+
+    #[test]
+    fn test_superblock_new() {
+        let sb = super::super::SuperBlock::new(0, "test_sb".to_string());
+        assert_eq!(sb.superblock_id, 0);
+        assert_eq!(sb.name, "test_sb");
+        assert!(sb.blocks.is_empty());
+        assert_eq!(sb.record_count, 0);
+        assert!(sb.adacurve_code.is_none());
+        assert!(sb.swift_metadata.swift_specific_data.hierarchical_structure);
+        assert!(sb.swift_metadata.swift_specific_data.large_scale_optimization);
+    }
+
+    #[test]
+    fn test_quantization_config_old_default() {
+        let config = super::super::QuantizationConfigOLD::default();
+        assert!(!config.enable_binary);
+        assert!(!config.enable_int8);
+        assert!(!config.enable_pq);
+        assert_eq!(config.binary_threshold, 0.5);
+        assert_eq!(config.int8_scale, 1.0);
+        assert_eq!(config.pq_segments, 8);
+    }
+
+    #[tokio::test]
+    async fn test_swift_engine_initial_statistics() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let engine = SwiftEngine::new().await.unwrap();
+        let stats = engine.statistics.read().await;
+        assert_eq!(stats.engine_name, "SWIFT");
+        assert_eq!(stats.engine_version, "2.0.0");
+        assert_eq!(stats.total_storage_bytes, 0);
+        assert_eq!(stats.memory_usage_bytes, 0);
+        assert_eq!(stats.collection_count, 0);
+    }
 }

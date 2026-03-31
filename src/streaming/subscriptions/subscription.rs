@@ -362,30 +362,44 @@ impl Ord for ScoredResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResultChange {
-    /// New result added to the set
+    /// New result added to the set.
     Added {
+        /// ID of the added vector.
         vector_id: String,
+        /// Similarity score.
         score: f32,
+        /// Rank position in the result set.
         position: u32,
     },
-    /// Result removed from the set
+    /// Result removed from the set.
     Removed {
+        /// ID of the removed vector.
         vector_id: String,
+        /// Score before removal.
         old_score: f32,
+        /// Position before removal.
         old_position: u32,
     },
-    /// Result score changed
+    /// Result score changed.
     ScoreChanged {
+        /// ID of the vector whose score changed.
         vector_id: String,
+        /// Previous similarity score.
         old_score: f32,
+        /// Updated similarity score.
         new_score: f32,
+        /// Current rank position.
         position: u32,
     },
-    /// Result position changed
+    /// Result position changed.
     PositionChanged {
+        /// ID of the vector that moved.
         vector_id: String,
+        /// Previous rank position.
         old_position: u32,
+        /// New rank position.
         new_position: u32,
+        /// Current similarity score.
         score: f32,
     },
 }

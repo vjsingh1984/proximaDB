@@ -3046,4 +3046,110 @@ mod tests {
         // This validates the fix: previously distance was always 0.0
         assert!(close_dist > 0.0, "Close centroid distance should still be non-zero");
     }
+
+    // ========== NEW TESTS ==========
+
+    #[test]
+    fn test_raptor_config_defaults() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::default();
+        assert_eq!(config.rowgroup_size, super::super::constants::clustering::DEFAULT_ROWGROUP_SIZE);
+        assert!(config.enable_simd);
+        assert!(config.enable_clustering);
+        assert!(config.use_component_boosting);
+        assert!(config.enable_bloom_filters);
+        assert!(config.enable_statistics);
+        assert!(config.enable_complex_types);
+        assert!(config.enable_range_reads);
+        assert!(config.enable_prefetching);
+        assert!(config.num_clusters.is_none()); // Auto-calculate
+    }
+
+    #[test]
+    fn test_raptor_config_for_small_k() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_small_k();
+        assert_eq!(config.rowgroup_size, 500);
+        assert_eq!(config.cache_size_mb, 4096);
+    }
+
+    #[test]
+    fn test_raptor_config_for_medium_k() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_medium_k();
+        assert_eq!(config.rowgroup_size, 2000);
+    }
+
+    #[test]
+    fn test_raptor_config_for_large_k() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_large_k();
+        assert_eq!(config.rowgroup_size, 5000);
+        assert!(config.enable_prefetching);
+        assert_eq!(config.prefetch_size_mb, 128);
+    }
+
+    #[test]
+    fn test_raptor_config_for_cloud() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_cloud();
+        assert!(config.enable_range_reads);
+        assert_eq!(config.prefetch_size_mb, 64);
+        assert_eq!(config.cache_size_mb, 2048);
+    }
+
+    #[test]
+    fn test_raptor_config_for_local_ssd() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_local_ssd();
+        assert!(!config.enable_range_reads);
+        assert_eq!(config.max_parallel_reads, 16);
+    }
+
+    #[test]
+    fn test_raptor_config_for_high_performance() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_high_performance();
+        assert_eq!(config.rowgroup_size, 5000);
+        assert!(config.enable_simd);
+        assert_eq!(config.simd_lanes, 32);
+        assert_eq!(config.cache_size_mb, 4096);
+        assert_eq!(config.max_parallel_reads, 32);
+    }
+
+    #[test]
+    fn test_raptor_format_version_constant() {
+        assert_eq!(super::super::constants::file_format::VERSION, 1);
+        assert_eq!(super::super::constants::file_format::MAGIC, *b"RPTR");
+    }
+
+    #[test]
+    fn test_raptor_distance_identical_vectors() {
+        let compute = UnifiedDistanceCompute::default();
+        let vec_a = vec![1.0, 2.0, 3.0];
+        let distance = compute.distance(&vec_a, &vec_a);
+        // Distance to self should be 0 or very close to 0
+        assert!(
+            distance < 0.001,
+            "Distance to self should be ~0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_raptor_distance_triangle_inequality_heuristic() {
+        let compute = UnifiedDistanceCompute::default();
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let c = vec![0.0, 0.0, 1.0];
+
+        let d_ab = compute.distance(&a, &b);
+        let d_bc = compute.distance(&b, &c);
+        let d_ac = compute.distance(&a, &c);
+
+        // All distances should be positive between different vectors
+        assert!(d_ab > 0.0);
+        assert!(d_bc > 0.0);
+        assert!(d_ac > 0.0);
+    }
 }
