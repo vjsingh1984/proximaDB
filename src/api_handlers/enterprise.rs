@@ -975,14 +975,7 @@ mod tests {
 
     #[test]
     fn test_enterprise_api_response_with_string_data() {
-        let user_context = crate::auth::sso::EnterpriseUserContext {
-            user_id: "test_user".to_string(),
-            tenant_id: "test_tenant".to_string(),
-            roles: vec!["admin".to_string()],
-            permissions: vec!["system_admin".to_string()],
-            sso_provider: crate::auth::sso::SSOProvider::AWSIAM,
-            session_id: "session_123".to_string(),
-        };
+        let user_context = crate::auth::sso::EnterpriseUserContext::system_admin();
 
         let response = EnterpriseApiResponse {
             success: true,
@@ -1002,20 +995,13 @@ mod tests {
         );
         assert_eq!(
             response.enterprise_metadata.user_context.user_id,
-            "test_user"
+            "system"
         );
     }
 
     #[test]
     fn test_enterprise_api_response_failure_with_no_audit_trail() {
-        let user_context = crate::auth::sso::EnterpriseUserContext {
-            user_id: "user_fail".to_string(),
-            tenant_id: "tenant_fail".to_string(),
-            roles: vec![],
-            permissions: vec![],
-            sso_provider: crate::auth::sso::SSOProvider::Okta,
-            session_id: "session_fail".to_string(),
-        };
+        let user_context = crate::auth::sso::EnterpriseUserContext::system_admin();
 
         let response = EnterpriseApiResponse {
             success: false,
@@ -1036,14 +1022,7 @@ mod tests {
 
     #[test]
     fn test_enterprise_api_metadata_timestamp_is_recent() {
-        let user_context = crate::auth::sso::EnterpriseUserContext {
-            user_id: "ts_user".to_string(),
-            tenant_id: "ts_tenant".to_string(),
-            roles: vec![],
-            permissions: vec![],
-            sso_provider: crate::auth::sso::SSOProvider::AzureAD,
-            session_id: "ts_session".to_string(),
-        };
+        let user_context = crate::auth::sso::EnterpriseUserContext::system_admin();
 
         let now = chrono::Utc::now();
         let metadata = EnterpriseApiMetadata {
@@ -1081,14 +1060,7 @@ mod tests {
 
     #[test]
     fn test_enterprise_api_response_clone() {
-        let user_context = crate::auth::sso::EnterpriseUserContext {
-            user_id: "clone_user".to_string(),
-            tenant_id: "clone_tenant".to_string(),
-            roles: vec!["role1".to_string()],
-            permissions: vec!["perm1".to_string()],
-            sso_provider: crate::auth::sso::SSOProvider::AWSIAM,
-            session_id: "clone_session".to_string(),
-        };
+        let user_context = crate::auth::sso::EnterpriseUserContext::system_admin();
 
         let original = EnterpriseApiResponse {
             success: true,
@@ -1125,7 +1097,7 @@ mod tests {
 
         assert_eq!(requirements.latency_requirement_ms, 0);
         assert_eq!(requirements.throughput_requirement_qps, 0);
-        assert!((requirements.availability_requirement - 0.0).abs() < f64::EPSILON);
+        assert!((requirements.availability_requirement - 0.0).abs() < std::f64::EPSILON);
     }
 
     #[test]
@@ -1136,6 +1108,6 @@ mod tests {
             availability_requirement: 1.0,
         };
 
-        assert!((requirements.availability_requirement - 1.0).abs() < f64::EPSILON);
+        assert!((requirements.availability_requirement - 1.0).abs() < std::f64::EPSILON);
     }
 }
