@@ -233,12 +233,18 @@ use crate::core::config::HardwareConfig;
 // GPU types with feature gating
 // NOTE: GpuBackend and GpuDevice stub definitions
 // These are used when gpu feature is disabled or for basic type definitions
+/// Available GPU compute backends
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuBackend {
+    /// No GPU available
     None,
+    /// NVIDIA CUDA
     CUDA,
+    /// AMD ROCm
     ROCm,
+    /// Apple Metal Performance Shaders
     MPS,
+    /// OpenCL (cross-platform)
     OpenCL,
 }
 
@@ -382,14 +388,20 @@ impl std::fmt::Display for GpuBackend {
     }
 }
 
-// NOTE: GpuDevice stub definition
+/// Represents a detected GPU device and its capabilities
 #[derive(Debug, Clone)]
 pub struct GpuDevice {
+    /// Device index (0-based)
     pub id: usize,
+    /// Human-readable device name
     pub name: String,
+    /// Total device memory in bytes
     pub total_memory: u64,
+    /// Currently available device memory in bytes
     pub available_memory: u64,
+    /// CUDA compute capability (major, minor), if applicable
     pub compute_capability: Option<(u32, u32)>,
+    /// GPU backend type
     pub backend: GpuBackend,
 }
 
@@ -414,21 +426,32 @@ pub struct HardwareCapabilities {
 /// Centralized CPU features (replaces duplicate from compute module)
 #[derive(Debug, Clone)]
 pub struct CpuFeatures {
+    /// Whether AVX-512 instruction set is available
     pub avx512_support: bool,
+    /// Whether AVX2 instruction set is available
     pub avx2_support: bool,
+    /// Whether SSE 4.2 instruction set is available
     pub sse42_support: bool,
+    /// Whether ARM NEON SIMD is available
     pub neon_support: bool,
+    /// Number of physical CPU cores
     pub core_count: usize,
+    /// Number of logical CPU threads (including hyperthreading)
     pub thread_count: usize,
+    /// CPU cache hierarchy sizes
     pub cache_sizes: CacheSizes,
 }
 
 /// Cache size information
 #[derive(Debug, Clone)]
 pub struct CacheSizes {
+    /// L1 data cache size in bytes
     pub l1_data: usize,
+    /// L1 instruction cache size in bytes
     pub l1_instruction: usize,
+    /// L2 cache size in bytes
     pub l2: usize,
+    /// L3 (last-level) cache size in bytes
     pub l3: usize,
 }
 
@@ -1454,6 +1477,7 @@ impl Default for HardwareCapabilities {
     }
 }
 
+/// Retrieve the global hardware capabilities, detecting them on first call
 pub fn get_hardware_capabilities() -> Arc<HardwareCapabilities> {
     try_get_hardware_capabilities().unwrap_or_else(|| Arc::new(HardwareCapabilities::default()))
 }

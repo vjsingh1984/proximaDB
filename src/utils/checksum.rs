@@ -215,7 +215,9 @@ impl Default for Crc32 {
 
 /// Trait for generic checksum calculations
 pub trait Checksum {
+    /// Compute a checksum over the given byte slice.
     fn calculate(data: &[u8]) -> u32;
+    /// Return `true` if the checksum of `data` matches `expected`.
     fn verify(data: &[u8], expected: u32) -> bool {
         Self::calculate(data) == expected
     }

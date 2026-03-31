@@ -174,7 +174,9 @@ impl Fnv1a64 {
 
 /// Fast hash trait for generic usage
 pub trait FastHash {
+    /// Compute a 64-bit hash of the given byte slice.
     fn hash_bytes(data: &[u8]) -> u64;
+    /// Compute a 64-bit hash of a UTF-8 string.
     fn hash_string(s: &str) -> u64 {
         Self::hash_bytes(s.as_bytes())
     }

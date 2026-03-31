@@ -141,6 +141,7 @@ pub struct UuidGenerator {
 }
 
 impl UuidGenerator {
+    /// Create a new UUID generator.
     pub fn new() -> Self {
         UuidGenerator {}
     }
@@ -162,9 +163,12 @@ impl Default for UuidGenerator {
     }
 }
 
+/// Errors that can occur during UUID parsing.
 #[derive(Debug, Clone)]
 pub enum UuidError {
+    /// Input byte length is not 16.
     InvalidLength,
+    /// Input contains non-hexadecimal characters.
     InvalidHex,
 }
 

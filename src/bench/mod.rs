@@ -6,6 +6,7 @@
 // - Storage engine performance tests
 // - Index type comparisons
 
+/// ANN benchmark suite for evaluating recall, throughput, and latency.
 pub mod ann_benchmarks;
 
 // Note: vectordb_comparison is a standalone binary at src/bin/vectordb_comparison.rs

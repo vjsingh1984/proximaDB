@@ -2430,6 +2430,7 @@ impl Default for UnifiedOptimizerConfig {
 }
 
 impl UnifiedCostModel {
+    /// Create a new unified cost model with default strategies and hardware detection.
     pub fn new() -> Self {
         let mut strategies: HashMap<String, Box<dyn CostStrategy>> = HashMap::new();
         strategies.insert("default".to_string(), Box::new(DefaultCostStrategy));

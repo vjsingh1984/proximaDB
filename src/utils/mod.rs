@@ -11,6 +11,7 @@ pub mod encoding;
 pub mod glob;
 pub mod hash;
 pub mod skiplist;
+/// Helpers for constructing canonical WAL and data storage paths.
 pub mod storage_path;
 pub mod tracing;
 pub mod uuid;

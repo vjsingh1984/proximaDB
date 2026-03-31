@@ -151,6 +151,7 @@ impl VectorEngineParticipant {
     }
 
     /// Set health status
+    /// Mark this participant as healthy or unhealthy.
     pub async fn set_healthy(&self, healthy: bool) {
         let mut h = self.healthy.write().await;
         *h = healthy;
@@ -278,6 +279,7 @@ impl DocumentEngineParticipant {
         self
     }
 
+    /// Mark this participant as healthy or unhealthy.
     pub async fn set_healthy(&self, healthy: bool) {
         let mut h = self.healthy.write().await;
         *h = healthy;
@@ -330,6 +332,7 @@ pub struct GraphEngineParticipant {
 }
 
 impl GraphEngineParticipant {
+    /// Create a new graph engine participant for the given graph.
     pub fn new(graph_id: &str) -> Self {
         Self {
             id: format!("graph:{}", graph_id),
@@ -345,6 +348,7 @@ impl GraphEngineParticipant {
         self
     }
 
+    /// Mark this participant as healthy or unhealthy.
     pub async fn set_healthy(&self, healthy: bool) {
         let mut h = self.healthy.write().await;
         *h = healthy;
@@ -413,6 +417,7 @@ impl TimeSeriesEngineParticipant {
         self
     }
 
+    /// Mark this participant as healthy or unhealthy.
     pub async fn set_healthy(&self, healthy: bool) {
         let mut h = self.healthy.write().await;
         *h = healthy;

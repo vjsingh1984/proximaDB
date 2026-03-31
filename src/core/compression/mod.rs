@@ -257,10 +257,12 @@ mod parquet {
         pub mod properties {
             use super::super::basic;
 
+            /// Parquet-compatible writer properties for compression configuration
             #[derive(Debug, Clone)]
             pub struct WriterProperties;
 
             impl WriterProperties {
+                /// Create a new builder for configuring writer properties
                 pub fn builder() -> WriterPropertiesBuilder {
                     WriterPropertiesBuilder
                 }
@@ -650,6 +652,7 @@ pub fn compress(
     COMPRESSION.compress(data, algorithm, level, context)
 }
 
+/// Decompress data using the specified algorithm
 pub fn decompress(
     data: &[u8],
     algorithm: CompressionAlgorithm,
@@ -658,6 +661,7 @@ pub fn decompress(
     COMPRESSION.decompress(data, algorithm, context)
 }
 
+/// Estimate the compression ratio for the given data and algorithm
 pub fn estimate_ratio(data: &[u8], algorithm: CompressionAlgorithm) -> f32 {
     COMPRESSION.estimate_ratio(data, algorithm)
 }

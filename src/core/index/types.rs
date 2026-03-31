@@ -18,14 +18,27 @@ pub enum Index {
 pub enum VectorIndex {
     /// Hierarchical Navigable Small World
     HNSW {
+        /// Maximum number of connections per node per layer
         m: u32,
+        /// Size of the dynamic candidate list during index construction
         ef_construction: u32,
+        /// Size of the dynamic candidate list during search
         ef_search: u32,
     },
     /// Inverted File Index
-    IVF { nlist: u32, nprobe: u32 },
+    IVF {
+        /// Number of Voronoi cells (clusters)
+        nlist: u32,
+        /// Number of cells to probe during search
+        nprobe: u32,
+    },
     /// Product Quantization
-    PQ { m: u32, nbits: u32 },
+    PQ {
+        /// Number of sub-quantizers
+        m: u32,
+        /// Bits per sub-quantizer code
+        nbits: u32,
+    },
     /// Flat (exhaustive) search
     Flat,
     /// Locality Sensitive Hashing

@@ -348,8 +348,11 @@ impl HierarchicalBloomFilters {
 /// Elimination statistics
 #[derive(Debug, Clone)]
 pub struct EliminationStats {
+    /// Total number of data blocks in the file
     pub total_blocks: usize,
+    /// Number of blocks that have bloom filters attached
     pub blocks_with_blooms: usize,
+    /// Estimated fraction of blocks that can be skipped (0.0 to 1.0)
     pub estimated_elimination_rate: f64,
 }
 

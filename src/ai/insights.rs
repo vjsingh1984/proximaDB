@@ -273,6 +273,7 @@ impl AutomatedInsightEngine {
 }
 
 impl BusinessInsightsGenerator {
+    /// Create a new business insights generator with default analyzers.
     pub async fn new() -> Result<Self> {
         Ok(Self {
             _strategic_templates: Arc::new(DashMap::new()),
@@ -424,237 +425,380 @@ impl BusinessInsightsGenerator {
 
 // Type definitions for automated insights
 
+/// Category of business insight to generate
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InsightType {
+    /// Risk exposure and mitigation analysis
     RiskAssessment,
+    /// Customer behavior and segmentation analytics
     CustomerAnalytics,
+    /// Healthcare and clinical data intelligence
     ClinicalIntelligence,
+    /// Financial performance and profitability analysis
     FinancialPerformance,
+    /// Operational efficiency and process optimization
     OperationalEfficiency,
+    /// Competitive landscape and market positioning
     CompetitiveIntelligence,
+    /// Long-term strategic planning insights
     StrategicPlanning,
+    /// Regulatory compliance and audit readiness
     RegulatoryCompliance,
 }
 
+/// Results of automated cross-domain business insight generation
 #[derive(Debug, Clone)]
 pub struct AutomatedBusinessInsights {
+    /// Tenant identifier
     pub tenant_id: String,
+    /// List of business domains that were analyzed
     pub domains_analyzed: Vec<String>,
+    /// Type of insight that was requested
     pub insight_type: InsightType,
+    /// Patterns discovered across multiple domains
     pub cross_domain_patterns: CrossDomainPatterns,
+    /// Insights specific to the identified industry
     pub industry_insights: IndustrySpecificInsights,
+    /// Synthesized business intelligence combining all sources
     pub synthesized_intelligence: SynthesizedBusinessIntelligence,
+    /// Regulatory compliance validation results
     pub regulatory_compliance: ComplianceInsightValidation,
+    /// Metadata about insight generation performance
     pub performance_metadata: InsightPerformanceMetadata,
+    /// Timestamp when insights were generated
     pub generated_at: DateTime<Utc>,
+    /// User ID of the requestor
     pub generated_by: String,
 }
 
+/// Strategic insights generated for executive-level decision making
 #[derive(Debug, Clone)]
 pub struct ExecutiveStrategicInsights {
+    /// High-level strategic analysis results
     pub strategic_analysis: StrategicAnalysis,
+    /// Actionable recommendations for executives
     pub executive_recommendations: Vec<StrategicRecommendation>,
+    /// Aggregate strategic metrics
     pub strategic_metrics: StrategicMetrics,
+    /// Executive role this was generated for
     pub generated_for_executive: String,
 }
 
+/// Actionable strategic recommendation with impact assessment
 #[derive(Debug, Clone)]
 pub struct StrategicRecommendation {
+    /// Category of the recommendation
     pub recommendation_type: RecommendationType,
+    /// Short title summarizing the recommendation
     pub title: String,
+    /// Detailed description of the recommendation
     pub description: String,
+    /// Quantified business impact assessment
     pub business_impact: BusinessImpact,
+    /// Estimated complexity of implementing this recommendation
     pub implementation_complexity: ImplementationComplexity,
+    /// Estimated timeline for implementation in months
     pub timeline_months: u32,
+    /// Confidence score for this recommendation (0.0 to 1.0)
     pub confidence_score: f32,
 }
 
+/// Category of strategic recommendation
 #[derive(Debug, Clone)]
 pub enum RecommendationType {
+    /// New strategic initiative or market expansion
     StrategicInitiative,
+    /// Financial process or capital optimization
     FinancialOptimization,
+    /// Risk reduction or mitigation strategy
     RiskMitigation,
+    /// Operational process improvement
     OperationalImprovement,
+    /// Competitive positioning enhancement
     CompetitivePositioning,
+    /// Regulatory compliance improvement
     RegulatoryCompliance,
+    /// General business optimization
     GeneralOptimization,
 }
 
+/// Quantified business impact across multiple dimensions
 #[derive(Debug, Clone)]
 pub struct BusinessImpact {
+    /// Expected revenue impact as a fraction (e.g., 0.23 = 23% increase)
     pub revenue_impact: f32,
+    /// Risk impact (negative = risk reduction)
     pub risk_impact: f32,
+    /// Operational efficiency impact
     pub operational_impact: f32,
+    /// Competitive advantage impact
     pub competitive_impact: f32,
 }
 
+/// Level of complexity for implementing a recommendation
 #[derive(Debug, Clone)]
 pub enum ImplementationComplexity {
+    /// Simple implementation with minimal resources
     Low,
+    /// Moderate effort and cross-team coordination
     Medium,
+    /// Significant effort and organizational change
     High,
+    /// Major transformation requiring extensive resources
     VeryHigh,
 }
 
+/// Results of validating insights against regulatory compliance frameworks
 #[derive(Debug, Clone)]
 pub struct ComplianceInsightValidation {
+    /// List of compliance frameworks that were validated against
     pub frameworks_validated: Vec<String>,
+    /// Overall compliance score (0.0 to 1.0)
     pub compliance_score: f32,
+    /// Regulatory notes and observations
     pub regulatory_notes: Vec<String>,
+    /// Unique identifier for the audit trail
     pub audit_trail_id: String,
 }
 
+/// Performance metadata for insight generation
 #[derive(Debug, Clone)]
 pub struct InsightPerformanceMetadata {
+    /// Time taken to generate insights in milliseconds
     pub generation_time_ms: u64,
+    /// Number of business domains processed
     pub domains_processed: usize,
+    /// Number of patterns analyzed
     pub patterns_analyzed: usize,
+    /// Overall confidence score of generated insights
     pub confidence_score: f32,
 }
 
+/// Aggregate strategic metrics for executive reporting
 #[derive(Debug, Clone)]
 pub struct StrategicMetrics {
+    /// Overall business impact score (0.0 to 1.0)
     pub business_impact_score: f32,
+    /// Feasibility of implementation (0.0 to 1.0)
     pub implementation_feasibility: f32,
+    /// Competitive advantage gained (0.0 to 1.0)
     pub competitive_advantage_score: f32,
+    /// Regulatory compliance level (0.0 to 1.0)
     pub regulatory_compliance_score: f32,
 }
 
 // Foundation structs for insights generation
 
+/// Generator for industry-specific business insights
 #[derive(Debug, Clone)]
 pub struct IndustryInsightGenerator {
+    /// Industry vertical (e.g., "financial_services", "healthcare")
     pub industry: String,
+    /// ML models available for this industry
     pub insight_models: Vec<String>,
 }
 
+/// Analyzer for discovering patterns across multiple business domains
 #[derive(Debug, Clone)]
 pub struct CrossDomainPatternAnalyzer;
 
+/// Synthesizer that combines insights from multiple sources into unified intelligence
 #[derive(Debug, Clone)]
 pub struct BusinessIntelligenceSynthesizer;
 
+/// Validator that checks generated insights against regulatory compliance frameworks
 #[derive(Debug, Clone)]
 pub struct RegulatoryInsightValidator;
 
+/// Optimizer for insight delivery performance and actionability
 #[derive(Debug, Clone)]
 pub struct InsightPerformanceOptimizer;
 
+/// Patterns discovered across multiple business domains
 #[derive(Debug, Clone)]
 pub struct CrossDomainPatterns {
+    /// Total number of patterns found
     pub pattern_count: usize,
+    /// Descriptions of discovered patterns
     pub patterns: Vec<String>,
+    /// Cross-domain correlations identified
     pub correlations: Vec<String>,
 }
 
+/// Insights tailored to a specific industry vertical
 #[derive(Debug, Clone)]
 pub struct IndustrySpecificInsights {
+    /// Industry vertical these insights apply to
     pub industry: String,
+    /// Generated insight descriptions
     pub insights: Vec<String>,
+    /// Confidence score for each insight
     pub confidence_scores: Vec<f32>,
 }
 
+/// Business intelligence synthesized from multiple data sources
 #[derive(Debug, Clone)]
 pub struct SynthesizedBusinessIntelligence {
+    /// Executive summary of synthesized intelligence
     pub summary: String,
+    /// List of key insights discovered
     pub key_insights: Vec<String>,
+    /// Actionable recommendations derived from the analysis
     pub recommendations: Vec<String>,
 }
 
+/// Template for generating strategic insights for a specific industry
 #[derive(Debug, Clone)]
 pub struct StrategicInsightTemplate {
+    /// Name of the template
     pub template_name: String,
+    /// Target industry for this template
     pub industry: String,
+    /// Template content with placeholders
     pub template_content: String,
 }
 
+/// Analyzer for operational efficiency and process metrics
 #[derive(Debug, Clone)]
 pub struct OperationalInsightAnalyzer;
 
+/// Calculator for financial metrics and profitability insights
 #[derive(Debug, Clone)]
 pub struct FinancialInsightCalculator;
 
+/// Analyzer for competitive market positioning and threats
 #[derive(Debug, Clone)]
 pub struct CompetitiveIntelligenceAnalyzer;
 
+/// Results of strategic pattern analysis
 #[derive(Debug, Clone)]
 pub struct StrategicAnalysis {
+    /// Identified strategic themes
     pub strategic_themes: Vec<String>,
+    /// Business opportunities discovered
     pub opportunities: Vec<String>,
+    /// Risks and threats identified
     pub risks: Vec<String>,
 }
 
+/// Context for guiding strategic analysis
 #[derive(Debug, Clone)]
 pub struct StrategicContext {
+    /// Primary business domain being analyzed
     pub business_domain: String,
+    /// Planning horizon (e.g., "quarterly", "annual")
     pub time_horizon: String,
+    /// Strategic objectives driving the analysis
     pub strategic_objectives: Vec<String>,
 }
 
+/// Focus areas for strategic insight generation
 #[derive(Debug, Clone)]
 pub struct StrategicFocus {
+    /// Primary strategic focus area
     pub primary_focus: String,
+    /// Secondary focus areas
     pub secondary_focuses: Vec<String>,
 }
 
+/// Context about the executive requesting insights
 #[derive(Debug, Clone)]
 pub struct ExecutiveUserContext {
+    /// Executive role (e.g., "CEO", "CFO", "CRO")
     pub executive_role: String,
+    /// Areas of responsibility
     pub responsibilities: Vec<String>,
+    /// Level of decision-making authority
     pub decision_authority: String,
 }
 
+/// Input data for business intelligence analysis
 #[derive(Debug, Clone)]
 pub struct BusinessIntelligenceData {
+    /// Data sources used for analysis
     pub data_sources: Vec<String>,
+    /// Business metrics to analyze
     pub metrics: Vec<String>,
+    /// Pre-existing insights to build upon
     pub insights: Vec<String>,
 }
 
+/// Comprehensive strategic business insights combining financial, operational, and competitive analysis
 #[derive(Debug, Clone)]
 pub struct StrategicBusinessInsights {
+    /// Financial analysis results
     pub financial_insights: FinancialInsights,
+    /// Operational analysis results
     pub operational_insights: OperationalInsights,
+    /// Competitive analysis results
     pub competitive_insights: CompetitiveInsights,
+    /// Strategic recommendations derived from the analysis
     pub strategic_recommendations: Vec<String>,
 }
 
+/// Financial analysis insights including revenue, cost, and profitability
 #[derive(Debug, Clone)]
 pub struct FinancialInsights {
+    /// Revenue trend analysis and observations
     pub revenue_analysis: Vec<String>,
+    /// Cost structure analysis and observations
     pub cost_analysis: Vec<String>,
+    /// Profitability insights and margin analysis
     pub profitability_insights: Vec<String>,
 }
 
+/// Operational efficiency insights and improvement recommendations
 #[derive(Debug, Clone)]
 pub struct OperationalInsights {
+    /// Efficiency metrics and benchmarks
     pub efficiency_metrics: Vec<String>,
+    /// Recommended process improvements
     pub process_improvements: Vec<String>,
+    /// Capacity utilization analysis
     pub capacity_analysis: Vec<String>,
 }
 
+/// Competitive market intelligence and positioning analysis
 #[derive(Debug, Clone)]
 pub struct CompetitiveInsights {
+    /// Current market position assessment
     pub market_position: String,
+    /// Identified competitive advantages
     pub competitive_advantages: Vec<String>,
+    /// Competitive threats and risks
     pub threats: Vec<String>,
 }
 
+/// Detailed executive recommendation with full impact assessment
 #[derive(Debug, Clone)]
 pub struct ExecutiveRecommendation {
+    /// Unique identifier for this recommendation
     pub recommendation_id: String,
+    /// Brief executive summary
     pub executive_summary: String,
+    /// Strategic impact score (0.0 to 1.0)
     pub strategic_impact: f32,
+    /// Implementation complexity score (0.0 to 1.0)
     pub implementation_complexity: f32,
+    /// Expected return on investment
     pub expected_roi: f32,
+    /// Risk assessment score (0.0 to 1.0)
     pub risk_assessment: f32,
+    /// Timeline for implementation (e.g., "Q2 2024")
     pub implementation_timeline: String,
+    /// Key dependencies for successful implementation
     pub key_dependencies: Vec<String>,
+    /// Metrics to measure success
     pub success_metrics: Vec<String>,
+    /// Stakeholders affected by this recommendation
     pub stakeholder_impact: Vec<String>,
+    /// Regulatory considerations to address
     pub regulatory_considerations: Vec<String>,
+    /// Feasibility of implementation (0.0 to 1.0)
     pub implementation_feasibility: f32,
+    /// Expected competitive advantage gain (0.0 to 1.0)
     pub competitive_advantage_score: f32,
+    /// Regulatory compliance level (0.0 to 1.0)
     pub regulatory_compliance_score: f32,
 }
 
