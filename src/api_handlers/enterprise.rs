@@ -1097,7 +1097,7 @@ mod tests {
 
         assert_eq!(requirements.latency_requirement_ms, 0);
         assert_eq!(requirements.throughput_requirement_qps, 0);
-        assert!((requirements.availability_requirement - 0.0).abs() < std::f64::EPSILON);
+        assert!((requirements.availability_requirement - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1108,6 +1108,6 @@ mod tests {
             availability_requirement: 1.0,
         };
 
-        assert!((requirements.availability_requirement - 1.0).abs() < std::f64::EPSILON);
+        assert!((requirements.availability_requirement - 1.0).abs() < f32::EPSILON);
     }
 }
