@@ -67,20 +67,32 @@ pub type WALWriter = Arc<RwLock<Vec<u8>>>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TransactionWALRecord {
     /// Transaction begun
-    TxBegin { tx_id: TransactionId },
+    TxBegin {
+        /// Unique transaction identifier.
+        tx_id: TransactionId,
+    },
 
     /// Participant prepared (voted YES)
     TxPrepare {
+        /// Transaction this prepare belongs to.
         tx_id: TransactionId,
+        /// ID of the participant that prepared.
         participant_id: String,
+        /// Total expected participants.
         total_count: usize,
     },
 
     /// Transaction committed
-    TxCommit { tx_id: TransactionId },
+    TxCommit {
+        /// Transaction being committed.
+        tx_id: TransactionId,
+    },
 
     /// Transaction aborted
-    TxAbort { tx_id: TransactionId },
+    TxAbort {
+        /// Transaction being aborted.
+        tx_id: TransactionId,
+    },
 }
 
 /// WAL state for a transaction
@@ -90,13 +102,18 @@ pub enum WALTransactionState {
     Begun,
     /// One or more participants prepared
     Preparing {
+        /// Number of participants that have prepared so far.
         prepared_count: usize,
+        /// Total expected participants.
         total_count: usize,
+        /// IDs of participants that have prepared.
         participant_ids: Vec<String>,
     },
     /// All participants prepared (ready to commit)
     Prepared {
+        /// Total participant count.
         total_count: usize,
+        /// IDs of all prepared participants.
         participant_ids: Vec<String>,
     },
     /// Transaction committed

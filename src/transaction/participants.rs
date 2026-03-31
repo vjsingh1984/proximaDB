@@ -44,9 +44,25 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 /// Buffered operations for a transaction
 #[derive(Debug, Clone)]
 pub enum BufferedOperation {
-    Insert { id: String, data: Vec<u8> },
-    Update { id: String, data: Vec<u8> },
-    Delete { id: String },
+    /// Insert a new record.
+    Insert {
+        /// Record identifier.
+        id: String,
+        /// Serialized record payload.
+        data: Vec<u8>,
+    },
+    /// Update an existing record.
+    Update {
+        /// Record identifier.
+        id: String,
+        /// Updated serialized payload.
+        data: Vec<u8>,
+    },
+    /// Delete a record by ID.
+    Delete {
+        /// Record identifier to delete.
+        id: String,
+    },
 }
 
 /// In-memory buffer for transaction operations
@@ -128,6 +144,7 @@ impl VectorEngineParticipant {
     /// Attach a durable write callback for live engine commits.
     /// When set, `supports_durable_commit()` returns true and commit
     /// operations are applied to the storage engine.
+    /// Attach a durable write callback for 2PC commit persistence.
     pub fn with_durable_writer(mut self, writer: DurableWriteFn) -> Self {
         self.durable_writer = Some(writer);
         self
@@ -245,6 +262,7 @@ pub struct DocumentEngineParticipant {
 }
 
 impl DocumentEngineParticipant {
+    /// Create a new document engine participant for the given collection.
     pub fn new(collection_id: &str) -> Self {
         Self {
             id: format!("document:{}", collection_id),
@@ -254,6 +272,7 @@ impl DocumentEngineParticipant {
         }
     }
 
+    /// Attach a durable write callback for 2PC commit persistence.
     pub fn with_durable_writer(mut self, writer: DurableWriteFn) -> Self {
         self.durable_writer = Some(writer);
         self
@@ -320,6 +339,7 @@ impl GraphEngineParticipant {
         }
     }
 
+    /// Attach a durable write callback for 2PC commit persistence.
     pub fn with_durable_writer(mut self, writer: DurableWriteFn) -> Self {
         self.durable_writer = Some(writer);
         self
@@ -377,6 +397,7 @@ pub struct TimeSeriesEngineParticipant {
 }
 
 impl TimeSeriesEngineParticipant {
+    /// Create a new time-series engine participant for the given collection.
     pub fn new(collection_id: &str) -> Self {
         Self {
             id: format!("tst:{}", collection_id),
@@ -386,6 +407,7 @@ impl TimeSeriesEngineParticipant {
         }
     }
 
+    /// Attach a durable write callback for 2PC commit persistence.
     pub fn with_durable_writer(mut self, writer: DurableWriteFn) -> Self {
         self.durable_writer = Some(writer);
         self

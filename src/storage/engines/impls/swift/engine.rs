@@ -2099,12 +2099,14 @@ mod tests {
 
     #[test]
     fn test_swift_magic_constant() {
-        assert_eq!(super::SWIFT_MAGIC, *b"SWFT");
+        use crate::storage::engines::impls::swift::SWIFT_MAGIC;
+        assert_eq!(SWIFT_MAGIC, *b"SWFT");
     }
 
     #[test]
     fn test_swift_header_default() {
-        let header = super::SwiftHeader::default();
+        use crate::storage::engines::impls::swift::SwiftHeader;
+        let header = SwiftHeader::default();
         assert_eq!(header.magic, *b"SWFT");
         assert_eq!(header.version, 1);
         assert_eq!(header.distance_metric, "cosine");
@@ -2118,8 +2120,9 @@ mod tests {
 
     #[test]
     fn test_swift_header_custom() {
-        let header = super::SwiftHeader {
-            magic: super::SWIFT_MAGIC,
+        use crate::storage::engines::impls::swift::{SWIFT_MAGIC, SwiftHeader};
+        let header = SwiftHeader {
+            magic: SWIFT_MAGIC,
             version: 2,
             collection_id: "test_collection".to_string(),
             timestamp: 1234567890,
@@ -2151,7 +2154,8 @@ mod tests {
 
     #[test]
     fn test_superblock_new() {
-        let sb = super::super::SuperBlock::new(0, "test_sb".to_string());
+        use crate::storage::engines::impls::swift::SuperBlock;
+        let sb = SuperBlock::new(0, "test_sb".to_string());
         assert_eq!(sb.superblock_id, 0);
         assert_eq!(sb.name, "test_sb");
         assert!(sb.blocks.is_empty());
@@ -2163,7 +2167,8 @@ mod tests {
 
     #[test]
     fn test_quantization_config_old_default() {
-        let config = super::super::QuantizationConfigOLD::default();
+        use crate::storage::engines::impls::swift::QuantizationConfigOLD;
+        let config = QuantizationConfigOLD::default();
         assert!(!config.enable_binary);
         assert!(!config.enable_int8);
         assert!(!config.enable_pq);
