@@ -229,6 +229,7 @@ pub struct VectorSimilarityStrategy {
 }
 
 impl VectorSimilarityStrategy {
+    /// Create a new vector similarity ranking strategy with the given distance computation engine.
     pub fn new(distance_compute: Arc<UnifiedDistanceCompute>) -> Self {
         Self { distance_compute }
     }
@@ -265,6 +266,7 @@ pub struct GraphCentralityStrategy {
 }
 
 impl GraphCentralityStrategy {
+    /// Create a new graph centrality ranking strategy backed by a pre-computed centrality cache.
     pub fn new(centrality_cache: Arc<DashMap<NodeId, f64>>) -> Self {
         Self { centrality_cache }
     }

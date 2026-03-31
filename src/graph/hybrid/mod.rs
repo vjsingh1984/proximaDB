@@ -196,21 +196,23 @@ pub enum FusionStrategy {
     Balanced,
     /// Custom weighted combination
     Weighted {
+        /// Weight applied to vector similarity scores.
         vector_weight: f32,
+        /// Weight applied to graph relevance scores.
         graph_weight: f32,
     },
 }
 
-/// Optimization flags for hybrid queries
+/// Optimization flags for hybrid vector+graph queries.
 #[derive(Debug, Clone)]
 pub struct HybridOptimizations {
-    /// Use progressive search for vector component
+    /// Use progressive search for vector component.
     pub use_progressive_search: bool,
-    /// Cache intermediate results
+    /// Cache intermediate results for re-use across fusion stages.
     pub cache_intermediates: bool,
-    /// Parallelize vector and graph operations
+    /// Parallelize vector and graph operations concurrently.
     pub parallel_execution: bool,
-    /// Use early termination when possible
+    /// Use early termination when possible to reduce latency.
     pub early_termination: bool,
 }
 
@@ -281,31 +283,48 @@ pub struct EdgeFilter {
     pub value: serde_json::Value,
 }
 
-/// Filter operators
+/// Filter operators for property-based node and edge filtering.
 #[derive(Debug, Clone)]
 pub enum FilterOperator {
+    /// Exact equality match.
     Equal,
+    /// Not-equal comparison.
     NotEqual,
+    /// Strictly greater than.
     GreaterThan,
+    /// Greater than or equal to.
     GreaterThanOrEqual,
+    /// Strictly less than.
     LessThan,
+    /// Less than or equal to.
     LessThanOrEqual,
+    /// Value is in the provided set.
     In,
+    /// Value is not in the provided set.
     NotIn,
+    /// String contains substring.
     Contains,
+    /// String starts with prefix.
     StartsWith,
+    /// String ends with suffix.
     EndsWith,
+    /// Regular expression match.
     Regex,
 }
 
-/// Traversal algorithms for graph component
+/// Traversal algorithms for the graph component of hybrid queries.
 #[derive(Debug, Clone)]
 pub enum TraversalAlgorithm {
+    /// Breadth-first search traversal.
     BFS,
+    /// Depth-first search traversal.
     DFS,
+    /// Dijkstra shortest-path traversal using edge weights.
     Dijkstra,
-    SemanticBFS, // BFS guided by vector similarity
-    SemanticDFS, // DFS guided by vector similarity
+    /// BFS guided by vector similarity at each expansion step.
+    SemanticBFS,
+    /// DFS guided by vector similarity at each expansion step.
+    SemanticDFS,
 }
 
 /// Fusion configuration
@@ -410,43 +429,63 @@ pub struct HybridDebugInfo {
     pub performance: HybridPerformanceMetrics,
 }
 
-/// Vector candidate in debug info
+/// Vector candidate in debug info before fusion.
 #[derive(Debug, Clone, Serialize)]
 pub struct VectorCandidate {
+    /// Node identifier from the vector search result.
     pub node_id: NodeId,
+    /// Cosine or distance similarity score from vector search.
     pub similarity: f32,
+    /// The underlying vector record for this candidate.
     pub vector_record: VectorRecord,
 }
 
-/// Graph candidate in debug info
+/// Graph candidate in debug info before fusion.
 #[derive(Debug, Clone, Serialize)]
 pub struct GraphCandidate {
+    /// Node identifier from the graph traversal result.
     pub node_id: NodeId,
+    /// Hop distance from the start node.
     pub distance: u32,
+    /// Number of edges in the shortest path to this node.
     pub path_length: usize,
+    /// Pre-computed centrality score, if available.
     pub centrality_score: Option<f32>,
 }
 
-/// Fusion process details
+/// Details of the fusion process combining vector and graph results.
 #[derive(Debug, Serialize)]
 pub struct FusionDetails {
+    /// Name of the fusion strategy applied (e.g. "Balanced", "VectorFirst").
     pub strategy_used: String,
+    /// Fusion weights that were applied, if any.
     pub weights_applied: Option<FusionWeights>,
+    /// Number of candidates before fusion filtering.
     pub candidates_before_fusion: usize,
+    /// Number of candidates after fusion filtering.
     pub candidates_after_fusion: usize,
+    /// Time spent on the fusion step in milliseconds.
     pub fusion_time_ms: u64,
 }
 
-/// Performance metrics for hybrid queries
+/// Performance metrics for hybrid query execution.
 #[derive(Debug, Serialize)]
 pub struct HybridPerformanceMetrics {
+    /// Total end-to-end query time in milliseconds.
     pub total_time_ms: u64,
+    /// Time spent on the vector search component in milliseconds.
     pub vector_time_ms: u64,
+    /// Time spent on the graph traversal component in milliseconds.
     pub graph_time_ms: u64,
+    /// Time spent on the fusion step in milliseconds.
     pub fusion_time_ms: u64,
+    /// Peak memory used during query execution in megabytes.
     pub memory_used_mb: f32,
+    /// Number of vector candidates evaluated.
     pub vector_candidates_evaluated: usize,
+    /// Number of graph nodes visited during traversal.
     pub graph_nodes_visited: usize,
+    /// Number of cache hits during the query.
     pub cache_hits: usize,
 }
 

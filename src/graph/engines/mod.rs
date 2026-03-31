@@ -33,7 +33,9 @@
 //! CSR (Compressed Sparse Row) format NEVER contains embedding data.
 //! Embeddings are optionally stored in separate vector storage engines.
 
+/// Generic graph traversal algorithms (BFS, DFS, Dijkstra, A*) usable across all engines.
 pub mod generic_traversal;
+/// ORION in-memory CSR graph engine for real-time traversal at 1M+ edges/sec.
 pub mod orion;
 
 // PULSAR: Distributed graph engine (experimental)
@@ -83,6 +85,7 @@ pub mod pulsar {
     pub struct PulsarGraphEngine;
 
     impl PulsarGraphEngine {
+        /// Create a new PULSAR engine (requires `distributed-graph` feature).
         pub fn new(_config: PulsarConfig) -> Result<Self, ProximaDBError> {
             Err(ProximaDBError::NotImplemented(
                 "PULSAR requires 'distributed-graph' feature. Build with: cargo build --features distributed-graph".to_string()
@@ -233,6 +236,7 @@ pub mod quasar {
     pub struct QuasarGraphEngine;
 
     impl QuasarGraphEngine {
+        /// Create a new QUASAR engine (requires `tiered-graph` feature).
         pub async fn new(_config: QuasarConfig) -> Result<Self, ProximaDBError> {
             Err(ProximaDBError::NotImplemented(
                 "QUASAR requires 'tiered-graph' feature. Build with: cargo build --features tiered-graph".to_string()
@@ -745,8 +749,11 @@ pub enum GraphEngineType {
 /// This avoids the dyn compatibility issues with async trait methods
 #[derive(Debug)]
 pub enum GraphEngineImpl {
+    /// ORION in-memory CSR engine instance.
     Orion(orion::OrionGraphEngine),
+    /// PULSAR distributed sharded engine instance.
     Pulsar(pulsar::PulsarGraphEngine),
+    /// QUASAR hybrid hot/cold tiering engine instance.
     Quasar(quasar::QuasarGraphEngine),
 }
 
@@ -1010,17 +1017,24 @@ impl GraphEngineFactory {
 /// Configuration for graph engine creation
 #[derive(Debug, Clone, Default)]
 pub struct GraphEngineConfig {
+    /// Optional PULSAR distributed engine configuration.
     pub pulsar_config: Option<pulsar::PulsarConfig>,
+    /// Optional QUASAR hybrid tiering engine configuration.
     pub quasar_config: Option<quasar::QuasarConfig>,
 }
 
 /// Engine capabilities description
 #[derive(Debug, Clone)]
 pub struct EngineCapabilities {
+    /// Engine name (e.g. "ORION", "PULSAR", "QUASAR").
     pub name: String,
+    /// Human-readable description of the engine.
     pub description: String,
+    /// List of supported features (e.g. "CSR storage", "DashMap concurrent access").
     pub features: Vec<String>,
+    /// Recommended use cases for this engine.
     pub use_cases: Vec<String>,
+    /// Performance characteristics (e.g. "1M+ edges/second traversal").
     pub performance_characteristics: Vec<String>,
 }
 

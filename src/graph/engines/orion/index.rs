@@ -67,12 +67,16 @@ pub struct EdgeTypeIndex {
     pub stats: IndexStats,
 }
 
-/// Index statistics
+/// Index statistics tracking size, cardinality, and memory consumption.
 #[derive(Debug, Default)]
 pub struct IndexStats {
+    /// Total number of entries in the index.
     pub total_entries: usize,
+    /// Number of distinct key values in the index.
     pub unique_values: usize,
+    /// Estimated heap memory consumed by the index in bytes.
     pub memory_usage_bytes: usize,
+    /// Timestamp of the last index update, if any.
     pub last_updated: Option<std::time::SystemTime>,
 }
 

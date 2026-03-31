@@ -202,28 +202,39 @@ pub struct SparkFilter {
 /// Spark filter types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SparkFilterType {
-    // Comparison
+    /// Equality comparison (=)
     EqualTo,
+    /// Inequality comparison (!=)
     NotEqualTo,
+    /// Greater-than comparison (>)
     GreaterThan,
+    /// Greater-than-or-equal comparison (>=)
     GreaterThanOrEqual,
+    /// Less-than comparison (<)
     LessThan,
+    /// Less-than-or-equal comparison (<=)
     LessThanOrEqual,
-    // String
+    /// String prefix match
     StringStartsWith,
+    /// String suffix match
     StringEndsWith,
+    /// String substring match
     StringContains,
-    // Null
+    /// Check for null value
     IsNull,
+    /// Check for non-null value
     IsNotNull,
-    // Logical
+    /// Logical AND of child filters
     And,
+    /// Logical OR of child filters
     Or,
+    /// Logical NOT of a child filter
     Not,
-    // Collection
+    /// Membership test (IN list)
     In,
-    // Special
+    /// Always-true constant predicate
     AlwaysTrue,
+    /// Always-false constant predicate
     AlwaysFalse,
 }
 
@@ -457,7 +468,9 @@ pub struct SparkWriteCommitMessage {
 /// Write error
 #[derive(Debug)]
 pub struct SparkWriteError {
+    /// Human-readable error description
     pub message: String,
+    /// Numeric error code
     pub code: i32,
 }
 

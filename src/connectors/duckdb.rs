@@ -235,31 +235,43 @@ pub struct DuckDBFilter {
 /// DuckDB filter types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DuckDBFilterType {
-    // Comparison
+    /// Equality comparison (=)
     Equal,
+    /// Inequality comparison (!=)
     NotEqual,
+    /// Greater-than comparison (>)
     GreaterThan,
+    /// Greater-than-or-equal comparison (>=)
     GreaterThanOrEqual,
+    /// Less-than comparison (<)
     LessThan,
+    /// Less-than-or-equal comparison (<=)
     LessThanOrEqual,
-    // String
+    /// SQL LIKE pattern match
     Like,
+    /// Negated SQL LIKE pattern match
     NotLike,
+    /// Case-insensitive LIKE pattern match
     ILike,
-    // Null
+    /// Check for null value
     IsNull,
+    /// Check for non-null value
     IsNotNull,
-    // Logical
+    /// Logical AND of child filters
     And,
+    /// Logical OR of child filters
     Or,
+    /// Logical NOT of a child filter
     Not,
-    // Range
+    /// Range predicate (BETWEEN low AND high)
     Between,
-    // Collection
+    /// Membership test (IN list)
     In,
+    /// Negated membership test (NOT IN list)
     NotIn,
-    // Constant
+    /// Always-true constant predicate
     ConstantTrue,
+    /// Always-false constant predicate
     ConstantFalse,
 }
 

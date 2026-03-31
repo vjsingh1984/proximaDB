@@ -178,28 +178,46 @@ pub trait IncrementalAlgorithm: GraphAlgorithm {
 pub enum GraphChange {
     /// A node was added
     NodeAdded {
+        /// Identifier of the newly added node.
         node_id: String,
+        /// Key-value properties assigned to the new node.
         properties: HashMap<String, String>,
     },
     /// A node was removed
-    NodeRemoved { node_id: String },
+    NodeRemoved {
+        /// Identifier of the removed node.
+        node_id: String,
+    },
     /// An edge was added
     EdgeAdded {
+        /// Source node identifier.
         from: String,
+        /// Target node identifier.
         to: String,
+        /// Numeric weight of the new edge.
         weight: f64,
     },
     /// An edge was removed
-    EdgeRemoved { from: String, to: String },
+    EdgeRemoved {
+        /// Source node identifier.
+        from: String,
+        /// Target node identifier.
+        to: String,
+    },
     /// A node's properties were updated
     NodePropertiesUpdated {
+        /// Identifier of the updated node.
         node_id: String,
+        /// Updated key-value properties.
         properties: HashMap<String, String>,
     },
     /// An edge's weight was updated
     EdgeWeightUpdated {
+        /// Source node identifier.
         from: String,
+        /// Target node identifier.
         to: String,
+        /// New weight value for the edge.
         new_weight: f64,
     },
 }
@@ -334,26 +352,38 @@ pub trait ApproximateAlgorithm: GraphAlgorithm {
 #[derive(Debug, Clone)]
 pub struct NoInput;
 
+/// Input specifying a single node for algorithms like single-source shortest path.
 #[derive(Debug, Clone)]
 pub struct SingleNodeInput {
+    /// Identifier of the target node.
     pub node_id: String,
 }
 
+/// Input specifying a source-target node pair for path-finding algorithms.
 #[derive(Debug, Clone)]
 pub struct NodePairInput {
+    /// Source node identifier.
     pub source: String,
+    /// Target node identifier.
     pub target: String,
 }
 
+/// Input specifying a subgraph by a set of node identifiers.
 #[derive(Debug, Clone)]
 pub struct SubgraphInput {
+    /// Node identifiers defining the subgraph.
     pub node_ids: Vec<String>,
 }
 
 /// Common algorithm output types
+
+/// Maps node identifiers to their centrality scores.
 pub type CentralityScores = HashMap<String, f64>;
+/// Maps node identifiers to their community/cluster assignments.
 pub type CommunityAssignment = HashMap<String, usize>;
+/// Ordered sequence of node identifiers forming a shortest path.
 pub type ShortestPath = Vec<String>;
+/// Maps (source, target) pairs to their shortest path distances.
 pub type AllPairsShortestPaths = HashMap<(String, String), f64>;
 
 #[cfg(test)]

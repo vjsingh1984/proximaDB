@@ -696,8 +696,10 @@ pub enum HadoopErrorCode {
 
 /// Base64 encoding helper (minimal implementation)
 mod base64 {
+    /// Standard Base64 alphabet characters.
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+    /// Encode a byte slice as a Base64-encoded string.
     pub fn encode(data: &[u8]) -> String {
         let mut result = String::new();
         let mut i = 0;

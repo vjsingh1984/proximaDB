@@ -150,16 +150,24 @@ pub struct OrionGraphEngine {
     persistence: Option<Arc<persistence::OrionPersistence>>,
 }
 
-/// Engine performance statistics
+/// Engine performance statistics tracking cumulative operation counts.
 #[derive(Debug, Default)]
 pub struct EngineStats {
+    /// Total number of nodes inserted since engine creation.
     pub nodes_created: u64,
+    /// Total number of edges inserted since engine creation.
     pub edges_created: u64,
+    /// Total number of node update operations.
     pub nodes_updated: u64,
+    /// Total number of edge update operations.
     pub edges_updated: u64,
+    /// Total number of node deletions.
     pub nodes_deleted: u64,
+    /// Total number of edge deletions.
     pub edges_deleted: u64,
+    /// Total number of traversal operations executed.
     pub traversals_performed: u64,
+    /// Cumulative traversal time in microseconds across all operations.
     pub total_traversal_time_microseconds: u64,
 }
 
@@ -469,18 +477,23 @@ impl OrionGraphEngine {
     }
 
     // Convenience alias methods for persistence module compatibility
+
+    /// Create a node in the graph (alias for `insert_node` used by persistence layer).
     pub async fn create_node(&self, node: Node) -> Result<Arc<Node>> {
         self.insert_node(node).await
     }
 
+    /// Create an edge in the graph (alias for `insert_edge` used by persistence layer).
     pub async fn create_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         self.insert_edge(edge).await
     }
 
+    /// Delete a node by ID, returning the removed node if it existed.
     pub async fn delete_node(&self, node_id: &NodeId) -> Result<Option<Arc<Node>>> {
         GraphEngine::delete_node(self, node_id).await
     }
 
+    /// Delete an edge by ID, returning the removed edge if it existed.
     pub async fn delete_edge(&self, edge_id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         GraphEngine::delete_edge(self, edge_id).await
     }

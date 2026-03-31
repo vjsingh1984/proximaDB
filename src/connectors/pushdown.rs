@@ -255,8 +255,11 @@ pub enum Expr {
 
     /// Binary comparison (=, <, >, etc.)
     BinaryOp {
+        /// Left-hand operand
         left: Box<Expr>,
+        /// Comparison operator
         op: BinaryOperator,
+        /// Right-hand operand
         right: Box<Expr>,
     },
 
@@ -271,43 +274,71 @@ pub enum Expr {
 
     /// IN clause (column IN (value1, value2, ...))
     In {
+        /// Column to test
         column: String,
+        /// Set of candidate values
         values: Vec<LiteralValue>,
+        /// Whether this is a NOT IN expression
         negated: bool,
     },
 
     /// BETWEEN clause (column BETWEEN low AND high)
     Between {
+        /// Column to test
         column: String,
+        /// Lower bound expression
         low: Box<Expr>,
+        /// Upper bound expression
         high: Box<Expr>,
+        /// Whether this is a NOT BETWEEN expression
         negated: bool,
     },
 
     /// LIKE pattern matching
     Like {
+        /// Column to test
         column: String,
+        /// LIKE pattern string
         pattern: String,
+        /// Optional escape character
         escape: Option<char>,
+        /// Whether this is a NOT LIKE expression
         negated: bool,
     },
 
     /// IS NULL check
-    IsNull { column: String, negated: bool },
+    IsNull {
+        /// Column to test for null
+        column: String,
+        /// Whether this is IS NOT NULL
+        negated: bool,
+    },
 
     /// Function call (for extensibility)
-    Function { name: String, args: Vec<Expr> },
+    Function {
+        /// Function name
+        name: String,
+        /// Function arguments
+        args: Vec<Expr>,
+    },
 
     /// Vector similarity comparison (for vector search)
     VectorSimilarity {
+        /// Vector column to search
         column: String,
+        /// Query vector for similarity
         query_vector: Vec<f32>,
+        /// Distance metric identifier
         metric: String,
+        /// Minimum similarity threshold
         threshold: f32,
     },
 
     /// Subquery (for complex filters)
-    Subquery { query: String },
+    Subquery {
+        /// SQL subquery text
+        query: String,
+    },
 }
 
 impl Expr {
@@ -499,6 +530,7 @@ impl Expr {
         columns
     }
 
+    /// Recursively collect all column names referenced by this expression.
     fn collect_columns(&self, columns: &mut Vec<String>) {
         match self {
             Self::Column(col) => columns.push(col.clone()),
@@ -601,8 +633,15 @@ pub enum LiteralValue {
     Date(i32),
     /// Timestamp (microseconds since epoch)
     Timestamp(i64),
-    /// Interval
-    Interval { months: i32, days: i32, nanos: i64 },
+    /// Time interval
+    Interval {
+        /// Number of months
+        months: i32,
+        /// Number of days
+        days: i32,
+        /// Remaining nanoseconds
+        nanos: i64,
+    },
     /// Array of values
     Array(Vec<LiteralValue>),
     /// Map of key-value pairs

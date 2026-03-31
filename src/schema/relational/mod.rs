@@ -55,37 +55,64 @@ pub struct ColumnDefinition {
 /// SQL data types supported in relational schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SqlDataType {
+    /// 32-bit signed integer
     Integer,
+    /// 64-bit signed integer
     BigInt,
+    /// Single-precision floating point
     Real,
+    /// Double-precision floating point
     Double,
-    Decimal(u32, u32), // precision, scale
-    VarChar(u32),      // max length
-    Char(u32),         // fixed length
+    /// Fixed-point decimal with precision and scale
+    Decimal(u32, u32),
+    /// Variable-length character string with maximum length
+    VarChar(u32),
+    /// Fixed-length character string
+    Char(u32),
+    /// Unlimited-length text
     Text,
+    /// Boolean (true/false) value
     Boolean,
+    /// Calendar date without time
     Date,
+    /// Time of day without date
     Time,
+    /// Date and time without time zone
     Timestamp,
+    /// Date and time with time zone
     TimestampTz,
+    /// JSON text value
     Json,
+    /// Binary JSON value with indexing support
     Jsonb,
-    Vector(u32), // Vector with dimension
+    /// Fixed-dimension vector with the given dimensionality
+    Vector(u32),
+    /// Universally unique identifier
     Uuid,
+    /// Variable-length binary data
     Bytea,
 }
 
 /// Column constraints
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ColumnConstraint {
+    /// Column must not contain null values
     NotNull,
+    /// Column values must be unique across the table
     Unique,
+    /// Column is the primary key
     PrimaryKey,
-    Check(String), // Check expression
+    /// Custom check expression that values must satisfy
+    Check(String),
+    /// Foreign key reference to another table's column
     References {
+        /// Referenced table name
         table: String,
+        /// Referenced column name
         column: String,
+        /// Action on referenced row deletion
         on_delete: ReferentialAction,
+        /// Action on referenced row update
         on_update: ReferentialAction,
     },
 }
@@ -93,60 +120,89 @@ pub enum ColumnConstraint {
 /// Referential actions for foreign keys
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReferentialAction {
+    /// Take no action; allow dangling references
     NoAction,
+    /// Prevent deletion/update of referenced rows
     Restrict,
+    /// Propagate deletion/update to referencing rows
     Cascade,
+    /// Set referencing columns to null on deletion/update
     SetNull,
+    /// Set referencing columns to their default values on deletion/update
     SetDefault,
 }
 
 /// Unique constraint definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UniqueConstraint {
+    /// Constraint name
     pub name: String,
+    /// Columns that must be jointly unique
     pub columns: Vec<String>,
 }
 
 /// Check constraint definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckConstraint {
+    /// Constraint name
     pub name: String,
+    /// SQL expression that must evaluate to true
     pub expression: String,
 }
 
 /// Foreign key constraint definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForeignKeyConstraint {
+    /// Constraint name
     pub name: String,
+    /// Table containing the foreign key columns
     pub from_table: String,
+    /// Foreign key columns in the source table
     pub from_columns: Vec<String>,
+    /// Referenced (target) table name
     pub to_table: String,
+    /// Referenced columns in the target table
     pub to_columns: Vec<String>,
+    /// Action when a referenced row is deleted
     pub on_delete: ReferentialAction,
+    /// Action when a referenced row is updated
     pub on_update: ReferentialAction,
 }
 
 /// Index definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexDefinition {
+    /// Index name
     pub name: String,
+    /// Table the index belongs to
     pub table: String,
+    /// Indexed columns
     pub columns: Vec<String>,
+    /// Type of index structure
     pub index_type: IndexType,
+    /// Whether the index enforces uniqueness
     pub unique: bool,
-    pub where_clause: Option<String>, // Partial index condition
+    /// Optional WHERE clause for a partial index
+    pub where_clause: Option<String>,
 }
 
 /// Index types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IndexType {
+    /// Balanced tree index for range queries
     BTree,
+    /// Hash index for equality lookups
     Hash,
-    Gin,    // For JSON, arrays
-    Gist,   // For geometric data
-    SpGist, // Space-partitioned GIST
-    Brin,   // Block range indexes
-    Vector, // For vector similarity
+    /// Generalized inverted index for JSON and arrays
+    Gin,
+    /// Generalized search tree for geometric data
+    Gist,
+    /// Space-partitioned GiST index
+    SpGist,
+    /// Block-range index for large sequential tables
+    Brin,
+    /// Vector similarity index
+    Vector,
 }
 
 impl RelationalSchema {
@@ -256,6 +312,7 @@ impl RelationalSchema {
         }
     }
 
+    /// Convert a SQL data type to its DDL string representation.
     fn sql_type_to_string(&self, data_type: &SqlDataType) -> String {
         match data_type {
             SqlDataType::Integer => "INTEGER".to_string(),
@@ -310,10 +367,15 @@ impl TableDefinition {
 /// Schema validation errors
 #[derive(Debug)]
 pub enum SchemaValidationError {
+    /// Referenced table does not exist in the schema
     TableNotFound(String),
+    /// Referenced column does not exist in its table
     ColumnNotFound(String, String),
+    /// A table with the same name already exists
     DuplicateTable(String),
+    /// A column with the same name already exists in the table
     DuplicateColumn(String, String),
+    /// A constraint definition is invalid
     InvalidConstraint(String),
 }
 

@@ -419,13 +419,18 @@ impl Default for CsrStorage {
     }
 }
 
-/// Memory usage statistics for CSR storage
+/// Memory usage statistics for CSR storage arrays.
 #[derive(Debug, Clone)]
 pub struct CsrMemoryStats {
+    /// Bytes consumed by the offsets array (one entry per node + 1).
     pub offsets_bytes: usize,
+    /// Bytes consumed by the targets array (one entry per edge).
     pub targets_bytes: usize,
+    /// Bytes consumed by the edge ID array (one entry per edge).
     pub edge_ids_bytes: usize,
+    /// Bytes consumed by temporary edge buffers pending CSR rebuild.
     pub temp_edges_bytes: usize,
+    /// Sum of all memory components above.
     pub total_bytes: usize,
 }
 

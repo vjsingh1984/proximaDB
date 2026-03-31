@@ -145,6 +145,7 @@ pub struct GraphMemoryPool {
     /// Numeric indexes for node properties (for numeric range queries)
     pub node_property_num_indexes:
         Arc<DashMap<String, std::sync::RwLock<std::collections::HashMap<i64, Vec<NodeId>>>>>,
+    /// Property indexes for edge-level properties, keyed by property name.
     pub edge_property_indexes: Arc<DashMap<String, DashMap<String, Vec<EdgeId>>>>,
     /// Ordered string indexes for edge properties (for range/prefix queries)
     pub edge_property_str_ordered:
@@ -155,6 +156,7 @@ pub struct GraphMemoryPool {
 
     /// Label indexes for fast label-based queries
     pub label_indexes: Arc<DashMap<String, Vec<NodeId>>>,
+    /// Edge type indexes mapping edge type strings to edge identifiers.
     pub edge_type_indexes: Arc<DashMap<String, Vec<EdgeId>>>,
 
     /// Composite (from,to,type) edge index for uniqueness checks

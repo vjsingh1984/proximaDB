@@ -55,13 +55,18 @@ pub struct TraversalResult {
     pub stats: TraversalStats,
 }
 
-/// Statistics collected during traversal
+/// Statistics collected during a graph traversal operation.
 #[derive(Debug, Clone, Default)]
 pub struct TraversalStats {
+    /// Number of unique nodes visited during traversal.
     pub nodes_visited: usize,
+    /// Number of edges traversed (expanded) during traversal.
     pub edges_traversed: usize,
+    /// Maximum depth reached from the start node.
     pub max_depth_reached: u32,
+    /// Wall-clock execution time in microseconds.
     pub execution_time_microseconds: u64,
+    /// Peak memory consumed by traversal data structures in bytes.
     pub memory_used_bytes: usize,
 }
 
@@ -83,7 +88,10 @@ pub enum AStarHeuristic {
     /// Heuristic: (1.0 - alpha) * graph_distance + alpha * semantic_distance
     ///
     /// This leverages UnifiedDistanceCompute for hardware acceleration (AVX2, NEON)
-    VectorGuided { alpha: f64 },
+    VectorGuided {
+        /// Blend factor between graph distance (0.0) and semantic similarity (1.0).
+        alpha: f64,
+    },
 }
 
 /// Traversal configuration and filters

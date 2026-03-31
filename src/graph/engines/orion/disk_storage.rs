@@ -115,9 +115,12 @@ pub struct PageId {
     pub page_number: usize,
 }
 
+/// Type of memory-mapped file backing a cache page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PageFileType {
+    /// CSR offset array file storing per-node edge list start positions.
     Offsets,
+    /// CSR target array file storing destination node indices.
     Targets,
 }
 
@@ -151,14 +154,17 @@ impl Page {
     }
 }
 
-/// Cache statistics
+/// Cache statistics for the disk-based CSR page cache.
 #[derive(Debug, Clone)]
 pub struct CacheStats {
+    /// Current number of cached pages.
     pub cache_size: usize,
+    /// Maximum number of pages the cache can hold.
     pub cache_capacity: usize,
 }
 
 impl CacheStats {
+    /// Compute the cache utilization ratio (0.0 to 1.0).
     pub fn hit_rate(&self) -> f64 {
         if self.cache_capacity == 0 {
             0.0
@@ -611,19 +617,25 @@ impl DiskCsrStorage {
     }
 }
 
-/// Snapshot of disk-based CSR storage
+/// Snapshot of disk-based CSR storage for persistence and recovery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskCsrSnapshot {
+    /// Number of nodes at snapshot time.
     pub node_count: usize,
+    /// Number of edges at snapshot time.
     pub edge_count: usize,
+    /// Unix timestamp (milliseconds) when the snapshot was taken.
     pub timestamp: i64,
 }
 
-/// Statistics from WAL recovery
+/// Statistics from WAL recovery after a restart or crash.
 #[derive(Debug, Clone)]
 pub struct RecoveryStats {
+    /// Total number of WAL operations replayed.
     pub operations_replayed: u64,
+    /// Number of edges successfully recovered.
     pub edges_recovered: u64,
+    /// Wall-clock duration of the recovery process in milliseconds.
     pub duration_ms: u64,
 }
 

@@ -34,15 +34,24 @@ pub struct FieldDefinition {
 /// Supported field types in document schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FieldType {
+    /// UTF-8 string value
     String,
+    /// Signed integer value
     Integer,
+    /// Floating-point value
     Float,
+    /// Boolean (true/false) value
     Boolean,
+    /// Date and time value
     DateTime,
-    Vector(u32), // Vector with dimension
+    /// Fixed-dimension vector with the given dimensionality
+    Vector(u32),
+    /// Ordered array of elements of the given type
     Array(Box<FieldType>),
+    /// Nested object with named sub-fields
     Object(HashMap<String, FieldDefinition>),
-    Json, // Free-form JSON
+    /// Free-form JSON value
+    Json,
 }
 
 /// Field validation constraints
@@ -104,6 +113,7 @@ impl DocumentSchema {
         Ok(())
     }
 
+    /// Validate that a field value matches the expected type.
     fn validate_field_value(
         &self,
         field_name: &str,
@@ -192,9 +202,13 @@ impl DocumentSchema {
 /// Schema validation errors
 #[derive(Debug)]
 pub enum ValidationError {
+    /// A required field is absent from the document
     MissingRequiredField(String),
+    /// A field value does not match the expected type
     TypeMismatch(String, String),
+    /// A vector field has an incorrect number of dimensions
     VectorDimensionMismatch(String, u32, usize),
+    /// The top-level document structure is invalid
     InvalidDocumentStructure(String),
 }
 
