@@ -103,7 +103,7 @@ impl HelixSIMDWriter {
             let binary_vectors: Vec<Vec<u8>> = vectors
                 .iter()
                 .map(|v| {
-                    let mut binary = vec![0u8; (dimension + 7) / 8];
+                    let mut binary = vec![0u8; dimension.div_ceil(8)];
                     for (i, &val) in v.iter().enumerate() {
                         if val > 0.0 {
                             binary[i / 8] |= 1 << (i % 8);

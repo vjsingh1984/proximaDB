@@ -2123,7 +2123,7 @@ impl ProximaDataBlock {
 
             // Build sparse column for this key
             let mut sparse_values = Vec::new();
-            let mut presence_bitmap = vec![0u8; (self.records.len() + 7) / 8];
+            let mut presence_bitmap = vec![0u8; self.records.len().div_ceil(8)];
 
             for (idx, record) in self.records.iter().enumerate() {
                 if let Some(sql_value) = record.metadata.get(key) {
@@ -3787,7 +3787,7 @@ impl ProximaDataBlock {
         field_data.push(0x01); // Version 0x01 (optimized layout)
 
         // Calculate and write number of groups (only field-specific info needed)
-        let num_groups = (dimension + GROUP_SIZE - 1) / GROUP_SIZE;
+        let num_groups = dimension.div_ceil(GROUP_SIZE);
         field_data.extend(&(num_groups as u32).to_le_bytes());
         // Note: dimension and record count are available from file header, no need to duplicate
 
@@ -4006,7 +4006,7 @@ impl ProximaDataBlock {
         field_data.push(0x01); // Version 0x01 (block compression)
 
         // Calculate and write number of groups (only field-specific info needed)
-        let num_groups = (dimension + GROUP_SIZE - 1) / GROUP_SIZE;
+        let num_groups = dimension.div_ceil(GROUP_SIZE);
         field_data.extend(&(num_groups as u32).to_le_bytes());
         // Note: dimension and record count are available from file header, no need to duplicate
 

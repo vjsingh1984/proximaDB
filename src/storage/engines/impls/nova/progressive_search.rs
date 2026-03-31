@@ -926,7 +926,7 @@ impl DistanceTable {
 impl BinarySketch {
     fn from_vector(vector: &[f32], threshold: f32) -> Self {
         let dimension = vector.len();
-        let num_bytes = (dimension + 7) / 8;
+        let num_bytes = dimension.div_ceil(8);
         let mut bits = vec![0u8; num_bytes];
         for (i, &value) in vector.iter().enumerate() {
             if value > threshold {

@@ -296,7 +296,7 @@ impl IoStrategy for ParallelReader {
         // With parallelism, we can do multiple reads at once
         let io_operations = if self.should_parallelize(ranges) {
             // Parallel: ceiling of ranges / max_concurrent
-            (ranges.len() + self.config.max_concurrent_reads - 1) / self.config.max_concurrent_reads
+            ranges.len().div_ceil(self.config.max_concurrent_reads)
         } else {
             ranges.len()
         };

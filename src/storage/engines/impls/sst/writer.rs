@@ -835,7 +835,7 @@ impl SstableWriter {
 
         for (i, serialized_block) in serialized_blocks.iter().enumerate() {
             // Align to cache line boundaries for better CPU performance
-            let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE)
+            let aligned_size = serialized_block.len().div_ceil(CACHE_LINE_SIZE)
                 * CACHE_LINE_SIZE;
             let padding = aligned_size - serialized_block.len();
 
@@ -954,7 +954,7 @@ impl SstableWriter {
                 .iter()
                 .map(|v| {
                     // Simple sign-based binary quantization
-                    let mut binary = vec![0u8; (dimension + 7) / 8];
+                    let mut binary = vec![0u8; dimension.div_ceil(8)];
                     for (i, &val) in v.iter().enumerate() {
                         if val > 0.0 {
                             binary[i / 8] |= 1 << (i % 8);
@@ -1009,7 +1009,7 @@ impl SstableWriter {
                 "⚡ SST: Added quantization to block {} ({} vectors): binary={} bytes, int8={} bytes",
                 block_id,
                 vectors.len(),
-                vectors.len() * ((dimension + 7) / 8),
+                vectors.len() * dimension.div_ceil(8),
                 vectors.len() * dimension
             );
         }

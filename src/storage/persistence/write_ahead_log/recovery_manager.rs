@@ -963,7 +963,7 @@ impl ParallelRecoveryManager {
         }
 
         // Split files into chunks for parallel processing
-        let chunk_size = (wal_files.len() + self.num_workers - 1) / self.num_workers;
+        let chunk_size = wal_files.len().div_ceil(self.num_workers);
         let file_chunks: Vec<Vec<_>> = wal_files
             .chunks(chunk_size)
             .map(|chunk| chunk.to_vec())

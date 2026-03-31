@@ -66,7 +66,7 @@ pub fn create_parquet_schema_from_specs(
         // Binary quantization
         fields.push(Field::new(
             "vector_binary",
-            DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
+            DataType::FixedSizeBinary(dimension.div_ceil(8) as i32),
             true,
         ));
 
@@ -576,7 +576,7 @@ impl ColumnarSchemaBuilder {
 
         // Binary quantization - ultra-fast filtering
         if quant_config.enable_binary.unwrap_or(false) {
-            let binary_size = (config.dimension + 7) / 8; // Bits to bytes
+            let binary_size = config.dimension.div_ceil(8); // Bits to bytes
             fields.push(Field::new(
                 "vector_binary",
                 DataType::FixedSizeBinary(binary_size as i32),

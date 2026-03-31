@@ -1781,7 +1781,7 @@ impl RaptorEngine {
                 let num_vectors = u32::from_le_bytes(count_bytes) as usize;
 
                 // Read binary data (packed bits)
-                let bits_per_vector = (dimension + 7) / 8; // Round up to byte boundary
+                let bits_per_vector = dimension.div_ceil(8); // Round up to byte boundary
                 let mut binary_data = vec![0u8; num_vectors * bits_per_vector];
                 cursor.read_exact(&mut binary_data)?;
 

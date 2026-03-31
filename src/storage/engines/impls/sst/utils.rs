@@ -228,7 +228,7 @@ impl SstEngine {
         };
 
         // Ensure within reasonable bounds (4KB to 1MB)
-        optimal_size.max(4096).min(1048576)
+        optimal_size.clamp(4096, 1048576)
     }
 
     /// Estimate memory requirements for an operation

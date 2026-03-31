@@ -723,7 +723,7 @@ impl RowGroupBloomFilter {
     /// Formula: k = ln(2) * m/n where k=bits_per_key, m=total_bits, n=items
     fn calculate_bits_per_key(false_positive_rate: f64) -> u32 {
         let bits = (-false_positive_rate.ln() / (2.0_f64.ln().powi(2))).ceil();
-        (bits as u32).max(4).min(32) // Clamp between 4 and 32 bits
+        (bits as u32).clamp(4, 32) // Clamp between 4 and 32 bits
     }
 
     /// Insert VectorRecord ID into bloom filter

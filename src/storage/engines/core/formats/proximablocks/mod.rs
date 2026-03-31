@@ -561,8 +561,7 @@ pub mod utils {
 
         // Clamp to practical I/O bounds
         target_block_size
-            .max(MIN_TARGET_BLOCK_SIZE_BYTES) // 2MB min
-            .min(MAX_TARGET_BLOCK_SIZE_BYTES) // 4MB max
+            .clamp(MIN_TARGET_BLOCK_SIZE_BYTES, MAX_TARGET_BLOCK_SIZE_BYTES) // 2MB min, 4MB max
     }
 
     /// Calculate optimal block size based on dimension and record count

@@ -890,7 +890,7 @@ fn compute_query_adacurve_code(query: &[f32], superblocks: &[super::SuperBlock])
     let pca_coords: Vec<Vec<f32>> = centroids.iter().map(|c| pca.transform(c)).collect();
 
     // Train AdaCurve from PCA coords (same as during write)
-    let num_segments = pca_coords.len().min(256).max(8);
+    let num_segments = pca_coords.len().clamp(8, 256);
     let curve = AdaCurve::train(&pca_coords, num_segments);
 
     // Transform query to PCA space

@@ -378,7 +378,7 @@ impl AdvancedZoneMap {
         // Build zones at different resolution levels
         for level in 0..config.hierarchical_levels {
             let resolution = 1 << level; // 1, 2, 4, 8, ...
-            let dimensions_per_group = (dimension + resolution - 1) / resolution;
+            let dimensions_per_group = dimension.div_ceil(resolution);
 
             let mut grouped_dimensions = Vec::new();
             for group in 0..resolution {
@@ -839,8 +839,7 @@ impl SelectivityModel {
                 (norm_factor * characteristics.norm
                     + sparsity_factor * characteristics.sparsity
                     + intercept)
-                    .max(0.0)
-                    .min(1.0)
+                    .clamp(0.0, 1.0)
             }
             _ => 0.5, // Default selectivity for other model types
         }

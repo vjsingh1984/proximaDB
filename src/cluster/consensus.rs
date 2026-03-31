@@ -463,7 +463,7 @@ impl RaftConsensus {
                                 }
                             }
 
-                            let majority = (peers_snapshot.len() + 1) / 2 + 1;
+                            let majority = peers_snapshot.len().div_ceil(2) + 1;
                             if votes >= majority {
                                 // Become leader
                                 let mut s = state.write().await;

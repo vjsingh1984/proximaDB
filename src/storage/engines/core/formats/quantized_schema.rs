@@ -523,7 +523,7 @@ impl QuantizedVectorSchemaBuilder {
         match level {
             QuantizationLevel::Binary => DataCharacteristics {
                 expected_compression_ratio: 32.0, // 32x compression vs FP32
-                expected_memory_per_vector: (self.dimension + 7) / 8, // Bit-packed
+                expected_memory_per_vector: self.dimension.div_ceil(8), // Bit-packed
                 expected_search_speedup: 15.0,
                 sparsity_info: Some(SparsityInfo {
                     zero_percentage: 50.0,      // Binary typically has high sparsity

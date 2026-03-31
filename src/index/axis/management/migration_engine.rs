@@ -641,7 +641,7 @@ impl IndexMigrationEngine {
         improvement_score += index_count_improvement;
 
         // Ensure reasonable bounds
-        improvement_score.max(-50.0).min(200.0)
+        improvement_score.clamp(-50.0, 200.0)
     }
 
     /// Get performance score for different algorithms (higher is better)

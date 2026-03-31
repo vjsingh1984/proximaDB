@@ -3827,7 +3827,7 @@ impl UnifiedSstableReader {
             // See: src/storage/engines/core/formats/proximablocks/mod.rs for best practices
             const CACHE_LINE_SIZE: u64 = 64;
             let aligned_block_len =
-                ((block_len + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
+                block_len.div_ceil(CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
             let padding = aligned_block_len - block_len;
             if padding > 0 && padding < CACHE_LINE_SIZE {
                 offset += padding;

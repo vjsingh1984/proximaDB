@@ -422,7 +422,7 @@ pub async fn search_sstable_quantized(
     // Compute query binary sketch for Hamming distance
     let query_binary: Vec<u8> = if use_binary {
         let dim = query_vector.len();
-        let mut binary = vec![0u8; (dim + 7) / 8];
+        let mut binary = vec![0u8; dim.div_ceil(8)];
         for (i, &val) in query_vector.iter().enumerate() {
             if val > 0.0 {
                 binary[i / 8] |= 1 << (i % 8);

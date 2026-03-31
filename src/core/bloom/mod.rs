@@ -399,7 +399,7 @@ impl BloomFilterConfig {
     pub fn bits_from_fpr(false_positive_rate: f64) -> u32 {
         let ln2_squared = 0.4804530139182014;
         let bits = (-(false_positive_rate.ln() / ln2_squared)) as u32;
-        bits.max(1).min(32)
+        bits.clamp(1, 32)
     }
 }
 

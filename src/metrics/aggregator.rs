@@ -263,7 +263,7 @@ impl MetricsAggregationEngine {
         let error_count = self.calculate_error_count(metrics);
         let success_count = total_ops - error_count;
 
-        (success_count as f32 / total_ops as f32).max(0.0).min(1.0)
+        (success_count as f32 / total_ops as f32).clamp(0.0, 1.0)
     }
 }
 

@@ -447,7 +447,7 @@ impl SimilarityResult {
                 // Dot product: higher = more similar, so invert for distance semantics
                 // Return negated value as distance (lower = more similar)
                 let distance = -value;
-                let normalized_similarity = ((value + 1.0) / 2.0).min(1.0).max(0.0);
+                let normalized_similarity = ((value + 1.0) / 2.0).clamp(0.0, 1.0);
                 (distance, normalized_similarity)
             }
             DistanceMetric::Cosine => {
@@ -456,7 +456,7 @@ impl SimilarityResult {
                 let normalized_similarity = if value.is_infinite() {
                     0.0
                 } else {
-                    1.0 - (value / 2.0).min(1.0).max(0.0)
+                    1.0 - (value / 2.0).clamp(0.0, 1.0)
                 };
                 (value, normalized_similarity)
             }

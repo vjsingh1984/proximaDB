@@ -620,7 +620,7 @@ impl AdaptivePcaConfig {
             _ => (64, 8), // Max PCA dims
         };
 
-        let n_components = n_components.min(64).max(1);
+        let n_components = n_components.clamp(1, 64);
         let code_type = CodeType::select(n_components, bits_per_dim);
 
         Self {
@@ -1020,7 +1020,7 @@ where
         .collect();
 
     // Step 3: Train AdaCurve from PCA-transformed data
-    let num_segments = (pca_coords.len() / 50).max(8).min(256); // Adaptive segment count
+    let num_segments = (pca_coords.len() / 50).clamp(8, 256); // Adaptive segment count
     let adacurve = AdaCurve::train(&pca_coords, num_segments);
 
     // Step 4: Encode each point using learned curve

@@ -1054,7 +1054,7 @@ impl ArrowFileExportHandler {
             }
 
             // Move to next block (with cache-line alignment padding)
-            let aligned_size = ((block_len + 63) / 64) * 64;
+            let aligned_size = block_len.div_ceil(64) * 64;
             offset += 4 + aligned_size;
         }
 
@@ -1226,7 +1226,7 @@ impl ArrowFileExportHandler {
             }
 
             // Move to next block (with cache-line alignment padding)
-            let aligned_size = ((block_len + 63) / 64) * 64;
+            let aligned_size = block_len.div_ceil(64) * 64;
             offset += 4 + aligned_size;
         }
 
@@ -1411,7 +1411,7 @@ impl ArrowFileExportHandler {
                     }
             }
 
-            let aligned_size = ((block_len + 63) / 64) * 64;
+            let aligned_size = block_len.div_ceil(64) * 64;
             offset += 4 + aligned_size;
         }
 

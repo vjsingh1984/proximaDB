@@ -266,7 +266,7 @@ impl RewardCalculator {
             latency_w * latency_score + recall_w * recall_score + throughput_w * throughput_score;
 
         // Clip to [0, 1]
-        reward.max(0.0).min(1.0)
+        reward.clamp(0.0, 1.0)
     }
 
     /// Calculate reward with collection-size-aware latency normalization
@@ -364,7 +364,7 @@ impl RewardCalculator {
         );
 
         // Clip to [0, 1]
-        reward.max(0.0).min(1.0)
+        reward.clamp(0.0, 1.0)
     }
 
     /// Calculate reward with additional penalty for constraint violations

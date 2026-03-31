@@ -203,7 +203,7 @@ fn decode_patched_base_i32_base(data: &[u8], count: usize) -> Result<Vec<i32>> {
     let num_patches = u32::from_le_bytes([data[5], data[6], data[7], data[8]]) as usize;
 
     // Calculate size of bitpacked data
-    let bitpacked_bytes = ((count * patch_bits as usize) + 7) / 8;
+    let bitpacked_bytes = (count * patch_bits as usize).div_ceil(8);
 
     // Patches are 12 bytes each: 4 (pos) + 8 (value i64)
     if data.len() < 9 + bitpacked_bytes + num_patches * 12 {
@@ -269,7 +269,7 @@ fn decode_patched_base_i64_base(data: &[u8], count: usize) -> Result<Vec<i64>> {
     let num_patches = u32::from_le_bytes([data[9], data[10], data[11], data[12]]) as usize;
 
     // Calculate size of bitpacked data
-    let bitpacked_bytes = ((count * patch_bits as usize) + 7) / 8;
+    let bitpacked_bytes = (count * patch_bits as usize).div_ceil(8);
 
     // Patches are 12 bytes each
     if data.len() < 13 + bitpacked_bytes + num_patches * 12 {

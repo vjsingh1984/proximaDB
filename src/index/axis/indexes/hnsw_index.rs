@@ -763,8 +763,7 @@ impl AxisHnswIndex {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .len();
         let size_aware_ef = ((collection_size as f64).sqrt() as usize)
-            .max(50) // Minimum ef for small collections
-            .min(500); // Cap to avoid excessive search time
+            .clamp(50, 500); // Clamp ef for small/large collections
         let search_ef = self.config.ef.max(size_aware_ef).max(top_k);
 
         tracing::debug!(

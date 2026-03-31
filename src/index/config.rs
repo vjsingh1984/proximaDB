@@ -635,7 +635,7 @@ impl IndexConfig {
                 if let Some(size) = collection_size_hint {
                     // Rule of thumb: n_lists = sqrt(N)
                     ivf.n_lists = (size as f64).sqrt().ceil() as usize;
-                    ivf.n_lists = ivf.n_lists.max(100).min(10_000);
+                    ivf.n_lists = ivf.n_lists.clamp(100, 10_000);
 
                     if size < 10_000 {
                         // Small collection: simple setup
@@ -691,7 +691,7 @@ impl IndexConfig {
                 let mut ivf = IvfConfig::default();
                 if let Some(size) = collection_size_hint {
                     ivf.n_lists = ((size as f64).sqrt() / 4.0).ceil() as usize;
-                    ivf.n_lists = ivf.n_lists.max(50).min(1000);
+                    ivf.n_lists = ivf.n_lists.clamp(50, 1000);
                     ivf.n_probe = 4;
                     ivf.use_pq = true;
                     ivf.pq_subspaces = 8; // Common PQ8 configuration

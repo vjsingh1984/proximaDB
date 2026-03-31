@@ -816,7 +816,7 @@ impl StorageEngine {
         // Determine optimal parallelism based on CPU cores
         let num_cpus = num_cpus::get();
         let chunk_size = total_collections.div_ceil(num_cpus);
-        let chunk_size = chunk_size.max(1).min(10); // Between 1 and 10 collections per task
+        let chunk_size = chunk_size.clamp(1, 10); // Between 1 and 10 collections per task
 
         tracing::info!(
             "🚀 Loading collections in parallel with chunk size: {}",

@@ -625,7 +625,7 @@ impl TextStorageValidationConfig {
 
         // Calculate chunk information for Chunked strategy
         let chunk_count = if effective_strategy == TextStorageStrategy::Chunked {
-            (text_len + self.max_chunk_size - 1) / self.max_chunk_size
+            text_len.div_ceil(self.max_chunk_size)
         } else {
             0
         };

@@ -337,7 +337,7 @@ impl QuantizationSmartDefaults {
     /// Calculate optimal number of subvectors for PQ based on dimension
     fn calculate_optimal_subvectors(dimension: usize) -> i32 {
         // Rule of thumb: subvectors = dimension / 8, with bounds [8, 64]
-        let optimal = (dimension / 8).max(8).min(64);
+        let optimal = (dimension / 8).clamp(8, 64);
 
         // Ensure dimension is divisible by subvectors for clean splits
         let mut subvectors = optimal;

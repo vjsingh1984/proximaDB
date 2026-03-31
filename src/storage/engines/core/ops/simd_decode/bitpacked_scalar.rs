@@ -82,7 +82,7 @@ impl SimdDecoder for ScalarDecoder {
             let bit_in_byte = bit_offset % 8;
 
             // Read enough bytes to cover all bits (up to 9 bytes for 64-bit values crossing boundaries)
-            let bytes_needed = ((bit_in_byte + bits) + 7) / 8;
+            let bytes_needed = (bit_in_byte + bits).div_ceil(8);
             if byte_offset + bytes_needed > input.len() {
                 // Partial read at end of input
                 break;
@@ -161,7 +161,7 @@ impl SimdDecoder for ScalarDecoder {
             let bit_in_byte = bit_offset % 8;
 
             // Read enough bytes (up to 5 for 32-bit values crossing boundaries)
-            let bytes_needed = ((bit_in_byte + bits) + 7) / 8;
+            let bytes_needed = (bit_in_byte + bits).div_ceil(8);
             if byte_offset + bytes_needed > input.len() {
                 break;
             }

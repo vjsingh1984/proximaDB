@@ -194,7 +194,7 @@ impl FlushOperations {
         };
 
         // Ensure minimum and maximum block sizes
-        optimal_size.max(4096).min(1024 * 1024) // 4KB to 1MB
+        optimal_size.clamp(4096, 1024 * 1024) // 4KB to 1MB
     }
 
     /// Validate flush preconditions

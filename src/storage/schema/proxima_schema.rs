@@ -641,7 +641,7 @@ impl ProximaDataType {
                 )
             }
             ProximaDataType::BinaryVector { dimension } => {
-                ArrowDataType::FixedSizeBinary(((*dimension + 7) / 8) as i32)
+                ArrowDataType::FixedSizeBinary(dimension.div_ceil(8) as i32)
             }
             ProximaDataType::QuantizedInt8Vector { dimension, .. } => {
                 ArrowDataType::FixedSizeBinary(*dimension as i32)
@@ -650,7 +650,7 @@ impl ProximaDataType {
                 ArrowDataType::FixedSizeBinary(*segments as i32)
             }
             ProximaDataType::QuantizedBinaryVector { dimension } => {
-                ArrowDataType::FixedSizeBinary(((*dimension + 7) / 8) as i32)
+                ArrowDataType::FixedSizeBinary(dimension.div_ceil(8) as i32)
             }
         }
     }

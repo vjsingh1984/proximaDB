@@ -29,7 +29,7 @@ pub struct BitPackedBloomFilter {
 impl BitPackedBloomFilter {
     /// Create a new bit-packed bloom filter
     pub fn new(expected_elements: usize, config: &BloomFilterConfig) -> Self {
-        let bits_per_key = config.bits_per_key.max(1).min(32);
+        let bits_per_key = config.bits_per_key.clamp(1, 32);
         let expected_elements = expected_elements.max(1); // Ensure at least 1 element
         let num_bits = (expected_elements * bits_per_key as usize).max(64); // Minimum 64 bits
         let num_u64s = num_bits.div_ceil(64);

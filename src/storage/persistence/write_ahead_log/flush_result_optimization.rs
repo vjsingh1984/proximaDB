@@ -115,7 +115,7 @@ impl BatchFlushProcessor {
         &self,
         vectors: Vec<VectorRecord>,
     ) -> Result<Vec<Arc<VectorRecord>>> {
-        let chunk_size = (vectors.len() + self.worker_count - 1) / self.worker_count;
+        let chunk_size = vectors.len().div_ceil(self.worker_count);
         let chunks: Vec<_> = vectors
             .chunks(chunk_size)
             .map(|chunk| chunk.to_vec())

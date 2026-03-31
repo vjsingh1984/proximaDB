@@ -37,7 +37,7 @@ fn encode_sparse_bitmap_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
     result.extend_from_slice(&num_nonzero.to_le_bytes());
 
     // Create bitmap
-    let bitmap_bytes = (wire_values.len() + 7) / 8;
+    let bitmap_bytes = wire_values.len().div_ceil(8);
     let mut bitmap = vec![0u8; bitmap_bytes];
 
     for &idx in &nonzero_indices {
@@ -82,7 +82,7 @@ fn encode_sparse_bitmap_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
     result.extend_from_slice(&num_nonzero.to_le_bytes());
 
     // Create bitmap
-    let bitmap_bytes = (wire_values.len() + 7) / 8;
+    let bitmap_bytes = wire_values.len().div_ceil(8);
     let mut bitmap = vec![0u8; bitmap_bytes];
 
     for &idx in &nonzero_indices {
@@ -152,7 +152,7 @@ fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> 
     let num_nonzero = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
     // Calculate bitmap size
-    let bitmap_bytes = (count + 7) / 8;
+    let bitmap_bytes = count.div_ceil(8);
 
     if data.len() < 4 + bitmap_bytes {
         return Err(anyhow::anyhow!(
@@ -209,7 +209,7 @@ fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> 
     let num_nonzero = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
     // Calculate bitmap size
-    let bitmap_bytes = (count + 7) / 8;
+    let bitmap_bytes = count.div_ceil(8);
 
     if data.len() < 4 + bitmap_bytes {
         return Err(anyhow::anyhow!(

@@ -672,7 +672,7 @@ pub fn create_columnar_schema(
     if config.enable_binary.unwrap_or(false) {
         fields.push(Field::new(
             "vector_binary",
-            DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
+            DataType::FixedSizeBinary(dimension.div_ceil(8) as i32),
             true,
         ));
     }

@@ -282,7 +282,7 @@ fn decode_pfor_double_delta_i32_base(data: &[u8], count: usize) -> Result<Vec<i3
     let num_patches = u32::from_le_bytes([data[13], data[14], data[15], data[16]]) as usize;
 
     let double_delta_count = count - 1;
-    let bitpacked_bytes = ((double_delta_count * bits as usize) + 7) / 8;
+    let bitpacked_bytes = (double_delta_count * bits as usize).div_ceil(8);
 
     if data.len() < 17 + bitpacked_bytes + num_patches * 12 {
         return Err(anyhow::anyhow!(
@@ -364,7 +364,7 @@ fn decode_pfor_double_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i6
     let num_patches = u32::from_le_bytes([data[17], data[18], data[19], data[20]]) as usize;
 
     let double_delta_count = count - 1;
-    let bitpacked_bytes = ((double_delta_count * bits as usize) + 7) / 8;
+    let bitpacked_bytes = (double_delta_count * bits as usize).div_ceil(8);
 
     if data.len() < 21 + bitpacked_bytes + num_patches * 12 {
         return Err(anyhow::anyhow!(

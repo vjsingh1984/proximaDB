@@ -88,7 +88,7 @@ pub fn base64_encode_config(data: &[u8], config: Base64Config) -> String {
         return String::new();
     }
 
-    let mut result = Vec::with_capacity(((data.len() + 2) / 3) * 4);
+    let mut result = Vec::with_capacity(data.len().div_ceil(3) * 4);
     let chunks = data.chunks_exact(3);
     let remainder = chunks.remainder();
 

@@ -338,7 +338,7 @@ pub fn encode_quantized_tensor(
             output.write_all(&(num_vectors as u32).to_le_bytes())?;
 
             // Pack bits
-            let bytes_per_vector = (dimension + 7) / 8;
+            let bytes_per_vector = dimension.div_ceil(8);
             for vec_idx in 0..num_vectors {
                 let mut packed = vec![0u8; bytes_per_vector];
                 for dim_idx in 0..dimension {
@@ -462,7 +462,7 @@ pub fn decode_quantized_tensor(data: &[u8]) -> Result<(Vec<f32>, usize, usize, Q
             let num_vectors = u32::from_le_bytes(count_bytes) as usize;
 
             // Unpack bits
-            let bytes_per_vector = (dimension + 7) / 8;
+            let bytes_per_vector = dimension.div_ceil(8);
             let mut binary_data = vec![0u8; num_vectors * bytes_per_vector];
             cursor.read_exact(&mut binary_data)?;
 

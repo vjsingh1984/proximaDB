@@ -399,7 +399,7 @@ impl GradientBoostingModel {
             score += tree.predict(features);
         }
         // Clamp to [0, 1]
-        score.max(0.0).min(1.0)
+        score.clamp(0.0, 1.0)
     }
 
     fn fit_stump(&self, samples: &[(&[f64], f64)]) -> Option<DecisionStump> {

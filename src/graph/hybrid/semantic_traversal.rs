@@ -302,20 +302,20 @@ impl SemanticBFSTraversal {
         // For cosine: distance = 1 - similarity, so similarity = 1 - distance
         // Clamp to [0, 1] range
         let similarity = match self.distance_metric {
-            DistanceMetric::Cosine => (1.0 - distance).max(0.0).min(1.0),
+            DistanceMetric::Cosine => (1.0 - distance).clamp(0.0, 1.0),
             DistanceMetric::DotProduct => {
                 // Dot product is already similarity-like (higher = more similar)
                 // Normalize to [0, 1] by clamping
-                (-distance).max(0.0).min(1.0)
+                (-distance).clamp(0.0, 1.0)
             }
             DistanceMetric::Euclidean | DistanceMetric::Manhattan => {
                 // For distance metrics, convert to similarity using inverse
                 // similarity = 1 / (1 + distance)
-                (1.0 / (1.0 + distance)).max(0.0).min(1.0)
+                (1.0 / (1.0 + distance)).clamp(0.0, 1.0)
             }
             _ => {
                 // For other metrics, use inverse distance
-                (1.0 / (1.0 + distance)).max(0.0).min(1.0)
+                (1.0 / (1.0 + distance)).clamp(0.0, 1.0)
             }
         };
 

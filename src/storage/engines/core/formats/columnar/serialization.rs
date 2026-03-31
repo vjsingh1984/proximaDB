@@ -689,7 +689,7 @@ impl ColumnarSerializer {
         &self,
         quantized_data: &[StorageQuantizedData],
     ) -> Result<ArrayRef> {
-        let binary_size = (self.config.dimension + 7) / 8;
+        let binary_size = self.config.dimension.div_ceil(8);
         let mut builder = FixedSizeBinaryBuilder::new(binary_size as i32);
 
         for data in quantized_data {

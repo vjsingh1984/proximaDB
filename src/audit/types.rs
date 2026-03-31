@@ -154,7 +154,7 @@ impl AuditEvent {
 
     /// Set risk score
     pub fn with_risk_score(mut self, risk_score: f64) -> Self {
-        self.risk_score = Some(risk_score.max(0.0).min(1.0));
+        self.risk_score = Some(risk_score.clamp(0.0, 1.0));
         self
     }
 }

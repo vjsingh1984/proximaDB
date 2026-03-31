@@ -150,7 +150,7 @@ pub(crate) fn bitpack_u32(values: &[u32], bits: u8) -> Result<Vec<u8>> {
     }
 
     let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
+    let total_bytes = total_bits.div_ceil(8);
     let mut result = vec![0u8; total_bytes];
 
     let mut bit_offset = 0;
@@ -185,7 +185,7 @@ fn bitpack_u64(values: &[u64], bits: u8) -> Result<Vec<u8>> {
     }
 
     let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
+    let total_bytes = total_bits.div_ceil(8);
     let mut result = vec![0u8; total_bytes];
 
     let mut bit_offset = 0;
@@ -294,7 +294,7 @@ pub(crate) fn bitpack_i32(values: &[i32], bits: u8) -> Result<Vec<u8>> {
     }
 
     let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
+    let total_bytes = total_bits.div_ceil(8);
     let mut result = vec![0u8; total_bytes];
 
     let mut bit_offset = 0;
@@ -330,7 +330,7 @@ pub(crate) fn bitpack_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
     }
 
     let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
+    let total_bytes = total_bits.div_ceil(8);
     let mut result = vec![0u8; total_bytes];
 
     let mut bit_offset = 0;

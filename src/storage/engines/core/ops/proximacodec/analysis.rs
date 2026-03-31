@@ -88,9 +88,9 @@ fn analyze_linearity(data: &[f32]) -> f64 {
     // If first second delta is >100x larger than rest, skip more aggressively
     let skip_count = if first_sd_abs > rest_mean * 100.0 && second_deltas.len() > 5 {
         // Skip first 2 or 3 to avoid the 0.0 startup transient
-        (second_deltas.len() / 3).min(3).max(2)
+        (second_deltas.len() / 3).clamp(2, 3)
     } else {
-        (second_deltas.len() / 4).min(2).max(1) // Original logic: skip 25% or at least 1
+        (second_deltas.len() / 4).clamp(1, 2) // Original logic: skip 25% or at least 1
     };
 
     let stable_deltas = if second_deltas.len() > skip_count + 2 {
@@ -154,7 +154,7 @@ fn analyze_linearity(data: &[f32]) -> f64 {
         }
     };
 
-    linearity.min(1.0).max(0.0)
+    linearity.clamp(0.0, 1.0)
 }
 
 /// Analyze smoothness of data by examining first-order delta variance
@@ -201,7 +201,7 @@ fn analyze_smoothness(data: &[f32]) -> f64 {
 
     // Map to smoothness score
     let smoothness = 1.0 / (1.0 + cov * 0.5);
-    smoothness.min(1.0).max(0.0)
+    smoothness.clamp(0.0, 1.0)
 }
 
 /// Analyze jaggedness/randomness of data

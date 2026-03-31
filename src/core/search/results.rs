@@ -156,7 +156,7 @@ impl OptimizedSearchRecord {
                 if distance.is_infinite() {
                     0.0 // Zero vectors get worst similarity score
                 } else {
-                    1.0 - (distance / 2.0).min(1.0).max(0.0)
+                    1.0 - (distance / 2.0).clamp(0.0, 1.0)
                 }
             }
             DistanceMetric::Euclidean => {
@@ -166,7 +166,7 @@ impl OptimizedSearchRecord {
             DistanceMetric::DotProduct => {
                 // Dot product similarity is already in similarity form (higher = better)
                 // Just ensure it's in [0,1] range
-                ((distance + 1.0) / 2.0).min(1.0).max(0.0)
+                ((distance + 1.0) / 2.0).clamp(0.0, 1.0)
             }
             DistanceMetric::Manhattan => {
                 // Manhattan distance is in [0, ∞), use exponential decay

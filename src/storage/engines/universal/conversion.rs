@@ -675,7 +675,7 @@ impl StorageFormat {
             StorageFormat::FP16 => dimension * 2,
             StorageFormat::QuantizedINT8 { .. } => dimension,
             StorageFormat::QuantizedPQ { segments, .. } => *segments,
-            StorageFormat::Binary => (dimension + 7) / 8,
+            StorageFormat::Binary => dimension.div_ceil(8),
             StorageFormat::Custom { .. } => dimension * 4, // Default assumption
         }
     }

@@ -300,7 +300,7 @@ impl HilbertCurve {
 
         // Cap at 8 bits to ensure we fit in u64 with reasonable depth
         // With 8 bits per level and 8 levels = 64 bits total
-        optimal_bits.min(8).max(1)
+        optimal_bits.clamp(1, 8)
     }
 
     /// Adaptive compression based on dimension and bits available

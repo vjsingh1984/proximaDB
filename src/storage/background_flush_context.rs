@@ -349,7 +349,7 @@ impl BackgroundFlushContext {
                 // Balance between compression efficiency and memory usage
                 let base_size = 10_000;
                 let dimension_factor = (self.dimension / 100).max(1);
-                (base_size / dimension_factor).max(1_000).min(50_000)
+                (base_size / dimension_factor).clamp(1_000, 50_000)
             }
             StorageEngineType::Sst => 1_000, // Smaller for OLTP workloads
             StorageEngineType::Tst => {
@@ -367,13 +367,13 @@ impl BackgroundFlushContext {
                 // VIPER benefits from larger batches for columnar compression
                 let base_threshold = 50_000;
                 let dimension_factor = (self.dimension / 100).max(1);
-                (base_threshold / dimension_factor).max(10_000).min(100_000)
+                (base_threshold / dimension_factor).clamp(10_000, 100_000)
             }
             StorageEngineType::Sst => {
                 // SST optimized for smaller, frequent flushes
                 let base_threshold = 10_000;
                 let dimension_factor = (self.dimension / 100).max(1);
-                (base_threshold / dimension_factor).max(1_000).min(25_000)
+                (base_threshold / dimension_factor).clamp(1_000, 25_000)
             }
             StorageEngineType::Tst => {
                 // TST favors larger time-windowed flushes for partition efficiency.

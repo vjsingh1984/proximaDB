@@ -1686,7 +1686,7 @@ impl AxisManager {
             primary_level: Some(
                 crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
                     // Default to dimension/4 with min 8 and max 64 subvectors
-                    ((collection_config.dimension / 4).max(8).min(64) as usize).min(255) as u8,
+                    (collection_config.dimension / 4).clamp(8, 64).min(255) as u8,
                 ),
             ),
             filter_level: Some(

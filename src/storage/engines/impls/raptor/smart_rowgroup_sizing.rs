@@ -256,7 +256,7 @@ impl SmartRowGroupSizer {
     fn apply_bounds(&self, size: usize) -> usize {
         // Minimum: 100 vectors (avoid too many small I/Os)
         // Maximum: 10,000 vectors (avoid excessive memory usage)
-        size.max(100).min(10_000)
+        size.clamp(100, 10_000)
     }
 
     /// Estimate read latency for a row group of this size

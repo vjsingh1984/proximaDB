@@ -706,7 +706,7 @@ impl EnvironmentDetector {
         let scaling_config = match platform_type {
             PlatformType::Kubernetes => ScalingConfig {
                 initial_replicas: if resources.cpu_cores >= 8 { 3 } else { 1 },
-                max_replicas: (resources.cpu_cores / 4).max(1).min(10),
+                max_replicas: (resources.cpu_cores / 4).clamp(1, 10),
                 auto_scaling_enabled: true,
                 scaling_triggers: vec![
                     ScalingTrigger {

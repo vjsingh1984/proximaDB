@@ -411,7 +411,7 @@ impl ProgressiveRefinementPipeline {
 
         for candidate in candidates {
             // Convert candidate to binary if needed
-            let candidate_binary = if candidate.data.len() == (query_vector.len() + 7) / 8 {
+            let candidate_binary = if candidate.data.len() == query_vector.len().div_ceil(8) {
                 // Already in binary format
                 candidate.data.clone()
             } else {

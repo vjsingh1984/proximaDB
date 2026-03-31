@@ -555,7 +555,7 @@ fn decode_variable_bits_i64_neon(input: &[u8], bits: u8, output: &mut [i64]) -> 
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
 
-        let bytes_needed = ((bit_in_byte + bits_usize) + 7) / 8;
+        let bytes_needed = (bit_in_byte + bits_usize).div_ceil(8);
         if byte_offset + bytes_needed > input.len() {
             break;
         }
@@ -595,7 +595,7 @@ fn decode_variable_bits_i32_neon(input: &[u8], bits: u8, output: &mut [i32]) -> 
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
 
-        let bytes_needed = ((bit_in_byte + bits_usize) + 7) / 8;
+        let bytes_needed = (bit_in_byte + bits_usize).div_ceil(8);
         if byte_offset + bytes_needed > input.len() {
             break;
         }

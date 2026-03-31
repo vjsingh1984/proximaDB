@@ -2710,7 +2710,7 @@ impl RaptorWriter {
             let binary_data = quantized.filter.map_or_else(|| {
                 // Compute binary sketch: 1 bit per dimension (sign-based)
                 let dim = vector.vector.len();
-                let mut binary = vec![0u8; (dim + 7) / 8];
+                let mut binary = vec![0u8; dim.div_ceil(8)];
                 for (i, &val) in vector.vector.iter().enumerate() {
                     if val > 0.0 {
                         binary[i / 8] |= 1 << (i % 8);
@@ -3332,7 +3332,7 @@ impl RaptorWriter {
                 1 => {
                     // Binary: pack bits columnar
                     let _bits_per_dim = 1;
-                    let packed_dims = (self.dimension + 7) / 8;
+                    let packed_dims = self.dimension.div_ceil(8);
                     for dim_byte in 0..packed_dims {
                         let mut column = Vec::with_capacity(num_rows);
                         for row in &page.rows {
@@ -3459,7 +3459,7 @@ impl RaptorWriter {
                 // High cardinality: use direct encoding with null bitmap
                 encoded.push(0x02); // Direct encoding marker
 
-                let mut null_bitmap = vec![0u8; (num_rows + 7) / 8];
+                let mut null_bitmap = vec![0u8; num_rows.div_ceil(8)];
                 let mut value_data = Vec::new();
 
                 for (idx, value) in values.iter().enumerate() {
@@ -3658,7 +3658,7 @@ impl RaptorWriter {
         let num_hash_functions = (bits_per_item * 2.0_f64.ln()).ceil() as u32;
 
         // Create bloom filter bitmap
-        let mut bloom_bits = vec![0u8; (total_bits + 7) / 8];
+        let mut bloom_bits = vec![0u8; total_bits.div_ceil(8)];
 
         // Add all IDs to bloom filter using DefaultHasher
         for id in ids {
@@ -5248,7 +5248,7 @@ impl RaptorWriter {
         // Validate bloom filter size is reasonable (cap at 128MB)
         // This supports up to ~107.3 million vectors at 1% false positive rate
         const MAX_BLOOM_SIZE_BYTES: usize = 128 * 1024 * 1024;
-        let num_bytes = (num_bits + 7) / 8;
+        let num_bytes = num_bits.div_ceil(8);
         if num_bytes > MAX_BLOOM_SIZE_BYTES {
             return Err(anyhow::anyhow!(
                 "Bloom filter size {} bytes exceeds maximum {} bytes (supports up to ~107M vectors)",
