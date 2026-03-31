@@ -59,8 +59,10 @@ pub struct Claims {
 /// Token type for JWT claims
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TokenType {
+    /// Short-lived access token for API requests
     #[serde(rename = "access")]
     Access,
+    /// Long-lived refresh token for obtaining new access tokens
     #[serde(rename = "refresh")]
     Refresh,
 }
@@ -68,9 +70,13 @@ pub enum TokenType {
 /// JWT token pair (access + refresh)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenPair {
+    /// JWT access token
     pub access_token: String,
+    /// JWT refresh token
     pub refresh_token: String,
+    /// Access token expiration time in seconds
     pub expires_in: i64,
+    /// Token type (always "Bearer")
     pub token_type: String,
 }
 

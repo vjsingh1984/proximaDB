@@ -62,22 +62,31 @@ use super::{QueryParser, ToFilter};
 /// Token types for the MongoDB query lexer
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // Structural tokens
+    /// Opening brace `{`
     LeftBrace,
+    /// Closing brace `}`
     RightBrace,
+    /// Opening bracket `[`
     LeftBracket,
+    /// Closing bracket `]`
     RightBracket,
+    /// Colon separator `:`
     Colon,
+    /// Comma separator `,`
     Comma,
 
-    // Literal tokens
+    /// String literal
     String(String),
+    /// Floating point number
     Number(f64),
+    /// Integer number
     Integer(i64),
+    /// Boolean literal
     Boolean(bool),
+    /// Null literal
     Null,
 
-    // MongoDB operators (prefixed with $)
+    /// MongoDB operator (prefixed with `$`)
     Operator(MongoOperator),
 }
 

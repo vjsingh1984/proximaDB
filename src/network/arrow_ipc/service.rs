@@ -63,6 +63,7 @@ pub struct ProximaFlightService {
 }
 
 impl ProximaFlightService {
+    /// Create a new Arrow Flight service backed by unified handlers
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
         // Get storage locations from config
         let storage_locations = unified_handlers

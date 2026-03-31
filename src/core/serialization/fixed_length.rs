@@ -12,46 +12,55 @@ use zstd::{decode_all, encode_all};
 
 /// Marker trait for fixed-length vector dimensions
 pub trait FixedDimension: Send + Sync + 'static {
+    /// Number of f32 elements in the vector
     const DIMENSION: usize;
+    /// Total size in bytes (DIMENSION * 4)
     const BYTE_SIZE: usize = Self::DIMENSION * size_of::<f32>();
 }
 
-/// Common fixed dimensions
+/// 64-dimensional vector marker
 pub struct Dim64;
 impl FixedDimension for Dim64 {
     const DIMENSION: usize = 64;
 }
 
+/// 128-dimensional vector marker
 pub struct Dim128;
 impl FixedDimension for Dim128 {
     const DIMENSION: usize = 128;
 }
 
+/// 256-dimensional vector marker
 pub struct Dim256;
 impl FixedDimension for Dim256 {
     const DIMENSION: usize = 256;
 }
 
+/// 512-dimensional vector marker
 pub struct Dim512;
 impl FixedDimension for Dim512 {
     const DIMENSION: usize = 512;
 }
 
+/// 768-dimensional vector marker (BERT embeddings)
 pub struct Dim768;
 impl FixedDimension for Dim768 {
     const DIMENSION: usize = 768;
 }
 
+/// 1024-dimensional vector marker
 pub struct Dim1024;
 impl FixedDimension for Dim1024 {
     const DIMENSION: usize = 1024;
 }
 
+/// 1536-dimensional vector marker (OpenAI embeddings)
 pub struct Dim1536;
 impl FixedDimension for Dim1536 {
     const DIMENSION: usize = 1536;
 }
 
+/// 2048-dimensional vector marker
 pub struct Dim2048;
 impl FixedDimension for Dim2048 {
     const DIMENSION: usize = 2048;
@@ -513,16 +522,24 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
 /// Analysis results for fixed-length vectors
 #[derive(Debug, Clone)]
 pub struct FixedVectorAnalysis {
+    /// Vector dimension
     pub dimension: usize,
+    /// Fraction of zero-valued elements (0.0 to 1.0)
     pub sparsity: f32,
+    /// Minimum element value
     pub min_value: f32,
+    /// Maximum element value
     pub max_value: f32,
+    /// Arithmetic mean of all elements
     pub mean: f32,
+    /// Variance of element values
     pub variance: f32,
+    /// L2 (Euclidean) norm of the vector
     pub l2_norm: f32,
 }
 
 impl FixedVectorAnalysis {
+    /// Log a summary of the vector analysis to debug output
     pub fn print_summary(&self) {
         debug!("📊 Fixed Vector Analysis ({}D):", self.dimension);
         debug!("   Sparsity: {:.3}", self.sparsity);
@@ -532,21 +549,32 @@ impl FixedVectorAnalysis {
     }
 }
 
-/// Type aliases for common dimensions
+/// Fixed 64-dimensional vector
 pub type Vector64 = FixedVector<Dim64>;
+/// Fixed 128-dimensional vector
 pub type Vector128 = FixedVector<Dim128>;
+/// Fixed 256-dimensional vector
 pub type Vector256 = FixedVector<Dim256>;
+/// Fixed 512-dimensional vector
 pub type Vector512 = FixedVector<Dim512>;
+/// Fixed 768-dimensional vector (BERT)
 pub type Vector768 = FixedVector<Dim768>;
+/// Fixed 1024-dimensional vector
 pub type Vector1024 = FixedVector<Dim1024>;
+/// Fixed 1536-dimensional vector (OpenAI)
 pub type Vector1536 = FixedVector<Dim1536>;
+/// Fixed 2048-dimensional vector
 pub type Vector2048 = FixedVector<Dim2048>;
 
-/// Serializer aliases for common dimensions
+/// Serializer for 64-dimensional vectors
 pub type Serializer64 = FixedLengthSerializer<Dim64>;
+/// Serializer for 128-dimensional vectors
 pub type Serializer128 = FixedLengthSerializer<Dim128>;
+/// Serializer for 256-dimensional vectors
 pub type Serializer256 = FixedLengthSerializer<Dim256>;
+/// Serializer for 512-dimensional vectors
 pub type Serializer512 = FixedLengthSerializer<Dim512>;
+/// Serializer for 768-dimensional vectors
 pub type Serializer768 = FixedLengthSerializer<Dim768>;
 pub type Serializer1024 = FixedLengthSerializer<Dim1024>;
 pub type Serializer1536 = FixedLengthSerializer<Dim1536>;

@@ -7,9 +7,13 @@
 //
 // Protocol: PostgreSQL Protocol v3.0
 
+/// PostgreSQL Protocol v3.0 message parsing and encoding
 pub mod protocol;
+/// Session management for PostgreSQL client connections
 pub mod session;
+/// SQL-to-ProximaDB query translator (pgvector compatibility)
 pub mod translator;
+/// PostgreSQL type system mapping and conversions
 pub mod types;
 
 use std::net::SocketAddr;

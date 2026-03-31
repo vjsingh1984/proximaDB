@@ -99,11 +99,14 @@ pub struct ReadinessResponse {
 /// Shared state for health checks
 #[derive(Clone)]
 pub struct HealthState {
+    /// Shared unified handlers for checking service availability
     pub unified_handlers: Arc<UnifiedHandlers>,
+    /// Server startup timestamp for uptime calculation
     pub startup_time: SystemTime,
 }
 
 impl HealthState {
+    /// Create a new health state recording the current time as startup
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
         Self {
             unified_handlers,

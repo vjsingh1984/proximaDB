@@ -57,11 +57,17 @@ impl Default for CircuitBreakerConfig {
 pub enum CircuitBreakerError {
     /// Circuit is open, request rejected
     #[error("Circuit breaker '{name}' is open - requests are blocked")]
-    CircuitOpen { name: String },
+    CircuitOpen {
+        /// Name of the circuit breaker that is open
+        name: String,
+    },
 
     /// Maximum half-open requests exceeded
     #[error("Circuit breaker '{name}' half-open limit exceeded")]
-    HalfOpenLimitExceeded { name: String },
+    HalfOpenLimitExceeded {
+        /// Name of the circuit breaker at its limit
+        name: String,
+    },
 
     /// Underlying operation failed
     #[error("Operation failed: {0}")]

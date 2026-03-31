@@ -705,13 +705,21 @@ impl MultiServerConfig {
 /// Responsibilities: business logic, metadata configuration, service coordination
 #[derive(Clone)]
 pub struct SharedServices {
+    /// Collection lifecycle management service
     pub collection_service: Arc<CollectionService>,
+    /// Vector CRUD and search operations service
     pub vector_operations_service: Arc<VectorOperationsService>,
+    /// Graph database operations service
     pub graph_service: Arc<crate::graph::GraphService>,
+    /// Document storage and retrieval service
     pub document_service: Arc<DocumentService>,
+    /// Observability service for logs, metrics, and traces
     pub observability_service: Arc<crate::observability::ObservabilityService>,
+    /// Unified request handlers shared across all protocol layers
     pub unified_handlers: Arc<UnifiedHandlers>,
+    /// Optional metrics collector for Prometheus/monitoring integration
     pub metrics_collector: Option<Arc<MetricsCollector>>,
+    /// Optional internal metrics updater for background metric publishing
     pub metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>,
     /// Unified query facade - single entry point for all query types
     /// Consolidates vector search, SQL, and graph query paths
@@ -1609,7 +1617,8 @@ impl SharedServices {
 /// Responsibilities: ports, TLS, server lifecycle, protocol orchestration
 pub struct MultiServer {
     config: MultiServerConfig,
-    pub shared_services: SharedServices, // Made public for recovery access
+    /// Shared services accessible for WAL recovery during startup
+    pub shared_services: SharedServices,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
     rest_auth_enabled: bool,
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
@@ -2728,10 +2737,15 @@ impl MultiServer {
 /// Server status information
 #[derive(Debug, Clone)]
 pub struct ServerStatus {
+    /// Whether the HTTP/REST server is running
     pub http_running: bool,
+    /// Whether the gRPC server is running
     pub grpc_running: bool,
+    /// HTTP server bind address (if running)
     pub http_address: Option<SocketAddr>,
+    /// gRPC server bind address (if running)
     pub grpc_address: Option<SocketAddr>,
+    /// Whether TLS is enabled for connections
     pub tls_enabled: bool,
 }
 // TODO: Re-add TTL sweeper code in proper function context if needed

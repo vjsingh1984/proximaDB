@@ -35,6 +35,7 @@ pub struct LdapAuthProvider {
 }
 
 impl LdapAuthProvider {
+    /// Create a new LDAP authentication provider with connection and search settings
     pub fn new(
         server_url: String,
         bind_dn: String,
@@ -314,6 +315,7 @@ pub struct OAuth2AuthProvider {
 }
 
 impl OAuth2AuthProvider {
+    /// Create a new OAuth2 authentication provider with endpoint configuration
     pub fn new(
         client_id: String,
         client_secret: String,
@@ -484,6 +486,7 @@ struct SamlAssertion {
 }
 
 impl SamlAuthProvider {
+    /// Create a new SAML authentication provider with IdP configuration
     pub fn new(entity_id: String, sso_url: String, certificate: String) -> Self {
         Self {
             entity_id,
@@ -553,6 +556,7 @@ pub struct DatabaseAuthProvider {
 }
 
 impl DatabaseAuthProvider {
+    /// Create a new database authentication provider with a connection string
     pub fn new(connection_string: String) -> Self {
         Self { connection_string }
     }

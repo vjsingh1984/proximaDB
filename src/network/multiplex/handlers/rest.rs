@@ -20,9 +20,13 @@ use crate::security::SecurityCoordinator;
 
 /// REST handler configuration
 pub struct RestHandlerConfig {
+    /// Shared unified handlers for business logic delegation
     pub unified_handlers: Arc<UnifiedHandlers>,
+    /// Optional metrics collector for request instrumentation
     pub metrics_collector: Option<Arc<MetricsCollector>>,
+    /// Optional security coordinator for authentication/authorization
     pub security_coordinator: Option<Arc<SecurityCoordinator>>,
+    /// Data directory path for serving static files and exports
     pub data_dir: std::path::PathBuf,
 }
 

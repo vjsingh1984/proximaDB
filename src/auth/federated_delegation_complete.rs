@@ -792,6 +792,7 @@ impl AWSSTSClient {
         })
     }
 
+    /// Assume an AWS IAM role using existing credentials, returning temporary credentials.
     pub async fn assume_role_with_credentials(
         &self,
         _credentials: &AWSCredentials,
@@ -809,13 +810,16 @@ impl AWSSTSClient {
     }
 }
 
+/// Integrates with AWS CloudTrail for authentication event correlation and audit.
 pub struct CompleteCloudTrailIntegration;
 
 impl CompleteCloudTrailIntegration {
+    /// Create a new CloudTrail integration instance.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Correlate CloudTrail events for a user's authentication delegation chain.
     pub async fn correlate_authentication_events(
         &self,
         _user_id: &str,
@@ -828,13 +832,16 @@ impl CompleteCloudTrailIntegration {
     }
 }
 
+/// Validates cross-account AWS IAM delegation requests against security policies.
 pub struct CrossAccountDelegationValidator;
 
 impl CrossAccountDelegationValidator {
+    /// Create a new cross-account delegation validator.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Validate that a cross-account delegation step meets security requirements.
     pub async fn validate_cross_account_delegation(
         &self,
         _step: &AssumeRoleStep,
@@ -845,13 +852,16 @@ impl CrossAccountDelegationValidator {
     }
 }
 
+/// Validates delegation chains against enterprise IAM policies and compliance rules.
 pub struct EnterpriseIAMPolicyValidator;
 
 impl EnterpriseIAMPolicyValidator {
+    /// Create a new enterprise IAM policy validator.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Validate a delegation chain against enterprise compliance requirements.
     pub async fn validate_enterprise_compliance(
         &self,
         _validation: &STSValidationResult,
@@ -865,54 +875,77 @@ impl EnterpriseIAMPolicyValidator {
     }
 }
 
+/// Optimizes AWS AssumeRole chains for reduced latency and minimal privilege.
 pub struct RoleChainOptimizer;
 
 impl RoleChainOptimizer {
+    /// Create a new role chain optimizer.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 }
 
+/// Result of AWS STS token validation with resolved identity and permissions.
 #[derive(Debug, Clone)]
 pub struct STSValidationResult {
+    /// Authenticated AWS user identifier.
     pub user_id: String,
+    /// Resolved tenant identifier from the STS token.
     pub tenant_id: String,
+    /// Effective IAM permissions after policy evaluation.
     pub effective_permissions: Vec<String>,
+    /// Temporary AWS credentials from the validated token.
     pub credentials: AWSCredentials,
 }
 
+/// Configuration for a single AWS AssumeRole step in a delegation chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssumeRoleStep {
+    /// ARN of the IAM role to assume.
     pub target_role_arn: String,
+    /// Session name for the assumed role session.
     pub session_name: String,
+    /// Duration in seconds for the assumed role credentials.
     pub duration_seconds: u32,
+    /// Source AWS account context for cross-account validation.
     pub source_account_context: String,
 }
 
+/// AWS temporary security credentials for delegation operations.
 #[derive(Debug, Clone)]
 pub struct AWSCredentials {
+    /// AWS identity ARN associated with these credentials.
     pub identity: String,
 }
 
+/// Result of an AWS STS AssumeRole operation.
 #[derive(Debug, Clone)]
 pub struct AssumeRoleResult {
+    /// ARN of the assumed role identity.
     pub assumed_role_identity: String,
+    /// Temporary credentials for the assumed role.
     pub credentials: AWSCredentials,
+    /// CloudTrail event ID for audit correlation.
     pub cloudtrail_event_id: String,
 }
 
+/// Correlated CloudTrail events for an authentication delegation chain.
 #[derive(Debug, Clone)]
 pub struct CloudTrailCorrelation {
+    /// Unique audit trail identifier linking correlated events.
     pub audit_trail_id: String,
 }
 
+/// Client for Microsoft Graph API operations including token validation and OBO flows.
 pub struct CompleteMicrosoftGraphClient;
 
 impl CompleteMicrosoftGraphClient {
+    /// Create a new Microsoft Graph client.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Validate an Azure AD token against the enterprise directory.
     pub async fn validate_enterprise_azure_token(
         &self,
         _token_data: &str,
@@ -926,6 +959,7 @@ impl CompleteMicrosoftGraphClient {
         })
     }
 
+    /// Execute an optimized Azure AD On-Behalf-Of flow for service delegation.
     pub async fn execute_optimized_on_behalf_of_flow(
         &self,
         _flow: &OptimizedOBOFlow,
@@ -938,13 +972,16 @@ impl CompleteMicrosoftGraphClient {
     }
 }
 
+/// Integrates with Azure Activity Logs for authentication event correlation.
 pub struct CompleteAzureActivityLogIntegration;
 
 impl CompleteAzureActivityLogIntegration {
+    /// Create a new Azure Activity Log integration instance.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Correlate Azure Activity Log events for an authentication delegation chain.
     pub async fn correlate_azure_authentication_events(
         &self,
         _user_id: &str,
@@ -958,13 +995,16 @@ impl CompleteAzureActivityLogIntegration {
     }
 }
 
+/// Resolves Azure Managed Identity context for service-to-service authentication.
 pub struct EnterpriseManagedIdentityResolver;
 
 impl EnterpriseManagedIdentityResolver {
+    /// Create a new managed identity resolver.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Resolve a Managed Identity and its enterprise context for delegation.
     pub async fn resolve_enterprise_managed_identity(
         &self,
         _mi_id: &str,
@@ -977,21 +1017,26 @@ impl EnterpriseManagedIdentityResolver {
     }
 }
 
+/// Maps Azure AD groups and roles to enterprise permission sets.
 pub struct AzureEnterpriseMapper;
 
 impl AzureEnterpriseMapper {
+    /// Create a new Azure enterprise mapper.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 }
 
+/// Optimizes Azure AD On-Behalf-Of flows for reduced latency.
 pub struct OnBehalfOfFlowOptimizer;
 
 impl OnBehalfOfFlowOptimizer {
+    /// Create a new On-Behalf-Of flow optimizer.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Optimize an On-Behalf-Of flow configuration for the given validation context.
     pub async fn optimize_obo_flow(
         &self,
         _config: &OnBehalfOfConfiguration,
@@ -1003,70 +1048,104 @@ impl OnBehalfOfFlowOptimizer {
     }
 }
 
+/// Result of Azure AD token validation with resolved identity and permissions.
 #[derive(Debug, Clone)]
 pub struct AzureValidationResult {
+    /// Authenticated Azure AD user identifier.
     pub user_id: String,
+    /// Azure AD tenant identifier.
     pub tenant_id: String,
+    /// Effective permissions after Azure AD role evaluation.
     pub effective_permissions: Vec<String>,
+    /// User principal name or object ID for delegation tracking.
     pub user_identity: String,
 }
 
+/// Configuration for an Azure AD On-Behalf-Of delegation flow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnBehalfOfConfiguration {
+    /// Unique identifier for this OBO flow configuration.
     pub config_id: String,
 }
 
+/// An optimized On-Behalf-Of flow ready for execution.
 #[derive(Debug, Clone)]
 pub struct OptimizedOBOFlow {
+    /// Unique identifier for the optimized flow instance.
     pub flow_id: String,
 }
 
+/// Result of an Azure AD On-Behalf-Of flow execution.
 #[derive(Debug, Clone)]
 pub struct OBOResult {
+    /// Service principal identity obtained via the OBO flow.
     pub service_principal_identity: String,
+    /// Azure Activity Log event ID for audit correlation.
     pub activity_log_event_id: String,
 }
 
+/// Resolved Azure Managed Identity context for service-to-service auth.
 #[derive(Debug, Clone)]
 pub struct ManagedIdentityContext {
+    /// Azure Managed Identity resource identifier.
     pub identity_id: String,
 }
 
+/// Correlated Azure Activity Log events for an authentication chain.
 #[derive(Debug, Clone)]
 pub struct ActivityLogCorrelation {
+    /// Unique audit trail identifier linking correlated Activity Log events.
     pub audit_trail_id: String,
 }
 
+/// Result of delegation execution for a single identity provider.
 #[derive(Debug, Clone)]
 pub struct ProviderDelegationResult {
+    /// Total time in milliseconds for this provider's delegation steps.
     pub total_delegation_time_ms: u64,
 }
 
+/// Unified audit trail correlating events across multiple identity providers.
 #[derive(Debug, Clone)]
 pub struct UnifiedCrossProviderAuditTrail {
+    /// Cross-provider correlation identifiers linking audit events.
     pub cross_provider_correlations: Vec<String>,
+    /// Time in milliseconds taken to correlate cross-provider events.
     pub correlation_time_ms: u64,
 }
 
+/// Compliance validation result for an enterprise delegation chain.
 #[derive(Debug, Clone)]
 pub struct EnterpriseDelegationComplianceValidation {
+    /// Overall compliance score (0.0 = non-compliant, 1.0 = fully compliant).
     pub overall_compliance_score: f64,
+    /// Time in milliseconds taken for compliance validation.
     pub validation_time_ms: u64,
 }
 
+/// Metadata summarizing an enterprise delegation chain execution.
 #[derive(Debug, Clone)]
 pub struct EnterpriseDelegationMetadata {
+    /// Total number of delegation steps in the chain.
     pub total_delegation_steps: usize,
+    /// Identity providers involved in the delegation chain.
     pub providers_involved: Vec<SSOProvider>,
+    /// Number of cross-provider audit event correlations.
     pub cross_provider_correlations: usize,
+    /// Overall enterprise compliance score for the chain.
     pub enterprise_compliance_score: f64,
+    /// Performance metrics for the delegation execution.
     pub delegation_performance: DelegationPerformanceMetrics,
 }
 
+/// Performance metrics for a delegation chain execution.
 #[derive(Debug, Clone)]
 pub struct DelegationPerformanceMetrics {
+    /// Total wall-clock time for all delegation steps in milliseconds.
     pub total_delegation_time_ms: u64,
+    /// Time spent correlating audit events across providers in milliseconds.
     pub audit_correlation_time_ms: u64,
+    /// Time spent on compliance validation in milliseconds.
     pub compliance_validation_time_ms: u64,
 }
 

@@ -19,12 +19,19 @@
 //! Provides HTTP/JSON endpoints that delegate to the unified service layer
 
 pub use crate::api_handlers;
+/// Health and readiness check endpoints
 pub mod health;
+/// Progressive multi-stage search with explain endpoint
 pub mod progressive_search_handler;
+/// Proto-JSON bidirectional serialization for REST responses
 pub mod proto_json;
+/// REST HTTP server setup and route configuration
 pub mod server;
+/// V1 REST API handlers (collections, vectors, graph, entities)
 pub mod v1;
+/// V2 REST API handlers (ProximaRecord, typed fields, schema)
 pub mod v2;
+/// WebSocket support for real-time streaming
 pub mod websocket;
 
 pub use api_handlers::*;

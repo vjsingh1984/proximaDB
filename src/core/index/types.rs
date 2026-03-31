@@ -42,9 +42,17 @@ pub enum VectorIndex {
     /// Flat (exhaustive) search
     Flat,
     /// Locality Sensitive Hashing
-    LSH { num_tables: u32, num_bits: u32 },
+    LSH {
+        /// Number of hash tables
+        num_tables: u32,
+        /// Number of hash bits per table
+        num_bits: u32,
+    },
     /// Annoy index
-    Annoy { num_trees: u32 },
+    Annoy {
+        /// Number of random projection trees
+        num_trees: u32,
+    },
     /// Full-text search
     FullText,
 }

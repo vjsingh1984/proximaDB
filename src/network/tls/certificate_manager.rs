@@ -76,25 +76,40 @@ pub struct CertificateConfig {
 /// Certificate subject information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificateSubject {
+    /// Common Name (CN) for the certificate
     pub common_name: String,
+    /// Organization (O) field
     pub organization: Option<String>,
+    /// Organizational Unit (OU) field
     pub organizational_unit: Option<String>,
+    /// Country (C) two-letter code
     pub country: Option<String>,
+    /// State or Province (ST) name
     pub state: Option<String>,
+    /// Locality (L) / city name
     pub locality: Option<String>,
+    /// Email address for the certificate subject
     pub email: Option<String>,
 }
 
 /// Certificate status information
 #[derive(Debug, Clone)]
 pub struct CertificateStatus {
+    /// Whether the certificate is currently valid
     pub valid: bool,
+    /// Certificate expiration time
     pub expires_at: SystemTime,
+    /// Days remaining until the certificate expires
     pub days_until_expiry: u64,
+    /// Whether the certificate needs renewal (based on renewal threshold)
     pub needs_renewal: bool,
+    /// Certificate subject distinguished name
     pub subject: String,
+    /// Certificate issuer distinguished name
     pub issuer: String,
+    /// Certificate serial number (hex string)
     pub serial: String,
+    /// Certificate validity start time
     pub not_before: SystemTime,
 }
 
@@ -131,18 +146,25 @@ pub struct ParsedCertificate {
 /// TLS-related errors
 #[derive(Debug, thiserror::Error)]
 pub enum TlsError {
+    /// Certificate generation (e.g., self-signed CA or leaf cert) failed
     #[error("Certificate generation failed: {0}")]
     CertificateGeneration(String),
+    /// Certificate PEM parsing or decoding failed
     #[error("Certificate parsing failed: {0}")]
     CertificateParse(String),
+    /// Certificate chain or trust validation failed
     #[error("Certificate validation failed: {0}")]
     CertificateValidation(String),
+    /// Private key generation failed
     #[error("Key generation failed: {0}")]
     KeyGeneration(String),
+    /// File system read/write error during certificate operations
     #[error("File I/O error: {0}")]
     FileIO(String),
+    /// The certificate has passed its notAfter date
     #[error("Certificate expired")]
     CertificateExpired,
+    /// The certificate's notBefore date is in the future
     #[error("Certificate not yet valid")]
     CertificateNotYetValid,
 }

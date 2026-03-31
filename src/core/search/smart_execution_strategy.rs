@@ -40,35 +40,49 @@ pub struct SmartExecutionStrategy {
 pub enum ExecutionStrategy {
     /// Use AXIS indexes first, then fallback to storage
     IndexFirst {
+        /// Type of index to use (e.g., "hnsw", "ivf")
         index_type: String,
+        /// Estimated search latency in milliseconds
         expected_latency_ms: u64,
+        /// Probability of needing fallback to storage scan
         fallback_probability: f32,
     },
 
     /// Use progressive quantization search
     Progressive {
+        /// Quantization stages to execute in order
         stages: Vec<String>,
+        /// Estimated total search latency in milliseconds
         expected_latency_ms: u64,
+        /// Estimated peak memory usage in megabytes
         memory_usage_mb: u64,
     },
 
     /// Direct FP32 search (for small datasets)
     DirectFP32 {
+        /// Explanation for why direct search was chosen
         reason: String,
+        /// Estimated search latency in milliseconds
         expected_latency_ms: u64,
     },
 
     /// Hybrid approach combining multiple strategies
     Hybrid {
+        /// Primary execution strategy
         primary: Box<ExecutionStrategy>,
+        /// Secondary fallback strategy
         secondary: Box<ExecutionStrategy>,
+        /// Selectivity threshold for switching strategies
         switch_threshold: f32,
     },
 
     /// Memory-optimized search (for high memory pressure)
     MemoryOptimized {
+        /// Memory optimization technique name
         technique: String,
+        /// Maximum memory budget in megabytes
         memory_limit_mb: u64,
+        /// Estimated search latency in milliseconds
         expected_latency_ms: u64,
     },
 }
@@ -625,10 +639,15 @@ struct QueryAnalysis {
 /// Execution hints for optimizing the selected strategy
 #[derive(Debug, Clone)]
 pub struct ExecutionHints {
+    /// Whether to prefetch index nodes before search
     pub prefetch_indexes: bool,
+    /// Whether to warm the cache before search
     pub warm_cache: bool,
+    /// Number of candidates to evaluate in parallel
     pub parallel_candidates: usize,
+    /// Whether to use SIMD-accelerated distance computation
     pub use_simd: bool,
+    /// Optimal batch size for processing
     pub batch_size: usize,
 }
 

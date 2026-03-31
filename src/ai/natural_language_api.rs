@@ -551,101 +551,169 @@ impl BusinessIntelligenceTranslator {
 
 // Type definitions for natural language business intelligence
 
+/// Complete answer to a conversational business question
 #[derive(Debug, Clone)]
 pub struct ConversationalBusinessAnswer {
+    /// The original natural language question
     pub original_question: String,
+    /// Business context used for the query
     pub business_context: BusinessContext,
+    /// Validated AI-generated answer
     pub ai_answer: ValidatedEnterpriseResponse,
+    /// Supporting evidence from domain intelligence
     pub supporting_evidence: Vec<String>,
+    /// Regulatory compliance validation results
     pub regulatory_compliance: ComplianceValidation,
+    /// Metadata about conversation processing
     pub conversation_metadata: ConversationMetadata,
+    /// Timestamp of answer generation
     pub generated_at: DateTime<Utc>,
+    /// User ID the answer was generated for
     pub generated_for: String,
 }
 
+/// Parsed representation of a natural language enterprise query
 #[derive(Debug, Clone)]
 pub struct ParsedEnterpriseQuery {
+    /// Original question text
     pub original_question: String,
+    /// Business entities extracted from the question
     pub business_entities: Vec<BusinessEntity>,
+    /// Classified business intent
     pub business_intent: BusinessIntent,
+    /// Analysis of query complexity
     pub complexity_analysis: QueryComplexityAnalysis,
+    /// Regulatory frameworks that apply to this query
     pub regulatory_requirements: Vec<String>,
+    /// Business domains required for a complete answer
     pub cross_domain_requirements: Vec<String>,
 }
 
+/// Structured business query translated from natural language
 #[derive(Debug, Clone)]
 pub struct StructuredBusinessQuery {
+    /// Domain-specific structured queries
     pub domain_queries: Vec<DomainStructuredQuery>,
+    /// Cross-domain composition strategy, if multiple domains needed
     pub cross_domain_composition: Option<CrossDomainComposition>,
+    /// Regulatory constraints to enforce
     pub regulatory_constraints: Vec<String>,
+    /// Performance requirements for query execution
     pub performance_requirements: QueryPerformanceRequirements,
 }
 
+/// Structured query for a single business domain
 #[derive(Debug, Clone)]
 pub struct DomainStructuredQuery {
+    /// Business domain name
     pub domain: String,
+    /// Type of analysis to perform
     pub query_type: QueryType,
+    /// Business entities involved in the query
     pub entities: Vec<BusinessEntity>,
+    /// Operations to execute
     pub operations: Vec<QueryOperation>,
+    /// Filters to apply
     pub filters: BusinessQueryFilters,
 }
 
+/// Type of business analysis query
 #[derive(Debug, Clone)]
 pub enum QueryType {
+    /// Risk exposure and portfolio analysis
     RiskAnalysis,
+    /// Customer segmentation and value analysis
     CustomerAnalysis,
+    /// Clinical outcome and treatment analysis
     ClinicalAnalysis,
+    /// Regulatory compliance analysis
     ComplianceAnalysis,
+    /// Performance metrics analysis
     PerformanceAnalysis,
+    /// General business intelligence analysis
     GeneralAnalysis,
 }
 
+/// Business intelligence operation to execute
 #[derive(Debug, Clone)]
 pub enum QueryOperation {
+    /// Calculate risk exposure metrics
     CalculateRiskMetrics,
+    /// Analyze portfolio exposure distribution
     AnalyzePortfolioExposure,
+    /// Validate against regulatory requirements
     ValidateRegulatoryCompliance,
+    /// Analyze customer segments
     AnalyzeCustomerSegments,
+    /// Calculate customer lifetime value
     CalculateCustomerValue,
+    /// Identify relationship patterns between entities
     IdentifyRelationshipPatterns,
+    /// Analyze clinical treatment outcomes
     AnalyzeClinicalOutcomes,
+    /// Evaluate treatment option effectiveness
     EvaluateTreatmentOptions,
+    /// Validate patient safety criteria
     ValidatePatientSafety,
+    /// Analyze general business metrics
     AnalyzeBusinessMetrics,
+    /// Identify patterns in business data
     IdentifyBusinessPatterns,
+    /// Generate actionable business insights
     GenerateBusinessInsights,
 }
 
+/// Filters applied to business intelligence queries
 #[derive(Debug, Clone)]
 pub struct BusinessQueryFilters {
+    /// Regulatory compliance constraints
     pub regulatory_constraints: Vec<String>,
+    /// Data sensitivity access filters
     pub data_sensitivity_filters: Vec<String>,
+    /// Business logic filters
     pub business_logic_filters: Vec<String>,
 }
 
+/// Validation results for regulatory compliance
 #[derive(Debug, Clone)]
 pub struct ComplianceValidation {
+    /// Compliance frameworks that were validated
     pub frameworks_validated: Vec<String>,
+    /// Overall compliance score (0.0 to 1.0)
     pub compliance_score: f32,
+    /// Whether an audit trail was generated
     pub audit_trail_generated: bool,
+    /// Regulatory notes and observations
     pub regulatory_notes: Vec<String>,
 }
 
+/// Metadata about the conversation processing
 #[derive(Debug, Clone)]
 pub struct ConversationMetadata {
+    /// Estimated complexity of the query (0.0 to 1.0)
     pub query_complexity: f32,
+    /// Processing time in milliseconds
     pub processing_time_ms: u64,
+    /// Confidence in the answer (0.0 to 1.0)
     pub confidence_score: f32,
+    /// Business relevance score (0.0 to 1.0)
     pub business_relevance: f32,
 }
 
+/// Type of conversational analytics session
 #[derive(Debug, Clone)]
 pub enum ConversationalSessionType {
+    /// Risk analysis conversation
     RiskAnalysis,
+    /// Customer intelligence exploration
     CustomerIntelligence,
+    /// Clinical decision support dialogue
     ClinicalDecisionSupport,
+    /// Strategic planning discussion
     StrategicPlanning,
+    /// Compliance review session
     ComplianceReview,
+    /// General business intelligence queries
     GeneralBusinessIntelligence,
 }
 
@@ -654,79 +722,115 @@ pub use crate::ai::llm::BusinessIntent;
 pub use crate::ai::nlp::BusinessEntity;
 // Foundation structs for Natural Language API
 
+/// Active conversational analytics session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationalAnalyticsSession {
+    /// Unique session identifier
     pub session_id: String,
+    /// User who owns the session
     pub user_id: String,
+    /// Accumulated conversation context
     pub context: Vec<String>,
+    /// Session creation timestamp
     pub created_at: DateTime<Utc>,
 }
 
+/// Manager for enterprise conversational analytics sessions
 #[derive(Debug, Clone)]
 pub struct EnterpriseConversationManager;
 
+/// Validator for enterprise response compliance and quality
 #[derive(Debug, Clone)]
 pub struct EnterpriseResponseValidator;
 
+/// AI response validated for enterprise compliance
 #[derive(Debug, Clone)]
 pub struct ValidatedEnterpriseResponse {
+    /// Validated response text
     pub response_text: String,
+    /// Confidence in the response (0.0 to 1.0)
     pub confidence_score: f32,
+    /// Compliance validation results
     pub compliance_validation: Vec<String>,
+    /// Evidence supporting the response
     pub supporting_evidence: Vec<String>,
 }
 
+/// Results from domain intelligence analysis
 #[derive(Debug, Clone)]
 pub struct DomainIntelligenceResult {
+    /// Number of entities analyzed
     pub entities_analyzed: usize,
+    /// Number of relationships analyzed
     pub relationships_analyzed: usize,
+    /// Number of cross-domain correlations found
     pub cross_domain_correlations: usize,
+    /// Supporting evidence from the analysis
     pub supporting_evidence: Vec<String>,
+    /// Knowledge sources used
     pub knowledge_sources: Vec<String>,
+    /// Business intelligence insights generated
     pub business_intelligence_insights: Vec<String>,
 }
 
+/// Parser for business context-aware query parsing
 #[derive(Debug, Clone)]
 pub struct BusinessContextQueryParser;
 
+/// Classifier for enterprise business query intent
 #[derive(Debug, Clone)]
 pub struct EnterpriseIntentClassifier;
 
+/// Entity extractor with regulatory compliance awareness
 #[derive(Debug, Clone)]
 pub struct RegulatoryAwareEntityExtractor;
 
+/// Analyzer for query complexity estimation
 #[derive(Debug, Clone)]
 pub struct QueryComplexityAnalyzer;
 
+/// Results of query complexity analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryComplexityAnalysis {
+    /// Complexity score (0.0 to 1.0)
     pub complexity_score: f32,
+    /// Estimated processing time in milliseconds
     pub estimated_processing_time: u64,
+    /// Resource requirement level description
     pub resource_requirements: String,
 }
 
+/// Translation rules for a specific business domain
 #[derive(Debug, Clone)]
 pub struct DomainTranslationRules {
+    /// Business domain name
     pub domain: String,
+    /// Translation rules for this domain
     pub rules: Vec<String>,
+    /// Query patterns recognized in this domain
     pub patterns: Vec<String>,
 }
 
+/// Translator that adds compliance constraints to queries
 #[derive(Debug, Clone)]
 pub struct ComplianceQueryTranslator;
 
+/// Composer for cross-domain query execution
 #[derive(Debug, Clone)]
 pub struct CrossDomainQueryComposer;
 
+/// Optimizer for translated structured queries
 #[derive(Debug, Clone)]
 pub struct TranslatedQueryOptimizer;
 
 // Add methods for QueryComplexityAnalyzer
 impl QueryComplexityAnalyzer {
+    /// Create a new query complexity analyzer.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Analyze the complexity of a natural language query.
     pub async fn analyze_query_complexity(
         &self,
         query: &str,
@@ -745,21 +849,29 @@ impl QueryComplexityAnalyzer {
     }
 }
 
+/// Cross-domain query composition result
 #[derive(Debug, Clone)]
 pub struct CrossDomainComposition {
+    /// Composed cross-domain query string
     pub composed_query: String,
+    /// Domain mappings used in the composition
     pub domain_mappings: Vec<String>,
 }
 
+/// Performance requirements for query execution
 #[derive(Debug, Clone)]
 pub struct QueryPerformanceRequirements {
+    /// Maximum acceptable latency in milliseconds
     pub max_latency_ms: u64,
+    /// Maximum memory usage in megabytes
     pub memory_limit_mb: u64,
+    /// Number of CPU cores to allocate
     pub cpu_cores: u32,
 }
 
 // Implementations for foundation structs
 impl NaturalLanguageQueryProcessor {
+    /// Create a new natural language query processor with all sub-components.
     pub async fn new() -> Result<Self> {
         Ok(Self {
             _query_parser: Arc::new(BusinessContextQueryParser::new()?),
@@ -771,6 +883,7 @@ impl NaturalLanguageQueryProcessor {
 }
 
 impl BusinessIntelligenceTranslator {
+    /// Create a new business intelligence translator.
     pub async fn new() -> Result<Self> {
         Ok(Self {
             _domain_translation_rules: Arc::new(DashMap::new()),
@@ -782,10 +895,12 @@ impl BusinessIntelligenceTranslator {
 }
 
 impl EnterpriseConversationManager {
+    /// Create a new enterprise conversation manager.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Create a new conversational analytics session.
     pub async fn create_conversational_session(
         &self,
         tenant_id: &str,
@@ -800,10 +915,12 @@ impl EnterpriseConversationManager {
         })
     }
 
+    /// Retrieve conversation context for a session.
     pub async fn get_conversation_context(&self, _session_id: &str) -> Result<Vec<String>> {
         Ok(vec!["Previous conversation context".to_string()])
     }
 
+    /// Update conversation context with a new question-answer pair.
     pub async fn update_conversation_context(
         &self,
         _session_id: &str,
@@ -815,10 +932,12 @@ impl EnterpriseConversationManager {
 }
 
 impl EnterpriseResponseValidator {
+    /// Create a new enterprise response validator.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Validate an enterprise response for compliance and quality.
     pub async fn validate_enterprise_response(
         &self,
         _response_text: &str,
@@ -835,16 +954,19 @@ impl EnterpriseResponseValidator {
 }
 
 impl BusinessContextQueryParser {
+    /// Create a new business context query parser.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 }
 
 impl EnterpriseIntentClassifier {
+    /// Create a new enterprise intent classifier.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Classify the business intent of a natural language query.
     pub async fn classify_business_intent(
         &self,
         query: &str,
@@ -875,10 +997,12 @@ impl EnterpriseIntentClassifier {
 }
 
 impl RegulatoryAwareEntityExtractor {
+    /// Create a new regulatory-aware entity extractor.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Extract business entities from a natural language query.
     pub async fn extract_business_entities(
         &self,
         query: &str,
@@ -920,10 +1044,12 @@ impl RegulatoryAwareEntityExtractor {
 }
 
 impl ComplianceQueryTranslator {
+    /// Create a new compliance query translator.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Add regulatory compliance constraints to a query.
     pub async fn add_compliance_constraints(
         &self,
         base_query: &str,
@@ -939,10 +1065,12 @@ impl ComplianceQueryTranslator {
 }
 
 impl CrossDomainQueryComposer {
+    /// Create a new cross-domain query composer.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Compose a query that spans multiple business domains.
     pub async fn compose_cross_domain_query(
         &self,
         compliance_query: &str,
@@ -960,6 +1088,7 @@ impl CrossDomainQueryComposer {
 }
 
 impl TranslatedQueryOptimizer {
+    /// Create a new translated query optimizer.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }

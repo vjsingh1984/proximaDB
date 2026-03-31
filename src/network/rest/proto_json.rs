@@ -148,17 +148,25 @@ pub struct ProtoApiResponse<T> {
     pub metadata: Option<ResponseMetadata>,
 }
 
+/// Error information included in failed API responses
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorInfo {
+    /// Machine-readable error code
     pub code: String,
+    /// Human-readable error message
     pub message: String,
+    /// Additional structured error details
     pub details: Option<serde_json::Value>,
 }
 
+/// Metadata attached to API responses for observability
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseMetadata {
+    /// Unique request identifier for tracing
     pub request_id: String,
+    /// Server-side processing time in milliseconds
     pub processing_time_ms: u64,
+    /// Server version string
     pub server_version: Option<String>,
 }
 

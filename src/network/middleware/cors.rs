@@ -230,12 +230,15 @@ impl CorsConfig {
 /// Errors that can occur during CORS configuration.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CorsConfigError {
+    /// Credentials mode is incompatible with wildcard ("*") origins
     #[error("Cannot use credentials with wildcard origins")]
     CredentialsWithWildcard,
 
+    /// The specified origin URL is malformed
     #[error("Invalid origin URL (must start with http:// or https://): {0}")]
     InvalidOrigin(String),
 
+    /// General CORS configuration validation failure
     #[error("CORS configuration validation failed: {0}")]
     ValidationFailed(String),
 }

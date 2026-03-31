@@ -31,7 +31,9 @@ use serde::{Deserialize, Serialize};
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
+    /// Shared unified handlers for business logic delegation
     pub unified_handlers: Arc<UnifiedHandlers>,
+    /// Optional security coordinator for authentication/authorization
     pub security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
     /// Data directory from config (e.g., server.data_dir from TOML)
     pub data_dir: std::path::PathBuf,
@@ -342,7 +344,9 @@ pub async fn delete_vector(
 /// Query parameters for get_vector endpoint
 #[derive(Debug, Deserialize)]
 pub struct GetVectorParams {
+    /// Include the raw vector data in the response
     pub include_vector: Option<bool>,
+    /// Include metadata fields in the response
     pub include_metadata: Option<bool>,
 }
 
@@ -461,11 +465,15 @@ pub async fn get_collection(
 /// List collections with pagination
 #[derive(serde::Deserialize)]
 pub struct ListCollectionsQuery {
+    /// Maximum number of collections to return
     pub limit: Option<u32>,
+    /// Pagination offset
     pub offset: Option<u32>,
+    /// Include collection statistics (vector count, storage size)
     pub include_stats: Option<bool>,
 }
 
+/// List collections with pagination and optional statistics
 pub async fn list_collections(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
@@ -924,36 +932,51 @@ pub struct HybridDocument {
 /// Response for hybrid search
 #[derive(Debug, Serialize)]
 pub struct HybridSearchResponse {
+    /// Whether the search completed successfully
     pub success: bool,
+    /// Fused search result hits
     pub results: Vec<HybridSearchHit>,
+    /// Total number of results
     pub total: usize,
+    /// Server-side processing time in microseconds
     pub processing_time_us: u64,
-    /// Search mode used
+    /// Search mode used (e.g., "hybrid", "vector_only", "bm25_only")
     pub mode: String,
 }
 
 /// A single hybrid search result hit
 #[derive(Debug, Serialize)]
 pub struct HybridSearchHit {
+    /// Vector/document identifier
     pub id: String,
+    /// Fused score combining vector and BM25 signals
     pub combined_score: f64,
+    /// Vector similarity score (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vector_score: Option<f32>,
+    /// BM25 text relevance score (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bm25_score: Option<f64>,
+    /// Rank in vector-only results (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vector_rank: Option<usize>,
+    /// Rank in BM25-only results (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bm25_rank: Option<usize>,
+    /// BM25 terms that matched the query
     pub matched_terms: Vec<String>,
 }
 
 /// Response for hybrid index operations
 #[derive(Debug, Serialize)]
 pub struct HybridIndexResponse {
+    /// Whether the indexing operation succeeded
     pub success: bool,
+    /// Collection that was indexed
     pub collection: String,
+    /// Number of documents indexed in this operation
     pub documents_indexed: usize,
+    /// Total number of documents in the full-text index
     pub total_documents: usize,
 }
 

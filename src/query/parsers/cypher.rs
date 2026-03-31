@@ -102,91 +102,158 @@ type ParseResult<'a, T> = IResult<&'a str, T, VerboseError<&'a str>>;
 /// Token types for the Cypher lexer
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // Keywords
+    /// MATCH keyword
     Match,
+    /// OPTIONAL MATCH keyword
     OptionalMatch,
+    /// WHERE keyword
     Where,
+    /// RETURN keyword
     Return,
+    /// ORDER BY keyword
     OrderBy,
+    /// LIMIT keyword
     Limit,
+    /// SKIP keyword
     Skip,
+    /// CREATE keyword
     Create,
+    /// MERGE keyword
     Merge,
+    /// DELETE keyword
     Delete,
+    /// DETACH DELETE keyword
     DetachDelete,
+    /// SET keyword
     Set,
+    /// REMOVE keyword
     Remove,
+    /// WITH keyword
     With,
+    /// AS keyword
     As,
+    /// DISTINCT keyword
     Distinct,
+    /// AND logical operator
     And,
+    /// OR logical operator
     Or,
+    /// NOT logical operator
     Not,
+    /// XOR logical operator
     Xor,
+    /// IN set membership operator
     In,
+    /// IS operator
     Is,
+    /// NULL literal
     Null,
+    /// TRUE boolean literal
     True,
+    /// FALSE boolean literal
     False,
+    /// ASC sort direction
     Asc,
+    /// DESC sort direction
     Desc,
+    /// ON CREATE merge action
     OnCreate,
+    /// ON MATCH merge action
     OnMatch,
+    /// UNWIND list expansion
     Unwind,
+    /// FOREACH iteration
     ForEach,
+    /// CALL procedure invocation
     Call,
+    /// YIELD for procedure results
     Yield,
 
-    // Delimiters
+    /// Opening parenthesis `(`
     OpenParen,
+    /// Closing parenthesis `)`
     CloseParen,
+    /// Opening bracket `[`
     OpenBracket,
+    /// Closing bracket `]`
     CloseBracket,
+    /// Opening brace `{`
     OpenBrace,
+    /// Closing brace `}`
     CloseBrace,
+    /// Comma separator
     Comma,
+    /// Colon separator
     Colon,
+    /// Dot property accessor
     Dot,
+    /// Semicolon statement separator
     Semicolon,
 
-    // Operators
-    Arrow,          // ->
-    LeftArrow,      // <-
-    Dash,           // -
-    Equals,         // =
-    NotEquals,      // <>
-    LessThan,       // <
-    GreaterThan,    // >
-    LessOrEqual,    // <=
-    GreaterOrEqual, // >=
-    Plus,           // +
-    Minus,          // -
-    Asterisk,       // *
-    Slash,          // /
-    Percent,        // %
-    Caret,          // ^
-    PlusEquals,     // +=
-    DoubleDot,      // ..
+    /// Right arrow `->`
+    Arrow,
+    /// Left arrow `<-`
+    LeftArrow,
+    /// Dash `-`
+    Dash,
+    /// Equals `=`
+    Equals,
+    /// Not equals `<>`
+    NotEquals,
+    /// Less than `<`
+    LessThan,
+    /// Greater than `>`
+    GreaterThan,
+    /// Less than or equal `<=`
+    LessOrEqual,
+    /// Greater than or equal `>=`
+    GreaterOrEqual,
+    /// Plus `+`
+    Plus,
+    /// Minus `-`
+    Minus,
+    /// Asterisk `*`
+    Asterisk,
+    /// Slash `/`
+    Slash,
+    /// Percent `%`
+    Percent,
+    /// Caret `^`
+    Caret,
+    /// Plus-equals `+=`
+    PlusEquals,
+    /// Double dot `..` for range
+    DoubleDot,
 
-    // Literals
+    /// Integer literal
     Integer(i64),
+    /// Float literal
     Float(f64),
+    /// String literal
     String(String),
+    /// Identifier (variable or label name)
     Identifier(String),
+    /// Parameter reference
     Parameter(String),
 
-    // Special
+    /// Whitespace token
     Whitespace,
+    /// Comment text
     Comment(String),
+    /// End of file
     Eof,
 }
 
 /// Token with location information
 #[derive(Debug, Clone)]
 pub struct LocatedToken {
+    /// The token value
     pub token: Token,
+    /// Line number in the source (1-based)
     pub line: usize,
+    /// Column number in the source (1-based)
     pub column: usize,
+    /// Byte range in the source string
     pub span: std::ops::Range<usize>,
 }
 
@@ -1520,13 +1587,21 @@ fn parse_function_call(input: &str) -> ParseResult<'_, CypherFunction> {
 /// Cypher function types
 #[derive(Debug, Clone, PartialEq)]
 pub enum CypherFunction {
+    /// Get labels of a node
     Labels(String),
+    /// Get type of a relationship
     Type(String),
+    /// Get internal ID of a node or relationship
     Id(String),
+    /// Get all properties as a map
     Properties(String),
+    /// Get property keys of a node or relationship
     Keys(String),
+    /// Check if a property exists on an element
     Exists(String, String),
+    /// Collect values into a list
     Collect(String),
+    /// Collect property values into a list
     CollectProperty(String, String),
 }
 
@@ -2175,14 +2250,22 @@ fn parse_simple_query(input: &str) -> ParseResult<'_, CompiledPattern> {
 
 /// Visitor trait for CypherQuery AST
 pub trait CypherVisitor {
+    /// Output type produced by visiting each node
     type Output;
 
+    /// Visit a complete Cypher query
     fn visit_query(&mut self, query: &CypherQuery) -> Self::Output;
+    /// Visit a reading clause (MATCH, OPTIONAL MATCH)
     fn visit_reading_clause(&mut self, clause: &ReadingClause) -> Self::Output;
+    /// Visit an updating clause (CREATE, MERGE, DELETE, SET)
     fn visit_updating_clause(&mut self, clause: &UpdatingClause) -> Self::Output;
+    /// Visit a node pattern
     fn visit_node_pattern(&mut self, pattern: &NodePattern) -> Self::Output;
+    /// Visit an edge pattern
     fn visit_edge_pattern(&mut self, pattern: &EdgePattern) -> Self::Output;
+    /// Visit a WHERE clause
     fn visit_where_clause(&mut self, clause: &WhereClause) -> Self::Output;
+    /// Visit a RETURN specification
     fn visit_return_spec(&mut self, spec: &ReturnSpec) -> Self::Output;
 }
 
@@ -2193,6 +2276,7 @@ pub struct QueryValidator {
 }
 
 impl QueryValidator {
+    /// Create a new query validator.
     pub fn new() -> Self {
         Self {
             errors: Vec::new(),
@@ -2200,6 +2284,7 @@ impl QueryValidator {
         }
     }
 
+    /// Validate a Cypher query AST for semantic correctness.
     pub fn validate(query: &CypherQuery) -> Result<(), Vec<String>> {
         let mut validator = Self::new();
         validator.visit_query(query);
@@ -2392,32 +2477,47 @@ pub struct GraphQuery {
 pub enum GraphQueryType {
     /// Read-only pattern match
     Match {
+        /// Patterns to match in the graph
         patterns: Vec<MatchPattern>,
+        /// Specification for what to return
         return_spec: ReturnSpec,
     },
     /// Create nodes and edges
     Create {
+        /// Node specifications to create
         nodes: Vec<CreateNodeSpec>,
+        /// Edge specifications to create
         edges: Vec<CreateEdgeSpec>,
+        /// Optional return specification
         return_spec: Option<ReturnSpec>,
     },
     /// Merge (create if not exists)
     Merge {
+        /// Pattern to merge
         pattern: MatchPattern,
+        /// SET clause to apply on CREATE
         on_create: Option<SetClause>,
+        /// SET clause to apply on MATCH
         on_match: Option<SetClause>,
+        /// Optional return specification
         return_spec: Option<ReturnSpec>,
     },
     /// Delete nodes and edges
     Delete {
+        /// Variables to delete
         variables: Vec<String>,
+        /// Whether to detach (delete relationships first)
         detach: bool,
+        /// Patterns to match for deletion
         patterns: Vec<MatchPattern>,
     },
     /// Update properties
     Update {
+        /// Patterns to match for updating
         patterns: Vec<MatchPattern>,
+        /// SET clause with property updates
         set_clause: SetClause,
+        /// Optional return specification
         return_spec: Option<ReturnSpec>,
     },
 }

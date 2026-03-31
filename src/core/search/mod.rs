@@ -30,8 +30,11 @@ use std::collections::HashMap;
 /// Custom recall rates for progressive search stages
 #[derive(Debug, Clone)]
 pub struct ProgressiveRecalls {
+    /// Target recall for binary quantization stage
     pub binary_recall: Option<f32>,
+    /// Target recall for INT8 quantization stage
     pub int8_recall: Option<f32>,
+    /// Target recall for product quantization stage
     pub pq_recall: Option<f32>,
 }
 
@@ -51,12 +54,18 @@ pub enum SearchMode {
     /// Searches only `nprobe` closest partitions for faster queries.
     /// - `nprobe`: Number of partitions to search (None = auto-calculate as sqrt(num_partitions))
     /// - Typical recall: 95-98% with nprobe=sqrt(n)
-    Approximate { nprobe: Option<usize> },
+    Approximate {
+        /// Number of IVF partitions to probe (None = auto-calculate)
+        nprobe: Option<usize>,
+    },
 
     /// Adaptive mode: automatically selects Exact or Approximate based on dataset size.
     /// - Uses Exact for small datasets (< threshold vectors)
     /// - Uses Approximate for large datasets
-    Adaptive { threshold: usize },
+    Adaptive {
+        /// Vector count threshold above which approximate search is used
+        threshold: usize,
+    },
 }
 
 
@@ -72,7 +81,10 @@ pub enum HybridSearchMode {
     /// Hybrid: combine BM25 + vector results using Reciprocal Rank Fusion
     Hybrid,
     /// Hybrid with custom RRF k parameter (default k=60)
-    HybridCustom { rrf_k: u32 },
+    HybridCustom {
+        /// Reciprocal Rank Fusion k parameter (higher = more uniform weighting)
+        rrf_k: u32,
+    },
 }
 
 
@@ -357,8 +369,11 @@ impl SearchParams {
 pub enum FilterExpression {
     /// Single comparison operation
     Comparison {
+        /// Metadata field name to compare
         field: String,
+        /// Comparison operator to apply
         operator: ComparisonOperator,
+        /// Value to compare against
         value: serde_json::Value,
     },
     /// Logical AND of multiple expressions
@@ -372,17 +387,29 @@ pub enum FilterExpression {
 /// Comparison operators for metadata filtering
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ComparisonOperator {
+    /// Equal to
     Equals,
+    /// Not equal to
     NotEquals,
+    /// Greater than
     GreaterThan,
+    /// Greater than or equal to
     GreaterThanOrEqual,
+    /// Less than
     LessThan,
+    /// Less than or equal to
     LessThanOrEqual,
+    /// Value is in the provided list
     In,
+    /// Value is not in the provided list
     NotIn,
+    /// String contains substring
     Contains,
+    /// String starts with prefix
     StartsWith,
+    /// String ends with suffix
     EndsWith,
+    /// Value is between two bounds (inclusive)
     Between,
     IsNull,
     IsNotNull,

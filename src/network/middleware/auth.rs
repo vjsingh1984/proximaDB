@@ -41,8 +41,11 @@ pub struct AuthConfig {
 /// User information associated with an API key
 #[derive(Debug, Clone)]
 pub struct UserInfo {
+    /// Authenticated user identifier
     pub user_id: String,
+    /// Tenant identifier for multi-tenant requests
     pub tenant_id: Option<String>,
+    /// Granted permission strings
     pub permissions: Vec<String>,
 }
 
@@ -59,6 +62,7 @@ pub struct AuthLayer {
 }
 
 impl AuthLayer {
+    /// Create a new authentication layer with the given configuration
     pub fn new(config: AuthConfig) -> Self {
         Self { _config: config }
     }
@@ -157,6 +161,7 @@ fn is_health_endpoint(path: &str) -> bool {
 
 /// Extension trait to extract user info from requests
 pub trait RequestUserInfo {
+    /// Extract authenticated user information from request extensions
     fn user_info(&self) -> Option<&UserInfo>;
 }
 

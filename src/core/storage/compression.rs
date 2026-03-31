@@ -13,7 +13,10 @@ pub enum CompressionAlgorithm {
     /// LZ4 high compression
     Lz4Hc,
     /// Zstandard compression with configurable level
-    Zstd { level: i32 },
+    Zstd {
+        /// Compression level (1-22, higher = better ratio but slower)
+        level: i32,
+    },
     /// Snappy compression  
     #[default]
     Snappy,

@@ -67,23 +67,34 @@ fn convert_json_map_to_sql_value_map(
 // All functionality moved to OptimizedSearchRecord for better performance
 
 // Type definitions needed by OptimizedSearchRecord
+/// Debug information attached to individual search results
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SearchDebugInfo {
+    /// Storage engine that served this result
     pub engine_used: String,
+    /// Time to retrieve this result in milliseconds
     pub search_time_ms: f64,
+    /// Number of candidate vectors evaluated
     pub candidates_evaluated: usize,
 }
 
+/// Quantization information for a search result
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct QuantizationInfo {
+    /// Quantization method used (e.g., "pq", "binary", "int8")
     pub quantization_type: String,
+    /// Compression ratio achieved
     pub compression_ratio: f32,
 }
 
+/// Per-engine performance statistics for a search result
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EngineStats {
+    /// Number of vectors scanned
     pub vectors_scanned: usize,
+    /// Number of cache hits during search
     pub cache_hits: usize,
+    /// Number of I/O operations performed
     pub io_operations: usize,
 }
 

@@ -7,14 +7,18 @@ use crate::proto::proximadb_v1::collection_service_server::{
     CollectionService, CollectionServiceServer,
 };
 
+/// gRPC implementation of the CollectionService for managing vector collections
 pub struct CollectionServiceImpl {
+    /// Shared unified handlers for business logic delegation
     unified_handlers: Arc<UnifiedHandlers>,
 }
 
 impl CollectionServiceImpl {
+    /// Create a new collection service backed by unified handlers
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
         Self { unified_handlers }
     }
+    /// Convert this implementation into a tonic gRPC server
     pub fn into_server(self) -> CollectionServiceServer<Self> {
         CollectionServiceServer::new(self)
     }

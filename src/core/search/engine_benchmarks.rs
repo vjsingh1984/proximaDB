@@ -22,28 +22,41 @@ use crate::core::search::integrated_search_optimization::{
 /// Dataset size categories for performance modeling
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DatasetSizeCategory {
-    Small,     // < 100K vectors
-    Medium,    // 100K - 1M vectors
-    Large,     // 1M - 10M vectors
-    VeryLarge, // > 10M vectors
+    /// Less than 100K vectors
+    Small,
+    /// 100K to 1M vectors
+    Medium,
+    /// 1M to 10M vectors
+    Large,
+    /// More than 10M vectors
+    VeryLarge,
 }
 
 /// Storage type for cost estimation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StorageType {
+    /// In-memory storage
     Memory,
+    /// NVMe solid-state drive
     NvmeSsd,
+    /// SATA solid-state drive
     SataSsd,
+    /// Traditional spinning hard drive
     HDD,
+    /// Cloud object storage (S3, GCS, Azure Blob)
     Cloud,
 }
 
 /// Storage profile for performance characteristics
 #[derive(Debug, Clone)]
 pub struct StorageProfile {
+    /// Type of storage backing
     pub storage_type: StorageType,
+    /// Maximum sustained read bandwidth in MB/s
     pub read_bandwidth_mbps: f64,
+    /// Average random read latency in milliseconds
     pub random_read_latency_ms: f64,
+    /// Average sequential read latency in milliseconds
     pub sequential_read_latency_ms: f64,
 }
 
@@ -90,8 +103,8 @@ impl Default for BenchmarkConfig {
     }
 }
 
-/// Quick benchmark configuration for rapid testing
 impl BenchmarkConfig {
+    /// Create a quick benchmark configuration for rapid testing
     pub fn quick() -> Self {
         Self {
             dimensions: vec![128, 768],
@@ -104,6 +117,7 @@ impl BenchmarkConfig {
         }
     }
 
+    /// Create a comprehensive benchmark configuration for full evaluation
     pub fn comprehensive() -> Self {
         Self {
             dimensions: vec![64, 128, 256, 384, 512, 768, 1024, 1536, 2048],
@@ -164,6 +178,7 @@ pub struct StorageEngineBenchmark {
 }
 
 impl StorageEngineBenchmark {
+    /// Create a new benchmark executor with the given configuration
     pub fn new(config: BenchmarkConfig) -> Self {
         Self {
             config,
@@ -647,8 +662,8 @@ pub mod engine_specific {
     }
 }
 
-/// Update SearchCostEstimator with benchmark results
 impl SearchCostEstimator {
+    /// Update cost model parameters from benchmark measurement results
     pub fn update_from_benchmarks(&mut self, results: &EngineBenchmarkResults) {
         // Update direct search times
         for _stats in results.direct_search_stats.values() {

@@ -139,8 +139,11 @@ impl TlsClientCertConfig {
 /// TLS client certificate authentication error response
 #[derive(Debug, Serialize)]
 pub struct TlsCertErrorResponse {
+    /// Error type identifier
     pub error: String,
+    /// Human-readable error description
     pub message: String,
+    /// HTTP status code
     pub code: u16,
 }
 
@@ -166,10 +169,12 @@ pub struct TlsAuthenticatedUser {
 /// State for TLS client certificate middleware
 #[derive(Clone)]
 pub struct TlsClientCertState {
+    /// TLS client certificate configuration
     pub config: Arc<TlsClientCertConfig>,
 }
 
 impl TlsClientCertState {
+    /// Create a new TLS client certificate state from configuration
     pub fn new(config: TlsClientCertConfig) -> Self {
         Self {
             config: Arc::new(config),
@@ -381,6 +386,7 @@ pub struct TlsClientCertLayer {
 }
 
 impl TlsClientCertLayer {
+    /// Create a new TLS client certificate middleware layer
     pub fn new(config: TlsClientCertConfig) -> Self {
         Self {
             state: TlsClientCertState::new(config),

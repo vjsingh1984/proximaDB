@@ -556,35 +556,58 @@ impl BusinessContextAI {
 
 // Type definitions for AI intelligence
 
+/// Classified business intent extracted from a natural language query
 #[derive(Debug, Clone)]
 pub struct BusinessIntent {
+    /// Primary business intent (e.g., "risk_analysis", "customer_analysis")
     pub primary_intent: String,
+    /// Business domain the query belongs to
     pub business_domain: String,
+    /// Industry-specific context
     pub industry_context: IndustryContext,
+    /// Applicable regulatory requirements
     pub regulatory_requirements: Vec<String>,
+    /// Confidence in the intent classification (0.0 to 1.0)
     pub intent_confidence: f32,
+    /// Business entities extracted from the query
     pub extracted_entities: Vec<String>,
+    /// Business constraints that apply to the query
     pub business_constraints: Vec<String>,
 }
 
+/// Industry-specific context for understanding business queries
 #[derive(Debug, Clone)]
 pub struct IndustryContext {
+    /// Industry vertical (e.g., "financial_services", "healthcare")
     pub industry_type: String,
+    /// Domain expertise areas relevant to the query
     pub domain_expertise: Vec<String>,
+    /// User role context for access control
     pub user_role_context: Vec<String>,
+    /// Compliance frameworks applicable in this context
     pub compliance_context: Vec<String>,
 }
 
+/// Complete AI-generated business answer with intelligence metadata
 #[derive(Debug, Clone)]
 pub struct AIIntelligentBusinessAnswer {
+    /// The original natural language query
     pub original_query: String,
+    /// Classified business intent
     pub business_intent: BusinessIntent,
+    /// Structured knowledge graph query generated from the intent
     pub structured_query: StructuredKnowledgeQuery,
+    /// Results from domain intelligence analysis
     pub domain_intelligence_result: DomainIntelligenceResult,
+    /// AI-generated answer with supporting evidence
     pub ai_generated_answer: AIGeneratedAnswer,
+    /// Confidence metrics across the processing pipeline
     pub confidence_metrics: AIConfidenceMetrics,
+    /// Processing time metadata
     pub processing_metadata: AIProcessingMetadata,
+    /// Timestamp of answer generation
     pub generated_at: DateTime<Utc>,
+    /// User ID who generated this answer
     pub generated_by: String,
 }
 
@@ -598,148 +621,225 @@ impl std::fmt::Display for AIIntelligentBusinessAnswer {
     }
 }
 
+/// Confidence metrics across the AI processing pipeline
 #[derive(Debug, Clone)]
 pub struct AIConfidenceMetrics {
+    /// Confidence in understanding the business intent
     pub intent_understanding_confidence: f32,
+    /// Confidence in translating the query to structured form
     pub query_translation_confidence: f32,
+    /// Confidence in the generated answer
     pub answer_generation_confidence: f32,
+    /// Overall combined confidence score
     pub overall_confidence: f32,
 }
 
+/// Processing time metadata for AI pipeline stages
 #[derive(Debug, Clone)]
 pub struct AIProcessingMetadata {
+    /// Total end-to-end processing time in milliseconds
     pub total_processing_time_ms: u64,
+    /// Time spent in LLM generation
     pub llm_processing_time_ms: u64,
+    /// Time spent querying the knowledge graph
     pub knowledge_graph_time_ms: u64,
+    /// Time spent analyzing business context
     pub business_context_time_ms: u64,
 }
 
+/// Configuration for an enterprise LLM model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMModelConfiguration {
+    /// Model name identifier
     pub model_name: String,
+    /// Type of model specialization
     pub model_type: LLMModelType,
+    /// Maximum context window size in tokens
     pub context_window: u32,
+    /// Sampling temperature (lower = more deterministic)
     pub temperature: f32,
+    /// Maximum tokens to generate
     pub max_tokens: u32,
+    /// Enterprise context for model configuration
     pub enterprise_context: EnterpriseModelContext,
 }
 
+/// Specialization type of an LLM model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LLMModelType {
+    /// Specialized for financial analysis and risk management
     FinancialIntelligence,
+    /// Specialized for clinical and healthcare intelligence
     ClinicalIntelligence,
+    /// General-purpose business intelligence
     GeneralBusiness,
+    /// Specialized for regulatory compliance analysis
     RegulatoryCompliance,
+    /// Specialized for executive-level strategic intelligence
     ExecutiveIntelligence,
 }
 
+/// Enterprise context for configuring LLM model behavior
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnterpriseModelContext {
+    /// Industry vertical
     pub industry: String,
+    /// Applicable compliance requirements
     pub compliance_requirements: Vec<String>,
+    /// Business domains the model supports
     pub business_domains: Vec<String>,
 }
 
 // Foundation structs for LLM integration
 
+/// Enterprise NLP engine for natural language processing
 #[derive(Debug, Clone)]
 pub struct EnterpriseNLPEngine;
 
+/// Translator that converts business intent into structured knowledge graph queries
 #[derive(Debug, Clone)]
 pub struct AIQueryTranslator;
 
+/// Coordinator for executing queries against the knowledge graph with AI augmentation
 #[derive(Debug, Clone)]
 pub struct KnowledgeGraphAICoordinator;
 
+/// Structured query for the enterprise knowledge graph
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredKnowledgeQuery {
+    /// Type of query to execute
     pub query_type: String,
+    /// Target entities to query
     pub target_entities: Vec<String>,
+    /// Relationships to traverse
     pub relationships: Vec<String>,
+    /// Constraints to apply
     pub constraints: Vec<String>,
 }
 
+/// Results from domain intelligence analysis of the knowledge graph
 #[derive(Debug, Clone)]
 pub struct DomainIntelligenceResult {
+    /// Number of entities analyzed
     pub entities_analyzed: usize,
+    /// Number of relationships analyzed
     pub relationships_analyzed: usize,
+    /// Knowledge sources consulted
     pub knowledge_sources: Vec<String>,
+    /// Domain-specific insights generated
     pub domain_insights: Vec<String>,
 }
 
+/// AI-generated answer with supporting evidence and compliance
 #[derive(Debug, Clone)]
 pub struct AIGeneratedAnswer {
+    /// Generated answer text
     pub answer_text: String,
+    /// Evidence supporting the answer
     pub supporting_evidence: Vec<String>,
+    /// Business insights derived from the analysis
     pub business_insights: Vec<String>,
+    /// Confidence score for the answer (0.0 to 1.0)
     pub confidence_score: f32,
+    /// Knowledge sources used to generate the answer
     pub knowledge_sources: Vec<String>,
+    /// Regulatory compliance statements
     pub regulatory_compliance: Vec<String>,
 }
 
+/// Template for generating enterprise prompts for LLMs
 #[derive(Debug, Clone)]
 pub struct EnterprisePromptTemplate {
+    /// Template name identifier
     pub template_name: String,
+    /// System prompt defining LLM behavior
     pub system_prompt: String,
+    /// User prompt template with placeholders
     pub user_prompt_template: String,
 }
 
+/// Validator for LLM responses to ensure enterprise compliance
 #[derive(Debug, Clone)]
 pub struct LLMResponseValidator;
 
+/// Optimizer for LLM performance in enterprise workloads
 #[derive(Debug, Clone)]
 pub struct LLMPerformanceOptimizer;
 
+/// Classifier for industry-specific business intent
 #[derive(Debug, Clone)]
 pub struct IndustryIntentClassifier;
 
+/// Engine for understanding business domain semantics
 #[derive(Debug, Clone)]
 pub struct BusinessDomainUnderstanding;
 
+/// Integration layer for regulatory context in AI processing
 #[derive(Debug, Clone)]
 pub struct RegulatoryContextIntegration;
 
+/// Processor for enterprise-specific terminology and jargon
 #[derive(Debug, Clone)]
 pub struct EnterpriseTerminologyProcessor;
 
+/// Assembled prompt for enterprise LLM execution
 #[derive(Debug, Clone)]
 pub struct EnterprisePrompt {
+    /// System-level instructions for the LLM
     pub system_prompt: String,
+    /// The user's original query
     pub user_query: String,
+    /// Knowledge graph context to include
     pub knowledge_context: String,
+    /// Business constraints and context for the LLM
     pub business_constraints: EnterpriseModelContext,
 }
 
+/// Raw response from an LLM provider
 #[derive(Debug, Clone)]
 pub struct LLMResponse {
+    /// Generated text response
     pub response_text: String,
+    /// Model confidence in the response
     pub confidence_score: f32,
+    /// Processing time in milliseconds
     pub processing_time_ms: u64,
+    /// Name of the model that generated the response
     pub model_used: String,
+    /// Business relevance score (0.0 to 1.0)
     pub business_relevance_score: f32,
 }
 
+/// LLM response after enterprise compliance validation
 #[derive(Debug, Clone)]
 pub struct ValidatedResponse {
+    /// Validated answer text
     pub answer_text: String,
+    /// Supporting evidence from knowledge sources
     pub supporting_evidence: Vec<String>,
+    /// Business insights derived from the response
     pub business_insights: Vec<String>,
+    /// Confidence score after validation
     pub confidence_score: f32,
+    /// Regulatory compliance statements
     pub regulatory_compliance: Vec<String>,
 }
 
 // Implementations for foundation structs
 impl EnterpriseNLPEngine {
+    /// Create a new enterprise NLP engine.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 }
 
 impl AIQueryTranslator {
+    /// Create a new AI query translator.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Translate a business intent into a structured knowledge graph query.
     pub async fn translate_to_knowledge_query(
         &self,
         business_intent: &BusinessIntent,
@@ -755,10 +855,12 @@ impl AIQueryTranslator {
 }
 
 impl KnowledgeGraphAICoordinator {
+    /// Create a new knowledge graph AI coordinator.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Execute a structured query with domain intelligence augmentation.
     pub async fn execute_with_domain_intelligence(
         &self,
         _tenant_id: &str,
@@ -776,10 +878,12 @@ impl KnowledgeGraphAICoordinator {
 }
 
 impl LLMResponseValidator {
+    /// Create a new LLM response validator.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Validate an LLM response for enterprise compliance and quality.
     pub async fn validate_enterprise_response(
         &self,
         llm_response: &LLMResponse,
@@ -797,22 +901,26 @@ impl LLMResponseValidator {
 }
 
 impl LLMPerformanceOptimizer {
+    /// Create a new LLM performance optimizer.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 }
 
 impl BusinessDomainUnderstanding {
+    /// Create a new business domain understanding engine.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 }
 
 impl RegulatoryContextIntegration {
+    /// Create a new regulatory context integration.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Extract applicable regulatory requirements from the query and context.
     pub async fn extract_regulatory_requirements(
         &self,
         _query: &str,
@@ -832,6 +940,7 @@ impl RegulatoryContextIntegration {
 }
 
 impl EnterpriseTerminologyProcessor {
+    /// Create a new enterprise terminology processor.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }

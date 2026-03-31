@@ -804,6 +804,7 @@ pub struct ExecutiveRecommendation {
 
 // Implementations for foundation structs
 impl IndustryInsightGenerator {
+    /// Create a new general-purpose industry insight generator.
     pub fn new() -> Result<Self> {
         Ok(Self {
             industry: "general".to_string(),
@@ -811,6 +812,7 @@ impl IndustryInsightGenerator {
         })
     }
 
+    /// Create a new insight generator tailored to a specific industry.
     pub async fn new_for_industry(industry: &str) -> Result<Self> {
         Ok(Self {
             industry: industry.to_string(),
@@ -818,6 +820,7 @@ impl IndustryInsightGenerator {
         })
     }
 
+    /// Generate insights based on cross-domain patterns for this industry.
     pub async fn generate_insights(
         &self,
         _patterns: &CrossDomainPatterns,
@@ -833,10 +836,12 @@ impl IndustryInsightGenerator {
 }
 
 impl CrossDomainPatternAnalyzer {
+    /// Create a new cross-domain pattern analyzer.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Analyze patterns across multiple business domains.
     pub async fn analyze_cross_domain_patterns(
         &self,
         _business_data: &[String],
@@ -851,10 +856,12 @@ impl CrossDomainPatternAnalyzer {
 }
 
 impl BusinessIntelligenceSynthesizer {
+    /// Create a new business intelligence synthesizer.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Synthesize cross-domain patterns and industry insights into unified intelligence.
     pub async fn synthesize_business_intelligence(
         &self,
         _patterns: &CrossDomainPatterns,
@@ -870,10 +877,12 @@ impl BusinessIntelligenceSynthesizer {
 }
 
 impl RegulatoryInsightValidator {
+    /// Create a new regulatory insight validator.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Validate insights against regulatory compliance frameworks.
     pub async fn validate_insights_compliance(
         &self,
         _insights: &SynthesizedBusinessIntelligence,
@@ -888,10 +897,12 @@ impl RegulatoryInsightValidator {
 }
 
 impl InsightPerformanceOptimizer {
+    /// Create a new insight performance optimizer.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Optimize insight delivery for performance and actionability.
     pub async fn optimize_insight_delivery(
         &self,
         insights: &SynthesizedBusinessIntelligence,
@@ -902,10 +913,12 @@ impl InsightPerformanceOptimizer {
 }
 
 impl OperationalInsightAnalyzer {
+    /// Create a new operational insight analyzer.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Analyze operational patterns from business intelligence data.
     pub async fn analyze_operational_patterns(
         &self,
         _data: &BusinessIntelligenceData,
@@ -920,10 +933,12 @@ impl OperationalInsightAnalyzer {
 }
 
 impl FinancialInsightCalculator {
+    /// Create a new financial insight calculator.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Calculate financial insights from business intelligence data.
     pub async fn calculate_financial_insights(
         &self,
         _data: &BusinessIntelligenceData,
@@ -938,10 +953,12 @@ impl FinancialInsightCalculator {
 }
 
 impl CompetitiveIntelligenceAnalyzer {
+    /// Create a new competitive intelligence analyzer.
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Analyze competitive market position from business data.
     pub async fn analyze_competitive_position(
         &self,
         _data: &BusinessIntelligenceData,
@@ -957,6 +974,7 @@ impl CompetitiveIntelligenceAnalyzer {
 
 // Missing methods for AutomatedInsightEngine
 impl AutomatedInsightEngine {
+    /// Analyze strategic patterns from context and business data.
     pub async fn analyze_strategic_patterns(
         &self,
         _strategic_context: &StrategicContext,
@@ -969,6 +987,7 @@ impl AutomatedInsightEngine {
         })
     }
 
+    /// Generate executive-level recommendations from strategic analysis.
     pub async fn generate_executive_recommendations(
         &self,
         _strategic_analysis: &StrategicAnalysis,
@@ -992,6 +1011,7 @@ impl AutomatedInsightEngine {
         }])
     }
 
+    /// Generate strategic recommendations from business intelligence data.
     pub async fn generate_strategic_recommendations(
         &self,
         _data: &BusinessIntelligenceData,

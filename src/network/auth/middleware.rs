@@ -33,14 +33,18 @@ use tracing::{debug, info, warn};
 
 /// Authentication middleware state
 pub struct AuthMiddlewareState {
+    /// Shared authentication service instance
     pub auth_service: Arc<AuthService>,
 }
 
-/// Authentication error response
+/// Authentication error response returned as JSON
 #[derive(Debug, Serialize)]
 pub struct AuthErrorResponse {
+    /// Error type identifier
     pub error: String,
+    /// Human-readable error description
     pub message: String,
+    /// HTTP status code
     pub code: u16,
 }
 
@@ -380,8 +384,11 @@ fn auth_error_to_response(error: AuthError) -> (StatusCode, Json<AuthErrorRespon
 
 /// Extension trait to extract auth result from request
 pub trait RequestAuthExt {
+    /// Extract the authentication result from request extensions
     fn auth_result(&self) -> Option<&AuthResult>;
+    /// Extract the authenticated user ID
     fn user_id(&self) -> Option<&str>;
+    /// Extract the tenant ID for multi-tenant requests
     fn tenant_id(&self) -> Option<&str>;
 }
 
@@ -449,9 +456,11 @@ impl Default for MtlsConfig {
     }
 }
 
-/// mTLS authentication state
+/// mTLS authentication state shared with the middleware layer
 pub struct MtlsAuthState {
+    /// mTLS configuration
     pub config: MtlsConfig,
+    /// Shared authentication service for permission resolution
     pub auth_service: Arc<AuthService>,
 }
 

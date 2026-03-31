@@ -9,8 +9,11 @@ use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::vector_service_server::{VectorService, VectorServiceServer};
 use crate::query::facade::QueryFacadeAdapter;
 
+/// gRPC implementation of the VectorService for vector CRUD and search operations
 pub struct VectorServiceImpl {
+    /// Shared unified handlers for business logic delegation
     unified_handlers: Arc<UnifiedHandlers>,
+    /// Optional query facade adapter for unified routing through the query planner
     query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
 
@@ -20,6 +23,7 @@ pub type VectorSearchStreamStream = Pin<
 >;
 
 impl VectorServiceImpl {
+    /// Create a new vector service backed by unified handlers
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
         Self {
             unified_handlers,
@@ -38,6 +42,7 @@ impl VectorServiceImpl {
         }
     }
 
+    /// Convert this implementation into a tonic gRPC server
     pub fn into_server(self) -> VectorServiceServer<Self> {
         VectorServiceServer::new(self)
     }

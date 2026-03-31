@@ -37,8 +37,11 @@ pub enum WriteMode {
 /// Metadata extracted from FlightDescriptor
 #[derive(Debug, Clone)]
 pub struct FlightRequestMetadata {
+    /// Target collection for the Arrow Flight operation
     pub collection_id: String,
+    /// Write mode (WAL or direct engine write)
     pub write_mode: WriteMode,
+    /// Whether to trigger compaction after the write completes
     pub trigger_compaction: bool,
 }
 

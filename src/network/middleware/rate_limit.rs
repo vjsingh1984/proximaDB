@@ -132,10 +132,15 @@ impl RateLimitConfig {
 /// Internal rate limiting configuration used by middleware logic
 #[derive(Debug, Clone)]
 pub struct MiddlewareRateLimitConfig {
+    /// Enable rate limiting
     pub enabled: bool,
+    /// Maximum requests per IP per window
     pub max_requests: u32,
+    /// Sliding window duration for rate limit tracking
     pub window_duration: Duration,
+    /// Whether to apply rate limits to health check endpoints
     pub limit_health_endpoints: bool,
+    /// Global maximum requests across all clients (optional)
     pub global_max_requests: Option<u32>,
 }
 
@@ -187,6 +192,7 @@ pub struct RateLimitState {
 }
 
 impl RateLimitState {
+    /// Create a new rate limit state with the given configuration
     pub fn new(config: MiddlewareRateLimitConfig) -> Self {
         Self {
             config,
@@ -210,6 +216,7 @@ pub struct RateLimitLayer {
 }
 
 impl RateLimitLayer {
+    /// Create a new rate limiting layer with the given configuration
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             _state: Arc::new(RateLimitState::new(config.to_middleware_config())),

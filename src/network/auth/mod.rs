@@ -38,11 +38,17 @@ use std::collections::HashMap;
 /// Authentication result containing user information and permissions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthResult {
+    /// Authenticated user identifier
     pub user_id: String,
+    /// Tenant/organization identifier for multi-tenant deployments
     pub tenant_id: Option<String>,
+    /// Assigned role names
     pub roles: Vec<String>,
+    /// Resolved permissions based on roles
     pub permissions: Vec<Permission>,
+    /// Authentication method used
     pub auth_method: AuthMethod,
+    /// Token expiration time (None for non-expiring credentials like API keys)
     pub token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -63,62 +69,92 @@ pub enum AuthMethod {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Permission {
     // Collection permissions
+    /// Create a new collection
     CreateCollection,
+    /// Delete an existing collection
     DeleteCollection,
+    /// List available collections
     ListCollections,
+    /// Read collection metadata and configuration
     ReadCollectionMetadata,
+    /// Update collection metadata and configuration
     UpdateCollectionMetadata,
 
     // Vector permissions
+    /// Insert vectors into a collection
     InsertVectors,
+    /// Delete vectors from a collection
     DeleteVectors,
+    /// Execute similarity search queries
     SearchVectors,
+    /// Update existing vectors
     UpdateVectors,
+    /// Read individual vector data
     ReadVectors,
 
     // Graph permissions
+    /// Create graph relationships (edges)
     CreateGraphRelations,
+    /// Delete graph relationships
     DeleteGraphRelations,
+    /// Execute graph traversal queries
     TraverseGraph,
+    /// Read graph relationships and node data
     ReadGraphRelations,
 
     // Query permissions
+    /// Execute SQL queries via the federated query engine
     ExecuteSqlQueries,
+    /// Execute SKS (Semantic Knowledge Store) functions
     ExecuteSksFunctions,
 
     // System permissions
+    /// View system metrics (Prometheus, health)
     ViewSystemMetrics,
+    /// View system health status
     ViewSystemHealth,
+    /// Modify system configuration
     ConfigureSystem,
 
     // Administrative permissions
+    /// Create, update, or delete user accounts
     ManageUsers,
+    /// Create, update, or delete RBAC roles
     ManageRoles,
+    /// Create, revoke, or rotate API keys
     ManageApiKeys,
+    /// View authentication and authorization audit logs
     ViewAuditLogs,
 }
 
 /// Error types for authentication and authorization
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
+    /// Authentication attempt failed (bad credentials, provider error)
     #[error("Authentication failed: {0}")]
     AuthenticationFailed(String),
 
+    /// User lacks the required permission for the requested operation
     #[error("Authorization denied: missing permission {0:?}")]
     AuthorizationDenied(Permission),
 
+    /// JWT or API token is malformed or has an invalid signature
     #[error("Invalid token: {0}")]
     InvalidToken(String),
 
+    /// JWT token has expired and must be refreshed
     #[error("Token expired")]
     TokenExpired,
 
+    /// Provided credentials (username/password, API key) are incorrect
     #[error("Invalid credentials")]
     InvalidCredentials,
 
+    /// The specified user does not exist
     #[error("User not found: {0}")]
     UserNotFound(String),
 
+    /// The specified RBAC role does not exist
     #[error("Role not found: {0}")]
     RoleNotFound(String),
 }
@@ -219,7 +255,9 @@ impl AuthService {
 /// Trait for authentication providers (LDAP, OAuth, etc.)
 #[async_trait::async_trait]
 pub trait AuthProvider: Send + Sync {
+    /// Authenticate using provider-specific credentials and return user information
     async fn authenticate(&self, credentials: &str) -> Result<AuthResult, AuthError>;
+    /// Return the provider name (e.g., "ldap", "oauth2", "saml")
     fn name(&self) -> &str;
 }
 

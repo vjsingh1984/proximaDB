@@ -94,7 +94,9 @@ pub enum RetryError<E> {
     /// All retry attempts exhausted
     #[error("All {attempts} retry attempts exhausted")]
     RetriesExhausted {
+        /// Total number of attempts made
         attempts: u32,
+        /// The error from the final attempt
         #[source]
         last_error: E,
     },

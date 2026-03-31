@@ -962,6 +962,7 @@ pub async fn create_edge(
     }
 }
 
+/// Request parameters for shortest path computation
 #[derive(Debug, Deserialize)]
 pub struct ShortestPathRequest {
     /// Starting node ID
@@ -982,6 +983,7 @@ pub struct ShortestPathRequest {
     prefetch_budget: Option<usize>,
 }
 
+/// Request to create a unique constraint on a graph property
 #[derive(Debug, Deserialize)]
 pub struct UniqueConstraintRequest {
     /// Node label to constrain
@@ -1995,10 +1997,14 @@ fn convert_query_result_to_rows(result: &crate::query::QueryResult) -> Vec<serde
 /// Request for creating a graph with a specific engine
 #[derive(Debug, Deserialize)]
 pub struct CreateGraphWithEngineRequest {
+    /// Unique graph identifier
     pub graph_id: String,
+    /// Graph engine type: "orion", "pulsar", or "quasar"
     #[serde(default)]
     pub engine_type: String,
+    /// PULSAR-specific distributed engine configuration
     pub pulsar_config: Option<serde_json::Value>,
+    /// QUASAR-specific hybrid vector+graph engine configuration
     pub quasar_config: Option<serde_json::Value>,
 }
 
@@ -2113,8 +2119,11 @@ pub async fn get_pulsar_stats(
 /// Request for cross-shard query
 #[derive(Debug, Deserialize)]
 pub struct CrossShardQueryRequest {
+    /// Target graph identifier
     pub graph_id: String,
+    /// Graph query to execute across shards
     pub query: String,
+    /// Specific shard IDs to query (empty means all shards)
     #[serde(default)]
     pub shard_ids: Vec<String>,
 }
@@ -2166,9 +2175,12 @@ pub async fn cross_shard_query(
 /// Request for rebalancing shards
 #[derive(Debug, Deserialize)]
 pub struct RebalanceShardsRequest {
+    /// Target graph identifier
     pub graph_id: String,
+    /// Specific shard IDs to rebalance (empty means all)
     #[serde(default)]
     pub shard_ids: Vec<String>,
+    /// Force rebalance even if the cluster is not in a stable state
     #[serde(default)]
     pub force: bool,
 }
@@ -2291,9 +2303,12 @@ pub async fn get_tier_stats(
 /// Request for triggering migration
 #[derive(Debug, Deserialize)]
 pub struct TriggerMigrationRequest {
+    /// Target graph identifier
     pub graph_id: String,
+    /// Node IDs to migrate (empty means automatic selection)
     #[serde(default)]
     pub node_ids: Vec<String>,
+    /// Target storage tier (e.g., "hot", "warm", "cold")
     pub target_tier: String,
 }
 

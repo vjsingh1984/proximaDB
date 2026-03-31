@@ -100,38 +100,57 @@ pub struct StorageFilter {
 #[derive(Debug, Clone)]
 pub enum StorageFilterCondition {
     /// Equality check: field = value
-    Equals { field: String, value: FilterValue },
+    Equals {
+        /// Field name to compare
+        field: String,
+        /// Value to compare against
+        value: FilterValue,
+    },
 
     /// Range check: field >= min AND field <= max
     Range {
+        /// Field name to compare
         field: String,
+        /// Inclusive lower bound
         min: FilterValue,
+        /// Inclusive upper bound
         max: FilterValue,
     },
 
     /// In check: field IN (values)
     In {
+        /// Field name to compare
         field: String,
+        /// Set of allowed values
         values: Vec<FilterValue>,
     },
 
     /// Null check: field IS NULL
-    IsNull { field: String },
+    IsNull {
+        /// Field name to check for null
+        field: String,
+    },
 }
 
-/// Filter logic
+/// Boolean logic for combining filter conditions
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterLogic {
+    /// All conditions must match
     And,
+    /// At least one condition must match
     Or,
 }
 
 /// Filter value (supports multiple types)
 #[derive(Debug, Clone)]
 pub enum FilterValue {
+    /// UTF-8 string value
     String(String),
+    /// 64-bit integer value
     Integer(i64),
+    /// 64-bit float value
     Float(f64),
+    /// Boolean value
     Boolean(bool),
 }
 
@@ -463,16 +482,24 @@ impl FilterPushdownPlanner {
 /// statistics needed by the filter pushdown engine (distinct values, nulls, min/max).
 #[derive(Debug, Clone)]
 pub struct FilterCollectionStats {
+    /// Total number of vectors in the collection
     pub total_vectors: usize,
+    /// Per-column statistics keyed by column name
     pub column_stats: HashMap<String, ColumnStats>,
 }
 
+/// Per-column statistics for filter cost estimation
 #[derive(Debug, Clone)]
 pub struct ColumnStats {
+    /// Number of distinct values in the column
     pub distinct_values: usize,
+    /// Number of null values in the column
     pub null_count: usize,
+    /// Total number of rows with this column
     pub total_count: usize,
+    /// Minimum value for range pruning
     pub min_value: Option<serde_json::Value>,
+    /// Maximum value for range pruning
     pub max_value: Option<serde_json::Value>,
 }
 

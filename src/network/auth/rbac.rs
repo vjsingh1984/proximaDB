@@ -315,11 +315,17 @@ pub struct PermissionContext {
 /// Types of resources that can be protected
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ResourceType {
+    /// Vector collection resource
     Collection,
+    /// Individual vector resource
     Vector,
+    /// Graph database resource
     Graph,
+    /// System-level resource (configuration, metrics)
     System,
+    /// User account resource
     User,
+    /// RBAC role resource
     Role,
 }
 

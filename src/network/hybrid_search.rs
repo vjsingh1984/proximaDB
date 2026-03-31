@@ -13,27 +13,42 @@ use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::sql_value::Value as SqlValueKind;
 use crate::storage::engines::core::formats::columnar::fulltext_index::FullTextIndex;
 
+/// Shared map of per-collection full-text indexes for hybrid BM25+vector search
 pub type HybridFullTextIndexMap = Arc<RwLock<HashMap<String, FullTextIndex>>>;
 
+/// Parameters for executing a hybrid (vector + BM25 text) search
 #[derive(Debug)]
 pub struct HybridSearchExecutionRequest {
+    /// Target collection name
     pub collection: String,
+    /// Text query for BM25 scoring (optional if vector-only)
     pub text_query: Option<String>,
+    /// Query vector for similarity scoring
     pub query_vector: Vec<f32>,
+    /// Maximum number of results to return
     pub top_k: usize,
+    /// Metadata filters to apply
     pub filters: HashMap<String, prost_types::Value>,
+    /// Fusion strategy for combining vector and BM25 scores
     pub fusion_strategy: FusionStrategy,
 }
 
+/// Result of a hybrid search execution with timing breakdown
 #[derive(Debug)]
 pub struct HybridSearchExecution {
+    /// Fused results combining vector and BM25 scores
     pub fused_results: Vec<FusedSearchResult>,
+    /// BM25 text search elapsed time in milliseconds
     pub bm25_search_time_ms: f64,
+    /// Vector similarity search elapsed time in milliseconds
     pub vector_search_time_ms: f64,
+    /// Score fusion elapsed time in milliseconds
     pub fusion_time_ms: f64,
+    /// Total end-to-end elapsed time in milliseconds
     pub total_time_ms: f64,
 }
 
+/// Validate a hybrid search request for required fields
 pub fn validate_hybrid_search_request(request: &HybridSearchExecutionRequest) -> Result<()> {
     if request.collection.trim().is_empty() {
         bail!("Collection name is required");
@@ -52,6 +67,7 @@ pub fn validate_hybrid_search_request(request: &HybridSearchExecutionRequest) ->
     Ok(())
 }
 
+/// Execute a hybrid search combining vector similarity and BM25 text relevance
 pub async fn execute_hybrid_search(
     unified_handlers: &UnifiedHandlers,
     fulltext_indexes: Option<&HybridFullTextIndexMap>,

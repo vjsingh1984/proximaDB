@@ -141,17 +141,24 @@ pub struct VectorSearchQuery {
 /// Distance metric
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum DistanceMetric {
+    /// Cosine similarity (angular distance)
     Cosine,
+    /// Euclidean (L2) distance
     Euclidean,
+    /// Dot product similarity
     DotProduct,
+    /// Manhattan (L1) distance
     Manhattan,
 }
 
 /// Search parameters
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchParams {
+    /// Maximum number of results to return
     pub top_k: Option<u32>,
+    /// Minimum accuracy threshold for approximate search
     pub accuracy_threshold: Option<f64>,
+    /// Query timeout in milliseconds
     pub timeout_ms: Option<u32>,
 }
 
@@ -169,8 +176,11 @@ pub struct VectorBatchOperation {
 /// Vector record (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorRecord {
+    /// Unique vector identifier
     pub id: String,
+    /// Vector embedding values
     pub vector: Vec<f32>,
+    /// Key-value metadata associated with the vector
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
@@ -192,60 +202,92 @@ pub struct SqlQueryRequest {
 /// SQL parameter value
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SqlParameter {
+    /// SQL NULL value
     Null,
+    /// Text string value
     String(String),
+    /// 64-bit integer value
     Int(i64),
+    /// 64-bit floating point value
     Float(f64),
+    /// Boolean value
     Bool(bool),
+    /// Raw byte array
     Bytes(Vec<u8>),
+    /// Nested array of SQL parameters
     Array(Vec<SqlParameter>),
 }
 
 /// Collection operation (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionOperation {
+    /// Type of collection operation to perform
     pub operation: CollectionOperationType,
+    /// Target collection identifier (required for get/delete/update)
     pub collection_id: Option<String>,
+    /// Collection configuration (required for create/update)
     pub config: Option<CollectionConfig>,
+    /// Source protocol that originated this request
     pub source: RequestProtocol,
 }
 
+/// Type of operation to perform on a collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CollectionOperationType {
+    /// Create a new collection
     Create,
+    /// Delete an existing collection
     Delete,
+    /// Get collection metadata
     Get,
+    /// List all collections
     List,
+    /// Update collection configuration
     Update,
 }
 
 /// Collection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionConfig {
+    /// Collection name
     pub name: String,
+    /// Vector dimensionality
     pub dimension: u32,
+    /// Distance metric for similarity computation
     pub distance_metric: Option<DistanceMetric>,
+    /// Storage engine identifier (e.g., "sst", "helix", "viper")
     pub storage_engine: Option<String>,
 }
 
 /// Graph operation (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphOperation {
+    /// Type of graph operation to perform
     pub operation: GraphOperationType,
+    /// Target graph name
     pub graph_name: String,
+    /// Source protocol that originated this request
     pub source: RequestProtocol,
 }
 
+/// Type of graph operation to perform
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GraphOperationType {
+    /// Create a new graph
     CreateGraph,
+    /// Delete an existing graph
     DeleteGraph,
+    /// Traverse the graph from start nodes
     Traverse {
+        /// Node IDs to start traversal from
         start_nodes: Vec<String>,
+        /// Edge types to follow during traversal
         edge_types: Vec<String>,
+        /// Maximum traversal depth
         max_depth: u32,
     },
-    Query(String), // Cypher-like query
+    /// Execute a Cypher-like graph query
+    Query(String),
 }
 
 // ============================================================================
@@ -272,13 +314,18 @@ pub enum ResponseData {
     SearchResults(Vec<SearchResult>),
     /// Batch operation result
     BatchResult {
+        /// Number of vectors inserted
         inserted: u32,
+        /// Number of vectors updated
         updated: u32,
+        /// Number of vectors deleted
         deleted: u32,
     },
     /// SQL query results
     SqlResults {
+        /// Column names in the result set
         columns: Vec<String>,
+        /// Row data as JSON values
         rows: Vec<Vec<serde_json::Value>>,
     },
     /// Collection info
@@ -287,11 +334,18 @@ pub enum ResponseData {
     CollectionList(Vec<CollectionInfo>),
     /// Graph traversal results
     GraphResults {
+        /// Nodes returned by the graph query
         nodes: Vec<GraphNode>,
+        /// Edges returned by the graph query
         edges: Vec<GraphEdge>,
     },
     /// Health check result
-    HealthStatus { status: String, version: String },
+    HealthStatus {
+        /// Server health status
+        status: String,
+        /// Server version string
+        version: String,
+    },
     /// Empty response
     Empty,
 }
@@ -299,46 +353,67 @@ pub enum ResponseData {
 /// Search result (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
+    /// Vector ID
     pub id: String,
+    /// Similarity score
     pub score: f64,
+    /// Original vector data (if requested)
     pub vector: Option<Vec<f32>>,
+    /// Associated metadata
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// Collection info (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionInfo {
+    /// Collection identifier
     pub id: String,
+    /// Vector dimensionality
     pub dimension: u32,
+    /// Total number of vectors in the collection
     pub vector_count: u64,
+    /// Storage engine used by this collection
     pub storage_engine: String,
+    /// Creation timestamp (Unix epoch seconds)
     pub created_at: i64,
 }
 
 /// Graph node (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNode {
+    /// Node identifier
     pub id: String,
+    /// Node labels (categories)
     pub labels: Vec<String>,
+    /// Node properties as key-value pairs
     pub properties: HashMap<String, serde_json::Value>,
 }
 
 /// Graph edge (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphEdge {
+    /// Edge identifier
     pub id: String,
+    /// Source node ID
     pub source: String,
+    /// Target node ID
     pub target: String,
+    /// Relationship type label
     pub edge_type: String,
+    /// Edge properties as key-value pairs
     pub properties: HashMap<String, serde_json::Value>,
 }
 
 /// Response metadata
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ResponseMetadata {
+    /// Total execution time in milliseconds
     pub execution_time_ms: u64,
+    /// Unique request identifier for tracing
     pub request_id: Option<String>,
+    /// Number of rows scanned during query execution
     pub rows_scanned: Option<u64>,
+    /// Whether the result was served from cache
     pub cache_hit: Option<bool>,
 }
 
@@ -789,18 +864,23 @@ impl UnifiedQueryResponse {
 /// PostgreSQL result format
 #[derive(Debug, Clone)]
 pub struct PostgresResult {
+    /// Column definitions for the result set
     pub columns: Vec<PostgresColumn>,
+    /// Row data in PostgreSQL wire format
     pub rows: Vec<Vec<PostgresValue>>,
 }
 
 /// PostgreSQL column definition
 #[derive(Debug, Clone)]
 pub struct PostgresColumn {
+    /// Column name
     pub name: String,
+    /// PostgreSQL data type
     pub pg_type: PostgresType,
 }
 
 impl PostgresColumn {
+    /// Create a new column definition with the given name and type
     pub fn new(name: &str, pg_type: PostgresType) -> Self {
         Self {
             name: name.to_string(),
@@ -812,25 +892,40 @@ impl PostgresColumn {
 /// PostgreSQL types (subset)
 #[derive(Debug, Clone, Copy)]
 pub enum PostgresType {
+    /// Text (VARCHAR) type
     Text,
+    /// 32-bit integer
     Int4,
+    /// 64-bit integer
     Int8,
+    /// 64-bit floating point
     Float8,
+    /// Boolean
     Bool,
+    /// JSONB binary JSON
     Jsonb,
+    /// Raw byte array
     Bytea,
 }
 
 /// PostgreSQL value
 #[derive(Debug, Clone)]
 pub enum PostgresValue {
+    /// SQL NULL
     Null,
+    /// Text string
     Text(String),
+    /// 32-bit integer
     Int4(i32),
+    /// 64-bit integer
     Int8(i64),
+    /// 64-bit floating point
     Float8(f64),
+    /// Boolean
     Bool(bool),
+    /// JSONB data as serialized string
     Jsonb(String),
+    /// Raw bytes
     Bytea(Vec<u8>),
 }
 
