@@ -44,7 +44,7 @@
 //! 4. **Collection-Aware Policies**: Per-collection constraints from base_location
 //! 5. **Unified Metrics**: Comprehensive observability across all backends
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use moka::future::Cache as MokaCache;
