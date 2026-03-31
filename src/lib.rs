@@ -337,6 +337,7 @@ use tracing::info;
 // RL Planner checkpoint interval (5 minutes default)
 const RL_CHECKPOINT_INTERVAL_SECS: u64 = 300;
 
+/// Convenience result type using a boxed dynamic error for cross-layer propagation.
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Main ProximaDB database instance
@@ -358,6 +359,7 @@ pub struct ProximaDB {
 }
 
 impl ProximaDB {
+    /// Create and initialize a new ProximaDB instance from the given configuration.
     pub async fn new(config: core::Config) -> Result<Self> {
         tracing::info!("🚀 ProximaDB::new - STARTING database initialization");
         tracing::debug!("🔍 ProximaDB::new - Config: {:?}", config);
@@ -545,6 +547,7 @@ impl ProximaDB {
         })
     }
 
+    /// Start all database services (network listeners, background tasks, WAL recovery).
     pub async fn start(&mut self) -> Result<()> {
         tracing::info!("🚀 ProximaDB::start - Starting database services...");
 
@@ -660,6 +663,7 @@ impl ProximaDB {
         Ok(())
     }
 
+    /// Gracefully shut down all database services and flush pending writes.
     pub async fn stop(&mut self) -> Result<()> {
         // Stop RL planner checkpoint task and persist policy
         tracing::info!("Stopping RL Query Planner...");
