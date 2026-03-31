@@ -50,8 +50,11 @@ pub trait LLMClient {
 /// Rate limit status for a provider
 #[derive(Debug, Clone)]
 pub struct RateLimitStatus {
+    /// Number of remaining requests in the current window
     pub remaining_requests: Option<u32>,
+    /// Time when the rate limit resets
     pub reset_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Maximum requests allowed per minute
     pub limit_per_minute: u32,
 }
 

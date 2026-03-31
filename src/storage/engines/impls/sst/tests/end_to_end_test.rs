@@ -15,7 +15,6 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::core::search::FilterExpression;
     use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,

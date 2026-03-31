@@ -33,13 +33,21 @@ pub struct MetadataFilterPushdown {
 /// Statistics for a metadata column
 #[derive(Debug, Clone)]
 pub struct ColumnStatistics {
+    /// Name of the metadata column
     pub column_name: String,
+    /// Number of distinct values
     pub distinct_values: usize,
+    /// Number of null values
     pub null_count: usize,
+    /// Total row count
     pub total_count: usize,
+    /// Minimum value in the column
     pub min_value: Option<Value>,
+    /// Maximum value in the column
     pub max_value: Option<Value>,
+    /// Distribution of values (for selectivity estimation)
     pub value_histogram: HashMap<Value, usize>,
+    /// Optional bloom filter for membership testing
     pub bloom_filter: Option<Arc<BloomFilter>>,
 }
 
@@ -598,7 +606,7 @@ impl SelectivityEstimator {
     }
 }
 
-/// Enhanced bloom filter builder for metadata
+/// Builder for creating per-column bloom filters on metadata values
 pub struct MetadataBloomBuilder {
     builders: HashMap<String, BloomFilterBuilder>,
     expected_items: usize,
@@ -606,6 +614,7 @@ pub struct MetadataBloomBuilder {
 }
 
 impl MetadataBloomBuilder {
+    /// Create a new metadata bloom filter builder for the expected number of items
     pub fn new(expected_items: usize) -> Self {
         Self {
             builders: HashMap::new(),

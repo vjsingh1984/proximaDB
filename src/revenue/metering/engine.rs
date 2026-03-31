@@ -28,76 +28,155 @@ pub struct UsageMeteringEngine {
 /// Configuration for usage metering
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeteringConfig {
+    /// Whether real-time usage metering is active.
     pub enable_real_time_metering: bool,
+    /// Dollar threshold that triggers an immediate billing cycle.
     pub billing_threshold_usd: f64,
+    /// Number of days between scheduled billing runs.
     pub billing_frequency_days: u32,
+    /// Whether usage analytics dashboards are enabled.
     pub enable_usage_analytics: bool,
+    /// Whether automated cost optimization recommendations are generated.
     pub enable_cost_optimization: bool,
 }
 
 /// Usage event for enterprise metering
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageEvent {
+    /// Unique identifier for this usage event.
     pub event_id: String,
+    /// Tenant that generated the event.
     pub tenant_id: String,
+    /// User within the tenant who triggered the event.
     pub user_id: String,
+    /// Category of billable action performed.
     pub event_type: UsageEventType,
+    /// When the event occurred.
     pub timestamp: DateTime<Utc>,
+    /// Resource consumption metrics recorded for this event.
     pub resource_consumed: ResourceConsumption,
+    /// Calculated dollar cost, populated after pricing evaluation.
     pub cost_impact: Option<f64>,
+    /// Arbitrary key-value pairs for event context.
     pub metadata: HashMap<String, String>,
 }
 
 /// Types of billable usage events
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UsageEventType {
-    VectorSearch { k: usize, dimensions: usize },
-    VectorInsertion { count: usize, dimensions: usize },
-    CollectionCreation { estimated_size: u64 },
-    AIQuery { provider: String, tokens: u32 },
-    DataStorage { bytes: u64 },
-    ComputeTime { milliseconds: u64 },
-    DataTransfer { bytes: u64 },
-    ExecutiveDashboard { insights_generated: u32 },
-    NaturalLanguageQuery { complexity_score: u32 },
+    /// K-nearest-neighbor vector search with `k` results and given dimensionality.
+    VectorSearch {
+        /// Number of nearest neighbors requested.
+        k: usize,
+        /// Dimensionality of the query vector.
+        dimensions: usize,
+    },
+    /// Batch vector insertion with count and dimensionality.
+    VectorInsertion {
+        /// Number of vectors inserted.
+        count: usize,
+        /// Dimensionality of each inserted vector.
+        dimensions: usize,
+    },
+    /// New collection provisioned with an estimated storage footprint.
+    CollectionCreation {
+        /// Estimated storage size in bytes.
+        estimated_size: u64,
+    },
+    /// AI-powered query routed to an LLM provider.
+    AIQuery {
+        /// LLM provider name (e.g. "openai").
+        provider: String,
+        /// Token count consumed by the query.
+        tokens: u32,
+    },
+    /// Persistent data storage consumption snapshot.
+    DataStorage {
+        /// Current storage usage in bytes.
+        bytes: u64,
+    },
+    /// Compute time consumed by a request.
+    ComputeTime {
+        /// Wall-clock compute time in milliseconds.
+        milliseconds: u64,
+    },
+    /// Network data transfer egress.
+    DataTransfer {
+        /// Bytes transferred out.
+        bytes: u64,
+    },
+    /// Executive analytics dashboard generation.
+    ExecutiveDashboard {
+        /// Number of insights produced in this dashboard run.
+        insights_generated: u32,
+    },
+    /// Natural language query translated and executed.
+    NaturalLanguageQuery {
+        /// Estimated complexity score (0-100).
+        complexity_score: u32,
+    },
 }
 
 /// Resource consumption metrics for precise billing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceConsumption {
+    /// CPU time consumed in milliseconds.
     pub cpu_milliseconds: u64,
+    /// Peak memory used in bytes.
     pub memory_bytes: u64,
+    /// Disk I/O in bytes.
     pub storage_bytes: u64,
+    /// Network I/O in bytes.
     pub network_bytes: u64,
+    /// LLM tokens consumed, if any.
     pub ai_tokens: u32,
+    /// Application-defined numeric metrics.
     pub custom_metrics: HashMap<String, f64>,
 }
 
 /// Aggregated usage for billing periods
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageAggregate {
+    /// Tenant this aggregate belongs to.
     pub tenant_id: String,
+    /// Start of the current billing period.
     pub billing_period_start: DateTime<Utc>,
+    /// End of the current billing period.
     pub billing_period_end: DateTime<Utc>,
+    /// Total vector search operations in this period.
     pub total_searches: u64,
+    /// Total vectors inserted in this period.
     pub total_insertions: u64,
+    /// Total AI-powered queries in this period.
     pub total_ai_queries: u64,
+    /// High-water mark for storage consumption in bytes.
     pub total_storage_bytes: u64,
+    /// Cumulative compute time in milliseconds.
     pub total_compute_ms: u64,
+    /// Running dollar cost for the billing period.
     pub total_cost: f64,
+    /// Per-day usage breakdown keyed by "YYYY-MM-DD".
     pub usage_by_day: HashMap<String, DailyUsage>,
+    /// Observed peak resource usage for capacity planning.
     pub peak_usage_metrics: PeakUsageMetrics,
 }
 
 /// Daily usage breakdown for analytics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailyUsage {
+    /// Calendar date in "YYYY-MM-DD" format.
     pub date: String,
+    /// Number of vector searches performed on this day.
     pub searches: u64,
+    /// Number of vector insertions performed on this day.
     pub insertions: u64,
+    /// Number of AI queries executed on this day.
     pub ai_queries: u64,
+    /// Number of executive dashboard reports generated.
     pub executive_dashboards: u32,
+    /// Total dollar cost accrued on this day.
     pub cost: f64,
+    /// Peak queries-per-second observed during the day.
     pub peak_qps: f64,
 }
 

@@ -21,11 +21,17 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 /// A search candidate from a specific storage tier awaiting deduplication
 pub struct TieredSearchCandidate {
+    /// The matched vector record
     pub vector_record: VectorRecord,
+    /// Similarity score to the query vector
     pub similarity: f32,
+    /// Data freshness tier this result came from
     pub tier: DataFreshnessTier,
+    /// Storage engine that produced this result
     pub engine: DeduplicationStorageEngine,
+    /// Timestamp when this record was written
     pub timestamp: DateTime<Utc>,
+    /// Write sequence number for ordering within a tier
     pub sequence: u64,
     /// File path for flushed/compacted results (SST or Parquet)
     pub file_path: Option<String>,
@@ -34,17 +40,23 @@ pub struct TieredSearchCandidate {
 /// Data freshness tier hierarchy for deduplication priority
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DataFreshnessTier {
-    Compacted = 0, // Lowest priority - final compacted storage
-    Flushed = 1,   // Medium priority - flushed but not compacted
-    Unflushed = 2, // Highest priority - WAL data in memtable
+    /// Lowest priority - final compacted storage
+    Compacted = 0,
+    /// Medium priority - flushed but not yet compacted
+    Flushed = 1,
+    /// Highest priority - WAL data still in memtable
+    Unflushed = 2,
 }
 
 /// Storage engine type for search result context (includes WAL for unflushed data)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeduplicationStorageEngine {
-    SST,   // SST files (LSM-Tree storage)
-    VIPER, // VIPER with Parquet files
-    WAL,   // WAL memtable (unflushed)
+    /// SST files (LSM-Tree storage)
+    SST,
+    /// VIPER with Parquet files
+    VIPER,
+    /// WAL memtable (unflushed)
+    WAL,
 }
 
 /// Metadata filter for client-side filtering
@@ -71,6 +83,7 @@ pub struct MultiTierDeduplicator {
 }
 
 impl MultiTierDeduplicator {
+    /// Create a new deduplicator with default settings
     pub fn new() -> Self {
         Self {
             id_to_latest: HashMap::new(),
@@ -475,8 +488,11 @@ impl MultiTierDeduplicator {
 /// Statistics for deduplication process
 #[derive(Debug, Clone)]
 pub struct DeduplicationStats {
+    /// Number of unique vector IDs after deduplication
     pub unique_ids: usize,
+    /// Number of records that had no ID (could not be deduplicated)
     pub records_without_id: usize,
+    /// Total records in the final result set
     pub total_records: usize,
 }
 

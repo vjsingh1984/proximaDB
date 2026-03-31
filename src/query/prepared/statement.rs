@@ -35,7 +35,12 @@ pub enum PreparedStatementError {
 
     /// Parameter count mismatch
     #[error("Expected {expected} parameters, got {actual}")]
-    ParameterCountMismatch { expected: usize, actual: usize },
+    ParameterCountMismatch {
+        /// Number of parameters expected
+        expected: usize,
+        /// Number of parameters provided
+        actual: usize,
+    },
 
     /// Cache is full
     #[error("Statement cache is full (max: {0})")]

@@ -19,11 +19,16 @@ pub struct PredictiveAnalyticsEngine {
     model_manager: Arc<ModelManager>,
 }
 
+/// Configuration for the predictive analytics engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictiveAnalyticsConfig {
+    /// Whether predictive analytics is enabled
     pub enabled: bool,
+    /// Number of days to forecast into the future
     pub prediction_window_days: u32,
+    /// Minimum confidence threshold for predictions
     pub confidence_threshold: f64,
+    /// Maximum number of data points for model input
     pub max_data_points: usize,
 }
 
@@ -37,11 +42,16 @@ pub struct ConversationalAnalyticsEngine {
     response_generator: Arc<ResponseGenerator>,
 }
 
+/// Configuration for the conversational analytics engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationalAnalyticsConfig {
+    /// Whether conversational analytics is enabled
     pub enabled: bool,
+    /// Maximum response time in milliseconds
     pub max_response_time_ms: u64,
+    /// Whether to include explanations in responses
     pub enable_explanations: bool,
+    /// Whether to cache analytics responses
     pub cache_responses: bool,
 }
 
@@ -55,12 +65,17 @@ pub struct GovernanceAnalyticsEngine {
     audit_analyzer: Arc<AuditAnalyzer>,
 }
 
+/// Configuration for the governance analytics engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernanceAnalyticsConfig {
+    /// Whether governance analytics is enabled
     pub enabled: bool,
+    /// Compliance frameworks to monitor
     #[allow(dead_code)]
     pub compliance_frameworks: Vec<String>,
+    /// Number of days to retain audit records
     pub audit_retention_days: u32,
+    /// Alert thresholds by metric name
     pub alert_thresholds: HashMap<String, f64>,
 }
 
@@ -71,10 +86,14 @@ pub struct DataProcessor {
     config: DataProcessorConfig,
 }
 
+/// Configuration for the analytics data processor
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataProcessorConfig {
+    /// Number of records to process per batch
     pub batch_size: usize,
+    /// Processing timeout in milliseconds
     pub processing_timeout_ms: u64,
+    /// Whether to process data in parallel
     pub enable_parallel_processing: bool,
 }
 
@@ -85,19 +104,29 @@ pub struct ModelManager {
     models: HashMap<String, AnalyticsModel>,
 }
 
+/// Analytics model with training metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalyticsModel {
+    /// Unique identifier for the model
     pub model_id: String,
+    /// Type of analytics model
     pub model_type: ModelType,
+    /// Model accuracy on validation data
     pub accuracy: f64,
+    /// Timestamp of last model training
     pub last_trained: DateTime<Utc>,
 }
 
+/// Type of analytics model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelType {
+    /// Time series forecasting model
     TimeSeriesForecasting,
+    /// Trend analysis model
     TrendAnalysis,
+    /// Anomaly detection model
     AnomalyDetection,
+    /// Classification model
     ClassificationModel,
 }
 
@@ -108,10 +137,14 @@ pub struct QueryProcessor {
     config: QueryProcessorConfig,
 }
 
+/// Configuration for the analytics query processor
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryProcessorConfig {
+    /// Maximum allowed query complexity score
     pub max_query_complexity: u32,
+    /// Whether to optimize parsed queries
     pub enable_query_optimization: bool,
+    /// Whether to cache parsed query representations
     pub cache_parsed_queries: bool,
 }
 
@@ -122,17 +155,25 @@ pub struct ResponseGenerator {
     config: ResponseGeneratorConfig,
 }
 
+/// Configuration for the analytics response generator
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseGeneratorConfig {
+    /// Output format for analytics responses
     pub response_format: ResponseFormat,
+    /// Whether to include visualization data
     pub include_visualizations: bool,
+    /// Maximum character length of responses
     pub max_response_length: usize,
 }
 
+/// Output format for analytics responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ResponseFormat {
+    /// JSON structured response
     Json,
+    /// Human-readable natural language response
     NaturalLanguage,
+    /// Structured tabular response
     Structured,
 }
 
@@ -143,34 +184,52 @@ pub struct ComplianceTracker {
     frameworks: Vec<ComplianceFramework>,
 }
 
+/// Compliance framework with its requirements and status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplianceFramework {
+    /// Framework name (e.g., "SOC2", "GDPR")
     pub name: String,
+    /// Individual requirements within the framework
     pub requirements: Vec<ComplianceRequirement>,
+    /// Overall compliance status
     pub status: ComplianceStatus,
 }
 
+/// Individual compliance requirement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplianceRequirement {
+    /// Requirement identifier
     pub id: String,
+    /// Description of the requirement
     pub description: String,
+    /// Current status of the requirement
     pub status: RequirementStatus,
 }
 
+/// Overall compliance status for a framework
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ComplianceStatus {
+    /// Status not yet determined
     #[default]
     Unknown,
+    /// Fully compliant with all requirements
     Compliant,
+    /// Not compliant with one or more requirements
     NonCompliant,
+    /// Partially compliant
     PartiallyCompliant,
 }
 
+/// Status of an individual compliance requirement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RequirementStatus {
+    /// Requirement is met
     Met,
+    /// Requirement is not met
     NotMet,
+    /// Work in progress to meet the requirement
     InProgress,
+    /// Requirement does not apply
     NotApplicable,
 }
 
@@ -181,22 +240,31 @@ pub struct AuditAnalyzer {
     config: AuditAnalyzerConfig,
 }
 
+/// Configuration for the audit analyzer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditAnalyzerConfig {
+    /// Depth of audit analysis
     pub analysis_depth: AnalysisDepth,
+    /// Whether anomaly detection is enabled
     pub anomaly_detection_enabled: bool,
+    /// Whether risk scoring is enabled
     pub risk_scoring_enabled: bool,
 }
 
+/// Depth level for audit analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AnalysisDepth {
+    /// Basic surface-level analysis
     Basic,
+    /// Detailed analysis with pattern detection
     Detailed,
+    /// Comprehensive full-depth analysis
     Comprehensive,
 }
 
 // Implementation of core analytics functionality
 impl PredictiveAnalyticsEngine {
+    /// Create a new predictive analytics engine with the given configuration.
     pub fn new(config: PredictiveAnalyticsConfig) -> Self {
         Self {
             config,
@@ -205,15 +273,18 @@ impl PredictiveAnalyticsEngine {
         }
     }
 
+    /// Check if the engine is enabled.
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
 
+    /// Generate predictions from input data.
     pub async fn generate_predictions(&self, _data: &[f64]) -> Result<Vec<PredictionResult>> {
         // TODO: Implement actual prediction logic
         Ok(vec![])
     }
 
+    /// Execute a business prediction for a given scenario and horizon.
     pub async fn execute_business_prediction(
         &self,
         _tenant_id: &str,
@@ -230,6 +301,7 @@ impl PredictiveAnalyticsEngine {
 }
 
 impl ConversationalAnalyticsEngine {
+    /// Create a new conversational analytics engine.
     pub fn new(config: ConversationalAnalyticsConfig) -> Self {
         Self {
             config,
@@ -240,15 +312,18 @@ impl ConversationalAnalyticsEngine {
         }
     }
 
+    /// Check if the conversational engine is enabled.
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
 
+    /// Process a natural language analytics query.
     pub async fn process_conversational_query(&self, _query: &str) -> Result<String> {
         // TODO: Implement actual conversational query processing
         Ok("Analytics query processing not yet implemented".to_string())
     }
 
+    /// Start a new conversational analytics session.
     pub async fn start_conversational_session(
         &self,
         _tenant_id: &str,
@@ -265,6 +340,7 @@ impl ConversationalAnalyticsEngine {
 }
 
 impl GovernanceAnalyticsEngine {
+    /// Create a new governance analytics engine.
     pub fn new(config: GovernanceAnalyticsConfig) -> Self {
         Self {
             config,
@@ -273,10 +349,12 @@ impl GovernanceAnalyticsEngine {
         }
     }
 
+    /// Check if the governance engine is enabled.
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
 
+    /// Analyze compliance status across all frameworks.
     pub async fn analyze_compliance(&self) -> Result<ComplianceReport> {
         // TODO: Implement actual compliance analysis
         Ok(ComplianceReport::default())
@@ -285,12 +363,14 @@ impl GovernanceAnalyticsEngine {
 
 // Supporting implementations
 impl DataProcessor {
+    /// Create a new data processor.
     pub fn new(config: DataProcessorConfig) -> Self {
         Self { config }
     }
 }
 
 impl ModelManager {
+    /// Create a new model manager.
     pub fn new() -> Self {
         Self {
             models: HashMap::new(),
@@ -305,18 +385,21 @@ impl Default for ModelManager {
 }
 
 impl QueryProcessor {
+    /// Create a new query processor.
     pub fn new(config: QueryProcessorConfig) -> Self {
         Self { config }
     }
 }
 
 impl ResponseGenerator {
+    /// Create a new response generator.
     pub fn new(config: ResponseGeneratorConfig) -> Self {
         Self { config }
     }
 }
 
 impl ComplianceTracker {
+    /// Create a new compliance tracker.
     pub fn new() -> Self {
         Self { frameworks: vec![] }
     }
@@ -329,6 +412,7 @@ impl Default for ComplianceTracker {
 }
 
 impl AuditAnalyzer {
+    /// Create a new audit analyzer.
     pub fn new(config: AuditAnalyzerConfig) -> Self {
         Self { config }
     }
@@ -409,18 +493,27 @@ impl Default for AuditAnalyzerConfig {
 }
 
 // Supporting types
+/// Result of a prediction with confidence and timestamp
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictionResult {
+    /// Predicted value
     pub value: f64,
+    /// Confidence score for the prediction (0.0 to 1.0)
     pub confidence: f64,
+    /// Timestamp the prediction applies to
     pub timestamp: DateTime<Utc>,
 }
 
+/// Compliance analysis report
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComplianceReport {
+    /// Overall compliance status
     pub overall_status: ComplianceStatus,
+    /// Results for each compliance framework
     pub framework_results: Vec<ComplianceFramework>,
+    /// Actionable recommendations
     pub recommendations: Vec<String>,
+    /// Timestamp of report generation
     pub generated_at: DateTime<Utc>,
 }
 

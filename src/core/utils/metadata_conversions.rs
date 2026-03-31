@@ -225,8 +225,11 @@ pub fn validate_metadata_types(
 /// Used for schema validation and type checking.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MetadataValueType {
+    /// UTF-8 string value
     String,
+    /// Numeric value (integer or float)
     Number,
+    /// Boolean value
     Boolean,
     // Complex types (arrays, objects) are stored as JSON strings for now
 }

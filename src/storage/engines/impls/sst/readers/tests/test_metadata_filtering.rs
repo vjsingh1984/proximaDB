@@ -24,7 +24,7 @@ fn create_test_config() -> SstConfig {
     }
 }
 use serde_json::json;
-use tracing::{error, info};
+use tracing::info;
 
 // Helper function to compare SqlValue with JSON
 fn sql_value_matches_json(sql_value: &SqlValue, json_value: &serde_json::Value) -> bool {

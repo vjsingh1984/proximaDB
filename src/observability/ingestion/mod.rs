@@ -6,8 +6,11 @@
 // - Parallel parsing workers
 // - Alert rule evaluation during ingestion
 
+/// Input adapters for multiple ingestion formats (OTLP, Syslog, CEF/LEEF, etc.).
 pub mod adapters;
+/// Lock-free ring buffer for high-throughput event buffering.
 pub mod buffer;
+/// Log parser for converting raw input into structured log entries.
 pub mod parser;
 
 use std::sync::Arc;

@@ -478,11 +478,16 @@ impl VectorSerializationConfig {
 /// Analysis results for a vector
 #[derive(Debug, Clone)]
 pub struct VectorAnalysis {
+    /// Vector dimension
     pub dimension: usize,
-    pub sparsity: f32, // Ratio of zero/near-zero elements
+    /// Ratio of near-zero elements (below epsilon threshold)
+    pub sparsity: f32,
+    /// Arithmetic mean of element values
     pub mean: f32,
+    /// Variance of element values
     pub variance: f32,
-    pub zero_ratio: f32, // Ratio of exact zero elements
+    /// Ratio of exactly zero elements
+    pub zero_ratio: f32,
 }
 
 #[cfg(test)]

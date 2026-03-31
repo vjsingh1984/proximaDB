@@ -68,6 +68,7 @@ struct AzureUsage {
 }
 
 impl AzureOpenAIClient {
+    /// Create a new Azure OpenAI client with the given configuration.
     pub async fn new(config: AzureOpenAIConfig) -> Result<Self, LLMError> {
         if config.api_key.is_empty() {
             return Err(LLMError::ConfigurationError(

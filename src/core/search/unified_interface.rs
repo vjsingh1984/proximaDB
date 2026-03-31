@@ -31,6 +31,7 @@ use crate::services::collection::manager::CollectionService;
 pub struct SearchPlan {
     /// Collection metadata for optimization
     pub collection_id: String,
+    /// Collection configuration for optimization hints
     pub collection_config: Option<CollectionConfig>,
     /// Filterable metadata columns from collection config
     pub filterable_columns: Vec<FilterableColumn>,
@@ -90,11 +91,17 @@ pub struct FilterableColumn {
 /// Column data types for type-safe filtering
 #[derive(Debug, Clone)]
 pub enum ColumnData {
+    /// UTF-8 string column
     String,
+    /// 64-bit integer column
     Integer,
+    /// 64-bit float column
     Float,
+    /// Boolean column
     Boolean,
+    /// Date/time column
     DateTime,
+    /// JSON column
     Json,
 }
 
@@ -145,17 +152,31 @@ pub trait UnifiedSearchEngine: Send + Sync {
 pub enum OptimizationHint {
     /// Use quantized search for large datasets
     UseQuantization {
+        /// Quantization level to use
         method: UnifiedQuantizationLevel,
+        /// Expected speedup factor
         expected_speedup: f32,
     },
     /// Use metadata filtering for selective queries
-    UseMetadataFiltering { selectivity_estimate: f32 },
+    UseMetadataFiltering {
+        /// Estimated selectivity (0.0 to 1.0)
+        selectivity_estimate: f32,
+    },
     /// Use column projection for bandwidth optimization
-    UseColumnProjection { columns: Vec<String> },
+    UseColumnProjection {
+        /// Columns to project
+        columns: Vec<String>,
+    },
     /// Use range requests for cloud storage
-    UseRangeRequests { chunk_size_mb: f32 },
+    UseRangeRequests {
+        /// Chunk size for range requests in megabytes
+        chunk_size_mb: f32,
+    },
     /// Use caching for frequently accessed data
-    UseCaching { cache_key: String },
+    UseCaching {
+        /// Cache key for this search pattern
+        cache_key: String,
+    },
 }
 
 /// Unified search orchestrator - replaces VectorOperationsService search logic

@@ -58,9 +58,12 @@ pub struct PipelineConfig {
 /// Thresholds for each progressive stage
 #[derive(Debug, Clone)]
 pub struct StageThresholds {
-    pub binary_selectivity: f32, // e.g., 0.1 = keep top 10%
-    pub int8_selectivity: f32,   // e.g., 0.2 = keep top 20%
-    pub pq_selectivity: f32,     // e.g., 0.3 = keep top 30%
+    /// Fraction of candidates to keep after binary stage (e.g., 0.1 = top 10%)
+    pub binary_selectivity: f32,
+    /// Fraction of candidates to keep after INT8 stage (e.g., 0.2 = top 20%)
+    pub int8_selectivity: f32,
+    /// Fraction of candidates to keep after PQ stage (e.g., 0.3 = top 30%)
+    pub pq_selectivity: f32,
 }
 
 /// Statistics for stage execution

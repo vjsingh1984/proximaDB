@@ -49,11 +49,17 @@ pub trait RollupPersistence: Send + Sync {
 /// Rollup point for serialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RollupPoint {
+    /// Minimum observed value in the rollup window.
     pub min: f64,
+    /// Maximum observed value in the rollup window.
     pub max: f64,
+    /// Sum of all values in the rollup window.
     pub sum: f64,
+    /// Number of samples in the rollup window.
     pub count: u64,
+    /// Metric name.
     pub name: String,
+    /// Key-value labels identifying the metric series.
     pub labels: HashMap<String, String>,
 }
 

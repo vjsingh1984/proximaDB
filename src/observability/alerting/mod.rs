@@ -6,8 +6,11 @@
 // - Notification channels (webhook, Slack, PagerDuty)
 // - Alert aggregation and deduplication
 
+/// Core alert evaluation engine with threshold and anomaly detection.
 pub mod engine;
+/// Notification channels (webhook, Slack, PagerDuty, email).
 pub mod notifications;
+/// Alert rule definitions and rule management.
 pub mod rules;
 
 use std::collections::HashMap;

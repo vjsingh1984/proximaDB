@@ -266,8 +266,11 @@ impl BlockPruneConfig {
 /// Block pruning mode.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum BlockPruneMode {
+    /// Prune to sqrt(total_blocks)
     Sqrt,
+    /// Prune by a configured ratio
     Ratio,
+    /// Prune to a fixed number of blocks
     Fixed(usize),
 }
 
@@ -411,7 +414,9 @@ pub enum ComparisonOperator {
     EndsWith,
     /// Value is between two bounds (inclusive)
     Between,
+    /// Value is null
     IsNull,
+    /// Value is not null
     IsNotNull,
     /// SQL-style LIKE pattern matching (supports % and _ wildcards)
     Like,

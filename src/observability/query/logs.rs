@@ -221,15 +221,25 @@ pub enum LogAggregation {
     Count,
     /// Group by field
     GroupBy(String),
-    /// Time histogram
-    Histogram { interval_ns: i64 },
+    /// Time histogram with fixed-width buckets.
+    Histogram {
+        /// Bucket width in nanoseconds.
+        interval_ns: i64,
+    },
     /// Top values for a field
-    TopValues { field: String, limit: usize },
+    TopValues {
+        /// Field name to aggregate.
+        field: String,
+        /// Maximum number of top values to return.
+        limit: usize,
+    },
     /// Group by multiple fields
     GroupByMultiple(Vec<String>),
-    /// Time histogram with additional GROUP BY
+    /// Time histogram with additional GROUP BY.
     HistogramGroupBy {
+        /// Bucket width in nanoseconds.
         interval_ns: i64,
+        /// Fields to group by within each time bucket.
         group_by: Vec<String>,
     },
 }

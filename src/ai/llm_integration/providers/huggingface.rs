@@ -54,6 +54,7 @@ struct HuggingFaceErrorResponse {
 }
 
 impl HuggingFaceClient {
+    /// Create a new HuggingFace client with the given configuration.
     pub async fn new(config: HuggingFaceConfig) -> Result<Self, LLMError> {
         if config.api_key.is_empty() {
             return Err(LLMError::ConfigurationError(

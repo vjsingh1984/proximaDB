@@ -52,6 +52,7 @@ struct OllamaResponse {
 }
 
 impl OllamaClient {
+    /// Create a new Ollama client with the given configuration.
     pub async fn new(config: OllamaConfig) -> Result<Self, LLMError> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_seconds))

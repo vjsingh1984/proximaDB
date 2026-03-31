@@ -18,6 +18,7 @@ struct QueryTelemetrySink {
 static QUERY_TELEMETRY_SINK: Lazy<Mutex<Option<QueryTelemetrySink>>> =
     Lazy::new(|| Mutex::new(None));
 
+/// Configure the query telemetry sink with an observability service.
 pub fn configure_query_telemetry(service: Arc<ObservabilityService>, namespace: impl Into<String>) {
     match QUERY_TELEMETRY_SINK.lock() {
         Ok(mut guard) => {
@@ -35,12 +36,14 @@ pub fn configure_query_telemetry(service: Arc<ObservabilityService>, namespace: 
     }
 }
 
+/// Record the start of a query execution for telemetry.
 pub fn record_query_start(kind: &str) {
     // TODO: unify with proximadb_metrics once available in this crate scope
     info!("query_start" = kind);
     emit_query_log(kind, "start", true, None);
 }
 
+/// Record the end of a query execution with outcome and latency.
 pub fn record_query_end(kind: &str, ok: bool, latency_ms: u64) {
     info!("query_end" = kind);
     emit_query_log(kind, "end", ok, Some(latency_ms));

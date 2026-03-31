@@ -21,11 +21,13 @@ use crate::query::ast::{
     SetOp, TableRef, UnaryOp,
 };
 
+/// SQL frontend parser that converts SQL text into internal AST nodes
 pub struct SqlFrontendParser {
     dialect: GenericDialect,
 }
 
 impl SqlFrontendParser {
+    /// Create a new SQL frontend parser.
     pub fn new() -> Self {
         Self {
             dialect: GenericDialect {},

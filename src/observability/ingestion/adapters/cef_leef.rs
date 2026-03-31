@@ -46,7 +46,9 @@ pub enum SecurityFormat {
 /// Transport protocol
 #[derive(Debug, Clone, Copy)]
 pub enum CefLeefProtocol {
+    /// TCP transport for reliable delivery.
     Tcp,
+    /// UDP transport for low-latency delivery.
     Udp,
 }
 

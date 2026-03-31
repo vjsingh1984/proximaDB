@@ -54,19 +54,30 @@ impl Default for StreamingConfig {
 /// Performance metrics for streaming compression
 #[derive(Debug, Clone, Default)]
 pub struct StreamingMetrics {
+    /// Total number of vectors processed
     pub vectors_processed: u64,
+    /// Number of batches processed
     pub batches_processed: u64,
+    /// Total compressed output bytes
     pub total_compressed_bytes: u64,
+    /// Total uncompressed input bytes
     pub total_uncompressed_bytes: u64,
+    /// Average per-batch latency in microseconds
     pub average_latency_us: u64,
+    /// Maximum per-batch latency in microseconds
     pub max_latency_us: u64,
+    /// Overall compression ratio (compressed / uncompressed)
     pub compression_ratio: f32,
+    /// Sustained throughput in vectors per second
     pub throughput_vectors_per_sec: f32,
+    /// Number of currently active compression workers
     pub active_workers: usize,
+    /// Current depth of the pending work queue
     pub queue_depth: usize,
 }
 
 impl StreamingMetrics {
+    /// Log a human-readable summary of streaming compression metrics
     pub fn print_summary(&self) {
         info!("🌊 Streaming Compression Metrics:");
         info!(
@@ -105,11 +116,17 @@ struct CompressionWork {
 /// Result of compression work
 #[derive(Debug)]
 pub struct CompressionResult {
+    /// Batch identifier for correlation
     pub batch_id: u64,
+    /// Compressed output bytes
     pub compressed_data: Vec<u8>,
+    /// Original uncompressed size in bytes
     pub original_size: usize,
+    /// Compressed size in bytes
     pub compressed_size: usize,
+    /// Compression ratio (compressed / original)
     pub compression_ratio: f32,
+    /// Time taken to compress this batch
     pub processing_time: Duration,
 }
 

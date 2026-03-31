@@ -20,8 +20,11 @@ pub enum OptimizationGoal {
     Balanced,
     /// Custom weights (latency, recall, throughput as u8 percentages)
     Custom {
+        /// Weight for latency optimization (0-100)
         latency_weight: u8,
+        /// Weight for recall optimization (0-100)
         recall_weight: u8,
+        /// Weight for throughput optimization (0-100)
         throughput_weight: u8,
     },
 }

@@ -6,10 +6,15 @@
 // - Metric aggregation with PromQL-like syntax
 // - Trace queries and analysis
 
+/// Log query builder, filtering, aggregation, and pattern detection.
 pub mod logs;
+/// Metric query builder with time-series aggregation functions.
 pub mod metrics;
+/// PromQL-compatible query language parser and executor.
 pub mod promql;
+/// Full-text log search powered by Tantivy with BM25 ranking.
 pub mod tantivy_log_index;
+/// Trace query engine for distributed tracing analysis.
 pub mod traces;
 
 use std::collections::HashMap;

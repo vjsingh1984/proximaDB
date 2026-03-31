@@ -201,6 +201,7 @@ pub fn elementwise_add(a: &[f32], b: &[f32]) -> Result<Vec<f32>> {
     Ok(a.iter().zip(b.iter()).map(|(x, y)| x + y).collect())
 }
 
+/// Compute element-wise product of two vectors
 pub fn elementwise_multiply(a: &[f32], b: &[f32]) -> Result<Vec<f32>> {
     if a.len() != b.len() {
         return Err(anyhow!(
@@ -217,6 +218,7 @@ pub fn scalar_multiply(vector: &[f32], scalar: f32) -> Vec<f32> {
     vector.iter().map(|&v| v * scalar).collect()
 }
 
+/// Add a scalar value to every element of a vector
 pub fn scalar_add(vector: &[f32], scalar: f32) -> Vec<f32> {
     vector.iter().map(|&v| v + scalar).collect()
 }

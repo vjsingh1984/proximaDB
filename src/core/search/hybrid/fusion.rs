@@ -8,9 +8,11 @@ use std::collections::HashMap;
 /// Errors that can occur during fusion
 #[derive(Debug, thiserror::Error)]
 pub enum FusionError {
+    /// Requested fusion strategy is not implemented
     #[error("Strategy not yet implemented: {0}")]
     NotYetImplemented(String),
 
+    /// Fusion parameters are invalid
     #[error("Invalid fusion parameters: {0}")]
     InvalidParameters(String),
 }

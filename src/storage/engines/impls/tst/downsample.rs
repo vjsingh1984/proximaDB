@@ -388,7 +388,6 @@ impl Downsampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::impls::tst::partition::TimePartition;
 
     #[test]
     fn test_downsample_interval() {

@@ -48,6 +48,7 @@ struct VLLMUsage {
 }
 
 impl VLLMClient {
+    /// Create a new vLLM client with the given configuration.
     pub async fn new(config: VLLMConfig) -> Result<Self, LLMError> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_seconds))

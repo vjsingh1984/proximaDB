@@ -341,7 +341,13 @@ pub enum WebhookAuth {
     /// Bearer token
     Bearer(String),
     /// Basic auth
-    Basic { username: String, password: String },
+    /// Basic authentication with username and password.
+    Basic {
+        /// HTTP basic auth username.
+        username: String,
+        /// HTTP basic auth password.
+        password: String,
+    },
 }
 
 /// Slack configuration

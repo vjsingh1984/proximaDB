@@ -8,9 +8,13 @@
 // - WAL-backed durability for all writes
 // - SST-based rollup persistence for metric aggregates
 
+/// Time-series metric storage with downsampling and aggregation.
 pub mod metrics;
+/// Time-partitioned log storage with hot/warm/cold tiering.
 pub mod partitioned;
+/// Persistent storage for downsampled metric rollup aggregates.
 pub mod rollup_persistence;
+/// Distributed trace storage with span assembly and querying.
 pub mod traces;
 
 // Re-export tier types

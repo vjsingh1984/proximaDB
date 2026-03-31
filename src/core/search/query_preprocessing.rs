@@ -641,10 +641,15 @@ impl QueryPreprocessor {
 /// Cache statistics for monitoring
 #[derive(Debug, Clone)]
 pub struct CacheStatistics {
+    /// Number of preprocessing cache hits
     pub hits: u64,
+    /// Number of preprocessing cache misses
     pub misses: u64,
+    /// Cache hit rate (0.0 to 1.0)
     pub hit_rate: f64,
+    /// Average preprocessing time in microseconds
     pub avg_preprocessing_time_us: u64,
+    /// Total SIMD-accelerated operations performed
     pub simd_operations: u64,
 }
 

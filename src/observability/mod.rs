@@ -63,10 +63,15 @@
 // - OCSF (Open Cybersecurity Schema Framework)
 // - JSON over HTTP
 
+/// Alerting engine with rule-based evaluation and notification channels.
 pub mod alerting;
+/// Audit logging for compliance and security event tracking.
 pub mod audit;
+/// High-throughput ingestion pipeline with multi-format parsing.
 pub mod ingestion;
+/// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
+/// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
 
 use std::sync::Arc;
@@ -717,18 +722,28 @@ pub struct MetricAggParams {
     pub group_by: Vec<String>,
 }
 
-/// Metric aggregation function
+/// Metric aggregation function applied to time-series data.
 #[derive(Debug, Clone, Copy)]
 pub enum MetricAggregation {
+    /// Arithmetic mean of values.
     Avg,
+    /// Sum of all values.
     Sum,
+    /// Minimum value.
     Min,
+    /// Maximum value.
     Max,
+    /// Count of data points.
     Count,
+    /// Per-second rate of change.
     Rate,
+    /// 50th percentile (median).
     P50,
+    /// 90th percentile.
     P90,
+    /// 95th percentile.
     P95,
+    /// 99th percentile.
     P99,
 }
 

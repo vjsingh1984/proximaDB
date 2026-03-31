@@ -51,6 +51,7 @@ struct CohereBilledUnits {
 }
 
 impl CohereClient {
+    /// Create a new Cohere client with the given API key.
     pub async fn new(api_key: &str) -> Result<Self, LLMError> {
         if api_key.is_empty() {
             return Err(LLMError::ConfigurationError(

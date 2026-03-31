@@ -647,6 +647,7 @@ pub struct VectorPoolStats {
 }
 
 impl VectorPoolStats {
+    /// Log a comprehensive summary of all pool statistics
     pub fn print_comprehensive_summary(&self) {
         info!("🏊 Vector Memory Pool Comprehensive Statistics:");
 

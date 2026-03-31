@@ -5,8 +5,11 @@ use std::collections::HashMap;
 /// Search query placeholder
 #[derive(Debug, Clone)]
 pub struct SearchQuery {
+    /// Query vector for similarity matching
     pub query_vector: Vec<f32>,
+    /// Number of nearest neighbors to return
     pub k: usize,
+    /// Metadata filter predicates
     pub filters: HashMap<String, serde_json::Value>,
 }
 

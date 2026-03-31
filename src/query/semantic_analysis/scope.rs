@@ -8,7 +8,9 @@ use std::collections::HashMap;
 pub enum Symbol {
     /// A table or collection.
     Table {
+        /// Table or collection name
         name: String,
+        /// Columns in the table by name
         columns: HashMap<String, Column>,
     },
     /// A column in a table.
@@ -20,7 +22,9 @@ pub enum Symbol {
 /// Represents a column in a table.
 #[derive(Debug, Clone)]
 pub struct Column {
+    /// Column name
     pub name: String,
+    /// Data type of the column
     pub data_type: DataType,
 }
 

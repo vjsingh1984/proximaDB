@@ -125,7 +125,8 @@ pub enum CollectionAssignmentStrategy {
 
     /// Manual assignment via configuration
     Manual {
-        assignments: HashMap<String, u32>, // collection_uuid -> instance_id
+        /// Explicit mapping from collection UUID to instance ID
+        assignments: HashMap<String, u32>,
     },
 }
 

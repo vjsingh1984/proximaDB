@@ -112,10 +112,15 @@ pub struct JoinClause {
 /// Join type
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JoinType {
+    /// Inner join
     Inner,
+    /// Left outer join
     Left,
+    /// Right outer join
     Right,
+    /// Full outer join
     Full,
+    /// Cross join
     Cross,
     /// Graph-specific join
     Graph,
@@ -125,17 +130,28 @@ pub enum JoinType {
 #[derive(Debug, Clone)]
 pub enum JoinCondition {
     /// Column equality (a.id = b.id)
-    On { left: String, right: String },
+    On {
+        /// Left column reference
+        left: String,
+        /// Right column reference
+        right: String,
+    },
     /// Graph traversal join
     GraphTraversal {
+        /// Starting field for graph traversal
         start_field: String,
+        /// Edge type to traverse
         edge_type: String,
+        /// Maximum traversal depth
         depth: u32,
     },
     /// Vector similarity join
     VectorSimilarity {
+        /// Left vector field
         left_vector: String,
+        /// Right vector field
         right_vector: String,
+        /// Similarity threshold
         threshold: f32,
     },
 }
@@ -143,7 +159,9 @@ pub enum JoinCondition {
 /// WHERE clause
 #[derive(Debug, Clone)]
 pub struct WhereClause {
+    /// List of conditions in the WHERE clause
     pub conditions: Vec<Condition>,
+    /// Logic operator combining the conditions
     pub logic: LogicOperator,
 }
 
@@ -152,38 +170,56 @@ pub struct WhereClause {
 pub enum Condition {
     /// Simple comparison (field = value)
     Comparison {
+        /// Field name
         field: String,
+        /// Comparison operator
         operator: ComparisonOperator,
+        /// Value to compare against
         value: Value,
     },
     /// Vector similarity condition
     VectorSimilar {
+        /// Vector field name
         field: String,
+        /// Positional parameter index for query vector
         query_param: usize,
+        /// Similarity threshold
         threshold: f32,
     },
     /// Vector distance condition
     VectorDistance {
+        /// Vector field name
         field: String,
+        /// Positional parameter index for query vector
         query_param: usize,
+        /// Maximum distance threshold
         max_distance: f32,
     },
     /// Graph connected condition
     GraphConnected {
+        /// Start node reference
         start: String,
+        /// Edge type to check
         edge_type: String,
+        /// End node reference
         end: String,
     },
     /// Graph traversal condition
     GraphTraverse {
+        /// Start node reference
         start: String,
+        /// Edge types to traverse
         edge_types: Vec<String>,
+        /// Maximum depth
         depth: u32,
     },
     /// JSON path condition
     JsonPath {
+        /// JSON path expression
         path: String,
+        /// Comparison operator
         operator: ComparisonOperator,
+        /// Value to compare against
         value: Value,
     },
     /// Exists subquery

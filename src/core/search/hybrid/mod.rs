@@ -64,7 +64,10 @@ pub enum FusionStrategy {
     ///
     /// let strategy = FusionStrategy::ReciprocalRank { k: 60 };
     /// ```
-    ReciprocalRank { k: usize },
+    ReciprocalRank {
+        /// RRF parameter k (higher = more uniform weighting, default 60)
+        k: usize,
+    },
 
     /// Weighted linear combination
     ///
@@ -85,8 +88,11 @@ pub enum FusionStrategy {
     /// };
     /// ```
     WeightedLinear {
+        /// Weight for BM25 score (0.0 to 1.0, vector gets 1-alpha)
         alpha: f64,
+        /// Whether to normalize BM25 scores to [0,1]
         bm25_normalize: bool,
+        /// Whether to normalize vector scores to [0,1]
         vector_normalize: bool,
     },
 
@@ -106,7 +112,10 @@ pub enum FusionStrategy {
     ///     persistence: 0.95,
     /// };
     /// ```
-    RankBiasedPrecision { persistence: f64 },
+    RankBiasedPrecision {
+        /// Persistence parameter p controlling rank emphasis (0.8 to 0.99)
+        persistence: f64,
+    },
 
     /// Conditional Normalization
     ///
@@ -181,7 +190,10 @@ pub enum FusionStrategy {
     /// ```ignore
     /// let strategy = FusionStrategy::DempsterShafer { alpha: 0.5 };
     /// ```
-    DempsterShafer { alpha: f64 },
+    DempsterShafer {
+        /// Belief mass weighting parameter (0.0 to 1.0)
+        alpha: f64,
+    },
 
     /// Adaptive Fusion
     ///

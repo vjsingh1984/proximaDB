@@ -58,6 +58,7 @@ impl Default for ApproximateSearchStrategy {
 }
 
 impl ApproximateSearchStrategy {
+    /// Create a new approximate search strategy with default settings
     pub fn new() -> Self {
         Self::default()
     }

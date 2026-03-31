@@ -621,7 +621,7 @@ impl Default for PrefetchConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::{debug, info};
+    use tracing::debug;
 
     #[tokio::test]
     async fn test_sequential_pattern_detection() {

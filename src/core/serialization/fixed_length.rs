@@ -576,8 +576,11 @@ pub type Serializer256 = FixedLengthSerializer<Dim256>;
 pub type Serializer512 = FixedLengthSerializer<Dim512>;
 /// Serializer for 768-dimensional vectors
 pub type Serializer768 = FixedLengthSerializer<Dim768>;
+/// Serializer for 1024-dimensional vectors
 pub type Serializer1024 = FixedLengthSerializer<Dim1024>;
+/// Serializer for 1536-dimensional vectors
 pub type Serializer1536 = FixedLengthSerializer<Dim1536>;
+/// Serializer for 2048-dimensional vectors
 pub type Serializer2048 = FixedLengthSerializer<Dim2048>;
 
 #[cfg(test)]

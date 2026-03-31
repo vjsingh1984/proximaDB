@@ -33,7 +33,9 @@ pub struct SyslogAdapter {
 /// Syslog transport protocol
 #[derive(Debug, Clone, Copy)]
 pub enum SyslogProtocol {
+    /// TCP transport for reliable syslog delivery.
     Tcp,
+    /// UDP transport for traditional syslog.
     Udp,
 }
 

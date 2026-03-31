@@ -23,82 +23,125 @@ use crate::storage::multimodel::ModelType;
 pub enum PlanNodeType {
     /// Scan a table/collection
     Scan {
+        /// Target table or collection name
         target: String,
+        /// Data model type
         model_type: ModelType,
+        /// Predicates to apply during scan
         predicates: Vec<Predicate>,
     },
     /// Vector similarity search
     VectorSearch {
+        /// Collection to search
         collection: String,
+        /// Number of nearest neighbors to return
         top_k: usize,
+        /// Source of the query vector
         query_vector_source: VectorSource,
     },
     /// Graph traversal
     GraphTraversal {
+        /// Cypher query to execute
         cypher: String,
+        /// Optional starting node IDs
         start_nodes: Option<Vec<String>>,
     },
     /// Document query
     DocumentQuery {
+        /// Document collection name
         collection: String,
+        /// Optional filter expression
         filter: Option<String>,
     },
     /// Observability query (logs/metrics)
     ObservabilityQuery {
+        /// Observability namespace
         namespace: String,
+        /// Type of observability data to query
         query_type: ObservabilityQueryType,
+        /// Optional time range filter
         time_range: Option<TimeRange>,
     },
     /// Hash join
     HashJoin {
+        /// Left input plan
         left: Box<PlanNode>,
+        /// Right input plan
         right: Box<PlanNode>,
+        /// Join key pairs (left_col, right_col)
         join_keys: Vec<(String, String)>,
+        /// Type of join
         join_type: JoinType,
     },
     /// Nested loop join (for LATERAL)
     NestedLoopJoin {
+        /// Outer (driving) plan
         outer: Box<PlanNode>,
+        /// Inner (probed) plan
         inner: Box<PlanNode>,
+        /// Correlated columns
         correlation: Vec<String>,
     },
     /// Index join
     IndexJoin {
+        /// Left input plan
         left: Box<PlanNode>,
+        /// Right input plan
         right: Box<PlanNode>,
+        /// Index to use for the lookup
         index_lookup: String,
     },
     /// Filter operation
     Filter {
+        /// Input plan to filter
         input: Box<PlanNode>,
+        /// Predicate to apply
         predicate: Predicate,
     },
     /// Project columns
     Project {
+        /// Input plan to project
         input: Box<PlanNode>,
+        /// Column names to project
         columns: Vec<String>,
     },
     /// Distinct rows across the projected output
-    Distinct { input: Box<PlanNode> },
+    Distinct {
+        /// Input plan to deduplicate
+        input: Box<PlanNode>,
+    },
     /// Sort/Order By
     Sort {
+        /// Input plan to sort
         input: Box<PlanNode>,
+        /// Sort ordering clauses
         order_by: Vec<OrderByClause>,
     },
     /// Limit
     Limit {
+        /// Input plan to limit
         input: Box<PlanNode>,
+        /// Maximum number of rows
         limit: usize,
+        /// Number of rows to skip
         offset: usize,
     },
     /// Aggregate
     Aggregate {
+        /// Input plan to aggregate
         input: Box<PlanNode>,
+        /// Group by column names
         group_by: Vec<String>,
+        /// Aggregate expressions to compute
         aggregates: Vec<AggregateExpr>,
     },
     /// Union
-    Union { inputs: Vec<PlanNode>, all: bool },
+    Union {
+        /// Input plans to union
+        inputs: Vec<PlanNode>,
+        /// Whether to include all rows (UNION ALL)
+        all: bool,
+    },
 }
 
 /// Source of a query vector
@@ -107,7 +150,12 @@ pub enum VectorSource {
     /// Literal vector value
     Literal(Vec<f32>),
     /// Column reference from another table
-    ColumnRef { table: String, column: String },
+    ColumnRef {
+        /// Source table name
+        table: String,
+        /// Column name in the source table
+        column: String,
+    },
     /// Raw SQL expression that could not be reduced during parsing
     Expression(String),
     /// Subquery result
@@ -117,88 +165,131 @@ pub enum VectorSource {
 /// Observability query type
 #[derive(Debug, Clone)]
 pub enum ObservabilityQueryType {
+    /// Log entries query
     Logs,
+    /// Metrics query
     Metrics,
+    /// Distributed traces query
     Traces,
 }
 
 /// Time range for observability queries
 #[derive(Debug, Clone)]
 pub struct TimeRange {
+    /// Start time in nanoseconds since epoch
     pub start_ns: i64,
+    /// End time in nanoseconds since epoch
     pub end_ns: i64,
 }
 
 /// Join type
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JoinType {
+    /// Inner join
     Inner,
+    /// Left outer join
     Left,
+    /// Right outer join
     Right,
+    /// Full outer join
     Full,
+    /// Cross join (cartesian product)
     Cross,
+    /// Lateral join (correlated subquery)
     Lateral,
 }
 
 /// Predicate for filtering
 #[derive(Debug, Clone)]
 pub struct Predicate {
+    /// Column name to filter on
     pub column: String,
+    /// Comparison operator
     pub op: PredicateOp,
+    /// Value to compare against
     pub value: PredicateValue,
 }
 
 /// Predicate operators
 #[derive(Debug, Clone)]
 pub enum PredicateOp {
+    /// Equal
     Eq,
+    /// Not equal
     Ne,
+    /// Less than
     Lt,
+    /// Less than or equal
     Le,
+    /// Greater than
     Gt,
+    /// Greater than or equal
     Ge,
+    /// LIKE pattern match
     Like,
+    /// IN set membership
     In,
+    /// IS NULL check
     IsNull,
+    /// IS NOT NULL check
     IsNotNull,
+    /// BETWEEN range check
     Between,
 }
 
 /// Predicate values
 #[derive(Debug, Clone)]
 pub enum PredicateValue {
+    /// String value
     String(String),
+    /// Integer value
     Int(i64),
+    /// Float value
     Float(f64),
+    /// Boolean value
     Bool(bool),
+    /// List of values (for IN operator)
     List(Vec<PredicateValue>),
+    /// Null value
     Null,
 }
 
 /// Order by clause
 #[derive(Debug, Clone)]
 pub struct OrderByClause {
+    /// Column name to sort by
     pub column: String,
+    /// True for ascending, false for descending
     pub ascending: bool,
+    /// Whether nulls sort first
     pub nulls_first: bool,
 }
 
 /// Aggregate expression
 #[derive(Debug, Clone)]
 pub struct AggregateExpr {
+    /// Aggregate function to apply
     pub function: AggregateFunction,
+    /// Column to aggregate (None for COUNT(*))
     pub column: Option<String>,
+    /// Output alias name
     pub alias: String,
 }
 
 /// Aggregate functions
 #[derive(Debug, Clone)]
 pub enum AggregateFunction {
+    /// Count of rows
     Count,
+    /// Sum of values
     Sum,
+    /// Average of values
     Avg,
+    /// Minimum value
     Min,
+    /// Maximum value
     Max,
+    /// Count of distinct values
     CountDistinct,
 }
 

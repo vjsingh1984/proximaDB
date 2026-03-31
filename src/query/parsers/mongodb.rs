@@ -93,54 +93,86 @@ pub enum Token {
 /// MongoDB query operators
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MongoOperator {
-    // Comparison operators
+    /// `$eq` - equality comparison
     Eq,
+    /// `$ne` - not equal comparison
     Ne,
+    /// `$gt` - greater than comparison
     Gt,
+    /// `$gte` - greater than or equal comparison
     Gte,
+    /// `$lt` - less than comparison
     Lt,
+    /// `$lte` - less than or equal comparison
     Lte,
+    /// `$in` - set membership test
     In,
+    /// `$nin` - negated set membership test
     Nin,
 
-    // Logical operators
+    /// `$and` - logical AND of conditions
     And,
+    /// `$or` - logical OR of conditions
     Or,
+    /// `$not` - logical NOT
     Not,
+    /// `$nor` - logical NOR of conditions
     Nor,
 
-    // Element operators
+    /// `$exists` - field existence check
     Exists,
+    /// `$type` - BSON type check
     Type,
 
-    // Array operators
+    /// `$all` - array contains all elements
     All,
+    /// `$elemMatch` - array element matching
     ElemMatch,
+    /// `$size` - array size comparison
     Size,
 
-    // Evaluation operators
+    /// `$regex` - regular expression match
     Regex,
+    /// `$text` - full text search
     Text,
+    /// `$options` - regex options
     Options,
+    /// `$search` - text search query
     Search,
 
-    // Aggregation pipeline stages
+    /// `$match` - pipeline filter stage
     Match,
+    /// `$project` - pipeline projection stage
     Project,
+    /// `$group` - pipeline grouping stage
     Group,
+    /// `$sort` - pipeline sort stage
     Sort,
+    /// `$limit` - pipeline limit stage
     Limit,
+    /// `$skip` - pipeline skip stage
     Skip,
+    /// `$unwind` - pipeline array unwind stage
     Unwind,
+    /// `$lookup` - pipeline join stage
     Lookup,
+    /// `$count` - count aggregation
     Count,
+    /// `$sum` - sum aggregation
     Sum,
+    /// `$avg` - average aggregation
     Avg,
+    /// `$min` - minimum aggregation
     Min,
+    /// `$max` - maximum aggregation
     Max,
+    /// `$first` - first value in group
     First,
+    /// `$last` - last value in group
     Last,
+    /// `$push` - push to array in group
     Push,
+    /// `$addToSet` - add unique to set in group
     AddToSet,
 }
 
@@ -211,12 +243,20 @@ impl MongoOperator {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MongoDBExpression {
     /// Field equality: {"field": value}
-    FieldEquals { field: String, value: MongoDBValue },
+    FieldEquals {
+        /// Field name
+        field: String,
+        /// Value to match
+        value: MongoDBValue,
+    },
 
     /// Field with operator: {"field": {"$op": value}}
     FieldOperator {
+        /// Field name
         field: String,
+        /// Comparison operator
         operator: MongoOperator,
+        /// Operand value
         value: MongoDBValue,
     },
 
@@ -234,14 +274,19 @@ pub enum MongoDBExpression {
 
     /// Element match: {"field": {"$elemMatch": {...}}}
     ElemMatch {
+        /// Array field name
         field: String,
+        /// Sub-query to match array elements against
         query: Box<MongoDBExpression>,
     },
 
     /// Text search: {"$text": {"$search": "..."}}
     TextSearch {
+        /// Search query text
         search: String,
+        /// Optional language for text analysis
         language: Option<String>,
+        /// Whether search is case-sensitive
         case_sensitive: Option<bool>,
     },
 
@@ -252,14 +297,27 @@ pub enum MongoDBExpression {
 /// MongoDB value types
 #[derive(Debug, Clone, PartialEq)]
 pub enum MongoDBValue {
+    /// Null value
     Null,
+    /// Boolean value
     Bool(bool),
+    /// Integer value
     Integer(i64),
+    /// Floating point value
     Float(f64),
+    /// String value
     String(String),
+    /// Array of values
     Array(Vec<MongoDBValue>),
+    /// Nested object
     Object(HashMap<String, MongoDBValue>),
-    Regex { pattern: String, options: String },
+    /// Regular expression with pattern and options
+    Regex {
+        /// Regex pattern string
+        pattern: String,
+        /// Regex options (e.g., "i" for case-insensitive)
+        options: String,
+    },
 }
 
 impl MongoDBValue {
@@ -340,6 +398,7 @@ pub struct MongoDBProjection {
 }
 
 impl MongoDBProjection {
+    /// Create a new empty projection.
     pub fn new() -> Self {
         Self {
             include: Vec::new(),
@@ -375,7 +434,9 @@ pub enum MongoDBPipelineStage {
 
     /// $group stage
     Group {
+        /// Group key expression
         id_expression: MongoDBValue,
+        /// Accumulator expressions by output field name
         accumulators: HashMap<String, GroupAccumulator>,
     },
 
@@ -390,15 +451,21 @@ pub enum MongoDBPipelineStage {
 
     /// $unwind stage
     Unwind {
+        /// Array field path to unwind
         path: String,
+        /// Whether to preserve documents with null or empty arrays
         preserve_null_and_empty: bool,
     },
 
     /// $lookup stage
     Lookup {
+        /// Collection to join with
         from: String,
+        /// Local field for join
         local_field: String,
+        /// Foreign field for join
         foreign_field: String,
+        /// Output array field name
         as_field: String,
     },
 
@@ -409,35 +476,52 @@ pub enum MongoDBPipelineStage {
 /// Group accumulator operators
 #[derive(Debug, Clone, PartialEq)]
 pub enum GroupAccumulator {
+    /// Sum of values
     Sum(MongoDBValue),
+    /// Average of values
     Avg(MongoDBValue),
+    /// Minimum value
     Min(MongoDBValue),
+    /// Maximum value
     Max(MongoDBValue),
+    /// First value in group
     First(MongoDBValue),
+    /// Last value in group
     Last(MongoDBValue),
+    /// Push all values to array
     Push(MongoDBValue),
+    /// Add unique values to set
     AddToSet(MongoDBValue),
+    /// Count of documents
     Count,
 }
 
 /// Sort order
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortOrder {
+    /// Sort ascending (1)
     Ascending,
+    /// Sort descending (-1)
     Descending,
 }
 
 /// Complete MongoDB query with optional projection
 #[derive(Debug, Clone, PartialEq)]
 pub struct MongoDBQuery {
+    /// Filter expression to match documents
     pub filter: Option<MongoDBExpression>,
+    /// Projection to select fields
     pub projection: Option<MongoDBProjection>,
+    /// Sort specification
     pub sort: Option<Vec<(String, SortOrder)>>,
+    /// Maximum number of results
     pub limit: Option<i64>,
+    /// Number of results to skip
     pub skip: Option<i64>,
 }
 
 impl MongoDBQuery {
+    /// Create a new empty query.
     pub fn new() -> Self {
         Self {
             filter: None,
@@ -458,7 +542,9 @@ impl Default for MongoDBQuery {
 /// Result of parsing a MongoDB query
 #[derive(Debug, Clone)]
 pub struct MongoDBParseResult {
+    /// Parsed find-style query, if present
     pub query: Option<MongoDBQuery>,
+    /// Parsed aggregation pipeline, if present
     pub pipeline: Option<Vec<MongoDBPipelineStage>>,
 }
 

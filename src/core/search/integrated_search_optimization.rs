@@ -191,18 +191,26 @@ pub struct PerformanceTracker {
 
 /// Search cost estimator (from IntegratedSearchOptimizer)
 pub struct SearchCostEstimator {
+    /// Average search times per index type
     pub index_search_times: HashMap<Index, PerformanceStats>,
+    /// Average search times per quantization level
     pub progressive_search_times: HashMap<UnifiedQuantizationLevel, PerformanceStats>,
-    pub direct_search_times: HashMap<usize, PerformanceStats>, // by dataset size
+    /// Average search times by dataset size
+    pub direct_search_times: HashMap<usize, PerformanceStats>,
+    /// Detected hardware profile for SIMD/memory optimization
     pub hardware_profile: HardwareProfile,
 }
 
 /// Performance statistics for cost estimation
 #[derive(Debug, Clone)]
 pub struct PerformanceStats {
+    /// Average execution time in milliseconds
     pub avg_time_ms: f32,
+    /// Standard deviation of execution times
     pub std_dev_ms: f32,
+    /// 95th percentile execution time in milliseconds
     pub p95_time_ms: f32,
+    /// Number of samples collected
     pub sample_count: u64,
 }
 
@@ -217,9 +225,13 @@ pub struct RoutingEngine {
 /// Hardware profile for optimization decisions
 #[derive(Debug, Clone)]
 pub struct HardwareProfile {
+    /// Whether AVX2 SIMD is available
     pub has_avx2: bool,
+    /// Whether AVX-512 SIMD is available
     pub has_avx512: bool,
+    /// Number of CPU cores available
     pub cpu_cores: usize,
+    /// Available system memory in gigabytes
     pub available_memory_gb: f32,
 }
 
@@ -1072,6 +1084,7 @@ impl AdvancedSearchOptimizer {
 /// Stable facade for search implementations
 #[async_trait::async_trait]
 pub trait SearchOptimizer: Send + Sync {
+    /// Execute a simple vector similarity search
     async fn search_simple(
         &self,
         collection_id: &str,
@@ -1081,6 +1094,7 @@ pub trait SearchOptimizer: Send + Sync {
         filter: Option<&FilterExpression>,
     ) -> Result<Vec<OptimizedSearchRecord>>;
 
+    /// Inject an AXIS index manager for index-accelerated search
     fn set_axis_manager(&self, _axis: Arc<AxisManager>) {
         // Default no-op
     }

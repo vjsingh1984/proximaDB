@@ -313,7 +313,9 @@ pub fn extract_typed_conditions(
 /// Typed condition for optimized filtering
 #[derive(Debug, Clone)]
 pub struct TypedCondition {
+    /// Comparison operator to apply
     pub operator: ComparisonOperator,
+    /// Typed value to compare against
     pub value: MetadataValue,
 }
 
