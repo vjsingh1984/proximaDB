@@ -59,12 +59,19 @@ impl RLSPolicy {
 
 /// Builder for RLS policies
 pub struct RLSPolicyBuilder {
+    /// Policy name for identification
     name: String,
+    /// Target collection this policy applies to
     collection: String,
+    /// Set of operations (read, write, delete) this policy covers
     operations: HashSet<Operation>,
+    /// Security predicate defining the row filter logic
     predicate: Option<SecurityPredicate>,
+    /// Whether the policy is active
     enabled: bool,
+    /// Evaluation priority (lower values are evaluated first)
     priority: i32,
+    /// Optional human-readable description of the policy
     description: Option<String>,
 }
 
@@ -305,6 +312,7 @@ pub enum ValueSource {
 
 /// Builder for security predicates
 pub struct SecurityPredicateBuilder {
+    /// Accumulated predicates to be combined via AND or OR
     predicates: Vec<SecurityPredicate>,
 }
 

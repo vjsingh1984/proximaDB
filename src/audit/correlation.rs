@@ -56,10 +56,13 @@ pub struct ProviderAuditIntegrations {
 
 /// Cross-provider event correlator for unified audit trails
 pub struct CrossProviderEventCorrelator {
+    /// Rules defining how events from different providers are correlated
     #[allow(dead_code)]
     correlation_rules: Vec<EventCorrelationRule>,
+    /// Time window within which events are considered related
     #[allow(dead_code)]
     event_window: Duration,
+    /// Minimum confidence score required to accept a correlation
     #[allow(dead_code)]
     confidence_threshold: f64,
 }
@@ -74,16 +77,20 @@ pub struct EventCorrelationRule {
 
 /// Compliance audit reporter for enterprise reporting
 pub struct ComplianceAuditReporter {
+    /// Compliance frameworks (SOC2, GDPR, HIPAA, etc.) to report against
     #[allow(dead_code)]
     compliance_frameworks: Vec<ComplianceFramework>,
+    /// Configuration for report generation schedule and delivery
     #[allow(dead_code)]
     reporting_config: ReportingConfiguration,
 }
 
 /// Audit event store for persistent logging
 pub struct AuditEventStore {
+    /// Backend used for persisting audit events (local, S3, Azure, GCS)
     #[allow(dead_code)]
     storage_backend: StorageBackend,
+    /// Policy governing how long audit events are retained and archived
     #[allow(dead_code)]
     retention_policy: RetentionPolicy,
 }
@@ -91,12 +98,16 @@ pub struct AuditEventStore {
 /// Audit correlation session tracking
 #[derive(Debug, Clone)]
 pub struct AuditCorrelationSession {
+    /// Unique identifier for this correlation session
     #[allow(dead_code)]
     session_id: String,
+    /// Timestamp when this correlation session began
     #[allow(dead_code)]
     start_time: DateTime<Utc>,
+    /// Collected audit events being correlated in this session
     #[allow(dead_code)]
     events: Vec<AuditEvent>,
+    /// Current status of the correlation session (active, completed, failed)
     #[allow(dead_code)]
     correlation_status: CorrelationStatus,
 }
@@ -149,22 +160,30 @@ pub enum CorrelationStatus {
     Failed,
 }
 
+/// Compliance framework definition (e.g., SOC2, GDPR, HIPAA)
 #[derive(Debug)]
 pub struct ComplianceFramework {
+    /// Name of the compliance framework
     #[allow(dead_code)]
     name: String,
+    /// Version of the framework specification
     #[allow(dead_code)]
     version: String,
+    /// List of compliance requirements defined by this framework
     #[allow(dead_code)]
     requirements: Vec<String>,
 }
 
+/// Configuration for scheduled compliance report generation
 #[derive(Debug)]
 pub struct ReportingConfiguration {
+    /// How often reports are generated
     #[allow(dead_code)]
     frequency: Duration,
+    /// Email addresses of report recipients
     #[allow(dead_code)]
     recipients: Vec<String>,
+    /// Output format for reports (e.g., JSON, PDF)
     #[allow(dead_code)]
     format: String,
 }
@@ -177,10 +196,13 @@ pub enum StorageBackend {
     GCS,
 }
 
+/// Policy defining audit event retention and archival periods
 #[derive(Debug)]
 pub struct RetentionPolicy {
+    /// Number of days to retain audit events before deletion
     #[allow(dead_code)]
     retention_days: u32,
+    /// Number of days after which events are moved to archive storage
     #[allow(dead_code)]
     archive_after_days: u32,
 }

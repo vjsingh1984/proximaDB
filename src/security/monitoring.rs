@@ -190,6 +190,7 @@ impl SecurityMetricsCollector {
 }
 
 impl AuthenticationMetrics {
+    /// Create a new zeroed authentication metrics instance.
     fn new() -> Self {
         Self {
             successful_logins: 0,
@@ -205,6 +206,7 @@ impl AuthenticationMetrics {
 }
 
 impl AuthorizationMetrics {
+    /// Create a new zeroed authorization metrics instance.
     fn new() -> Self {
         Self {
             permission_checks: 0,
@@ -230,6 +232,7 @@ pub struct SecurityMetricsSummary {
 }
 
 impl SecurityMetricsSummary {
+    /// Create a new zeroed security metrics summary.
     fn new() -> Self {
         Self {
             total_successful_logins: 0,
@@ -391,6 +394,7 @@ impl SecurityMonitoringService {
 }
 
 impl ThreatDetectionEngine {
+    /// Create a new threat detection engine with the given configuration.
     fn new(config: ThreatDetectionConfig) -> Self {
         Self {
             event_history: Arc::new(DashMap::new()),
@@ -399,6 +403,7 @@ impl ThreatDetectionEngine {
         }
     }
 
+    /// Generate a threat analysis summary for the configured analysis window.
     async fn get_threat_analysis(&self) -> ThreatAnalysis {
         ThreatAnalysis {
             total_threats_detected: 0,
@@ -413,6 +418,7 @@ impl ThreatDetectionEngine {
 }
 
 impl SecurityAlertManager {
+    /// Create a new security alert manager with the given configuration.
     fn new(config: SecurityAlertConfig) -> Self {
         Self {
             active_alerts: Arc::new(DashMap::new()),
@@ -421,6 +427,7 @@ impl SecurityAlertManager {
         }
     }
 
+    /// Retrieve all currently active threat alerts.
     async fn get_active_alerts(&self) -> Vec<ThreatAlert> {
         self.active_alerts
             .iter()

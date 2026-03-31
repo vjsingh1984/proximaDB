@@ -481,6 +481,7 @@ impl RateLimitingService {
 }
 
 impl RateLimitCounter {
+    /// Create a new rate limit counter starting at the given time.
     fn new(now: DateTime<Utc>) -> Self {
         Self {
             requests: 0,
@@ -490,6 +491,7 @@ impl RateLimitCounter {
         }
     }
 
+    /// Reset the counter for a new rate limit window.
     fn reset(&mut self, now: DateTime<Utc>) {
         self.requests = 0;
         self.window_start = now;

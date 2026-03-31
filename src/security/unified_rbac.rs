@@ -32,7 +32,9 @@ pub enum DataModel {
 /// Permission cache entry with TTL
 #[derive(Debug, Clone)]
 struct PermissionCacheEntry {
+    /// Whether the permission check was allowed
     allowed: bool,
+    /// Timestamp when this cache entry was created, for TTL expiry
     cached_at: DateTime<Utc>,
 }
 

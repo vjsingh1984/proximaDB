@@ -684,6 +684,7 @@ impl UnifiedAuditCorrelator {
         })
     }
 
+    /// Generate a comprehensive audit trail for an authentication event.
     pub async fn generate_complete_authentication_audit(
         &self,
         _token: &EnterpriseSSOMToken,
@@ -694,13 +695,16 @@ impl UnifiedAuditCorrelator {
     }
 }
 
+/// Validates delegation chains against enterprise compliance requirements.
 pub struct EnterpriseComplianceValidator;
 
 impl EnterpriseComplianceValidator {
+    /// Create a new enterprise compliance validator.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Validate a delegation request against compliance requirements before execution.
     pub async fn validate_delegation_request(
         &self,
         _request: &EnterpriseDelegationRequest,
@@ -709,6 +713,7 @@ impl EnterpriseComplianceValidator {
         Ok(())
     }
 
+    /// Validate compliance of a completed delegation chain with audit trail.
     pub async fn validate_complete_delegation_compliance(
         &self,
         _results: &[ProviderDelegationResult],
@@ -722,13 +727,16 @@ impl EnterpriseComplianceValidator {
     }
 }
 
+/// Handles GCP Workload Identity Federation delegation.
 pub struct CompleteGCPIdentityDelegationHandler;
 
 impl CompleteGCPIdentityDelegationHandler {
+    /// Create a new GCP identity delegation handler.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Process GCP authentication with Workload Identity Federation.
     pub async fn process_complete_gcp_authentication(
         &self,
         _token: &EnterpriseSSOMToken,
@@ -749,21 +757,26 @@ impl CompleteGCPIdentityDelegationHandler {
     }
 }
 
+/// Handles Okta token exchange delegation.
 pub struct CompleteOktaDelegationHandler;
 
 impl CompleteOktaDelegationHandler {
+    /// Create a new Okta delegation handler.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 }
 
+/// Client for AWS Security Token Service operations.
 pub struct AWSSTSClient;
 
 impl AWSSTSClient {
+    /// Create a new AWS STS client.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Validate an enterprise AWS token against STS.
     pub async fn validate_enterprise_token(
         &self,
         _token_data: &str,

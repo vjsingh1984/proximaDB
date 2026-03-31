@@ -100,8 +100,11 @@ impl MetadataValidationConfig {
 /// Metadata validator for VectorRecord metadata fields
 #[derive(Debug, Clone)]
 pub struct MetadataValidator {
+    /// Validation configuration (field limits, injection checks, nesting depth)
     config: MetadataValidationConfig,
+    /// Validator for binary metadata values (size limits, magic byte checks)
     binary_validator: BinaryValidator,
+    /// Validator for nested JSON metadata values (depth limits)
     #[allow(dead_code)]
     json_validator: JsonValidator,
 }

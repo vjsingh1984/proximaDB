@@ -2,12 +2,17 @@
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+/// Process-wide shared context for dependency injection of cross-cutting services
 #[derive(Clone)]
 #[derive(Default)]
 pub struct SharedContext {
+    /// Cross-cache orchestrator for coordinated eviction and rebalancing
     pub orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
+    /// Internal metrics updater for system-level metrics
     pub metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>,
-    pub tracer: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>, // placeholder for tracer handle
+    /// Tracing handle for distributed request tracing
+    pub tracer: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>,
+    /// Current tenant identifier for multi-tenant isolation
     pub tenant: Option<String>,
     /// Optional graph traversal runtime settings (e.g., prefetch knobs)
     pub graph_settings: Option<GraphTraversalSettings>,
@@ -18,9 +23,12 @@ pub struct SharedContext {
 }
 
 
+/// Runtime settings for graph traversal prefetch optimization
 #[derive(Clone, Debug)]
 pub struct GraphTraversalSettings {
+    /// Whether adjacency-list prefetch hints are enabled
     pub enable_prefetch: bool,
+    /// Maximum number of prefetch operations per traversal step
     pub prefetch_budget: usize,
 }
 

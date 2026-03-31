@@ -48,8 +48,11 @@ pub struct AuditStatistics {
 
 /// File-based audit storage implementation
 pub struct FileAuditStorage {
+    /// Base directory for audit log files
     base_directory: String,
+    /// Path to the current active audit log file
     current_file: tokio::sync::RwLock<Option<String>>,
+    /// Maximum size in MB before rotating to a new file
     file_rotation_size_mb: usize,
 }
 
@@ -301,6 +304,7 @@ impl FileAuditStorage {
 
 /// Database-based audit storage implementation (placeholder)
 pub struct DatabaseAuditStorage {
+    /// Connection string for the audit database (e.g., PostgreSQL)
     #[allow(dead_code)]
     connection_string: String,
 }

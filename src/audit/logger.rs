@@ -19,9 +19,13 @@ use uuid::Uuid;
 /// Comprehensive audit logger for enterprise compliance
 #[derive(Clone)]
 pub struct AuditLogger {
+    /// Backend storage for persisting audit events
     storage: Arc<dyn AuditStorage + Send + Sync>,
+    /// Audit logging configuration (encryption, retention, alerts)
     config: AuditConfig,
+    /// Encryption key for protecting sensitive audit data fields
     encryption_key: Arc<EncryptionKey>,
+    /// Optional sender for real-time security alert notifications
     alert_sender: Option<Arc<AlertSender>>,
 }
 
@@ -77,8 +81,10 @@ pub enum AuditStorageBackend {
 /// Encryption key for sensitive audit data
 #[derive(Debug)]
 pub struct EncryptionKey {
+    /// 256-bit key material used for encrypting sensitive fields
     #[allow(dead_code)]
     key: [u8; 32],
+    /// Encryption algorithm (AES-256-GCM or ChaCha20-Poly1305)
     #[allow(dead_code)]
     algorithm: EncryptionAlgorithm,
 }
@@ -93,7 +99,9 @@ pub enum EncryptionAlgorithm {
 /// Alert sender for real-time security notifications
 #[derive(Debug)]
 pub struct AlertSender {
+    /// Webhook URL for sending security alert payloads
     webhook_url: Option<String>,
+    /// Optional email configuration for alert delivery
     #[allow(dead_code)]
     email_config: Option<EmailConfig>,
 }

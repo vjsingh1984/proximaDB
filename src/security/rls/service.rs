@@ -101,7 +101,9 @@ pub struct CollectionRLS {
 
 /// Cached filter result (uses Arc to avoid expensive cloning of FilterExpression)
 struct CachedFilter {
+    /// The cached RLS filter result, shared via Arc for cheap cloning
     filter: Arc<RLSFilterResult>,
+    /// Unix timestamp when this entry was cached, used for TTL expiry
     cached_at: i64,
 }
 

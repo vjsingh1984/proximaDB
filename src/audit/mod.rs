@@ -169,8 +169,10 @@ impl EnterpriseAuditCoordinator {
 /// Compliance reporting engine
 #[derive(Debug, Clone)]
 pub struct ComplianceReportingEngine {
+    /// Compliance frameworks supported by this reporter (e.g., SOC2, GDPR, HIPAA)
     #[allow(dead_code)]
     frameworks: Vec<String>,
+    /// Report output format and detail level configuration
     #[allow(dead_code)]
     config: ReportingConfig,
 }
@@ -178,6 +180,7 @@ pub struct ComplianceReportingEngine {
 /// Audit analytics engine
 #[derive(Debug, Clone)]
 pub struct AuditAnalyticsEngine {
+    /// Configuration for analytics depth and predictive analysis
     #[allow(dead_code)]
     analytics_config: AnalyticsConfig,
 }

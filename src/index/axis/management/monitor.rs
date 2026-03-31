@@ -299,7 +299,9 @@ struct AlertHistory {
 /// Alert subscriber trait
 #[async_trait::async_trait]
 pub trait AlertSubscriber {
+    /// Called when a new alert is triggered.
     async fn on_alert(&self, alert: &Alert) -> Result<()>;
+    /// Called when a previously triggered alert is resolved.
     async fn on_alert_resolved(&self, alert: &Alert) -> Result<()>;
 }
 
@@ -408,24 +410,39 @@ enum HealthStatus {
 /// Monitoring events
 #[derive(Debug, Clone)]
 pub enum MonitoringEvent {
+    /// Collection metrics have been refreshed.
     MetricsUpdated {
+        /// Collection whose metrics were updated.
         collection_id: String,
+        /// Updated metrics snapshot.
         metrics: CollectionMetrics,
     },
+    /// A new alert has been triggered.
     AlertTriggered {
+        /// The triggered alert.
         alert: Alert,
     },
+    /// A previously active alert has been resolved.
     AlertResolved {
+        /// Identifier of the resolved alert.
         alert_id: String,
     },
+    /// An anomalous metric value has been detected.
     AnomalyDetected {
+        /// Collection where the anomaly was detected.
         collection_id: String,
+        /// Type of metric exhibiting the anomaly.
         metric_type: MetricType,
+        /// Observed anomalous value.
         value: f64,
+        /// Expected normal range (min, max).
         expected_range: (f64, f64),
     },
+    /// Performance trend direction has changed.
     PerformanceTrendChanged {
+        /// Collection whose trend changed.
         collection_id: String,
+        /// New trend analysis result.
         trend: PerformanceTrend,
     },
 }

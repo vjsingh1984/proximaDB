@@ -742,8 +742,9 @@ pub struct MetadataBackendConfig {
     /// Cloud-specific configuration
     pub cloud_config: Option<CloudStorageConfig>,
 
-    /// Performance settings
+    /// In-memory cache size in megabytes for metadata
     pub cache_size_mb: Option<u64>,
+    /// Interval in seconds between metadata flush operations
     pub flush_interval_secs: Option<u64>,
 }
 
@@ -775,30 +776,45 @@ pub struct CloudStorageConfig {
 /// AWS S3 configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct S3Config {
+    /// AWS region (e.g., "us-east-1")
     pub region: String,
+    /// S3 bucket name
     pub bucket: String,
+    /// AWS access key ID (optional if using IAM role)
     pub access_key_id: Option<String>,
+    /// AWS secret access key (optional if using IAM role)
     pub secret_access_key: Option<String>,
+    /// Use IAM role-based authentication instead of static keys
     pub use_iam_role: bool,
-    pub endpoint: Option<String>, // For S3-compatible stores
+    /// Custom S3-compatible endpoint URL (e.g., MinIO)
+    pub endpoint: Option<String>,
 }
 
 /// Azure Blob Storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AzureConfig {
+    /// Azure Storage account name
     pub account_name: String,
+    /// Blob container name
     pub container: String,
+    /// Storage account access key (optional if using managed identity)
     pub access_key: Option<String>,
+    /// Shared Access Signature token (optional)
     pub sas_token: Option<String>,
+    /// Use Azure Managed Identity for authentication
     pub use_managed_identity: bool,
 }
 
 /// Google Cloud Storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GcsConfig {
+    /// Google Cloud project ID
     pub project_id: String,
+    /// GCS bucket name
     pub bucket: String,
+    /// Path to the service account JSON key file
     pub service_account_path: Option<String>,
+    /// Use GKE Workload Identity for authentication
     pub use_workload_identity: bool,
 }
 
@@ -822,7 +838,10 @@ pub enum TempStrategy {
     SameDirectory,
 
     /// Configured temp directory
-    ConfiguredTemp { temp_dir: String },
+    ConfiguredTemp {
+        /// Path to the custom temporary directory
+        temp_dir: String,
+    },
 
     /// System temp directory (fallback)
     SystemTemp,
@@ -1362,12 +1381,18 @@ impl SstConfig {
     }
 }
 
+/// Raft consensus configuration for clustered deployments
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsensusConfig {
+    /// Raft node identifier (unique within the cluster)
     pub node_id: Option<u64>,
+    /// Addresses of other cluster peers
     pub cluster_peers: Vec<String>,
+    /// Election timeout in milliseconds
     pub election_timeout_ms: u64,
+    /// Heartbeat interval in milliseconds
     pub heartbeat_interval_ms: u64,
+    /// Number of log entries before taking a snapshot
     pub snapshot_threshold: u64,
 }
 
@@ -1383,12 +1408,18 @@ impl Default for ConsensusConfig {
     }
 }
 
+/// REST and gRPC API endpoint configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
+    /// gRPC listening port (used in multi-port mode)
     pub grpc_port: u16,
+    /// REST listening port (used in multi-port mode)
     pub rest_port: u16,
+    /// Maximum request body size in megabytes
     pub max_request_size_mb: u64,
+    /// Request timeout in seconds
     pub timeout_seconds: u64,
+    /// Whether TLS is enabled for API endpoints
     pub enable_tls: Option<bool>,
     /// Interval for background TTL sweeper in seconds (default: 900 = 15 minutes)
     pub ttl_sweep_interval_seconds: u64,
@@ -1563,6 +1594,7 @@ pub struct WalStorageConfig {
     pub global_manifest_url: Option<String>,
 }
 
+/// Strategy for distributing WAL segments across multiple storage directories
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[derive(Default)]
 pub enum WalDistributionStrategy {
@@ -1637,9 +1669,12 @@ fn default_global_shrink_factor() -> Option<f64> {
     Some(0.4) // 40% shrink factor - recommended for global threshold management
 }
 
+/// Observability and monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {
+    /// Whether Prometheus metrics collection is enabled
     pub metrics_enabled: bool,
+    /// Default tracing log level (e.g., "info", "debug", "trace")
     pub log_level: String,
     /// Dashboard refresh interval in seconds (default: 60, minimum: 15)
     #[serde(default = "default_dashboard_refresh_interval")]
