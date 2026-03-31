@@ -1111,11 +1111,17 @@ impl RoutingService {
 /// Summary of routing statistics
 #[derive(Debug, Clone)]
 pub struct RoutingStatsSummary {
+    /// Total number of routing decisions made
     pub total_routes: u64,
+    /// Number of requests routed to primary shard holders
     pub primary_routes: u64,
+    /// Number of requests routed to replica shard holders
     pub replica_routes: u64,
+    /// Total number of routing retries after transient failures
     pub retries: u64,
+    /// Total number of routing failures that could not be resolved
     pub failures: u64,
+    /// Average routing latency in microseconds
     pub avg_latency_us: u64,
 }
 

@@ -30,24 +30,34 @@ use tokio::fs;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+/// Convenience result type alias using ProximaDBError.
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Serializable graph collection metadata for persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GraphCollectionMetadata {
+    /// Unique identifier for this graph collection
     graph_id: String,
+    /// Human-readable name for the graph collection
     name: String,
+    /// User-provided description of the graph collection
     description: String,
+    /// Unix timestamp when the graph was created
     created_at: i64,
+    /// Unix timestamp when the graph was last modified
     updated_at: i64,
-    // Schema and configs are stored as JSON for flexibility
+    /// Serialized graph schema as JSON for flexibility
     schema_json: Option<String>,
+    /// Serialized storage configuration as JSON
     storage_config_json: Option<String>,
+    /// Serialized engine configuration as JSON
     engine_config_json: Option<String>,
+    /// Serialized access control rules as JSON
     access_control_json: Option<String>,
 }
 
 impl GraphCollectionMetadata {
+    /// Convert a `GraphCollection` into its serializable metadata form.
     fn from_collection(collection: &GraphCollection) -> Self {
         Self {
             graph_id: collection.graph_id.clone(),
@@ -74,6 +84,7 @@ impl GraphCollectionMetadata {
         }
     }
 
+    /// Reconstruct a `GraphCollection` from this persisted metadata.
     fn to_collection(&self) -> GraphCollection {
         GraphCollection {
             graph_id: self.graph_id.clone(),
@@ -124,6 +135,7 @@ pub struct GraphCollectionService {
 
     /// Configuration
     max_graphs: usize,
+    /// Maximum number of metadata entries to cache in memory
     #[allow(dead_code)]
     metadata_cache_size: usize,
 }

@@ -134,6 +134,7 @@ impl ComputePlan {
         tables
     }
 
+    /// Recursively collect all table names referenced by the given plan node.
     fn collect_tables(&self, node: &PlanNode, tables: &mut Vec<String>) {
         match node {
             PlanNode::TableScan { table, .. } => {
@@ -174,6 +175,7 @@ impl ComputePlan {
         self.check_vector_ops(&self.root)
     }
 
+    /// Recursively check whether any node in the subtree is a vector scan.
     fn check_vector_ops(&self, node: &PlanNode) -> bool {
         match node {
             PlanNode::VectorScan { .. } => true,
@@ -196,6 +198,7 @@ impl ComputePlan {
         self.check_graph_ops(&self.root)
     }
 
+    /// Recursively check whether any node in the subtree is a graph scan.
     fn check_graph_ops(&self, node: &PlanNode) -> bool {
         match node {
             PlanNode::GraphScan { .. } => true,

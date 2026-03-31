@@ -93,26 +93,50 @@ pub enum Command {
     Noop,
     /// Create a collection
     CreateCollection {
+        /// Unique identifier for the new collection
         collection_id: String,
+        /// Human-readable collection name
         name: String,
+        /// Vector dimensionality for the collection
         dimension: u32,
+        /// Number of shards to distribute the collection across
         shard_count: u32,
     },
     /// Delete a collection
-    DeleteCollection { collection_id: String },
+    DeleteCollection {
+        /// Identifier of the collection to delete
+        collection_id: String,
+    },
     /// Update shard placement
     UpdateShardPlacement {
+        /// Identifier of the shard being reassigned
         shard_id: String,
+        /// Collection that owns this shard
         collection_id: String,
+        /// Node designated as the primary for this shard
         primary_node: String,
+        /// Nodes holding read replicas of this shard
         replica_nodes: Vec<String>,
     },
     /// Add a node to the cluster
-    AddNode { node_id: String, address: String },
+    AddNode {
+        /// Unique identifier for the new node
+        node_id: String,
+        /// Network address of the new node
+        address: String,
+    },
     /// Remove a node from the cluster
-    RemoveNode { node_id: String },
+    RemoveNode {
+        /// Identifier of the node to remove
+        node_id: String,
+    },
     /// Update cluster configuration
-    UpdateConfig { key: String, value: String },
+    UpdateConfig {
+        /// Configuration key to update
+        key: String,
+        /// New value for the configuration key
+        value: String,
+    },
 }
 
 /// Persistent state on all servers

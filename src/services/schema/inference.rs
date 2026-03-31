@@ -249,6 +249,7 @@ impl InferredSchema {
 /// Analyzes VectorRecord metadata to infer optimal column types
 /// for ProximaRecord storage.
 pub struct SchemaInferenceService {
+    /// Configuration controlling inference thresholds and behavior
     config: InferenceConfig,
 }
 

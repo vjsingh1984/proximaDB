@@ -3,6 +3,7 @@
 //! Provides x86 SIMD feature detection stubs for ARM64 platforms to ensure
 //! clean compilation across all architectures.
 
+/// Stub for x86 SIMD feature detection on non-x86 platforms (always returns false).
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 #[allow(unused_macros)]
 macro_rules! is_x86_feature_detected {

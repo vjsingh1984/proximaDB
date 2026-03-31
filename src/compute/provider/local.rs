@@ -149,6 +149,7 @@ impl std::fmt::Debug for ExecutionState {
 }
 
 impl ExecutionState {
+    /// Create a new empty execution state with zeroed counters.
     fn new() -> Self {
         Self {
             active_count: AtomicUsize::new(0),
@@ -159,6 +160,7 @@ impl ExecutionState {
         }
     }
 
+    /// Register a new execution, increment counters, and return a cancellation receiver.
     fn start_execution(&self, id: &str) -> broadcast::Receiver<()> {
         self.active_count.fetch_add(1, Ordering::SeqCst);
         self.total_count.fetch_add(1, Ordering::SeqCst);
@@ -176,6 +178,7 @@ impl ExecutionState {
         rx
     }
 
+    /// Mark an execution as finished and release its memory allocation.
     fn finish_execution(&self, id: &str) {
         self.active_count.fetch_sub(1, Ordering::SeqCst);
         self.cancel_channels.write().remove(id);
@@ -186,6 +189,7 @@ impl ExecutionState {
         }
     }
 
+    /// Send a cancellation signal to the execution with the given id.
     fn cancel_execution(&self, id: &str) -> bool {
         if let Some(tx) = self.cancel_channels.read().get(id) {
             tx.send(()).is_ok()
@@ -194,6 +198,7 @@ impl ExecutionState {
         }
     }
 
+    /// Track additional memory allocated for the given execution.
     #[allow(dead_code)]
     fn allocate_memory(&self, id: &str, bytes: u64) {
         self.memory_usage.fetch_add(bytes, Ordering::SeqCst);
@@ -203,10 +208,13 @@ impl ExecutionState {
     }
 }
 
+/// Metadata tracked for a single in-flight execution.
 #[derive(Debug)]
 struct ExecutionInfo {
+    /// Timestamp when the execution started
     #[allow(dead_code)]
     started_at: std::time::Instant,
+    /// Cumulative memory allocated by this execution in bytes
     memory_allocated: u64,
 }
 

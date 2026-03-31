@@ -30,6 +30,7 @@ use std::sync::Mutex;
 
 /// Thread-safe skip list with guaranteed 100% operation success
 pub struct SkipList<K, V> {
+    /// Mutex-protected BTreeMap providing ordered key-value storage
     data: Mutex<BTreeMap<K, V>>,
 }
 
@@ -140,6 +141,7 @@ unsafe impl<K: Send, V: Send> Sync for SkipList<K, V> {}
 
 /// Iterator type for backwards compatibility
 pub struct SkipListIterator<K, V> {
+    /// Owned vector iterator over collected key-value pairs
     items: std::vec::IntoIter<(K, V)>,
 }
 

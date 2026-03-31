@@ -18,6 +18,7 @@ thread_local! {
 /// A 128-bit UUID (Universally Unique Identifier)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Uuid {
+    /// Raw 16-byte representation of the UUID
     bytes: [u8; 16],
 }
 

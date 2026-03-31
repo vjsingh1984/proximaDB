@@ -99,7 +99,9 @@ impl Default for SparsityConfig {
 
 /// Sparsity analyzer with caching
 pub struct SparsityAnalyzer {
+    /// Configuration for sparsity detection thresholds and cache behavior
     config: SparsityConfig,
+    /// Cached sparsity results keyed by vector hash
     cache: DashMap<u64, SparsityInfo>,
 }
 

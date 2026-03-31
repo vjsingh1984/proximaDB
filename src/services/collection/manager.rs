@@ -78,24 +78,33 @@ use crate::utils::StoragePath;
 // Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
 
 // Local types to replace assignment service
+/// Storage component type used for multi-disk path assignment.
 #[derive(Debug, Clone)]
 enum StorageComponentType {
+    /// Write-ahead log component
     Wal,
+    /// Data storage component
     Storage,
+    /// Index storage component
     Index,
 }
 
 /// Collection service for unified business logic with multi-disk coordination
 pub struct CollectionService {
+    /// Backend provider for collection metadata persistence
     metadata_backend: Arc<dyn InternalCollectionProvider>,
+    /// Factory for creating filesystem instances per collection path
     filesystem_factory: Arc<FilesystemFactory>,
     /// Cache for IndexConfig to avoid repeated deserialization
     /// Using dashmap for lock-free concurrent access
     index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::IndexConfig>>,
+    /// Global storage configuration for engine and WAL settings
     storage_config: StorageConfig,
 
     // NEW: Multi-tenant integration
+    /// Optional tenant manager for multi-tenant isolation
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
+    /// Optional RBAC enforcer for role-based access control
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 }
 
@@ -1759,7 +1768,9 @@ impl CollectionServiceResponse {
 
 /// Builder for collection service with dependencies
 pub struct CollectionServiceBuilder {
+    /// Optional metadata backend to set during construction
     metadata_backend: Option<Arc<dyn InternalCollectionProvider>>,
+    /// Optional storage configuration to set during construction
     storage_config: Option<StorageConfig>,
 }
 

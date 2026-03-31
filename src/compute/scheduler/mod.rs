@@ -209,6 +209,7 @@ struct ProviderState {
 }
 
 impl ProviderState {
+    /// Create a new provider state wrapping the given compute provider.
     fn new(provider: Arc<dyn ComputeProvider>) -> Self {
         Self {
             provider,
@@ -222,11 +223,13 @@ impl ProviderState {
         }
     }
 
+    /// Record the start of a new execution on this provider.
     fn start_execution(&self) {
         self.active_executions.fetch_add(1, Ordering::SeqCst);
         self.total_executions.fetch_add(1, Ordering::SeqCst);
     }
 
+    /// Record the completion of an execution, updating success/failure and timing stats.
     fn finish_execution(&self, success: bool, duration_ms: u64) {
         self.active_executions.fetch_sub(1, Ordering::SeqCst);
         self.total_execution_time_ms
@@ -239,6 +242,7 @@ impl ProviderState {
         }
     }
 
+    /// Compute the current load score, combining active executions and failure penalty.
     fn load(&self) -> f64 {
         let active = self.active_executions.load(Ordering::SeqCst) as f64;
         let total = self.total_executions.load(Ordering::SeqCst) as f64;
@@ -257,6 +261,7 @@ impl ProviderState {
         }
     }
 
+    /// Return the ratio of successful executions to total executions (1.0 when none run).
     fn success_rate(&self) -> f64 {
         let total = self.total_executions.load(Ordering::SeqCst) as f64;
         if total == 0.0 {
@@ -746,8 +751,11 @@ pub struct ProviderStatistics {
 
 /// Builder for ComputeScheduler
 pub struct ComputeSchedulerBuilder {
+    /// Registered compute providers available for scheduling
     providers: Vec<Arc<dyn ComputeProvider>>,
+    /// Provider used when no specific provider is requested
     default_provider: Option<Arc<dyn ComputeProvider>>,
+    /// Scheduler configuration (retry policy, timeouts, etc.)
     config: SchedulerConfig,
 }
 

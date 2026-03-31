@@ -849,11 +849,17 @@ impl ShardManager {
 /// Statistics about shard distribution
 #[derive(Debug, Clone)]
 pub struct ShardDistributionStats {
+    /// Total number of shards across the entire cluster
     pub total_shards: usize,
+    /// Number of nodes participating in shard distribution
     pub node_count: usize,
+    /// Average number of shards assigned per node
     pub avg_shards_per_node: f64,
+    /// Maximum number of shards assigned to any single node
     pub max_shards_per_node: usize,
+    /// Minimum number of shards assigned to any single node
     pub min_shards_per_node: usize,
+    /// Ratio indicating shard distribution imbalance (0.0 = perfectly balanced)
     pub imbalance_ratio: f64,
 }
 

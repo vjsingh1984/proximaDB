@@ -138,6 +138,7 @@ struct InternalNode {
 }
 
 impl InternalNode {
+    /// Create a new empty internal node with no keys or children
     fn new() -> Self {
         InternalNode {
             keys: Vec::new(),
@@ -208,6 +209,7 @@ struct LeafNode {
 }
 
 impl LeafNode {
+    /// Create a new empty leaf node with no entries
     fn new() -> Self {
         LeafNode {
             entries: Vec::new(),
@@ -322,10 +324,12 @@ enum NodeRef {
 // NodeRef serde handled by derive macro
 
 impl NodeRef {
+    /// Wrap an internal node in an in-memory reference
     fn new_internal(node: InternalNode) -> Self {
         NodeRef::InMemory(Arc::new(RwLock::new(Node::Internal(node))))
     }
 
+    /// Wrap a leaf node in an in-memory reference
     fn new_leaf(node: LeafNode) -> Self {
         NodeRef::InMemory(Arc::new(RwLock::new(Node::Leaf(node))))
     }
@@ -426,6 +430,7 @@ pub struct BTreeIterator {
 }
 
 impl BTreeIterator {
+    /// Create a new iterator starting from the given leaf node
     fn new(leaf: Option<NodeRef>, end_key: Option<Vec<u8>>, forward: bool) -> Self {
         BTreeIterator {
             current_leaf: leaf,
@@ -435,6 +440,7 @@ impl BTreeIterator {
         }
     }
 
+    /// Create a new iterator positioned at the first key >= start_key
     fn new_with_start(
         leaf: Option<NodeRef>,
         start_key: Option<Vec<u8>>,

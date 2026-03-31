@@ -23,22 +23,35 @@ fn read_u32_le(bytes: &[u8]) -> u32 {
 
 /// xxHash64 - extremely fast non-cryptographic hash
 pub struct XxHash64 {
+    /// Initial seed value
     seed: u64,
+    /// Accumulator lane 1
     v1: u64,
+    /// Accumulator lane 2
     v2: u64,
+    /// Accumulator lane 3
     v3: u64,
+    /// Accumulator lane 4
     v4: u64,
+    /// Pending bytes not yet consumed in a 32-byte block
     buffer: Vec<u8>,
+    /// Total number of bytes fed so far
     total_len: usize,
 }
 
 impl XxHash64 {
+    /// First prime constant used in xxHash64 mixing
     const PRIME1: u64 = 0x9E3779B185EBCA87;
+    /// Second prime constant used in xxHash64 mixing
     const PRIME2: u64 = 0xC2B2AE3D27D4EB4F;
+    /// Third prime constant used in xxHash64 mixing
     const PRIME3: u64 = 0x165667B19E3779F9;
+    /// Fourth prime constant used in xxHash64 mixing
     const PRIME4: u64 = 0x85EBCA77C2B2AE63;
+    /// Fifth prime constant used in xxHash64 mixing
     const PRIME5: u64 = 0x27D4EB2F165667C5;
 
+    /// Create a new xxHash64 hasher with the given seed
     pub fn new(seed: u64) -> Self {
         XxHash64 {
             seed,
@@ -51,6 +64,7 @@ impl XxHash64 {
         }
     }
 
+    /// Feed data into the hash, processing complete 32-byte blocks immediately
     pub fn update(&mut self, data: &[u8]) {
         self.total_len += data.len();
         self.buffer.extend_from_slice(data);
@@ -66,6 +80,7 @@ impl XxHash64 {
         }
     }
 
+    /// Finalize the hash and return the 64-bit digest
     pub fn finish(&self) -> u64 {
         let mut hash = if self.total_len >= 32 {
             self.v1
@@ -116,6 +131,7 @@ impl XxHash64 {
         hash
     }
 
+    /// Perform one round of xxHash64 accumulation
     fn round(&self, acc: u64, input: u64) -> u64 {
         acc.wrapping_add(input.wrapping_mul(Self::PRIME2))
             .rotate_left(31)
@@ -125,19 +141,24 @@ impl XxHash64 {
 
 /// FNV-1a hash - simple and fast
 pub struct Fnv1a64 {
+    /// Running hash state
     hash: u64,
 }
 
 impl Fnv1a64 {
+    /// FNV-1a 64-bit offset basis
     const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    /// FNV-1a 64-bit prime multiplier
     const FNV_PRIME: u64 = 0x100000001b3;
 
+    /// Create a new FNV-1a hasher initialized with the offset basis
     pub fn new() -> Self {
         Fnv1a64 {
             hash: Self::OFFSET_BASIS,
         }
     }
 
+    /// Feed data byte-by-byte into the FNV-1a hash
     pub fn update(&mut self, data: &[u8]) {
         for &byte in data {
             self.hash ^= byte as u64;
@@ -145,6 +166,7 @@ impl Fnv1a64 {
         }
     }
 
+    /// Return the current 64-bit hash value
     pub fn finish(&self) -> u64 {
         self.hash
     }
@@ -182,22 +204,27 @@ impl FastHash for FnvHasher {
 
 /// Builder for creating hashers
 pub struct HashBuilder {
+    /// Seed value passed to hashers that support seeding
     seed: u64,
 }
 
 impl HashBuilder {
+    /// Create a new hash builder with a default seed of 0
     pub fn new() -> Self {
         HashBuilder { seed: 0 }
     }
 
+    /// Create a new hash builder with the given seed
     pub fn with_seed(seed: u64) -> Self {
         HashBuilder { seed }
     }
 
+    /// Build an xxHash64 hasher using this builder's seed
     pub fn build_xxhash(&self) -> XxHash64 {
         XxHash64::new(self.seed)
     }
 
+    /// Build an FNV-1a hasher (seed is not used for FNV)
     pub fn build_fnv(&self) -> Fnv1a64 {
         Fnv1a64::new()
     }

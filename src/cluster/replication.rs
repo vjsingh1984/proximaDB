@@ -113,11 +113,20 @@ pub struct ReplicationEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReplicationOperation {
     /// Insert new records
-    Insert { count: usize },
+    Insert {
+        /// Number of records being inserted
+        count: usize,
+    },
     /// Update existing records
-    Update { ids: Vec<String> },
+    Update {
+        /// Identifiers of the records being updated
+        ids: Vec<String>,
+    },
     /// Delete records
-    Delete { ids: Vec<String> },
+    Delete {
+        /// Identifiers of the records being deleted
+        ids: Vec<String>,
+    },
     /// Flush memtable to disk
     Flush,
     /// Compaction operation
@@ -1043,22 +1052,34 @@ fn create_replicate_request(
 /// Replication health status
 #[derive(Debug, Clone)]
 pub struct ReplicationHealth {
+    /// Whether the replication subsystem is operating normally
     pub healthy: bool,
+    /// Number of replicas currently in sync and healthy
     pub healthy_replicas: usize,
+    /// Total number of configured replicas
     pub total_replicas: usize,
+    /// Current log sequence number on the primary
     pub current_lsn: u64,
+    /// Maximum replication lag in LSN units across all replicas
     pub max_lag: u64,
+    /// Number of replication log entries awaiting acknowledgment
     pub pending_entries: usize,
 }
 
 /// Summary of replication statistics
 #[derive(Debug, Clone)]
 pub struct ReplicationStatsSummary {
+    /// Total number of log entries successfully replicated
     pub total_entries_replicated: u64,
+    /// Total bytes transferred during replication
     pub total_bytes_replicated: u64,
+    /// Number of replication batches that succeeded
     pub successful_replications: u64,
+    /// Number of replication batches that failed
     pub failed_replications: u64,
+    /// Average replication latency in milliseconds
     pub avg_latency_ms: u64,
+    /// Total number of replication retries due to transient failures
     pub retry_count: u64,
 }
 

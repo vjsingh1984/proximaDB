@@ -1276,19 +1276,28 @@ impl DistributedCollectionOps {
 /// Summary of distributed operations statistics
 #[derive(Debug, Clone)]
 pub struct DistributedOpsStatsSummary {
+    /// Total number of distributed search operations executed
     pub total_searches: u64,
+    /// Total number of distributed write operations executed
     pub total_writes: u64,
+    /// Number of search operations that failed across the cluster
     pub failed_searches: u64,
+    /// Number of write operations that failed across the cluster
     pub failed_writes: u64,
+    /// Average search latency in milliseconds across all nodes
     pub avg_search_time_ms: u64,
+    /// Average write latency in milliseconds across all nodes
     pub avg_write_time_ms: u64,
 }
 
 /// Result of a rebalance operation
 #[derive(Debug, Clone)]
 pub struct RebalanceResult {
+    /// Number of shards moved during the rebalance
     pub shards_moved: usize,
+    /// Whether the rebalance completed successfully
     pub success: bool,
+    /// Human-readable description of the rebalance outcome
     pub message: String,
 }
 

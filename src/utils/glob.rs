@@ -79,6 +79,7 @@ enum CharacterClass {
 }
 
 impl CharacterClass {
+    /// Check whether the given character is a member of this character class
     fn matches(&self, ch: char) -> bool {
         match self {
             CharacterClass::Set(set) => set.contains(&ch),
@@ -91,6 +92,7 @@ impl CharacterClass {
 /// Compiled glob pattern for efficient matching
 #[derive(Debug, Clone)]
 struct CompiledPattern {
+    /// Sequence of pattern elements parsed from the glob string
     elements: Vec<PatternElement>,
 }
 

@@ -132,8 +132,9 @@ pub struct GlobalQuantizationCache {
     /// Memory budget allocated for quantization (managed by orchestrator)
     allocated_memory_bytes: std::sync::atomic::AtomicUsize,
 
-    /// Cache hit statistics
+    /// Cache hit count
     cache_hits: std::sync::atomic::AtomicUsize,
+    /// Cache miss count
     cache_misses: std::sync::atomic::AtomicUsize,
 }
 

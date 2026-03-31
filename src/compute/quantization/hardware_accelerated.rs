@@ -8,6 +8,7 @@ use anyhow::Result;
 
 /// Hardware-accelerated quantization dispatcher
 pub struct AcceleratedQuantization {
+    /// Active SIMD or GPU backend selected at initialization
     backend: HardwareBackend,
 }
 
@@ -48,6 +49,7 @@ impl AcceleratedQuantization {
         Self { backend }
     }
 
+    /// Select the best CPU SIMD backend based on detected hardware capabilities.
     fn select_cpu_backend(
         caps: &crate::core::hardware_capabilities::HardwareCapabilities,
     ) -> HardwareBackend {
@@ -491,17 +493,20 @@ impl AcceleratedQuantization {
         self.quantize_u8_scalar(values)
     }
 
+    /// Fallback AVX-512 quantization stub for non-x86 platforms (delegates to scalar).
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     #[allow(dead_code)]
     fn quantize_u8_avx512(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         self.quantize_u8_scalar(values)
     }
 
+    /// Fallback AVX2 quantization stub for non-x86 platforms (delegates to scalar).
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn quantize_u8_avx2(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         self.quantize_u8_scalar(values)
     }
 
+    /// Fallback SSE quantization stub for non-x86 platforms (delegates to scalar).
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn quantize_u8_sse(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         self.quantize_u8_scalar(values)

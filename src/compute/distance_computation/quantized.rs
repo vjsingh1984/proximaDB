@@ -286,6 +286,7 @@ struct PQDistanceCache {
     /// Cache statistics
     #[allow(dead_code)]
     hits: usize,
+    /// Cache miss count
     #[allow(dead_code)]
     misses: usize,
 
@@ -886,6 +887,7 @@ impl QuantizedDistanceCalculator {
             && self.hardware_caps.has_simd()
     }
 
+    /// Return true when the batch is large enough to benefit from SIMD batch processing.
     fn should_use_batch_processing(&self, batch_size: usize) -> bool {
         batch_size >= 32 && self.config.simd_optimization.enable_simd
     }
@@ -924,6 +926,7 @@ impl QuantizedDistanceCalculator {
         Ok(results)
     }
 
+    /// Select the highest-fidelity format available in the quantized vector data.
     fn select_best_format(&self, vector: &QuantizedVectorData) -> SelectedFormat {
         if vector.fp32.is_some() {
             SelectedFormat::FP32
@@ -941,7 +944,7 @@ impl QuantizedDistanceCalculator {
         }
     }
 
-    // Additional helper methods...
+    /// Quantize a query vector to binary using the median as the threshold.
     fn quantize_query_to_binary(&self, query: &[f32]) -> Result<Vec<u8>> {
         // Simplified binary quantization - use median threshold
         let median = {
@@ -963,6 +966,7 @@ impl QuantizedDistanceCalculator {
         Ok(binary)
     }
 
+    /// Compute Hamming distance between binary vectors using popcount.
     fn compute_hamming_distance_simd(&self, a: &[u8], b: &[u8]) -> Result<usize> {
         // SIMD Hamming distance computation
         if a.len() != b.len() {
@@ -978,6 +982,7 @@ impl QuantizedDistanceCalculator {
         Ok(distance)
     }
 
+    /// Compute Hamming distance between binary vectors using a 256-entry lookup table.
     fn compute_hamming_distance_lut(&self, a: &[u8], b: &[u8]) -> Result<usize> {
         // LUT-based Hamming distance computation
         if a.len() != b.len() {
@@ -993,6 +998,7 @@ impl QuantizedDistanceCalculator {
         Ok(distance)
     }
 
+    /// Compute distance between a query and an INT8 vector using a precomputed lookup table.
     #[allow(dead_code)]
     fn compute_int8_distance_with_table(
         &self,
@@ -1025,6 +1031,7 @@ impl QuantizedDistanceCalculator {
         }
     }
 
+    /// Compute distance from PQ codes using a precomputed distance table for O(1) lookups.
     #[allow(dead_code)]
     fn compute_pq_distance_with_table(
         &self,
@@ -1047,6 +1054,7 @@ impl QuantizedDistanceCalculator {
         Ok(total_distance)
     }
 
+    /// Quantize a float query vector to INT8 using the given scale and zero point.
     fn quantize_query_to_int8(&self, query: &[f32], scale: f32, zero_point: i8) -> Result<Vec<i8>> {
         let mut quantized = Vec::with_capacity(query.len());
         for &value in query {
@@ -1058,6 +1066,7 @@ impl QuantizedDistanceCalculator {
         Ok(quantized)
     }
 
+    /// Estimate memory bandwidth in KB for a distance operation given dimension and format.
     fn estimate_memory_bandwidth(&self, dimension: usize, format: SelectedFormat) -> f32 {
         let bytes_per_element = match format {
             SelectedFormat::FP32 => 4.0,
@@ -1070,6 +1079,7 @@ impl QuantizedDistanceCalculator {
         (dimension as f32 * bytes_per_element * 2.0) / 1024.0 // MB/s estimate
     }
 
+    /// Estimate the number of arithmetic operations for a distance computation.
     fn estimate_operation_count(&self, dimension: usize, format: SelectedFormat) -> usize {
         match format {
             SelectedFormat::FP32 => dimension * 2, // Multiply + accumulate
@@ -1079,7 +1089,7 @@ impl QuantizedDistanceCalculator {
         }
     }
 
-    // SIMD batch processing implementation
+    /// Compute distances for a batch of quantized vectors with SIMD acceleration.
     async fn compute_batch_distances_simd(
         &self,
         query: &[f32],
@@ -1096,6 +1106,7 @@ impl QuantizedDistanceCalculator {
         Ok(results)
     }
 
+    /// Evict stale entries from the PQ distance table cache based on the configured policy.
     #[allow(dead_code)]
     fn evict_pq_cache_entries(&self, cache: &mut PQDistanceCache) {
         // Implement cache eviction based on configured policy
@@ -1121,6 +1132,7 @@ impl QuantizedDistanceCalculator {
 
 // Implementation of helper structs
 impl HammingLookupTable {
+    /// Build a 256-entry popcount lookup table, detecting hardware POPCNT support.
     fn new(hardware_caps: &HardwareCapabilities) -> Result<Self> {
         let mut hamming_weights = [0u8; 256];
         for (i, weight) in hamming_weights.iter_mut().enumerate() {
@@ -1135,6 +1147,7 @@ impl HammingLookupTable {
 }
 
 impl Int8DistanceTable {
+    /// Create a new precomputed distance table for INT8 quantized vectors.
     #[allow(dead_code)]
     fn new(distance_metric: DistanceMetric, dimension: usize) -> Result<Self> {
         let mut squared_diff_table = Vec::with_capacity(dimension);
@@ -1155,6 +1168,7 @@ impl Int8DistanceTable {
         })
     }
 
+    /// Estimate the heap memory usage of this distance table in bytes.
     #[allow(dead_code)]
     fn estimated_size(&self) -> usize {
         self.dimension * 256 * std::mem::size_of::<f32>()
@@ -1162,6 +1176,7 @@ impl Int8DistanceTable {
 }
 
 impl PQDistanceTable {
+    /// Build a PQ distance table by computing distances from the query to all centroids.
     #[allow(dead_code)]
     fn new(query: &[f32], codebook: &[Vec<f32>], distance_metric: DistanceMetric) -> Result<Self> {
         let num_subvectors = codebook.len();
@@ -1216,6 +1231,7 @@ impl PQDistanceTable {
         })
     }
 
+    /// Estimate the heap memory usage of this PQ distance table in bytes.
     #[allow(dead_code)]
     fn estimated_size(&self) -> usize {
         self.num_subvectors * self.num_centroids * std::mem::size_of::<f32>()

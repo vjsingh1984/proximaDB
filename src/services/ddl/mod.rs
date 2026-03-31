@@ -349,6 +349,7 @@ impl DdlService {
     // Table Operations
     // ========================
 
+    /// Create a new table with the given columns and properties in the catalog.
     async fn create_table(
         &self,
         table_name: &str,
@@ -380,6 +381,7 @@ impl DdlService {
         )))
     }
 
+    /// Drop a table from the catalog, optionally purging its data.
     async fn drop_table(
         &self,
         table_name: &str,
@@ -407,6 +409,7 @@ impl DdlService {
         )))
     }
 
+    /// Apply schema evolution changes (add/drop columns, rename, etc.) to an existing table.
     async fn alter_table(
         &self,
         table_name: &str,
@@ -436,6 +439,7 @@ impl DdlService {
     // Index Operations
     // ========================
 
+    /// Create a new index on the specified table columns with the given type.
     async fn create_index(
         &self,
         index_name: &str,
@@ -482,6 +486,7 @@ impl DdlService {
         )))
     }
 
+    /// Remove an existing index from the specified table.
     async fn drop_index(
         &self,
         index_name: &str,
@@ -523,6 +528,7 @@ impl DdlService {
     // Namespace Operations
     // ========================
 
+    /// Create a new namespace (schema grouping) in the default catalog.
     async fn create_namespace(
         &self,
         namespace: &[String],
@@ -551,6 +557,7 @@ impl DdlService {
         )))
     }
 
+    /// Drop a namespace, optionally cascading to all contained tables.
     async fn drop_namespace(
         &self,
         namespace: &[String],
@@ -583,6 +590,7 @@ impl DdlService {
     // Collection Operations (ProximaDB-specific)
     // ========================
 
+    /// Create a ProximaDB vector collection with auto-generated HNSW index.
     async fn create_collection(
         &self,
         collection_name: &str,
@@ -671,6 +679,7 @@ impl DdlService {
     // Helper Methods
     // ========================
 
+    /// Build a `CatalogTableSchema` from column definitions and table properties.
     fn build_catalog_schema(
         &self,
         table_name: &str,
@@ -709,6 +718,7 @@ impl DdlService {
         Ok(schema)
     }
 
+    /// Convert a SQL data type to its catalog equivalent and extract type properties.
     fn sql_to_catalog_type(
         &self,
         sql_type: &SqlDataType,
@@ -759,6 +769,7 @@ impl DdlService {
         Ok((catalog_type, properties))
     }
 
+    /// Translate ALTER TABLE changes into a `CatalogSchemaEvolution` for the catalog layer.
     fn build_schema_evolution(
         &self,
         changes: Vec<AlterTableChange>,
@@ -872,6 +883,7 @@ impl DdlService {
         })
     }
 
+    /// Map a SQL-level index type to its catalog enum variant.
     fn convert_index_type(&self, index_type: &IndexType) -> CatalogIndexType {
         match index_type {
             IndexType::BTree => CatalogIndexType::BTree,
@@ -883,6 +895,7 @@ impl DdlService {
         }
     }
 
+    /// Extract type-specific properties (e.g., m, ef_construction, nlist) from an index type.
     fn get_index_properties(&self, index_type: &IndexType) -> HashMap<String, String> {
         let mut props = HashMap::new();
 

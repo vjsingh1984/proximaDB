@@ -725,6 +725,7 @@ impl UnifiedDistanceCompute {
     // Cosine Distance Implementation
     // ------------------------------------------------------------------------
 
+    /// Compute cosine distance using the best available SIMD instruction set.
     #[inline(always)]
     fn compute_cosine_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         match self.platform_capability {
@@ -825,6 +826,7 @@ impl UnifiedDistanceCompute {
         self.cosine_distance_scalar(a, b)
     }
 
+    /// Compute cosine distance using ARM NEON 128-bit SIMD instructions.
     #[cfg(target_arch = "aarch64")]
     unsafe fn cosine_distance_neon(&self, a: &[f32], b: &[f32]) -> f32 {
         // SAFETY: NEON is always available on AArch64.
@@ -876,6 +878,7 @@ impl UnifiedDistanceCompute {
         }
     }
 
+    /// Compute cosine distance using a scalar fallback (no SIMD).
     fn cosine_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         // Ensure vectors have the same length
         if a.len() != b.len() {
@@ -908,6 +911,7 @@ impl UnifiedDistanceCompute {
     // Euclidean Distance Implementation
     // ------------------------------------------------------------------------
 
+    /// Compute Euclidean (L2) distance using the best available SIMD instruction set.
     #[inline(always)]
     fn compute_euclidean_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         match self.platform_capability {
@@ -965,6 +969,7 @@ impl UnifiedDistanceCompute {
         }
     }
 
+    /// Compute Euclidean distance using ARM NEON 128-bit SIMD instructions.
     #[cfg(target_arch = "aarch64")]
     unsafe fn euclidean_distance_neon(&self, a: &[f32], b: &[f32]) -> f32 {
         // SAFETY: NEON is always available on AArch64.
@@ -1000,6 +1005,7 @@ impl UnifiedDistanceCompute {
         }
     }
 
+    /// Compute Euclidean distance using a scalar fallback (no SIMD).
     fn euclidean_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         // Ensure vectors have the same length
         if a.len() != b.len() {
@@ -1023,6 +1029,7 @@ impl UnifiedDistanceCompute {
     // Dot Product Implementation
     // ------------------------------------------------------------------------
 
+    /// Compute dot product distance using the best available SIMD instruction set.
     #[inline(always)]
     fn compute_dot_product_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         match self.platform_capability {
@@ -1077,6 +1084,7 @@ impl UnifiedDistanceCompute {
         }
     }
 
+    /// Compute dot product using ARM NEON 128-bit SIMD instructions.
     #[cfg(target_arch = "aarch64")]
     unsafe fn dot_product_neon(&self, a: &[f32], b: &[f32]) -> f32 {
         unsafe {
@@ -1104,6 +1112,7 @@ impl UnifiedDistanceCompute {
         }
     }
 
+    /// Compute dot product using a scalar fallback (no SIMD).
     fn dot_product_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
         for (a_val, b_val) in a.iter().zip(b.iter()) {
@@ -1116,12 +1125,14 @@ impl UnifiedDistanceCompute {
     // Jaccard Distance Implementation
     // ------------------------------------------------------------------------
 
+    /// Compute Jaccard distance (delegates to scalar; no efficient SIMD path).
     #[inline(always)]
     fn compute_jaccard_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         // Jaccard doesn't have efficient SIMD implementation, use scalar
         self.compute_jaccard_scalar(a, b)
     }
 
+    /// Compute Jaccard distance as 1 - (min-sum intersection / max-sum union).
     fn compute_jaccard_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut intersection = 0.0;
         let mut union = 0.0;
@@ -1144,6 +1155,7 @@ impl UnifiedDistanceCompute {
     // Other Distance Metrics (Scalar implementations)
     // ------------------------------------------------------------------------
 
+    /// Compute Manhattan (L1) distance as the sum of absolute differences.
     fn compute_manhattan_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
         for (a_val, b_val) in a.iter().zip(b.iter()) {
@@ -1152,6 +1164,7 @@ impl UnifiedDistanceCompute {
         sum
     }
 
+    /// Compute Hamming distance as the count of differing dimensions.
     fn compute_hamming_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut count = 0.0;
         for (a_val, b_val) in a.iter().zip(b.iter()) {
@@ -1162,6 +1175,7 @@ impl UnifiedDistanceCompute {
         count
     }
 
+    /// Compute Chebyshev (L-infinity) distance as the maximum absolute difference.
     fn compute_chebyshev_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut max_diff = 0.0f32;
         for (a_val, b_val) in a.iter().zip(b.iter()) {
@@ -1171,6 +1185,7 @@ impl UnifiedDistanceCompute {
         max_diff
     }
 
+    /// Compute Minkowski distance with parameter `p` (generalizes L1 and L2).
     fn compute_minkowski_scalar(&self, a: &[f32], b: &[f32], p: f32) -> f32 {
         let mut sum = 0.0;
         for (a_val, b_val) in a.iter().zip(b.iter()) {
@@ -1179,6 +1194,7 @@ impl UnifiedDistanceCompute {
         sum.powf(1.0 / p)
     }
 
+    /// Compute Canberra distance, a weighted variant of Manhattan distance.
     fn compute_canberra_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
         for (a_val, b_val) in a.iter().zip(b.iter()) {
@@ -1190,6 +1206,7 @@ impl UnifiedDistanceCompute {
         sum
     }
 
+    /// Compute Bray-Curtis dissimilarity as sum-of-abs-diff / sum-of-abs-total.
     fn compute_bray_curtis_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum_diff = 0.0;
         let mut sum_total = 0.0;
@@ -1204,11 +1221,13 @@ impl UnifiedDistanceCompute {
         }
     }
 
+    /// Compute angular distance as acos(cosine_similarity) / pi, clamped to [0, 1].
     fn compute_angular_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let cosine_sim = 1.0 - self.cosine_distance_scalar(a, b);
         (cosine_sim.acos() / std::f32::consts::PI).clamp(0.0, 1.0)
     }
 
+    /// Compute Hellinger distance between two probability distributions.
     fn compute_hellinger_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
         for (a_val, b_val) in a.iter().zip(b.iter()) {

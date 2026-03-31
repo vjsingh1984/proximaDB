@@ -305,6 +305,7 @@ struct MigrationState {
 }
 
 impl MigrationState {
+    /// Create a new migration state for the given collection and mode.
     fn new(collection_name: String, mode: MigrationMode) -> Self {
         Self {
             collection_name,
@@ -320,34 +321,42 @@ impl MigrationState {
         }
     }
 
+    /// Return whether the migration is currently paused.
     fn is_paused(&self) -> bool {
         self.is_paused.load(Ordering::Relaxed)
     }
 
+    /// Pause the in-progress migration.
     fn pause(&self) {
         self.is_paused.store(true, Ordering::Relaxed);
     }
 
+    /// Resume a previously paused migration.
     fn resume(&self) {
         self.is_paused.store(false, Ordering::Relaxed);
     }
 
+    /// Return whether a stop has been requested.
     fn should_stop(&self) -> bool {
         self.should_stop.load(Ordering::Relaxed)
     }
 
+    /// Signal the migration to stop at the next safe checkpoint.
     fn request_stop(&self) {
         self.should_stop.store(true, Ordering::Relaxed);
     }
 
+    /// Atomically increment the count of successfully migrated records.
     fn increment_migrated(&self) {
         self.migrated_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Atomically increment the count of failed migration attempts.
     fn increment_failed(&self) {
         self.failed_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Build a `MigrationStatus` snapshot from the current atomic counters.
     fn to_status(&self) -> MigrationStatus {
         let migrated = self.migrated_count.load(Ordering::Relaxed);
         let failed = self.failed_count.load(Ordering::Relaxed);
@@ -372,22 +381,26 @@ impl MigrationState {
         }
     }
 
+    /// Record the schema ID associated with this migration.
     fn set_schema_id(&self, id: String) {
         if let Ok(mut schema_id) = self.schema_id.write() {
             *schema_id = Some(id);
         }
     }
 
+    /// Record the migration start time as the current instant.
     fn set_start_time(&self) {
         if let Ok(mut start_time) = self.start_time.write() {
             *start_time = Some(Instant::now());
         }
     }
 
+    /// Set the total number of records to be migrated.
     fn set_total_records(&self, total: u64) {
         self.total_records.store(total, Ordering::Relaxed);
     }
 
+    /// Store the most recent error message encountered during migration.
     fn set_error(&self, error: String) {
         if let Ok(mut last_error) = self.last_error.write() {
             *last_error = Some(error);

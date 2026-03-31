@@ -51,6 +51,7 @@ use crate::query::unified_query_optimizer::{
     UnifiedQueryContext, UnifiedQueryOptimizer,
 };
 
+/// Convert a query optimizer quantization strategy to a unified quantization level.
 #[allow(dead_code)]
 fn quantization_strategy_to_level(strategy: &QuantizationStrategy) -> UnifiedQuantizationLevel {
     let level_type = match strategy.quantization_type {
@@ -160,8 +161,9 @@ pub struct VectorOperationsService {
     /// Optional global cache orchestrator for richer cache stats/prefetch
     orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 
-    // NEW: Multi-tenant integration
+    /// Optional tenant manager for multi-tenant isolation
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
+    /// Optional RBAC enforcer for role-based access control
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 
     /// Bulk write router for intelligent write path selection
@@ -2180,6 +2182,7 @@ impl VectorOperationsService {
 
     // Helper methods (simplified for demonstration)
 
+    /// Retrieve a collection from cache, or load it from the collection service and register with WAL.
     async fn get_or_load_collection(&self, collection_id: &str) -> Result<Arc<Collection>> {
         let collection_id_string = collection_id.to_string();
         if let Some(cached) = self.collection_cache.get(&collection_id_string) {
@@ -2343,7 +2346,7 @@ impl VectorOperationsService {
     }
     */
 
-    // Stub implementations for execution methods
+    /// Execute metadata filter conditions against the storage engine and return matching records.
     async fn execute_filter(
         &self,
         collection_id: &str,
@@ -2422,6 +2425,7 @@ impl VectorOperationsService {
         Ok(optimized_results)
     }
 
+    /// Perform a vector or metadata index lookup via the AXIS index manager.
     async fn execute_index_lookup(
         &self,
         collection_id: &str,
@@ -2497,6 +2501,7 @@ impl VectorOperationsService {
         Ok(results)
     }
 
+    /// Apply a bloom filter to pre-screen candidate records before full evaluation.
     async fn apply_bloom_filter(
         &self,
         collection_id: &str,

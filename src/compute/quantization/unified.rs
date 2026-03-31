@@ -894,6 +894,7 @@ impl UnifiedQuantizationEngine {
 
     // Private helper methods
 
+    /// Quantize a vector using Product Quantization by assigning nearest centroid codes.
     fn quantize_pq(&self, vector: &[f32], codebook: &Codebook) -> Result<QuantizedVector> {
         let CodebookData::ProductQuantization {
             centroids,
@@ -940,6 +941,7 @@ impl UnifiedQuantizationEngine {
         })
     }
 
+    /// Quantize a vector to fixed-bit scalar representation with the given scale and offset.
     fn quantize_scalar(
         &self,
         vector: &[f32],
@@ -973,6 +975,7 @@ impl UnifiedQuantizationEngine {
         })
     }
 
+    /// Quantize a vector using uniform quantization, auto-computing scale and offset if absent.
     fn quantize_uniform(
         &self,
         vector: &[f32],
@@ -1026,6 +1029,7 @@ impl UnifiedQuantizationEngine {
         })
     }
 
+    /// Quantize a vector to 1-bit binary representation using the given threshold.
     fn quantize_binary(&self, vector: &[f32], threshold: Option<&f32>) -> Result<QuantizedVector> {
         let threshold = threshold.copied().unwrap_or(0.0);
         let mut bytes = vec![0u8; vector.len().div_ceil(8)];
@@ -1048,6 +1052,7 @@ impl UnifiedQuantizationEngine {
         })
     }
 
+    /// Quantize a vector using a custom algorithm selected by `type_id` (logarithmic, adaptive, sparse, hybrid).
     fn quantize_custom(
         &self,
         vector: &[f32],
@@ -1097,6 +1102,7 @@ impl UnifiedQuantizationEngine {
         })
     }
 
+    /// Quantize using logarithmic scaling for high dynamic range values.
     fn quantize_logarithmic(
         &self,
         vector: &[f32],
@@ -1122,6 +1128,7 @@ impl UnifiedQuantizationEngine {
         Ok(result)
     }
 
+    /// Quantize adaptively by mapping the value range to [0, 255].
     fn quantize_adaptive(
         &self,
         vector: &[f32],
@@ -1142,6 +1149,7 @@ impl UnifiedQuantizationEngine {
             .collect())
     }
 
+    /// Encode a sparse vector as index-value pairs, omitting near-zero elements.
     fn quantize_sparse(
         &self,
         vector: &[f32],
@@ -1170,6 +1178,7 @@ impl UnifiedQuantizationEngine {
         Ok(result)
     }
 
+    /// Quantize using a hybrid approach: binary for the first third, U4 for the second, INT8 for the last.
     fn quantize_hybrid(
         &self,
         vector: &[f32],
@@ -1192,6 +1201,7 @@ impl UnifiedQuantizationEngine {
         Ok(result)
     }
 
+    /// Apply a user-defined transform (e.g. delta encoding) based on config parameters.
     fn apply_custom_transform(
         &self,
         vector: &[f32],
@@ -1221,6 +1231,7 @@ impl UnifiedQuantizationEngine {
         }
     }
 
+    /// Dequantize raw bytes back to f32 by reinterpreting 4-byte little-endian chunks.
     fn dequantize_fp32(&self, bytes: &[u8]) -> Result<Vec<f32>> {
         if bytes.len() % 4 != 0 {
             anyhow::bail!("Invalid FP32 byte array length");
@@ -1232,6 +1243,7 @@ impl UnifiedQuantizationEngine {
             .collect())
     }
 
+    /// Dequantize scalar-quantized bytes back to f32 using the given bit-width, scale, and offset.
     fn dequantize_scalar(
         &self,
         bytes: &[u8],
@@ -1250,6 +1262,7 @@ impl UnifiedQuantizationEngine {
             .collect())
     }
 
+    /// Dequantize uniform-quantized bytes back to f32 (same as scalar dequantization).
     fn dequantize_uniform(
         &self,
         bytes: &[u8],
@@ -1261,6 +1274,7 @@ impl UnifiedQuantizationEngine {
         self.dequantize_scalar(bytes, bits, scale, offset)
     }
 
+    /// Dequantize binary-quantized bytes back to f32 (1.0 for set bits, 0.0 otherwise).
     fn dequantize_binary(&self, bytes: &[u8], dimension: usize) -> Result<Vec<f32>> {
         let mut result = Vec::with_capacity(dimension);
 
@@ -1279,6 +1293,7 @@ impl UnifiedQuantizationEngine {
         Ok(result)
     }
 
+    /// Reconstruct a vector from PQ codes by concatenating the corresponding centroid vectors.
     fn dequantize_pq(
         &self,
         codes: &[u8],
@@ -1307,6 +1322,7 @@ impl UnifiedQuantizationEngine {
         Ok(result)
     }
 
+    /// Dequantize bytes produced by a custom quantization algorithm back to f32.
     fn dequantize_custom(&self, bytes: &[u8], custom: &CustomQuantization) -> Result<Vec<f32>> {
         // Dequantize based on custom algorithm
         match custom.type_id.as_str() {
@@ -1378,6 +1394,7 @@ impl UnifiedQuantizationEngine {
         }
     }
 
+    /// Retrieve a codebook from the in-memory cache by its identifier.
     fn get_cached_codebook(&self, codebook_id: &str) -> Option<Codebook> {
         // Check codebook cache (lock-free, safe for async)
         self.codebook_cache
@@ -1515,6 +1532,7 @@ impl UnifiedQuantizationEngine {
         Ok(SimilarityResult::new(final_distance, *metric))
     }
 
+    /// Precompute per-subvector distance tables from the query to each centroid for fast PQ lookups.
     fn precompute_pq_distance_tables(
         &self,
         query: &[f32],
@@ -1551,6 +1569,7 @@ impl UnifiedQuantizationEngine {
         Ok(tables)
     }
 
+    /// Look up precomputed distances for PQ codes and aggregate into a final distance.
     fn lookup_pq_distance(
         &self,
         codes: &[u8],
@@ -1814,6 +1833,7 @@ pub struct QuantizationMetadata {
 
 /// In-memory codebook store for testing
 pub struct InMemoryCodebookStore {
+    /// Map of codebook id to codebook, guarded by an async read-write lock
     codebooks: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Codebook>>>,
 }
 
