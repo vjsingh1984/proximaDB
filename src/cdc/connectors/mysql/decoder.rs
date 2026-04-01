@@ -88,34 +88,63 @@ impl<R: Read> ReadExt for R {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EventType {
+    /// Unknown or unrecognized event type
     Unknown = 0,
+    /// Server startup event (type code 1)
     StartEvent = 1,
+    /// SQL statement event for DDL and non-row-based DML (type code 2)
     QueryEvent = 2,
+    /// Server shutdown event (type code 3)
     StopEvent = 3,
+    /// Binlog rotation event pointing to the next log file (type code 4)
     RotateEvent = 4,
+    /// Integer variable assignment event (type code 5)
     IntvarEvent = 5,
+    /// LOAD DATA INFILE event (type code 6)
     LoadEvent = 6,
+    /// Slave-generated event (type code 7)
     SlaveEvent = 7,
+    /// File creation event for LOAD DATA (type code 8)
     CreateFileEvent = 8,
+    /// Block append event for LOAD DATA (type code 9)
     AppendBlockEvent = 9,
+    /// Execute LOAD DATA event (type code 10)
     ExecLoadEvent = 10,
+    /// File deletion event for LOAD DATA (type code 11)
     DeleteFileEvent = 11,
+    /// New-style LOAD DATA event (type code 12)
     NewLoadEvent = 12,
+    /// RAND() seed value event (type code 13)
     RandEvent = 13,
+    /// User-defined variable assignment event (type code 14)
     UserVarEvent = 14,
+    /// Format description event describing the binlog version (type code 15)
     FormatDescriptionEvent = 15,
+    /// XA transaction identifier commit event (type code 16)
     XidEvent = 16,
+    /// Begin block for LOAD DATA statement (type code 17)
     BeginLoadQueryEvent = 17,
+    /// Execute a previously loaded LOAD DATA block (type code 18)
     ExecuteLoadQueryEvent = 18,
+    /// Maps a table ID to a database and table name for row events (type code 19)
     TableMapEvent = 19,
+    /// V1 write (INSERT) rows event (type code 23)
     WriteRowsEventV1 = 23,
+    /// V1 update rows event (type code 24)
     UpdateRowsEventV1 = 24,
+    /// V1 delete rows event (type code 25)
     DeleteRowsEventV1 = 25,
+    /// V2 write (INSERT) rows event (type code 30)
     WriteRowsEvent = 30,
+    /// V2 update rows event (type code 31)
     UpdateRowsEvent = 31,
+    /// V2 delete rows event (type code 32)
     DeleteRowsEvent = 32,
+    /// Global Transaction Identifier event (type code 33)
     GtidEvent = 33,
+    /// Anonymous GTID event for transactions without a GTID (type code 34)
     AnonymousGtidEvent = 34,
+    /// Set of previous GTIDs covered by earlier binlog files (type code 35)
     PreviousGtidsEvent = 35,
 }
 
@@ -415,11 +444,17 @@ impl BinlogDecoder {
 /// Event header
 #[derive(Debug, Clone)]
 pub struct EventHeader {
+    /// Unix timestamp (seconds) when the event was created on the source server
     pub timestamp: u32,
+    /// Type of the binlog event
     pub event_type: EventType,
+    /// ID of the MySQL server that generated this event
     pub server_id: u32,
+    /// Total length of the event in bytes, including the header
     pub event_length: u32,
+    /// Byte offset in the binlog file immediately after this event
     pub next_position: u32,
+    /// Event flags bitfield (e.g. LOG_EVENT_BINLOG_IN_USE_F)
     pub flags: u16,
 }
 
@@ -435,13 +470,24 @@ pub enum BinlogEvent {
     /// Delete rows event
     DeleteRows(RowEvent),
     /// XID (transaction commit)
-    Xid { xid: u64 },
+    Xid {
+        /// XA transaction ID that was committed
+        xid: u64,
+    },
     /// GTID event
-    Gtid { gtid: String },
+    Gtid {
+        /// Global Transaction Identifier string in `uuid:gno` format
+        gtid: String,
+    },
     /// Query event
     Query(QueryEvent),
     /// Rotate event (new binlog file)
-    Rotate { filename: String, position: u64 },
+    Rotate {
+        /// Name of the next binlog file
+        filename: String,
+        /// Byte position in the new binlog file to start reading from
+        position: u64,
+    },
 }
 
 impl BinlogEvent {
@@ -576,17 +622,24 @@ fn rows_to_json(rows: &[RowData], table_map: &Option<TableMapEvent>) -> Option<s
 /// Simplified binlog event type for CDC conversion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinlogEventType {
+    /// Corresponds to a WRITE_ROWS event (INSERT operation)
     WriteRowsEvent,
+    /// Corresponds to an UPDATE_ROWS event (UPDATE operation)
     UpdateRowsEvent,
+    /// Corresponds to a DELETE_ROWS event (DELETE operation)
     DeleteRowsEvent,
 }
 
 /// Table map event
 #[derive(Debug, Clone)]
 pub struct TableMapEvent {
+    /// Numeric table identifier assigned by the MySQL server for this binlog sequence
     pub table_id: u64,
+    /// Name of the database (schema) that owns the table
     pub schema: String,
+    /// Name of the table
     pub table: String,
+    /// Ordered list of column definitions for this table
     pub columns: Vec<ColumnDef>,
 }
 
@@ -600,70 +653,115 @@ impl TableMapEvent {
 /// Row event (INSERT/UPDATE/DELETE)
 #[derive(Debug, Clone)]
 pub struct RowEvent {
+    /// Numeric table identifier matching the associated `TableMapEvent`
     pub table_id: u64,
+    /// Whether this event represents an insert, update, or delete
     pub event_type: RowEventType,
+    /// Cached table map providing schema metadata; `None` if not yet received
     pub table_map: Option<TableMapEvent>,
+    /// Individual row changes carried by this event
     pub rows: Vec<RowData>,
 }
 
 /// Row event type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowEventType {
+    /// Row was newly inserted (WRITE_ROWS event)
     Insert,
+    /// Existing row was modified (UPDATE_ROWS event)
     Update,
+    /// Row was removed (DELETE_ROWS event)
     Delete,
 }
 
 /// Row data
 #[derive(Debug, Clone)]
 pub struct RowData {
+    /// Column values of the row before the change; present for UPDATE and DELETE events
     pub before: Option<Vec<ColumnValue>>,
+    /// Column values of the row after the change; present for INSERT and UPDATE events
     pub after: Option<Vec<ColumnValue>>,
 }
 
 /// Column definition
 #[derive(Debug, Clone)]
 pub struct ColumnDef {
+    /// Zero-based position of this column within the table
     pub index: usize,
+    /// MySQL wire type for this column
     pub column_type: ColumnType,
+    /// Whether the column allows NULL values
     pub is_nullable: bool,
+    /// Optional column name; populated when available from schema metadata
     pub name: Option<String>,
 }
 
 /// MySQL column types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnType {
+    /// Fixed-point DECIMAL type (type code 0)
     Decimal,
+    /// 1-byte integer TINYINT (type code 1)
     Tiny,
+    /// 2-byte integer SMALLINT (type code 2)
     Short,
+    /// 4-byte integer INT (type code 3)
     Long,
+    /// 4-byte floating-point FLOAT (type code 4)
     Float,
+    /// 8-byte floating-point DOUBLE (type code 5)
     Double,
+    /// NULL column placeholder (type code 6)
     Null,
+    /// TIMESTAMP without fractional seconds (type code 7)
     Timestamp,
+    /// 8-byte integer BIGINT (type code 8)
     LongLong,
+    /// 3-byte integer MEDIUMINT (type code 9)
     Int24,
+    /// Calendar date DATE (type code 10)
     Date,
+    /// Time-of-day TIME without fractional seconds (type code 11)
     Time,
+    /// Date and time DATETIME without fractional seconds (type code 12)
     DateTime,
+    /// Calendar year YEAR (type code 13)
     Year,
+    /// Internal new-style DATE representation (type code 14)
     NewDate,
+    /// Variable-length string VARCHAR (type code 15)
     Varchar,
+    /// Bit-field BIT (type code 16)
     Bit,
+    /// TIMESTAMP with fractional-second precision (type code 17)
     Timestamp2,
+    /// DATETIME with fractional-second precision (type code 18)
     DateTime2,
+    /// TIME with fractional-second precision (type code 19)
     Time2,
+    /// JSON column (type code 245)
     Json,
+    /// Fixed-precision decimal DECIMAL / NUMERIC (type code 246)
     NewDecimal,
+    /// ENUM string column (type code 247)
     Enum,
+    /// SET string column (type code 248)
     Set,
+    /// TINYBLOB / TINYTEXT (type code 249)
     TinyBlob,
+    /// MEDIUMBLOB / MEDIUMTEXT (type code 250)
     MediumBlob,
+    /// LONGBLOB / LONGTEXT (type code 251)
     LongBlob,
+    /// BLOB / TEXT (type code 252)
     Blob,
+    /// Internal variable-length string representation (type code 253)
     VarString,
+    /// Fixed-length CHAR / BINARY string (type code 254)
     String,
+    /// Spatial GEOMETRY column (type code 255)
     Geometry,
+    /// Unrecognized or reserved type code
     Unknown,
 }
 
@@ -708,12 +806,19 @@ impl From<u8> for ColumnType {
 /// Column value
 #[derive(Debug, Clone)]
 pub enum ColumnValue {
+    /// SQL NULL — the column has no value
     Null,
+    /// Signed 64-bit integer value
     Int(i64),
+    /// Unsigned 64-bit integer value
     UInt(u64),
+    /// 64-bit IEEE 754 floating-point value
     Float(f64),
+    /// UTF-8 text string value
     String(String),
+    /// Raw byte sequence (e.g. BLOB or BINARY columns)
     Bytes(Vec<u8>),
+    /// Structured JSON value
     Json(serde_json::Value),
 }
 
@@ -738,7 +843,9 @@ impl ColumnValue {
 /// Query event
 #[derive(Debug, Clone)]
 pub struct QueryEvent {
+    /// Database context in which the query was executed
     pub schema: String,
+    /// SQL statement text (DDL or non-row-based DML)
     pub query: String,
 }
 
