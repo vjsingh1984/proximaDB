@@ -968,7 +968,7 @@ pub async fn dijkstra_shortest_path(
 
             let should_update = distances
                 .get(neighbor_id)
-                .map_or(true, |&existing_dist| new_distance < existing_dist);
+                .is_none_or(|.map_or(true, |&existing_dist| new_distance < existing_dist)existing_dist| new_distance < existing_dist);
 
             if should_update {
                 distances.insert(neighbor_id.clone(), new_distance);
@@ -1528,7 +1528,7 @@ pub async fn k_shortest_paths(
                 let w = e.weight.unwrap_or(1.0);
                 let nd = q.dist + w;
                 let od = dist.get(&e.to_node_id).copied();
-                if od.map_or(true, |old| nd < old) {
+                if od.is_none_or(|old| nd < old) {
                     dist.insert(e.to_node_id.clone(), nd);
                     prev.insert(e.to_node_id.clone(), q.node_id.clone());
                     heap.push(QN {

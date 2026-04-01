@@ -330,7 +330,7 @@ impl SearchParams {
 
     /// Check if this is a batch search
     pub fn is_batch_search(&self) -> bool {
-        self.query_vectors.as_ref().map_or(false, |v| v.len() > 1)
+        self.query_vectors.as_ref().is_some_and(|v| v.len() > 1)
     }
 
     /// Create a filter expression from simple key-value pairs

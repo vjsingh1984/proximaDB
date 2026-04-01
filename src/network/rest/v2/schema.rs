@@ -755,7 +755,7 @@ fn build_existing_schema(
     let allow_additional = config
         .record_schema
         .as_ref()
-        .map_or(true, |s| s.auto_evolve);
+        .is_none_or(|s| s.auto_evolve);
 
     Some(SchemaDefinition {
         columns,
