@@ -645,7 +645,7 @@ impl LocalComputeProvider {
 impl Default for LocalComputeProvider {
     fn default() -> Self {
         Self::new()
-            .unwrap_or_else(|e| panic!("Failed to create default LocalComputeProvider: {}", e))
+            .unwrap_or_else(|e| anyhow::bail!("Failed to create default LocalComputeProvider: {}", e))
     }
 }
 

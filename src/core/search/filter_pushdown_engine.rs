@@ -426,7 +426,7 @@ impl FilterPushdownPlanner {
             }
         }
 
-        selectivity.min(1.0).max(0.0)
+        selectivity.clamp(0.0, 1.0)
     }
 
     /// Heuristic selectivity estimation (without statistics)

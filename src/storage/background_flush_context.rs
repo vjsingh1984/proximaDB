@@ -355,7 +355,7 @@ impl BackgroundFlushContext {
             StorageEngineType::Tst => {
                 let base_size = 20_000;
                 let dimension_factor = (self.dimension / 100).max(1);
-                (base_size / dimension_factor).max(2_000).min(100_000)
+                (base_size / dimension_factor).clamp(2_000, 100_000)
             }
         }
     }
@@ -379,7 +379,7 @@ impl BackgroundFlushContext {
                 // TST favors larger time-windowed flushes for partition efficiency.
                 let base_threshold = 100_000;
                 let dimension_factor = (self.dimension / 100).max(1);
-                (base_threshold / dimension_factor).max(5_000).min(250_000)
+                (base_threshold / dimension_factor).clamp(5_000, 250_000)
             }
         }
     }
