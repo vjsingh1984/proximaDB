@@ -61,18 +61,27 @@ pub enum FieldTransform {
     ParseJson,
     /// Apply regex replacement
     Regex {
+        /// Regex pattern to match.
         pattern: String,
+        /// Replacement string.
         replacement: String,
     },
     /// Extract substring
-    Substring { start: usize, length: Option<usize> },
+    Substring {
+        /// Starting index (0-based).
+        start: usize,
+        /// Optional length; if None, extracts to end.
+        length: Option<usize>,
+    },
     /// Convert case
     Case(CaseTransform),
     /// Hash the value
     Hash(HashAlgorithm),
     /// Concatenate multiple fields
     Concat {
+        /// Field names to concatenate.
         fields: Vec<String>,
+        /// Separator between concatenated values.
         separator: String,
     },
     /// Extract from JSON path
