@@ -553,7 +553,7 @@ impl MetadataSerializer for SstMetadataSerializer {
             });
 
             // Check each block against ID lookups
-            for (_i, block) in sst_metadata.blocks.iter().enumerate() {
+            for block in sst_metadata.blocks.iter() {
                 let mut need_block = false;
 
                 for id in &query_context.id_lookups {

@@ -1110,7 +1110,7 @@ impl IvfClusteringBuilder {
         let mut rowgroups = Vec::new();
 
         // Process each cluster independently
-        for (_cluster_idx, cluster) in clusters.into_iter().enumerate() {
+        for cluster in clusters.into_iter() {
             if cluster.is_empty() {
                 continue;
             }

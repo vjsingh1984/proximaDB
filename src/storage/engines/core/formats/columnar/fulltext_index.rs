@@ -350,7 +350,7 @@ impl Tokenizer {
         let mut tokens = Vec::new();
         let mut position = 0u32;
 
-        for (_i, word) in text.split_whitespace().enumerate() {
+        for word in text.split_whitespace() {
             let text_to_use = if self.config.lowercase {
                 word.to_lowercase()
             } else {

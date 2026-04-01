@@ -449,7 +449,7 @@ impl ModularBlockReader {
                 .read_data_block_async(block_idx as u64, ReadMode::Direct)
                 .await?;
 
-            for (_record_idx, record) in data_block.records.iter().enumerate() {
+            for record in data_block.records.iter() {
                 total_records_scanned += 1;
 
                 let distance =

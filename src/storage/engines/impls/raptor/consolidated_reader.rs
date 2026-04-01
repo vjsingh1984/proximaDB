@@ -400,7 +400,7 @@ impl RaptorReader {
         } else {
             // Load all row groups - DIRECT operations
             let metadata = self.read_metadata(file_path).await?;
-            for (_idx, rg_metadata) in metadata.row_groups.iter().enumerate() {
+            for rg_metadata in metadata.row_groups.iter() {
                 // DIRECT filesystem read
                 let full_file_data = self.filesystem.read(file_path).await?;
                 let start = rg_metadata.offset;
@@ -3002,7 +3002,7 @@ impl RaptorReader {
     ) -> Result<Vec<CandidateResult>> {
         let mut candidates = Vec::new();
 
-        for (_idx, (vector, id)) in vectors.iter().zip(ids.iter()).enumerate() {
+        for (vector, id) in vectors.iter().zip(ids.iter()) {
             let distance = self
                 .distance_compute
                 .calculate_distance(target_vector, vector, &DistanceMetric::Cosine)
