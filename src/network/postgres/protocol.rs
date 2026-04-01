@@ -2159,9 +2159,9 @@ impl PostgresProtocol {
         let after_eq = after_id[eq_pos + 1..].trim();
 
         // Extract quoted value
-        if after_eq.starts_with('\'') {
-            let end = after_eq[1..].find('\'')?;
-            Some(after_eq[1..end + 1].to_string())
+        if let Some(after_quote) = after_eq.strip_prefix('\'') {
+            let end = after_quote.find('\'')?;
+            Some(after_quote[..end + 1].to_string())
         } else {
             // Unquoted value - take until whitespace or semicolon
             let end = after_eq

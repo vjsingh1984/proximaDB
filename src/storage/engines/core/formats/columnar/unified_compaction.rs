@@ -761,8 +761,8 @@ impl UnifiedColumnarCompaction {
         let writer_properties = props_builder.build();
 
         // Strip file:// prefix if present for local file operations
-        let local_path = if output_path.starts_with("file://") {
-            &output_path[7..] // Strip "file://"
+        let local_path = if let Some(stripped) = output_path.strip_prefix("file://") {
+            stripped
         } else {
             output_path
         };

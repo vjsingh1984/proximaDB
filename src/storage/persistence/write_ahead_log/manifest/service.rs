@@ -620,7 +620,9 @@ impl GlobalManifestService {
         Ok(deleted_count)
     }
 
-    /// Rewrite the entire manifest (used after status updates)
+    /// Rewrite the entire manifest (used after status updates).
+    /// Uses write_atomic (temp file + rename) to prevent corruption if the process
+    /// crashes mid-write. A direct truncate+write would leave an empty or partial file.
     async fn rewrite_manifest(&self) -> Result<()> {
         let entries = self.entries.read().await;
 
@@ -638,7 +640,7 @@ impl GlobalManifestService {
         let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
             ::create_metadata_strategy(&*fs, None)?;
         let opts = strategy.create_file_options(&*fs, &url)?;
-        fs.write(&url, &buf, Some(opts))
+        fs.write_atomic(&url, &buf, Some(opts))
             .await
             .context("Failed to rewrite global manifest")?;
 

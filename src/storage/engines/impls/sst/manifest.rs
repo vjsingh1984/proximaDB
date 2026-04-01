@@ -180,14 +180,15 @@ impl SstManifest {
         // Get filesystem based on the URL scheme
         let fs = self.filesystem.get_filesystem(&self.manifest_url)?;
 
-        // Always allow overwrite for manifest updates
-        let write_options = crate::storage::persistence::filesystem::FileOptions {
-            overwrite: true,
-            ..Default::default()
-        };
+        // Use atomic write (temp+rename) to prevent corruption on crash
+        let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
+            ::create_metadata_strategy(&*fs, None)
+            .map_err(|e| anyhow::anyhow!("Failed to create write strategy: {}", e))?;
+        let write_options = strategy.create_file_options(&*fs, &self.manifest_url)
+            .map_err(|e| anyhow::anyhow!("Failed to create file options: {}", e))?;
 
-        // Write to manifest URL with overwrite enabled
-        fs.write(&self.manifest_url, &data, Some(write_options))
+        // Atomic write: write to temp file, then rename to final path
+        fs.write_atomic(&self.manifest_url, &data, Some(write_options))
             .await?;
 
         debug!(

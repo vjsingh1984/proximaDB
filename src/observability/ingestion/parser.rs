@@ -189,8 +189,8 @@ impl LogParser {
         let mut parsed = log.clone();
 
         // CEF:Version|Device Vendor|Device Product|Device Version|Signature ID|Name|Severity|Extension
-        if message.starts_with("CEF:") {
-            let parts: Vec<&str> = message[4..].splitn(8, '|').collect();
+        if let Some(message) = message.strip_prefix("CEF:") {
+            let parts: Vec<&str> = message.splitn(8, '|').collect();
             if parts.len() >= 7 {
                 parsed.source = Some(format!("{} {}", parts[1], parts[2]));
                 parsed.message = parts[5].to_string();

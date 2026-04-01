@@ -1283,12 +1283,12 @@ impl FilesystemFactory {
 
         // Handle file:// URLs specially to avoid URL parsing issues
         if normalized_url.starts_with("file://") {
-            let path = if normalized_url.starts_with("file:///") {
+            let path = if let Some(after_slashes) = normalized_url.strip_prefix("file:///") {
                 // Absolute path
-                format!("/{}", &normalized_url[8..])
+                format!("/{}", after_slashes)
             } else {
                 // Relative or other path
-                normalized_url[7..].to_string()
+                normalized_url.strip_prefix("file://").unwrap().to_string()
             };
             info!("    scheme: file, returning path: {}", path);
             return Ok(path);
@@ -1383,7 +1383,7 @@ impl FilesystemFactory {
             // The URL parser can fail on paths that look like domain names
             if url.starts_with("file://./") {
                 // Explicit relative path: file://./path/to/file
-                let relative_path = &url[7..]; // Remove "file://" prefix, keep "./"
+                let relative_path = url.strip_prefix("file://").unwrap(); // Keep the "./"
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Explicit relative path: '{}'",
                     relative_path
