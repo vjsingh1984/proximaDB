@@ -627,8 +627,7 @@ impl LeveledCompactor {
                 for next_file in next_files {
                     if let Some((next_min, next_max)) = next_file.hilbert_range {
                         // Check for overlap
-                        if !(curr_max < next_min || curr_min > next_max)
-                            && !files_to_compact.iter().any(|f| f.path == next_file.path) {
+                        if !(curr_max < next_min || curr_min > next_max || files_to_compact.iter().any(|f| f.path == next_file.path)) {
                                 files_to_compact.push(next_file.clone());
                             }
                     }

@@ -1395,7 +1395,7 @@ impl JoinOrderOptimizer {
             let left_in = (left_set.mask >> left_idx) & 1 == 1;
             let right_in = (right_set.mask >> right_idx) & 1 == 1;
 
-            if (left_in && right_in) || (left_in && (right_set.mask >> right_idx) & 1 == 1) {
+            if left_in && (right_in || (right_set.mask >> right_idx) & 1 == 1) {
                 keys.extend(join_keys.clone());
             }
         }

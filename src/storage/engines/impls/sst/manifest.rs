@@ -304,8 +304,7 @@ impl SstManifest {
             .files
             .values()
             .filter(|f| {
-                !f.marked_for_deletion
-                    && !(f.max_key < min_key.to_string() || f.min_key > max_key.to_string())
+                !(f.marked_for_deletion || f.max_key < min_key.to_string() || f.min_key > max_key.to_string())
             })
             .cloned()
             .collect()

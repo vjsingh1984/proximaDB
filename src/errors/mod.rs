@@ -209,6 +209,37 @@ impl From<crate::core::error::ProtocolError> for ApiError {
     }
 }
 
+/// Convert canonical ProximaDBError to ApiError for unified error handling.
+/// This enables any service-layer code returning ProximaDBError to be used
+/// directly in API handlers via the ? operator.
+impl From<crate::core::errors::ProximaDBError> for ApiError {
+    fn from(err: crate::core::errors::ProximaDBError) -> Self {
+        use crate::core::errors::ProximaDBError as E;
+        match err {
+            E::NotFound { resource_type, id } => {
+                if resource_type.to_lowercase() == "collection" {
+                    ApiError::CollectionNotFound(id)
+                } else {
+                    ApiError::NotFound(format!("{} not found: {}", resource_type, id))
+                }
+            }
+            E::AlreadyExists { resource_type, id } => {
+                ApiError::AlreadyExists(format!("{}: {}", resource_type, id))
+            }
+            E::InvalidInput(msg) => ApiError::InvalidArgument(msg),
+            E::InvalidCacheKey(msg) => ApiError::InvalidArgument(msg),
+            E::Authentication(msg) => ApiError::Unauthorized(msg),
+            E::PermissionDenied(msg) => ApiError::Forbidden(msg),
+            E::Timeout(secs) => ApiError::DeadlineExceeded(format!("Timed out after {}s", secs)),
+            E::CapacityExceeded { message } => ApiError::ResourceExhausted(message),
+            E::TransactionConflict { transaction, conflicting_with } => {
+                ApiError::Conflict(format!("{} conflicts with {}", transaction, conflicting_with))
+            }
+            other => ApiError::Internal(other.to_string()),
+        }
+    }
+}
+
 /// Helper function to convert Result<T, ApiError> to Response
 pub fn result_into_response<T>(result: Result<T, ApiError>) -> Response
 where

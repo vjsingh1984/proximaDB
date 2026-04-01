@@ -1687,11 +1687,15 @@ impl UnifiedDistanceCompute {
         }
     }
 
-    /// L2 distance using dimension-major (transposed) iteration
+    /// L2 distance using dimension-major (transposed) iteration.
+    /// Uses pooled buffer to avoid per-call allocation of the accumulator.
     fn batch_l2_transposed(&self, query: &[f32], candidates: &[&[f32]]) -> Vec<f32> {
         let n = candidates.len();
         let d = query.len();
-        let mut accum = vec![0.0f32; n];
+
+        let mut accum = self.memory_pool.vector_buffers.acquire();
+        accum.clear();
+        accum.resize(n, 0.0f32);
 
         for dim in 0..d {
             let q = query[dim];
@@ -1702,18 +1706,26 @@ impl UnifiedDistanceCompute {
         }
 
         // L2 distance is sqrt of sum of squared differences
-        for val in &mut accum {
+        for val in accum.iter_mut() {
             *val = val.sqrt();
         }
-        accum
+        accum.to_vec()
     }
 
-    /// Cosine distance using dimension-major (transposed) iteration
+    /// Cosine distance using dimension-major (transposed) iteration.
+    /// Uses pooled buffers for dot_products and norms_b intermediates.
     fn batch_cosine_transposed(&self, query: &[f32], candidates: &[&[f32]]) -> Vec<f32> {
         let n = candidates.len();
         let d = query.len();
-        let mut dot_products = vec![0.0f32; n];
-        let mut norms_b = vec![0.0f32; n];
+
+        let mut dot_products = self.memory_pool.vector_buffers.acquire();
+        dot_products.clear();
+        dot_products.resize(n, 0.0f32);
+
+        let mut norms_b = self.memory_pool.vector_buffers.acquire();
+        norms_b.clear();
+        norms_b.resize(n, 0.0f32);
+
         let mut norm_a = 0.0f32;
 
         for dim in 0..d {
@@ -1727,25 +1739,28 @@ impl UnifiedDistanceCompute {
         }
 
         let norm_a = norm_a.sqrt();
-        let mut results = vec![0.0f32; n];
+        let mut results = Vec::with_capacity(n);
         for i in 0..n {
             let norm_b = norms_b[i].sqrt();
             let denom = norm_a * norm_b;
             if denom > 0.0 {
-                // Cosine distance = 1 - similarity (lower = more similar)
-                results[i] = 1.0 - (dot_products[i] / denom);
+                results.push(1.0 - (dot_products[i] / denom));
             } else {
-                results[i] = f32::INFINITY;
+                results.push(f32::INFINITY);
             }
         }
         results
     }
 
-    /// Dot product distance using dimension-major (transposed) iteration
+    /// Dot product distance using dimension-major (transposed) iteration.
+    /// Uses pooled buffer for the accumulator.
     fn batch_dot_transposed(&self, query: &[f32], candidates: &[&[f32]]) -> Vec<f32> {
         let n = candidates.len();
         let d = query.len();
-        let mut dot_products = vec![0.0f32; n];
+
+        let mut dot_products = self.memory_pool.vector_buffers.acquire();
+        dot_products.clear();
+        dot_products.resize(n, 0.0f32);
 
         for dim in 0..d {
             let q = query[dim];
@@ -1754,8 +1769,7 @@ impl UnifiedDistanceCompute {
             }
         }
 
-        // Return raw dot products (consistent with compute_dot_product_simd which returns raw value)
-        dot_products
+        dot_products.to_vec()
     }
 
     /// Compute similarity results with semantic meaning
