@@ -342,11 +342,11 @@ impl ScalarPredicate {
                 bounds
                     .min
                     .compare(v)
-                    .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                    .is_none_or(|o| o != std::cmp::Ordering::Greater)
                     && bounds
                         .max
                         .compare(v)
-                        .map_or(true, |o| o != std::cmp::Ordering::Less)
+                        .is_none_or(|o| o != std::cmp::Ordering::Less)
             }
             Ne(_) => {
                 // Can only skip if min == max == v
@@ -364,7 +364,7 @@ impl ScalarPredicate {
                 bounds
                     .min
                     .compare(v)
-                    .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                    .is_none_or(|o| o != std::cmp::Ordering::Greater)
             }
             Gt(v) => {
                 // max > v
@@ -378,7 +378,7 @@ impl ScalarPredicate {
                 bounds
                     .max
                     .compare(v)
-                    .map_or(true, |o| o != std::cmp::Ordering::Less)
+                    .is_none_or(|o| o != std::cmp::Ordering::Less)
             }
             In(values) => {
                 // Any value in range
@@ -386,11 +386,11 @@ impl ScalarPredicate {
                     bounds
                         .min
                         .compare(v)
-                        .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                        .is_none_or(|o| o != std::cmp::Ordering::Greater)
                         && bounds
                             .max
                             .compare(v)
-                            .map_or(true, |o| o != std::cmp::Ordering::Less)
+                            .is_none_or(|o| o != std::cmp::Ordering::Less)
                 })
             }
             Between(min_v, max_v) => {
@@ -398,11 +398,11 @@ impl ScalarPredicate {
                 bounds
                     .min
                     .compare(max_v)
-                    .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                    .is_none_or(|o| o != std::cmp::Ordering::Greater)
                     && bounds
                         .max
                         .compare(min_v)
-                        .map_or(true, |o| o != std::cmp::Ordering::Less)
+                        .is_none_or(|o| o != std::cmp::Ordering::Less)
             }
             IsNull => bounds.null_count > 0,
             IsNotNull => bounds.null_count < 1, // Conservative

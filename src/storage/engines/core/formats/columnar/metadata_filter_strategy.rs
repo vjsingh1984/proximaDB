@@ -429,7 +429,7 @@ impl MetadataFilterAnalyzer {
             (serde_json::Value::Object(a), serde_json::Value::Object(e)) => {
                 a.len() == e.len()
                     && a.iter()
-                        .all(|(k, v)| e.get(k).map_or(false, |ev| self.values_equal(v, ev)))
+                        .all(|(k, v)| e.get(k).is_some_and(|ev| self.values_equal(v, ev)))
             }
 
             // Type mismatch - try numeric coercion
