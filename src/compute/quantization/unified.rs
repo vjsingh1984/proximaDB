@@ -522,8 +522,8 @@ impl UnifiedQuantizationEngine {
 
         if all_same {
             // Optimized batch processing for same quantization level
-            if let Some(QuantizationLevel::Pq(pq)) = &first_level.level_type {
-                if let Some(codebook_id) = &pq.codebook_id {
+            if let Some(QuantizationLevel::Pq(pq)) = &first_level.level_type
+                && let Some(codebook_id) = &pq.codebook_id {
                     let codebook = self
                         .codebook_store
                         .get_codebook(codebook_id)
