@@ -541,7 +541,6 @@ impl UnifiedQuantizationEngine {
 
                     return Ok(distances);
                 }
-            }
         }
 
         // Fallback to individual distance calculations

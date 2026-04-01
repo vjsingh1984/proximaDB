@@ -129,10 +129,7 @@ impl<D: FixedDimension> FixedVector<D> {
 
 impl<D: FixedDimension> From<Vec<f32>> for FixedVector<D> {
     fn from(data: Vec<f32>) -> Self {
-        match Self::new(data) {
-            Ok(vector) => vector,
-            Err(err) => err,
-        }
+        Self::new(data).expect("Vector dimension must match")
     }
 }
 

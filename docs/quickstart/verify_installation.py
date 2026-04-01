@@ -14,42 +14,42 @@ def test_imports():
     print("🔍 Testing imports...")
 
     try:
-        import proximadb
-        print(f"  ✅ proximadb (version {proximadb.__version__})")
+        import proximadb_sdk
+        print("  ✅ proximadb_sdk")
     except ImportError as e:
-        print(f"  ❌ proximadb: {e}")
+        print(f"  ❌ proximadb_sdk: {e}")
         return False
 
     try:
-        from proximadb import connect
+        from proximadb_sdk import connect
         print("  ✅ connect()")
     except ImportError as e:
         print(f"  ❌ connect: {e}")
         return False
 
     try:
-        from proximadb import ProximaDBClient
+        from proximadb_sdk import ProximaDBClient
         print("  ✅ ProximaDBClient")
     except ImportError as e:
         print(f"  ❌ ProximaDBClient: {e}")
         return False
 
     try:
-        from proximadb.models import CollectionConfig, VectorRecord
-        print("  ✅ CollectionConfig, VectorRecord")
+        from proximadb_sdk.models_v2 import CollectionConfig
+        print("  ✅ CollectionConfig (models_v2)")
     except ImportError as e:
         print(f"  ❌ models: {e}")
         return False
 
     try:
-        from proximadb.auth import AuthConfig, AuthMethod
+        from proximadb_sdk.auth import AuthConfig, AuthMethod
         print("  ✅ AuthConfig, AuthMethod")
     except ImportError as e:
         print(f"  ❌ auth: {e}")
         return False
 
     try:
-        from proximadb.exceptions import ProximaDBError
+        from proximadb_sdk.exceptions import ProximaDBError
         print("  ✅ ProximaDBError")
     except ImportError as e:
         print(f"  ❌ exceptions: {e}")
@@ -87,7 +87,7 @@ def test_client_creation():
     print("\n🔍 Testing client creation...")
 
     try:
-        from proximadb import ProximaDBClient
+        from proximadb_sdk import ProximaDBClient
 
         # Create client without connecting
         client = ProximaDBClient(url="http://localhost:5678")
@@ -103,7 +103,7 @@ def test_config_models():
     print("\n🔍 Testing configuration models...")
 
     try:
-        from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine
+        from proximadb_sdk.models_v2 import CollectionConfig, DistanceMetric, StorageEngine
 
         config = CollectionConfig(
             name="test_collection",
@@ -126,7 +126,7 @@ def test_auth_config():
     print("\n🔍 Testing authentication configuration...")
 
     try:
-        from proximadb.auth import AuthConfig, AuthMethod
+        from proximadb_sdk.auth import AuthConfig, AuthMethod
 
         config = AuthConfig(
             method=AuthMethod.API_KEY,

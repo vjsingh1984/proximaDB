@@ -39,10 +39,10 @@ pip install proximadb-python[dev]
 
 [source,bash]
 ----
-python3 -c "import proximadb; print(proximadb.__version__)"
+python3 -c "import proximadb_sdk; print('✅ ProximaDB SDK installed successfully')"
 ----
 
-Expected output: `0.2.0`
+Expected output: `✅ ProximaDB SDK installed successfully`
 
 == Quick Start (5 Minutes)
 
@@ -63,7 +63,7 @@ Create a file `quickstart.py`:
 
 [source,python]
 ----
-from proximadb import connect
+from proximadb_sdk import ProximaDBClient, connect
 
 # Connect to ProximaDB
 client = connect(url="http://localhost:5678")
@@ -148,7 +148,7 @@ python quickstart.py
 
 [source,python]
 ----
-from proximadb import connect
+from proximadb_sdk import connect
 from sentence_transformers import SentenceTransformer
 
 # Initialize
@@ -196,7 +196,7 @@ for result in results:
 
 [source,python]
 ----
-from proximadb import connect
+from proximadb_sdk import connect
 import numpy as np
 
 client = connect(url="http://localhost:5678")
@@ -247,7 +247,7 @@ for result in results:
 
 [source,python]
 ----
-from proximadb import connect
+from proximadb_sdk import connect
 from PIL import Image
 import numpy as np
 
@@ -300,7 +300,7 @@ for result in results:
 
 [source,python]
 ----
-from proximadb import connect
+from proximadb_sdk import connect
 import time
 from datetime import datetime, timedelta
 
@@ -351,8 +351,7 @@ for result in results:
 
 [source,python]
 ----
-from proximadb import connect
-from proximadb.auth import AuthConfig, AuthMethod
+from proximadb_sdk import connect, AuthConfig, AuthMethod
 
 # Configure tenant-specific authentication
 auth_config = AuthConfig(
@@ -480,7 +479,7 @@ results = client.search(
 
 [source,python]
 ----
-from proximadb import connect, ClientConfig
+from proximadb_sdk import connect, ClientConfig
 
 config = ClientConfig(
     url="http://localhost:5678",
@@ -497,7 +496,7 @@ client = connect(config=config)
 
 [source,python]
 ----
-from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine
+from proximadb_sdk.models_v2 import CollectionConfig, DistanceMetric, StorageEngine
 
 config = CollectionConfig(
     name="optimized_collection",
