@@ -110,7 +110,6 @@ impl FlushOperations {
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
             skip_uuid_subdir: true,
-            ..Default::default()
         };
 
         self.engine

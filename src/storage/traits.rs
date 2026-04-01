@@ -590,6 +590,41 @@ impl From<crate::proto::proximadb_v1::CollectionStats> for CollectionStats {
     }
 }
 
+/// Macro to implement the engine identification boilerplate for `UnifiedStorageEngine`.
+///
+/// Every engine must implement `engine_name()`, `engine_version()`, `strategy()`,
+/// and `get_filesystem_factory()`. These are purely descriptive and follow the same
+/// pattern across all 7+ engines. This macro eliminates ~15 lines of repetitive code
+/// per engine and prevents drift (e.g., one engine forgetting to update its version).
+///
+/// # Usage
+/// ```ignore
+/// impl_engine_identity!(SstEngine, "sst", PROXIMADB_VERSION, Sst, self.filesystem());
+/// impl_engine_identity!(ViperEngine, "VIPER", PROXIMADB_VERSION, Viper, &self.filesystem_factory);
+/// ```
+#[macro_export]
+macro_rules! impl_engine_identity {
+    ($engine:ty, $name:expr, $version:expr, $strategy:ident, $fs_expr:expr) => {
+        fn engine_name(&self) -> &'static str {
+            $name
+        }
+
+        fn engine_version(&self) -> &'static str {
+            $version
+        }
+
+        fn strategy(&self) -> $crate::storage::traits::StorageEngineStrategy {
+            $crate::storage::traits::StorageEngineStrategy::$strategy
+        }
+
+        fn get_filesystem_factory(
+            &self,
+        ) -> &$crate::storage::persistence::filesystem::FilesystemFactory {
+            $fs_expr
+        }
+    };
+}
+
 /// Unified storage engine trait implementing Strategy Pattern
 ///
 /// Common operations have default implementations that can be overridden.

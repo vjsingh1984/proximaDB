@@ -4280,7 +4280,6 @@ impl EmbeddedProximaDB {
                     timestamp_ns: m.timestamp_ns,
                     value: m.value,
                     labels: m.labels,
-                    ..Default::default()
                 })
                 .collect();
 

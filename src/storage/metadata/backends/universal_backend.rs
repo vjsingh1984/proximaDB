@@ -657,7 +657,6 @@ impl UniversalMetadataBackend {
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
             skip_uuid_subdir: true, // Skip UUID subdirectory to prevent orphaned directories
-            ..Default::default()
         };
 
         debug!("📁 Staging config:");
@@ -1277,7 +1276,6 @@ impl UniversalMetadataBackend {
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
             skip_uuid_subdir: true, // Skip UUID subdirectory to prevent orphaned directories
-            ..Default::default()
         };
 
         // Begin atomic operation
