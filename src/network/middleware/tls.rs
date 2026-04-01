@@ -50,7 +50,7 @@ use axum::{
     response::{Json, Response},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -71,6 +71,12 @@ pub struct TlsClientCertConfig {
     pub reject_expired: bool,
     /// Check certificate revocation (requires CRL/OCSP configuration)
     pub check_revocation: bool,
+    /// Set of revoked certificate serial numbers (loaded from CRL)
+    #[serde(default)]
+    pub revoked_serials: Option<HashSet<String>>,
+    /// Set of revoked certificate fingerprints (SHA-256)
+    #[serde(default)]
+    pub revoked_fingerprints: Option<HashSet<String>>,
 }
 
 impl Default for TlsClientCertConfig {
@@ -82,6 +88,8 @@ impl Default for TlsClientCertConfig {
             default_roles: vec!["reader".to_string()],
             reject_expired: true,
             check_revocation: false, // Disabled by default (requires additional setup)
+            revoked_serials: None,
+            revoked_fingerprints: None,
         }
     }
 }
@@ -320,11 +328,59 @@ fn validate_certificate(
         ));
     }
 
-    // Revocation checking would go here if enabled
-    // This requires CRL distribution points or OCSP responders
+    // CRL-based revocation checking
+    //
+    // When `check_revocation` is enabled, we check the certificate's serial
+    // number against the configured CRL (Certificate Revocation List).
+    // The CRL is expected to be available as a local file or cached copy
+    // from the CA's CRL Distribution Point.
     if config.check_revocation {
-        // TODO: Implement CRL/OCSP checking
-        debug!("Certificate revocation checking is configured but not yet implemented");
+        let serial = &info.serial;
+        let fingerprint = &info.fingerprint;
+
+        // Check serial against revoked certificate list
+        if let Some(ref revoked_serials) = config.revoked_serials {
+            if revoked_serials.contains(serial) {
+                warn!(
+                    "TLS client certificate revoked: serial={}, fingerprint={}",
+                    serial, fingerprint
+                );
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(TlsCertErrorResponse {
+                        error: "certificate_revoked".to_string(),
+                        message: format!(
+                            "Client certificate has been revoked (serial: {})",
+                            serial
+                        ),
+                        code: 401,
+                    }),
+                ));
+            }
+        }
+
+        // Check fingerprint against revoked fingerprint list
+        if let Some(ref revoked_fps) = config.revoked_fingerprints {
+            if revoked_fps.contains(fingerprint) {
+                warn!(
+                    "TLS client certificate revoked by fingerprint: {}",
+                    fingerprint
+                );
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(TlsCertErrorResponse {
+                        error: "certificate_revoked".to_string(),
+                        message: "Client certificate has been revoked".to_string(),
+                        code: 401,
+                    }),
+                ));
+            }
+        }
+
+        debug!(
+            "Certificate revocation check passed for serial={}, fingerprint={}",
+            serial, fingerprint
+        );
     }
 
     Ok(())

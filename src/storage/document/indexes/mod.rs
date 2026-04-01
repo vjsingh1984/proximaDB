@@ -8,6 +8,7 @@
 
 pub mod array_index;
 pub mod fulltext;
+pub mod geo_index;
 pub mod path_index;
 
 use std::collections::HashMap;
@@ -31,6 +32,8 @@ enum IndexType {
     // Hash and Geo are future implementations
 }
 
+use self::geo_index::GeoIndex;
+
 /// Collection index set - all indexes for a single collection
 #[derive(Default)]
 struct CollectionIndexes {
@@ -40,6 +43,8 @@ struct CollectionIndexes {
     array_indexes: HashMap<String, ArrayIndex>,
     /// Full-text search index (single per collection)
     fulltext_index: Option<FullTextIndex>,
+    /// Geospatial indexes by path
+    geo_indexes: HashMap<String, GeoIndex>,
 }
 
 
@@ -98,8 +103,10 @@ impl IndexManager {
                 }
             }
             DocIndexType::Geo => {
-                // TODO: Implement geospatial index
-                return Err(anyhow!("Geo index not yet implemented"));
+                let index = GeoIndex::new(&definition.path);
+                collection_indexes
+                    .geo_indexes
+                    .insert(definition.path.clone(), index);
             }
             DocIndexType::Unspecified => {
                 return Err(anyhow!("Unspecified index type"));

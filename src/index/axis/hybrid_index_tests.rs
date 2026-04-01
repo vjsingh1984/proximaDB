@@ -9,11 +9,111 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::index::axis::management::manager::AxisManager;
     use crate::index::axis::management::manager::{
         FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
     };
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
+    use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use tracing::debug;
+
+    fn create_vector_record(
+        id: &str,
+        vector: Vec<f32>,
+        metadata: &[(&str, serde_json::Value)],
+    ) -> VectorRecord {
+        let metadata = metadata
+            .iter()
+            .map(|(key, value)| {
+                let sql_value = match value {
+                    serde_json::Value::String(s) => SqlValue {
+                        value: Some(sql_value::Value::StringValue(s.clone())),
+                    },
+                    serde_json::Value::Number(n) => {
+                        if let Some(i) = n.as_i64() {
+                            SqlValue {
+                                value: Some(sql_value::Value::Int64Value(i)),
+                            }
+                        } else if let Some(f) = n.as_f64() {
+                            SqlValue {
+                                value: Some(sql_value::Value::NumberValue(f)),
+                            }
+                        } else {
+                            SqlValue {
+                                value: Some(sql_value::Value::StringValue(n.to_string())),
+                            }
+                        }
+                    }
+                    serde_json::Value::Bool(b) => SqlValue {
+                        value: Some(sql_value::Value::BoolValue(*b)),
+                    },
+                    serde_json::Value::Null => SqlValue {
+                        value: Some(sql_value::Value::NullValue(0)),
+                    },
+                    other => SqlValue {
+                        value: Some(sql_value::Value::StringValue(other.to_string())),
+                    },
+                };
+                ((*key).to_string(), sql_value)
+            })
+            .collect();
+
+        VectorRecord {
+            id: id.to_string(),
+            vector,
+            metadata,
+            timestamp: Some(chrono::Utc::now().timestamp()),
+            updated_at: Some(chrono::Utc::now().timestamp()),
+            expires_at: None,
+            version: Some(1),
+            source: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_axis_manager_filters_hybrid_query_results() {
+        let manager = AxisManager::new(crate::index::axis::types::AxisConfig::default())
+            .await
+            .unwrap();
+
+        let electronics = create_vector_record(
+            "electronics-1",
+            vec![1.0, 0.0, 0.0, 0.0],
+            &[("category", serde_json::json!("electronics"))],
+        );
+        let books = create_vector_record(
+            "books-1",
+            vec![0.0, 1.0, 0.0, 0.0],
+            &[("category", serde_json::json!("books"))],
+        );
+
+        manager
+            .insert("test_collection", &electronics)
+            .await
+            .unwrap();
+        manager.insert("test_collection", &books).await.unwrap();
+
+        let query = HybridQuery {
+            collection_id: "test_collection".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: vec![1.0, 0.0, 0.0, 0.0],
+                similarity_threshold: 0.0,
+            }),
+            metadata_filters: vec![MetadataFilter {
+                field: "category".to_string(),
+                operator: FilterOperator::Equals,
+                value: serde_json::json!("electronics"),
+            }],
+            id_filters: vec![],
+            top_k: 2,
+            include_expired: false,
+        };
+
+        let result = manager.query(query).await.unwrap();
+
+        assert_eq!(result.results.len(), 1);
+        assert_eq!(result.results[0].vector_id, "electronics-1".to_string());
+    }
 
     #[tokio::test]
     async fn test_hybrid_vector_metadata_search() {

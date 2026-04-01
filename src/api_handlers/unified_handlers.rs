@@ -120,13 +120,14 @@ impl CollectionIdCache {
     pub fn get(&self, identifier: &str) -> Option<String> {
         let cache = self.cache.read().ok()?;
         if let Some(entry) = cache.get(identifier)
-            && entry.cached_at.elapsed() < self.ttl {
-                debug!(
-                    "Collection ID cache hit: '{}' -> '{}'",
-                    identifier, entry.collection_id
-                );
-                return Some(entry.collection_id.clone());
-            }
+            && entry.cached_at.elapsed() < self.ttl
+        {
+            debug!(
+                "Collection ID cache hit: '{}' -> '{}'",
+                identifier, entry.collection_id
+            );
+            return Some(entry.collection_id.clone());
+        }
         None
     }
 
@@ -620,10 +621,10 @@ impl UnifiedHandlers {
     /// ```
     pub async fn execute_hybrid_search(
         &self,
-        _collection_id: &str,
+        collection_id: &str,
         text_query: &str,
         query_vector: &[f32],
-        _top_k: usize,
+        top_k: usize,
         fusion_strategy: crate::core::search::hybrid::FusionStrategy,
         _filters: Option<crate::core::search::FilterExpression>,
     ) -> anyhow::Result<Vec<crate::core::search::hybrid::FusedSearchResult>> {
@@ -631,17 +632,58 @@ impl UnifiedHandlers {
 
         let coordinator = HybridCoordinator::new(fusion_strategy);
 
-        // Mock BM25 search for now (TODO: integrate actual BM25 backend)
-        let bm25_search = |_query: String| async move {
-            // TODO: Replace with actual BM25 full-text search
-            // For now, return empty results
-            Ok::<Vec<BM25Result>, anyhow::Error>(vec![])
-        };
+        // BM25 search is temporarily disabled here until the document service is
+        // explicitly plumbed into UnifiedHandlers. Keep the hybrid API callable
+        // and let the fusion engine operate on the live vector branch.
+        let bm25_search =
+            |_query: String| async move { Ok::<Vec<BM25Result>, anyhow::Error>(Vec::new()) };
 
-        // Mock vector search (TODO: use actual vector search service)
-        let vector_search = |_vector: Vec<f32>| async move {
-            // TODO: Replace with actual vector search using self.vector_operations_service
-            Ok::<Vec<VectorResult>, anyhow::Error>(vec![])
+        // Vector search via the vector operations service
+        let vec_service = self.vector_operations_service.clone();
+        let coll_id_vec = collection_id.to_string();
+        let k_vec = top_k;
+        let vector_search = |vector: Vec<f32>| async move {
+            let request = crate::proto::proximadb_v1::VectorSearchRequest {
+                collection_id: coll_id_vec,
+                queries: vec![crate::proto::proximadb_v1::SearchQuery {
+                    vector,
+                    filters: HashMap::new(),
+                    advanced_filter: None,
+                }],
+                top_k: k_vec as u32,
+                include_fields: Some(crate::proto::proximadb_v1::IncludeFields {
+                    vector: false,
+                    metadata: true,
+                    score: true,
+                    rank: false,
+                    source: false,
+                    source_options: HashMap::new(),
+                }),
+                search_params: None,
+                distance_metric_override: None,
+                search_optimization: None,
+            };
+
+            match vec_service.search_v1(request).await {
+                Ok(results) => {
+                    let vec_results: Vec<VectorResult> = results
+                        .results
+                        .unwrap_or_default()
+                        .results
+                        .into_iter()
+                        .map(|r| VectorResult {
+                            doc_id: r.id,
+                            score: r.similarity.unwrap_or(r.score as f32) as f64,
+                            distance: 1.0 - r.similarity.unwrap_or(r.score as f32) as f64,
+                            metadata: crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(
+                                &r.metadata,
+                            ),
+                        })
+                        .collect();
+                    Ok(vec_results)
+                }
+                Err(_) => Ok::<Vec<VectorResult>, anyhow::Error>(vec![]),
+            }
         };
 
         let fused_results = coordinator
@@ -1115,10 +1157,7 @@ impl UnifiedHandlers {
                 // 1. Perform vector search
                 let vector_search_response = self
                     .handle_vector_search_v1(
-                        request
-                            .vector_search_request
-                            .clone()
-                            .unwrap_or_default(),
+                        request.vector_search_request.clone().unwrap_or_default(),
                     )
                     .await?;
                 if let Some(results) = vector_search_response.results {
@@ -1130,16 +1169,10 @@ impl UnifiedHandlers {
 
                     // 2. Perform graph traversal from these nodes
                     if !start_node_ids.is_empty() {
-                        let graph_req = request
-                            .graph_traversal_request
-                            .clone()
-                            .unwrap_or_default();
+                        let graph_req = request.graph_traversal_request.clone().unwrap_or_default();
                         let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
                             graph_id: "default".to_string(), // TODO: Extract from request or pass as parameter
-                            start_node_id: start_node_ids
-                                .first()
-                                .cloned()
-                                .unwrap_or_default(), // Use first for now, need to handle multiple starts
+                            start_node_id: start_node_ids.first().cloned().unwrap_or_default(), // Use first for now, need to handle multiple starts
                             max_depth: if graph_req.max_depth == 0 {
                                 3
                             } else {
@@ -2997,7 +3030,10 @@ mod tests {
 
         // Entry should be expired on next get (TTL = 0ms)
         std::thread::sleep(Duration::from_millis(1));
-        assert!(cache.get("key").is_none(), "Expired entry should return None");
+        assert!(
+            cache.get("key").is_none(),
+            "Expired entry should return None"
+        );
     }
 
     #[test]

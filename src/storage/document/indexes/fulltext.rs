@@ -7,10 +7,12 @@
 // - Fuzzy matching
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::RwLock;
 
 use anyhow::{Context, Result};
 use tantivy::collector::TopDocs;
+use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
 use tantivy::schema::{Field, STORED, Schema, TEXT, Value};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument};
@@ -36,26 +38,63 @@ pub struct FullTextIndex {
     id_field: Field,
     /// Indexed text fields by path
     text_fields: RwLock<HashMap<String, Field>>,
+    /// Disk directory for persistent indexes (None = in-memory)
+    persistent_dir: Option<std::path::PathBuf>,
 }
 
 impl FullTextIndex {
-    /// Create a new full-text index
+    /// Create a new in-memory full-text index (for tests and backward compatibility)
     pub fn new(collection: &str) -> Result<Self> {
-        // Build schema with document ID
         let mut schema_builder = Schema::builder();
         let id_field = schema_builder.add_text_field("_id", STORED);
-
         let schema = schema_builder.build();
 
-        // Create in-memory index (TODO: support disk-based index)
         let index = Index::create_in_ram(schema.clone());
+        Self::from_index(collection, index, schema, id_field, None)
+    }
 
-        // Create writer with 50MB heap
+    /// Create a disk-persisted full-text index at the given directory
+    ///
+    /// If the directory already contains a valid index, it is opened instead of
+    /// recreated, preserving previously indexed data across restarts.
+    pub fn new_persistent(collection: &str, data_dir: &Path) -> Result<Self> {
+        let index_dir = data_dir.join("fulltext").join(collection);
+        std::fs::create_dir_all(&index_dir)
+            .context("Failed to create full-text index directory")?;
+
+        let mut schema_builder = Schema::builder();
+        let id_field = schema_builder.add_text_field("_id", STORED);
+        let schema = schema_builder.build();
+
+        let mmap_dir = MmapDirectory::open(&index_dir)
+            .context("Failed to open mmap directory for full-text index")?;
+
+        // Try to open existing index first; fall back to creating a new one
+        let index = Index::open_or_create(mmap_dir, schema)
+            .context("Failed to open or create persistent full-text index")?;
+
+        // Use the index's actual schema (which may have additional fields
+        // from a previous session)
+        let actual_schema = index.schema();
+        let actual_id_field = actual_schema
+            .get_field("_id")
+            .unwrap_or(id_field);
+
+        Self::from_index(collection, index, actual_schema, actual_id_field, Some(index_dir))
+    }
+
+    /// Shared constructor from an already-created Tantivy Index
+    fn from_index(
+        collection: &str,
+        index: Index,
+        schema: Schema,
+        id_field: Field,
+        persistent_dir: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
         let writer = index
             .writer(50_000_000)
             .context("Failed to create index writer")?;
 
-        // Create reader
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::OnCommitWithDelay)
@@ -70,34 +109,102 @@ impl FullTextIndex {
             schema,
             id_field,
             text_fields: RwLock::new(HashMap::new()),
+            persistent_dir,
         })
     }
 
     /// Add a field to be indexed
+    ///
+    /// If the field already exists in the index schema (e.g., from a prior
+    /// persistent session), it is reused.  Otherwise, the field is dynamically
+    /// registered.  Note: Tantivy does not support adding fields to an existing
+    /// schema, so we look up the field by name — if it was pre-registered at
+    /// index creation time it is available; otherwise we store a mapping for
+    /// text extraction and the `_id` field is the only field written.
     pub fn add_field(&mut self, path: &str) -> Result<()> {
-        // Rebuild schema with new field
-        let mut schema_builder = Schema::builder();
-        let _id_field = schema_builder.add_text_field("_id", STORED);
-
-        // Copy existing fields
-        let existing_fields = self
-            .text_fields
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for (existing_path, _) in existing_fields.iter() {
-            schema_builder.add_text_field(existing_path, TEXT);
-        }
-
-        // Add new field
-        let field = schema_builder.add_text_field(path, TEXT);
-        drop(existing_fields);
-
-        // Update text fields
         let mut text_fields = self
             .text_fields
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        text_fields.insert(path.to_string(), field);
+
+        if text_fields.contains_key(path) {
+            return Ok(()); // Already registered
+        }
+
+        // Try to find the field in the existing index schema (works for re-opened indexes)
+        if let Ok(field) = self.index.schema().get_field(path) {
+            text_fields.insert(path.to_string(), field);
+            return Ok(());
+        }
+
+        // Field doesn't exist yet — we need to register it.
+        // Tantivy doesn't allow dynamic field addition after index creation.
+        // Workaround: store all text content under the _id field's document,
+        // and use the body text for search by concatenating into a "body" field.
+        // Better approach: recreate the index with the additional field.
+        drop(text_fields);
+
+        // Rebuild the entire index schema with all existing + new fields
+        let mut schema_builder = Schema::builder();
+        let new_id_field = schema_builder.add_text_field("_id", STORED);
+
+        let existing = self
+            .text_fields
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        for (existing_path, _) in existing.iter() {
+            schema_builder.add_text_field(existing_path, TEXT);
+        }
+        let new_text_field = schema_builder.add_text_field(path, TEXT);
+        let new_schema = schema_builder.build();
+        drop(existing);
+
+        // Create a new index with the extended schema
+        let new_index = if let Some(ref dir) = self.persistent_dir {
+            // Persistent: recreate on disk (existing segments are preserved by Tantivy)
+            let mmap_dir = MmapDirectory::open(dir)
+                .context("Failed to reopen mmap directory for field addition")?;
+            Index::open_or_create(mmap_dir, new_schema.clone())
+                .context("Failed to recreate persistent index with new field")?
+        } else {
+            Index::create_in_ram(new_schema.clone())
+        };
+        let new_writer = new_index
+            .writer(50_000_000)
+            .context("Failed to create index writer for extended schema")?;
+        let new_reader = new_index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into()
+            .context("Failed to create index reader for extended schema")?;
+
+        // Rebuild text_fields map with fields from the new schema
+        let mut new_text_fields = HashMap::new();
+        let old_fields = self
+            .text_fields
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        for (p, _) in old_fields.iter() {
+            if let Ok(f) = new_schema.get_field(p) {
+                new_text_fields.insert(p.clone(), f);
+            }
+        }
+        drop(old_fields);
+        new_text_fields.insert(path.to_string(), new_text_field);
+
+        // Swap all internals
+        self.index = new_index;
+        *self
+            .writer
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = new_writer;
+        self.reader = new_reader;
+        self.schema = new_schema;
+        self.id_field = new_id_field;
+        *self
+            .text_fields
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = new_text_fields;
 
         Ok(())
     }
@@ -266,10 +373,66 @@ impl FullTextIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::{SqlObject, SqlValue, sql_value::Value as V};
+    use std::collections::HashMap;
+
+    fn make_doc(fields: Vec<(&str, &str)>) -> SqlObject {
+        let mut map = HashMap::new();
+        for (k, v) in fields {
+            map.insert(
+                k.to_string(),
+                SqlValue {
+                    value: Some(V::StringValue(v.to_string())),
+                },
+            );
+        }
+        SqlObject { fields: map }
+    }
 
     #[test]
     fn test_fulltext_index_new() {
         let index = FullTextIndex::new("test_collection");
         assert!(index.is_ok());
+    }
+
+    #[test]
+    fn test_persistent_index_survives_reopen() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path();
+
+        // Phase 1: create index, insert document, commit
+        {
+            let mut idx = FullTextIndex::new_persistent("coll1", data_dir).unwrap();
+            idx.add_field("title").unwrap();
+            let doc = make_doc(vec![("title", "hello world rust programming")]);
+            idx.index_document("doc1", &doc).unwrap();
+            idx.commit().unwrap();
+        }
+
+        // Phase 2: reopen the same directory — data must still be searchable
+        {
+            let mut idx = FullTextIndex::new_persistent("coll1", data_dir).unwrap();
+            idx.add_field("title").unwrap();
+            // Force the reader to pick up committed segments from disk
+            // The OnCommitWithDelay policy may not auto-reload immediately
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            idx.reader.reload().unwrap();
+            let results = idx.search("rust", 10).unwrap();
+            assert_eq!(results.len(), 1, "Expected doc1 to survive reopen");
+            assert_eq!(results[0].0, "doc1");
+        }
+    }
+
+    #[test]
+    fn test_in_memory_index_basic_search() {
+        let mut idx = FullTextIndex::new("test").unwrap();
+        idx.add_field("body").unwrap();
+        let doc = make_doc(vec![("body", "the quick brown fox")]);
+        idx.index_document("d1", &doc).unwrap();
+        idx.commit().unwrap();
+
+        let results = idx.search("quick", 5).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "d1");
     }
 }

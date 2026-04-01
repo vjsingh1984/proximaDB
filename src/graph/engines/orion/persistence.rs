@@ -880,12 +880,40 @@ impl OrionPersistence {
     }
 
     /// Create a checkpoint (snapshot + truncate WAL)
+    ///
+    /// Saves a full snapshot, then truncates the WAL directory so that
+    /// replay after a restart starts from this checkpoint.
     pub async fn checkpoint(&self, engine: &OrionGraphEngine) -> Result<PathBuf> {
         let snapshot_path = self.save_snapshot(engine).await?;
 
-        // WAL truncation will be implemented when WAL is added
-        if self.wal_path.is_some() {
-            debug!("WAL truncation placeholder - to be implemented");
+        // Truncate WAL: remove all segment files so replay is a no-op after
+        // a clean checkpoint.  The next write re-creates segment files.
+        if let Some(ref wal_path) = self.wal_path {
+            if wal_path.exists() {
+                match std::fs::read_dir(wal_path) {
+                    Ok(entries) => {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() {
+                                if let Err(e) = std::fs::remove_file(&path) {
+                                    tracing::warn!(
+                                        "Failed to truncate WAL segment {:?}: {}",
+                                        path,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        info!(
+                            "WAL truncated after checkpoint for graph {}",
+                            self.graph_id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to read WAL directory for truncation: {}", e);
+                    }
+                }
+            }
         }
 
         Ok(snapshot_path)

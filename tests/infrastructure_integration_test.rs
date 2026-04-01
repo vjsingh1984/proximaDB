@@ -6,8 +6,8 @@
 // Run: cargo test --test infrastructure_integration_test
 
 use std::process::Command;
-use std::time::Duration;
 use std::thread;
+use std::time::Duration;
 
 /// Test helper to run shell commands
 fn run_command(command: &str, args: &[&str]) -> Result<String, String> {
@@ -58,7 +58,17 @@ mod infrastructure_tests {
     #[ignore] // Requires deployed infrastructure
     fn test_eks_cluster_exists() {
         // Test: EKS cluster should be running
-        let result = run_command("aws", &["eks", "describe-cluster", "--name", "proximadb-dev", "--region", "us-east-1"]);
+        let result = run_command(
+            "aws",
+            &[
+                "eks",
+                "describe-cluster",
+                "--name",
+                "proximadb-dev",
+                "--region",
+                "us-east-1",
+            ],
+        );
         assert!(result.is_ok(), "EKS cluster should exist");
     }
 
@@ -74,8 +84,8 @@ mod infrastructure_tests {
     #[ignore]
     fn test_nodes_are_ready() {
         // Test: All EKS nodes should be in Ready state
-        let output = run_command("kubectl", &["get", "nodes", "-o", "json"])
-            .expect("Failed to get nodes");
+        let output =
+            run_command("kubectl", &["get", "nodes", "-o", "json"]).expect("Failed to get nodes");
 
         // Parse JSON output (simplified check)
         assert!(output.contains("\"status\""), "Should have node status");
@@ -105,14 +115,14 @@ mod infrastructure_tests {
     #[ignore]
     fn test_proximadb_pods_are_running() {
         // Test: All ProximaDB pods should be running
-        let output = run_command(
-            "kubectl",
-            &["get", "pods", "-n", "proximadb", "-o", "json"],
-        )
-        .expect("Failed to get pods");
+        let output = run_command("kubectl", &["get", "pods", "-n", "proximadb", "-o", "json"])
+            .expect("Failed to get pods");
 
         // Check for Running phase
-        assert!(output.contains("\"phase\": \"Running\""), "Pods should be running");
+        assert!(
+            output.contains("\"phase\": \"Running\""),
+            "Pods should be running"
+        );
     }
 
     #[test]
@@ -129,10 +139,7 @@ mod infrastructure_tests {
     #[ignore]
     fn test_proximadb_hpa_exists() {
         // Test: Horizontal Pod Autoscaler should exist
-        assert!(
-            resource_exists("hpa", "proximadb"),
-            "HPA should exist"
-        );
+        assert!(resource_exists("hpa", "proximadb"), "HPA should exist");
     }
 
     #[test]
@@ -189,7 +196,10 @@ mod connectivity_tests {
 
         assert!(output.is_ok(), "Health endpoint should be accessible");
         let response = output.unwrap();
-        assert!(response.contains("\"status\": \"ok\""), "Health check should pass");
+        assert!(
+            response.contains("\"status\": \"ok\""),
+            "Health check should pass"
+        );
     }
 
     #[test]
@@ -239,9 +249,7 @@ mod performance_tests {
         // Test: Pods should start within reasonable time
         // This is more of a deployment test
         let result = wait_for_condition(
-            || {
-                run_command("kubectl", &["get", "pods", "-n", "proximadb"]).is_ok()
-            },
+            || run_command("kubectl", &["get", "pods", "-n", "proximadb"]).is_ok(),
             Duration::from_secs(300), // 5 minutes
             Duration::from_secs(5),
         );
@@ -260,11 +268,22 @@ mod security_tests {
         // Test: Pods should run as non-root user
         let output = run_command(
             "kubectl",
-            &["get", "pods", "-n", "proximadb", "-o", "jsonpath='{.items[*].spec.securityContext}'"],
-        ).expect("Failed to get pod security context");
+            &[
+                "get",
+                "pods",
+                "-n",
+                "proximadb",
+                "-o",
+                "jsonpath='{.items[*].spec.securityContext}'",
+            ],
+        )
+        .expect("Failed to get pod security context");
 
         // Should have runAsNonRoot set
-        assert!(output.contains("1000"), "Pods should run as non-root (UID 1000)");
+        assert!(
+            output.contains("1000"),
+            "Pods should run as non-root (UID 1000)"
+        );
     }
 
     #[test]
@@ -273,8 +292,16 @@ mod security_tests {
         // Test: Pods should have resource limits defined
         let output = run_command(
             "kubectl",
-            &["get", "pods", "-n", "proximadb", "-o", "jsonpath='{.items[*].spec.containers[*].resources}'"],
-        ).expect("Failed to get pod resources");
+            &[
+                "get",
+                "pods",
+                "-n",
+                "proximadb",
+                "-o",
+                "jsonpath='{.items[*].spec.containers[*].resources}'",
+            ],
+        )
+        .expect("Failed to get pod resources");
 
         // Should have limits and requests
         assert!(output.contains("cpu"), "Pods should have CPU limits");
@@ -289,7 +316,10 @@ mod security_tests {
 
         // Note: This might not have network policies if not configured
         // For now, we just check the command doesn't fail
-        assert!(result.is_ok() || result.unwrap_err().contains("No resources found"), "Network policies command should succeed");
+        assert!(
+            result.is_ok() || result.unwrap_err().contains("No resources found"),
+            "Network policies command should succeed"
+        );
     }
 }
 
@@ -301,11 +331,20 @@ mod scaling_tests {
     #[ignore]
     fn test_hpa_is_configured() {
         // Test: HPA should be configured
-        let output = run_command("kubectl", &["get", "hpa", "proximadb", "-n", "proximadb", "-o", "json"])
-            .expect("Failed to get HPA");
+        let output = run_command(
+            "kubectl",
+            &["get", "hpa", "proximadb", "-n", "proximadb", "-o", "json"],
+        )
+        .expect("Failed to get HPA");
 
-        assert!(output.contains("\"minReplicas\""), "HPA should have minReplicas");
-        assert!(output.contains("\"maxReplicas\""), "HPA should have maxReplicas");
+        assert!(
+            output.contains("\"minReplicas\""),
+            "HPA should have minReplicas"
+        );
+        assert!(
+            output.contains("\"maxReplicas\""),
+            "HPA should have maxReplicas"
+        );
     }
 
     #[test]
@@ -358,10 +397,7 @@ mod helm_tests {
     #[ignore]
     fn test_helm_lint() {
         // Test: Helm chart should pass lint
-        let result = run_command(
-            "helm",
-            &["lint", "infrastructure/helm/proximadb"],
-        );
+        let result = run_command("helm", &["lint", "infrastructure/helm/proximadb"]);
 
         assert!(result.is_ok(), "Helm chart should pass lint");
     }
@@ -411,10 +447,7 @@ mod integration_tests {
         // Test: Backup and restore functionality
         // This would require actual backup infrastructure
         // For now, we just check S3 bucket exists
-        let result = run_command(
-            "aws",
-            &["s3", "ls", "s3://proximadb-wal-archive-dev"],
-        );
+        let result = run_command("aws", &["s3", "ls", "s3://proximadb-wal-archive-dev"]);
 
         // This might fail if bucket doesn't exist yet
         // assert!(result.is_ok() || result.unwrap_err().contains("NoSuchBucket"), "S3 bucket should exist or not exist");

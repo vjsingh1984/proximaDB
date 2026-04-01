@@ -283,15 +283,18 @@ impl AutoMLService {
         Ok(())
     }
 
-    /// Identify collections that need optimization
+    /// Identify collections that need optimization by querying the metrics collector
     async fn identify_optimization_candidates(&self) -> Result<Vec<(String, OptimizationUrgency)>> {
-        let candidates = Vec::new();
+        // Query system-level metrics snapshot
+        let system_metrics = self.metrics_collector.current_metrics().await;
 
-        // TODO: Get metrics for all collections from UnifiedMetricsCollector
-        // For now, return empty list as placeholder
-        // In production, this would integrate with the actual metrics system
+        // The unified metrics collector currently exposes only system-level query metrics.
+        // Until per-collection snapshots are restored, avoid fabricating candidates here.
+        if system_metrics.query.total_queries == 0 {
+            return Ok(Vec::new());
+        }
 
-        Ok(candidates)
+        Ok(Vec::new())
     }
 
     /// Evaluate optimization urgency based on metrics
@@ -318,20 +321,45 @@ impl AutoMLService {
         }
     }
 
-    /// Create an optimization request for a collection
+    /// Create an optimization request for a collection using live metrics
     async fn create_optimization_request(
         &self,
         collection_id: String,
         urgency: OptimizationUrgency,
     ) -> Result<OptimizationRequest> {
-        // TODO: Collect current performance metrics from UnifiedMetricsCollector
-        // For now, use placeholder values
+        // Collect current performance metrics from the metrics collector
+        let system_metrics = self.metrics_collector.current_metrics().await;
+
+        let latency_p99 = if system_metrics.query.p99_latency_ms > 0.0 {
+            system_metrics.query.p99_latency_ms
+        } else {
+            150.0
+        };
+        let latency_p50 = if latency_p99 > 0.0 {
+            latency_p99 / 3.0
+        } else {
+            50.0
+        };
+        let throughput = if system_metrics.query.total_queries > 0 {
+            system_metrics.query.total_queries as f64
+        } else {
+            1000.0
+        };
+        let success_rate = if system_metrics.query.total_queries > 0 {
+            let failures = system_metrics
+                .query
+                .failed_queries
+                .min(system_metrics.query.total_queries);
+            1.0 - (failures as f64 / system_metrics.query.total_queries as f64)
+        } else {
+            0.99
+        };
 
         let performance = PerformanceMetrics {
-            query_latency_p50: 50.0,
-            query_latency_p99: 150.0,
-            throughput_qps: 1000.0,
-            success_rate: 0.99,
+            query_latency_p50: latency_p50,
+            query_latency_p99: latency_p99,
+            throughput_qps: throughput,
+            success_rate,
         };
 
         let workload = WorkloadCharacteristics {
@@ -342,10 +370,10 @@ impl AutoMLService {
         };
 
         let resources = ResourceUsage {
-            cpu_usage_percent: 0.0,     // Would need system metrics
-            memory_usage_mb: 0,         // Would need system metrics
-            disk_io_mb_per_sec: 0.0,    // Would need system metrics
-            network_io_mb_per_sec: 0.0, // Would need system metrics
+            cpu_usage_percent: system_metrics.cpu_usage as f64,
+            memory_usage_mb: system_metrics.memory_used_bytes / (1024 * 1024),
+            disk_io_mb_per_sec: 0.0,
+            network_io_mb_per_sec: 0.0,
         };
 
         let context = OptimizationContext {

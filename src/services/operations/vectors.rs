@@ -29,7 +29,7 @@
 //! All searches flow through this service → storage engine's search_vectors_unified →
 //! engine-specific optimizations → results
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -50,6 +50,129 @@ use crate::query::unified_query_optimizer::{
     ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType, UnifiedExecutionPlan,
     UnifiedQueryContext, UnifiedQueryOptimizer,
 };
+
+pub(crate) fn build_axis_hybrid_query(
+    collection_id: &str,
+    search_params: &crate::core::search::SearchParams,
+) -> Result<crate::index::axis::management::manager::HybridQuery> {
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+    use crate::index::axis::management::manager::{
+        FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+    };
+
+    fn flatten_filter_expression(
+        expr: &FilterExpression,
+        metadata_filters: &mut Vec<MetadataFilter>,
+        id_filters: &mut Vec<String>,
+    ) -> Result<()> {
+        match expr {
+            FilterExpression::And(parts) => {
+                for part in parts {
+                    flatten_filter_expression(part, metadata_filters, id_filters)?;
+                }
+                Ok(())
+            }
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                let axis_operator = match operator {
+                    ComparisonOperator::Equals => FilterOperator::Equals,
+                    ComparisonOperator::NotEquals => FilterOperator::NotEquals,
+                    ComparisonOperator::GreaterThan => FilterOperator::GreaterThan,
+                    ComparisonOperator::GreaterThanOrEqual => FilterOperator::GreaterThanOrEqual,
+                    ComparisonOperator::LessThan => FilterOperator::LessThan,
+                    ComparisonOperator::LessThanOrEqual => FilterOperator::LessThanOrEqual,
+                    ComparisonOperator::In => FilterOperator::In,
+                    ComparisonOperator::NotIn => FilterOperator::NotIn,
+                    ComparisonOperator::Contains => FilterOperator::Contains,
+                    ComparisonOperator::StartsWith => FilterOperator::StartsWith,
+                    ComparisonOperator::EndsWith => FilterOperator::EndsWith,
+                    ComparisonOperator::Between => FilterOperator::Between,
+                    ComparisonOperator::IsNull => FilterOperator::IsNull,
+                    ComparisonOperator::IsNotNull => FilterOperator::IsNotNull,
+                    ComparisonOperator::Like => FilterOperator::Like,
+                };
+
+                if field == "id"
+                    && matches!(axis_operator, FilterOperator::Equals | FilterOperator::In)
+                {
+                    match axis_operator {
+                        FilterOperator::Equals => {
+                            let vector_id = value.as_str().ok_or_else(|| {
+                                anyhow!("id equality filters must use string values")
+                            })?;
+                            id_filters.push(vector_id.to_string());
+                        }
+                        FilterOperator::In => {
+                            let values = value.as_array().ok_or_else(|| {
+                                anyhow!("id IN filters must use an array of strings")
+                            })?;
+                            for item in values {
+                                let vector_id = item.as_str().ok_or_else(|| {
+                                    anyhow!("id IN filters must use an array of strings")
+                                })?;
+                                id_filters.push(vector_id.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    metadata_filters.push(MetadataFilter {
+                        field: field.clone(),
+                        operator: axis_operator,
+                        value: value.clone(),
+                    });
+                }
+
+                Ok(())
+            }
+            FilterExpression::Or(_) | FilterExpression::Not(_) => Err(anyhow!(
+                "AXIS hybrid query builder currently supports conjunctive filters only"
+            )),
+        }
+    }
+
+    let vector_query = if let Some(vectors) = &search_params.query_vectors {
+        vectors.first().map(|vector| VectorQuery::Dense {
+            vector: vector.clone(),
+            similarity_threshold: 0.0,
+        })
+    } else {
+        search_params
+            .vector
+            .clone()
+            .map(|vector| VectorQuery::Dense {
+                vector,
+                similarity_threshold: 0.0,
+            })
+    };
+
+    let mut metadata_filters = Vec::new();
+    let mut id_filters = Vec::new();
+
+    if let Some(filter_expression) = &search_params.filter_expression {
+        flatten_filter_expression(filter_expression, &mut metadata_filters, &mut id_filters)?;
+    } else if let Some(filters) = &search_params.filters {
+        for (field, value) in filters {
+            metadata_filters.push(MetadataFilter {
+                field: field.clone(),
+                operator: FilterOperator::Equals,
+                value: value.clone(),
+            });
+        }
+    }
+
+    Ok(HybridQuery {
+        collection_id: collection_id.to_string(),
+        vector_query,
+        metadata_filters,
+        id_filters,
+        top_k: search_params.top_k.unwrap_or(10),
+        include_expired: search_params.include_expired.unwrap_or(false),
+    })
+}
 
 /// Convert a query optimizer quantization strategy to a unified quantization level.
 #[allow(dead_code)]
@@ -323,17 +446,12 @@ impl VectorOperationsService {
         let collection_id = req.collection_id.clone();
         let top_k = req.top_k as usize;
         let search_query = req
-            .queries.first()
+            .queries
+            .first()
             .ok_or_else(|| anyhow::anyhow!("No query vectors provided"))?;
         let query_vector = search_query.vector.clone();
-        let include_vectors = req
-            .include_fields
-            .as_ref()
-            .is_some_and(|f| f.vector);
-        let include_metadata = req
-            .include_fields
-            .as_ref()
-            .is_none_or(|f| f.metadata);
+        let include_vectors = req.include_fields.as_ref().is_some_and(|f| f.vector);
+        let include_metadata = req.include_fields.as_ref().is_none_or(|f| f.metadata);
 
         let cfg = Some(UnifiedSearchConfig {
             optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
@@ -1031,9 +1149,7 @@ impl VectorOperationsService {
             return Ok(cached);
         }
 
-        let progressive_enabled = config
-            .as_ref()
-            .is_some_and(|c| c.progressive_search);
+        let progressive_enabled = config.as_ref().is_some_and(|c| c.progressive_search);
         debug!(
             "Search: collection={}, progressive={}",
             collection_id, progressive_enabled
@@ -1201,9 +1317,7 @@ impl VectorOperationsService {
             return Ok(cached_v1);
         }
 
-        let progressive_enabled = config
-            .as_ref()
-            .is_some_and(|c| c.progressive_search);
+        let progressive_enabled = config.as_ref().is_some_and(|c| c.progressive_search);
         debug!(
             "Search v1: collection={}, progressive={}",
             collection_id, progressive_enabled
@@ -1338,23 +1452,24 @@ impl VectorOperationsService {
         // Report execution to RL planner for learning (if RL was used)
         if let (Some(rl_state), Some(rl_action)) =
             (&execution_plan.rl_state, &execution_plan.rl_action)
-            && let Some(rl_planner) = crate::query::rl_planner::get_rl_planner() {
-                // Calculate metrics for feedback
-                let latency_ms = total_time_us as f64 / 1000.0;
-                // Recall estimate: we got optimized_results.len() results out of k requested
-                // This is approximate - true recall requires ground truth
-                let recall = (optimized_results.len() as f32 / k as f32).min(1.0);
-                // Throughput: 1 query / total_time in seconds
-                let throughput_qps = if total_time_us > 0 {
-                    1_000_000.0 / total_time_us as f32
-                } else {
-                    1000.0 // Assume high throughput if instant
-                };
+            && let Some(rl_planner) = crate::query::rl_planner::get_rl_planner()
+        {
+            // Calculate metrics for feedback
+            let latency_ms = total_time_us as f64 / 1000.0;
+            // Recall estimate: we got optimized_results.len() results out of k requested
+            // This is approximate - true recall requires ground truth
+            let recall = (optimized_results.len() as f32 / k as f32).min(1.0);
+            // Throughput: 1 query / total_time in seconds
+            let throughput_qps = if total_time_us > 0 {
+                1_000_000.0 / total_time_us as f32
+            } else {
+                1000.0 // Assume high throughput if instant
+            };
 
-                rl_planner
-                    .report_execution(rl_state, rl_action, latency_ms, recall, throughput_qps)
-                    .await;
-            }
+            rl_planner
+                .report_execution(rl_state, rl_action, latency_ms, recall, throughput_qps)
+                .await;
+        }
 
         // Log query timing breakdown for performance analysis
         // Shows at RUST_LOG=info level for visibility
@@ -1386,8 +1501,10 @@ impl VectorOperationsService {
                     quantization_strategy,
                     candidates,
                 } => {
-                    let quant_info = quantization_strategy
-                        .as_ref().map_or_else(|| "None/FP32".to_string(), |q| format!("{:?}", q.quantization_type));
+                    let quant_info = quantization_strategy.as_ref().map_or_else(
+                        || "None/FP32".to_string(),
+                        |q| format!("{:?}", q.quantization_type),
+                    );
                     tracing::info!(
                         "  [Step {}] VectorSearch: method={:?} | quantization={} | candidates={}",
                         idx + 1,
@@ -2006,6 +2123,7 @@ impl VectorOperationsService {
             search_mode: search_mode.clone(), // Use passed search_mode for exact vs approximate search
             ..Default::default()
         };
+        let axis_search_params = search_params.clone();
 
         let search_context = crate::storage::traits::StorageQueryContext::new(
             Arc::new(search_params),
@@ -2048,39 +2166,37 @@ impl VectorOperationsService {
             "🔍 Stage 2: Searching AXIS HNSW index for {}",
             collection_id
         );
-        let hybrid_query = crate::index::axis::management::manager::HybridQuery {
-            collection_id: collection_id.to_string(),
-            vector_query: Some(
-                crate::index::axis::management::manager::VectorQuery::Dense {
-                    vector: query_vector.clone(),
-                    similarity_threshold: 0.0,
+        let axis_optimized_results =
+            match build_axis_hybrid_query(collection_id, &axis_search_params) {
+                Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
+                    Ok(result) => {
+                        let records: Vec<crate::core::search::results::OptimizedSearchRecord> =
+                            result
+                                .results
+                                .into_iter()
+                                .map(|r| {
+                                    crate::core::search::results::OptimizedSearchRecord::new(
+                                        r.vector_id,
+                                        r.similarity,
+                                    )
+                                })
+                                .collect();
+                        debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
+                        records
+                    }
+                    Err(e) => {
+                        debug!("Stage 2 AXIS search failed: {}", e);
+                        Vec::new()
+                    }
                 },
-            ),
-            metadata_filters: Vec::new(),
-            id_filters: Vec::new(),
-            top_k: candidates,
-            include_expired: false,
-        };
-        let axis_optimized_results = match self.axis_index_manager.query(hybrid_query).await {
-            Ok(result) => {
-                let records: Vec<crate::core::search::results::OptimizedSearchRecord> = result
-                    .results
-                    .into_iter()
-                    .map(|r| {
-                        crate::core::search::results::OptimizedSearchRecord::new(
-                            r.vector_id,
-                            r.similarity,
-                        )
-                    })
-                    .collect();
-                debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
-                records
-            }
-            Err(e) => {
-                debug!("Stage 2 AXIS search failed: {}", e);
-                Vec::new()
-            }
-        };
+                Err(e) => {
+                    warn!(
+                        "Stage 2 AXIS search skipped for collection {}: {}",
+                        collection_id, e
+                    );
+                    Vec::new()
+                }
+            };
 
         // Stage 3: Storage engine search - ONLY if we need more results
         // Skip if WAL + AXIS already have enough high-quality results
@@ -2141,8 +2257,7 @@ impl VectorOperationsService {
                     // Check if this is a tombstone
                     // Tombstone: vector is explicitly empty (Some(vec![])) AND expired
                     // A record with vector=None is NOT a tombstone - it's just missing vector data
-                    let is_explicit_empty_vector =
-                        r.vector.as_ref().is_some_and(|v| v.is_empty());
+                    let is_explicit_empty_vector = r.vector.as_ref().is_some_and(|v| v.is_empty());
                     let is_expired = r.expires_at.is_some_and(|e| e <= current_time_secs);
                     let is_tombstone = is_explicit_empty_vector && is_expired;
 
@@ -2197,49 +2312,50 @@ impl VectorOperationsService {
 
             // Register collection with WAL manager for persistence
             if let Some(ref storage_assignment) = collection.storage_assignment
-                && let Some(ref config) = collection.config {
-                    // Build compression_config from storage_config if available
-                    let compression_config = config.storage_config.as_ref().and_then(|sc| {
-                        sc.compression.map(|alg| {
-                            crate::proto::proximadb_v1::CompressionConfig {
-                                algorithm: alg,
-                                level: Some(3), // default level
-                                adaptive: false,
-                                min_ratio: None,
-                                enable_quantization: false,
-                                quantization_type: None,
-                                normalization_method: None,
-                                block_size_kb: 64,
-                                dynamic_block_sizing: false,
-                            }
-                        })
-                    });
+                && let Some(ref config) = collection.config
+            {
+                // Build compression_config from storage_config if available
+                let compression_config = config.storage_config.as_ref().and_then(|sc| {
+                    sc.compression.map(|alg| {
+                        crate::proto::proximadb_v1::CompressionConfig {
+                            algorithm: alg,
+                            level: Some(3), // default level
+                            adaptive: false,
+                            min_ratio: None,
+                            enable_quantization: false,
+                            quantization_type: None,
+                            normalization_method: None,
+                            block_size_kb: 64,
+                            dynamic_block_sizing: false,
+                        }
+                    })
+                });
 
-                    // Convert distance_metric from Option<i32> to DistanceMetric
-                    let distance_metric = config
-                        .distance_metric
-                        .and_then(|m| crate::proto::proximadb_v1::DistanceMetric::try_from(m).ok())
-                        .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine);
+                // Convert distance_metric from Option<i32> to DistanceMetric
+                let distance_metric = config
+                    .distance_metric
+                    .and_then(|m| crate::proto::proximadb_v1::DistanceMetric::try_from(m).ok())
+                    .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine);
 
-                    let assignment =
-                        crate::storage::persistence::write_ahead_log::CollectionAssignment {
-                            base_location: storage_assignment.base_location.clone(),
-                            storage_engine: crate::proto::proximadb_v1::StorageEngine::try_from(
-                                storage_assignment.engine,
-                            )
-                            .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst),
-                            dimension: config.dimension as i32,
-                            compression_config,
-                            distance_metric,
-                        };
-                    self.wal_manager
-                        .assign_collection(collection_id_string.clone(), assignment)
-                        .await;
-                    tracing::debug!(
-                        "✅ Registered collection {} with WAL manager",
-                        collection_id
-                    );
-                }
+                let assignment =
+                    crate::storage::persistence::write_ahead_log::CollectionAssignment {
+                        base_location: storage_assignment.base_location.clone(),
+                        storage_engine: crate::proto::proximadb_v1::StorageEngine::try_from(
+                            storage_assignment.engine,
+                        )
+                        .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst),
+                        dimension: config.dimension as i32,
+                        compression_config,
+                        distance_metric,
+                    };
+                self.wal_manager
+                    .assign_collection(collection_id_string.clone(), assignment)
+                    .await;
+                tracing::debug!(
+                    "✅ Registered collection {} with WAL manager",
+                    collection_id
+                );
+            }
 
             let arc_collection = Arc::new(collection);
             self.collection_cache
@@ -2269,13 +2385,13 @@ impl VectorOperationsService {
         let collection = self.get_or_load_collection(collection_id).await?;
 
         // Determine engine type from storage_assignment
-        let engine_type = collection
-            .storage_assignment
-            .as_ref()
-            .map_or(crate::proto::proximadb_v1::StorageEngine::Sst, |sa| {
+        let engine_type = collection.storage_assignment.as_ref().map_or(
+            crate::proto::proximadb_v1::StorageEngine::Sst,
+            |sa| {
                 crate::proto::proximadb_v1::StorageEngine::try_from(sa.engine)
                     .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst)
-            });
+            },
+        );
 
         debug!(
             "🔧 Creating storage engine {:?} for collection {}",
@@ -2447,25 +2563,7 @@ impl VectorOperationsService {
             ..Default::default()
         };
 
-        // Convert SearchParams to HybridQuery for AxisManager
-        let vector_query = if let Some(vectors) = search_params.query_vectors {
-            vectors.first().map(|vector| crate::index::axis::management::manager::VectorQuery::Dense {
-                        vector: vector.clone(),
-                        similarity_threshold: 0.0,
-                    })
-        } else { search_params.vector.map(|vector| crate::index::axis::management::manager::VectorQuery::Dense {
-                    vector,
-                    similarity_threshold: 0.0,
-                }) };
-
-        let hybrid_query = crate::index::axis::management::manager::HybridQuery {
-            collection_id: collection_id.to_string(),
-            vector_query,
-            metadata_filters: Vec::new(), // TODO: Convert from filter_expression
-            id_filters: Vec::new(),
-            top_k: search_params.top_k.unwrap_or(10),
-            include_expired: search_params.include_expired.unwrap_or(false),
-        };
+        let hybrid_query = build_axis_hybrid_query(collection_id, &search_params)?;
 
         // Perform index lookup using axis_index_manager
         let query_result = self.axis_index_manager.query(hybrid_query).await?;

@@ -80,11 +80,13 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::{String, VectorId, VectorRecord};
 use crate::index::axis::management::{
     migration_engine::{IndexMigrationEngine, MigrationDecision},
@@ -248,6 +250,10 @@ pub struct AxisManager {
     /// IVF requires k-means training before vectors can be added
     /// Vectors are buffered here until we have enough for training (min_train_size)
     ivf_pending_vectors: Arc<RwLock<HashMap<String, Vec<(String, Vec<f32>)>>>>,
+
+    /// Exact vector records tracked per collection for correctness-first filtered search.
+    /// This is the source of truth for metadata-aware fallback execution and MVCC timestamps.
+    collection_vectors: Arc<RwLock<HashMap<String, HashMap<String, VectorRecord>>>>,
 }
 
 /// Status of ongoing migrations
@@ -360,6 +366,7 @@ impl AxisManager {
             hnsw_indexes: Arc::new(RwLock::new(HashMap::new())), // Real HNSW indexes per collection
             ivf_indexes: Arc::new(RwLock::new(HashMap::new())), // Real IVF indexes per collection (DEFAULT)
             ivf_pending_vectors: Arc::new(RwLock::new(HashMap::new())), // Buffer for IVF training
+            collection_vectors: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -427,10 +434,11 @@ impl AxisManager {
 
         // Check if vector is expired (MVCC support) - direct field access
         if let Some(expires_at) = vector.expires_at
-            && expires_at <= Utc::now().timestamp() {
-                // Skip inserting already expired vectors
-                return Ok(());
-            }
+            && expires_at <= Utc::now().timestamp()
+        {
+            // Skip inserting already expired vectors
+            return Ok(());
+        }
 
         // Get collection config for quantization settings
         // First try shared cache, then fall back to collection service
@@ -469,6 +477,14 @@ impl AxisManager {
         } else {
             vector.clone()
         };
+
+        if !vector.id.is_empty() {
+            let mut collection_vectors = self.collection_vectors.write().await;
+            collection_vectors
+                .entry(collection_id.to_string())
+                .or_default()
+                .insert(vector.id.clone(), vector.clone());
+        }
 
         // Insert into appropriate indexes based on current search_strategy
         let search_strategy = self.get_collection_strategy(collection_id).await?;
@@ -543,6 +559,20 @@ impl AxisManager {
         // Remove from indexes
         let search_strategy = self.get_collection_strategy(collection_id).await?;
 
+        {
+            let mut collection_vectors = self.collection_vectors.write().await;
+            if let Some(vectors) = collection_vectors.get_mut(collection_id) {
+                vectors.remove(&vector_id);
+            }
+            let should_remove_collection = collection_vectors
+                .get(collection_id)
+                .map(|vectors| vectors.is_empty())
+                .unwrap_or(false);
+            if should_remove_collection {
+                collection_vectors.remove(collection_id);
+            }
+        }
+
         self.global_id_index.remove(&vector_id).await?;
 
         for index_spec in &search_strategy.indexes {
@@ -565,6 +595,8 @@ impl AxisManager {
 
     /// Query vectors using adaptive indexes
     pub async fn query(&self, query: HybridQuery) -> Result<QueryResult> {
+        let start = std::time::Instant::now();
+
         // Execute query using current search_strategy
         let collection_id = &query.collection_id;
 
@@ -576,7 +608,10 @@ impl AxisManager {
         // Query using the appropriate index based on strategy algorithm
         // HNSW: O(log N) search - best for search latency
         // IVF: O(√N) search - acceptable if insert-optimized
-        let results = {
+        let results = if !query.metadata_filters.is_empty() || !query.id_filters.is_empty() {
+            self.execute_exact_filtered_query(collection_id, &query)
+                .await?
+        } else {
             // Find the dense vector index spec to determine algorithm
             let use_ivf = search_strategy.indexes.iter().any(|spec| {
                 matches!(spec.data_type, Data::DenseVector { .. })
@@ -597,9 +632,12 @@ impl AxisManager {
         let active_results: Vec<_> = results
             .into_iter()
             .filter(|result| {
+                if query.include_expired {
+                    return true;
+                }
                 // Check if result is not expired
-                if let Some(expires_at) = result.expires_at {
-                    Utc::now() < expires_at
+                if let Some(expires_at) = result.expires_at.as_ref() {
+                    Utc::now() < *expires_at
                 } else {
                     true // No expiration
                 }
@@ -609,7 +647,7 @@ impl AxisManager {
         Ok(QueryResult {
             results: active_results,
             strategy_used: search_strategy,
-            execution_time_ms: 0, // TODO: Track actual time
+            execution_time_ms: start.elapsed().as_millis() as u64,
         })
     }
 
@@ -690,10 +728,13 @@ impl AxisManager {
                 let results = index.search(vector, query.top_k, None).await?;
                 return Ok(results
                     .into_iter()
-                    .map(|(id, score)| ScoredResult {
-                        vector_id: id,
-                        similarity: score,
-                        expires_at: None,
+                    .map(|(id, score)| {
+                        let expires_at = self.lookup_record_expiration(collection_id, &id);
+                        ScoredResult {
+                            vector_id: id,
+                            similarity: score,
+                            expires_at,
+                        }
                     })
                     .collect());
             }
@@ -747,9 +788,7 @@ impl AxisManager {
         // Buffer the vector for training
         {
             let mut pending = self.ivf_pending_vectors.write().await;
-            let buffer = pending
-                .entry(collection_id.to_string())
-                .or_default();
+            let buffer = pending.entry(collection_id.to_string()).or_default();
             buffer.push((vector.id.clone(), vector.vector.clone()));
 
             // Check if we have enough vectors to train
@@ -870,10 +909,13 @@ impl AxisManager {
 
                 return Ok(results
                     .into_iter()
-                    .map(|(id, score)| ScoredResult {
-                        vector_id: id,
-                        similarity: score,
-                        expires_at: None,
+                    .map(|(id, score)| {
+                        let expires_at = self.lookup_record_expiration(collection_id, &id);
+                        ScoredResult {
+                            vector_id: id,
+                            similarity: score,
+                            expires_at,
+                        }
                     })
                     .collect());
             }
@@ -1075,18 +1117,20 @@ impl AxisManager {
         // Try to get from shared cache first
         if let Some(cache) = &self.shared_collection_cache
             && let Some(collection) = cache.get(collection_id)
-                && let Some(config) = &collection.config {
-                    let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
-                    return Some(proto_distance_to_internal(metric_code));
-                }
+            && let Some(config) = &collection.config
+        {
+            let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
+            return Some(proto_distance_to_internal(metric_code));
+        }
 
         // Fall back to collection service
         if let Some(collection_service) = &self.collection_service
             && let Ok(Some(collection)) = collection_service.collection(collection_id).await
-                && let Some(config) = &collection.config {
-                    let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
-                    return Some(proto_distance_to_internal(metric_code));
-                }
+            && let Some(config) = &collection.config
+        {
+            let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
+            return Some(proto_distance_to_internal(metric_code));
+        }
 
         None
     }
@@ -1132,6 +1176,11 @@ impl AxisManager {
         self.sparse_vector_index
             .remove_collection(collection_id)
             .await?;
+
+        {
+            let mut collection_vectors = self.collection_vectors.write().await;
+            collection_vectors.remove(collection_id);
+        }
 
         // Update metrics
         let mut metrics = self.metrics.write().await;
@@ -1376,13 +1425,14 @@ impl AxisManager {
 
         // For medium-sized batches, still use batch training for better recall
         if batch_size >= 500
-            && let Err(e) = self.train_ivf_for_batch(collection_id, &vectors).await {
-                tracing::warn!(
-                    "⚠️ AXIS: Batch IVF training failed for collection {}: {}, using incremental",
-                    collection_id,
-                    e
-                );
-            }
+            && let Err(e) = self.train_ivf_for_batch(collection_id, &vectors).await
+        {
+            tracing::warn!(
+                "⚠️ AXIS: Batch IVF training failed for collection {}: {}, using incremental",
+                collection_id,
+                e
+            );
+        }
 
         for vector in vectors {
             self.insert(collection_id, &vector).await?;
@@ -1801,7 +1851,7 @@ pub struct MetadataFilter {
 }
 
 /// Filter operators
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FilterOperator {
     /// Exact equality match.
     Equals,
@@ -1809,12 +1859,30 @@ pub enum FilterOperator {
     NotEquals,
     /// Greater than comparison.
     GreaterThan,
+    /// Greater than or equal comparison.
+    GreaterThanOrEqual,
     /// Less than comparison.
     LessThan,
+    /// Less than or equal comparison.
+    LessThanOrEqual,
     /// Membership in a set of values.
     In,
     /// Exclusion from a set of values.
     NotIn,
+    /// String contains substring.
+    Contains,
+    /// String starts with prefix.
+    StartsWith,
+    /// String ends with suffix.
+    EndsWith,
+    /// SQL-style LIKE pattern matching.
+    Like,
+    /// Inclusive range comparison with `[lower, upper]`.
+    Between,
+    /// Value is null or missing.
+    IsNull,
+    /// Value is present and non-null.
+    IsNotNull,
 }
 
 /// Query result
@@ -1837,4 +1905,160 @@ pub struct ScoredResult {
     pub similarity: f32,
     /// MVCC expiration timestamp, if the record has a TTL.
     pub expires_at: Option<DateTime<Utc>>,
+}
+
+impl AxisManager {
+    async fn execute_exact_filtered_query(
+        &self,
+        collection_id: &str,
+        query: &HybridQuery,
+    ) -> Result<Vec<ScoredResult>> {
+        let records = {
+            let collection_vectors = self.collection_vectors.read().await;
+            collection_vectors
+                .get(collection_id)
+                .map(|vectors| vectors.values().cloned().collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+
+        if records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(crate::compute::distance_computation::DistanceMetric::DotProduct);
+        let compute = UnifiedDistanceCompute::new(metric);
+        let metadata_expression = if query.metadata_filters.is_empty() {
+            None
+        } else {
+            Some(self.metadata_filters_to_expression(&query.metadata_filters))
+        };
+
+        let mut results = Vec::new();
+
+        for record in records {
+            if !query.id_filters.is_empty() && !query.id_filters.contains(&record.id) {
+                continue;
+            }
+
+            let metadata = self.record_filter_metadata(&record);
+            if let Some(expr) = &metadata_expression
+                && !crate::core::search::json_comparison::evaluate_filter(expr, &metadata)
+            {
+                continue;
+            }
+
+            let similarity = match &query.vector_query {
+                Some(VectorQuery::Dense {
+                    vector,
+                    similarity_threshold,
+                }) => {
+                    let result = compute.similarity(vector, &record.vector, Some(metric));
+                    if result.normalized_score < *similarity_threshold {
+                        continue;
+                    }
+                    result.normalized_score
+                }
+                Some(VectorQuery::Sparse { .. }) => continue,
+                None => 1.0,
+            };
+
+            let expires_at = record
+                .expires_at
+                .and_then(|timestamp| DateTime::<Utc>::from_timestamp(timestamp, 0));
+
+            if !query.include_expired
+                && let Some(expiration) = expires_at.as_ref()
+                && Utc::now() >= *expiration
+            {
+                continue;
+            }
+
+            results.push(ScoredResult {
+                vector_id: record.id,
+                similarity,
+                expires_at,
+            });
+        }
+
+        results.sort_by(|left, right| {
+            right
+                .similarity
+                .partial_cmp(&left.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.vector_id.cmp(&right.vector_id))
+        });
+        results.truncate(query.top_k);
+
+        Ok(results)
+    }
+
+    fn metadata_filters_to_expression(
+        &self,
+        filters: &[MetadataFilter],
+    ) -> crate::core::search::FilterExpression {
+        crate::core::search::FilterExpression::And(
+            filters
+                .iter()
+                .map(|filter| crate::core::search::FilterExpression::Comparison {
+                    field: filter.field.clone(),
+                    operator: self.axis_filter_operator_to_comparison(&filter.operator),
+                    value: filter.value.clone(),
+                })
+                .collect(),
+        )
+    }
+
+    fn axis_filter_operator_to_comparison(
+        &self,
+        operator: &FilterOperator,
+    ) -> crate::core::search::ComparisonOperator {
+        match operator {
+            FilterOperator::Equals => crate::core::search::ComparisonOperator::Equals,
+            FilterOperator::NotEquals => crate::core::search::ComparisonOperator::NotEquals,
+            FilterOperator::GreaterThan => crate::core::search::ComparisonOperator::GreaterThan,
+            FilterOperator::GreaterThanOrEqual => {
+                crate::core::search::ComparisonOperator::GreaterThanOrEqual
+            }
+            FilterOperator::LessThan => crate::core::search::ComparisonOperator::LessThan,
+            FilterOperator::LessThanOrEqual => {
+                crate::core::search::ComparisonOperator::LessThanOrEqual
+            }
+            FilterOperator::In => crate::core::search::ComparisonOperator::In,
+            FilterOperator::NotIn => crate::core::search::ComparisonOperator::NotIn,
+            FilterOperator::Contains => crate::core::search::ComparisonOperator::Contains,
+            FilterOperator::StartsWith => crate::core::search::ComparisonOperator::StartsWith,
+            FilterOperator::EndsWith => crate::core::search::ComparisonOperator::EndsWith,
+            FilterOperator::Like => crate::core::search::ComparisonOperator::Like,
+            FilterOperator::Between => crate::core::search::ComparisonOperator::Between,
+            FilterOperator::IsNull => crate::core::search::ComparisonOperator::IsNull,
+            FilterOperator::IsNotNull => crate::core::search::ComparisonOperator::IsNotNull,
+        }
+    }
+
+    fn record_filter_metadata(&self, record: &VectorRecord) -> HashMap<String, Value> {
+        let mut metadata =
+            crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
+        metadata.insert("id".to_string(), Value::String(record.id.clone()));
+        metadata
+    }
+
+    fn lookup_record_expiration(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+    ) -> Option<DateTime<Utc>> {
+        self.collection_vectors
+            .try_read()
+            .ok()
+            .and_then(|collections| collections.get(collection_id).cloned())
+            .and_then(|vectors| vectors.get(vector_id).cloned())
+            .and_then(|record| {
+                record
+                    .expires_at
+                    .and_then(|timestamp| DateTime::<Utc>::from_timestamp(timestamp, 0))
+            })
+    }
 }

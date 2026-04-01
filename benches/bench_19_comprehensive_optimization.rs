@@ -292,7 +292,12 @@ fn setup_search_db(engine: &str, vector_count: usize) -> SearchState {
 
     let queries = generate_query_vectors(NUM_QUERIES, DIMENSION);
 
-    SearchState { db, collection_name, queries, data_path }
+    SearchState {
+        db,
+        collection_name,
+        queries,
+        data_path,
+    }
 }
 
 // ============================================================================
@@ -313,22 +318,18 @@ fn benchmark_engines_1k(c: &mut Criterion) {
         let state = setup_search_db(engine, 100);
         let query = state.queries[0].clone();
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(engine),
-            &engine,
-            |b, _| {
-                b.iter(|| {
-                    let results = state.db.search_with_mode(
-                        &state.collection_name,
-                        query.clone(),
-                        TOP_K,
-                        None,
-                        Some("exact"),
-                    );
-                    black_box(results)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(engine), &engine, |b, _| {
+            b.iter(|| {
+                let results = state.db.search_with_mode(
+                    &state.collection_name,
+                    query.clone(),
+                    TOP_K,
+                    None,
+                    Some("exact"),
+                );
+                black_box(results)
+            });
+        });
         // state drops here, cleaning up the temp directory
     }
 
@@ -349,22 +350,18 @@ fn benchmark_engines_10k(c: &mut Criterion) {
         let state = setup_search_db(engine, 1_000);
         let query = state.queries[0].clone();
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(engine),
-            &engine,
-            |b, _| {
-                b.iter(|| {
-                    let results = state.db.search_with_mode(
-                        &state.collection_name,
-                        query.clone(),
-                        TOP_K,
-                        None,
-                        Some("exact"),
-                    );
-                    black_box(results)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(engine), &engine, |b, _| {
+            b.iter(|| {
+                let results = state.db.search_with_mode(
+                    &state.collection_name,
+                    query.clone(),
+                    TOP_K,
+                    None,
+                    Some("exact"),
+                );
+                black_box(results)
+            });
+        });
         // state drops here, cleaning up the temp directory
     }
 
@@ -462,22 +459,18 @@ fn benchmark_full_matrix(c: &mut Criterion) {
             let mode_name = mode.replace(":", "_");
             let bench_id = format!("{}/{}", engine, mode_name);
 
-            group.bench_with_input(
-                BenchmarkId::from_parameter(&bench_id),
-                &mode,
-                |b, &mode| {
-                    b.iter(|| {
-                        let results = state.db.search_with_mode(
-                            &state.collection_name,
-                            query.clone(),
-                            TOP_K,
-                            None,
-                            Some(mode),
-                        );
-                        black_box(results)
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::from_parameter(&bench_id), &mode, |b, &mode| {
+                b.iter(|| {
+                    let results = state.db.search_with_mode(
+                        &state.collection_name,
+                        query.clone(),
+                        TOP_K,
+                        None,
+                        Some(mode),
+                    );
+                    black_box(results)
+                });
+            });
         }
         // state drops here, temp dir cleaned up
     }

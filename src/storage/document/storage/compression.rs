@@ -108,20 +108,88 @@ impl DocumentCompressor {
         }
     }
 
+    /// Dictionary encoding marker byte (0xFF followed by 4-byte dict ID)
+    const DICT_MARKER: u8 = 0xFF;
+
     /// Apply dictionary encoding to a document
-    fn dictionary_encode(&self, _doc: &[u8]) -> Vec<u8> {
-        // TODO: Implement dictionary encoding
-        // For now, return original
-        _doc.to_vec()
+    ///
+    /// Scans for quoted strings that appear in the dictionary and replaces them
+    /// with a compact marker + dictionary ID reference.
+    fn dictionary_encode(&self, doc: &[u8]) -> Vec<u8> {
+        if self.string_dictionary.is_empty() {
+            return doc.to_vec();
+        }
+
+        let mut result = Vec::with_capacity(doc.len());
+        let mut i = 0;
+
+        while i < doc.len() {
+            if doc[i] == b'"' {
+                // Try to extract the quoted string and look it up in the dictionary
+                let start = i + 1;
+                let mut end = start;
+                while end < doc.len() && doc[end] != b'"' {
+                    if doc[end] == b'\\' && end + 1 < doc.len() {
+                        end += 2;
+                    } else {
+                        end += 1;
+                    }
+                }
+                if end < doc.len() {
+                    if let Ok(s) = std::str::from_utf8(&doc[start..end]) {
+                        if let Some(&dict_id) = self.string_dictionary.get(s) {
+                            // Replace with marker + dict ID
+                            result.push(Self::DICT_MARKER);
+                            result.extend_from_slice(&dict_id.to_le_bytes());
+                            i = end + 1; // skip past closing quote
+                            continue;
+                        }
+                    }
+                }
+                // No dictionary hit — copy the character and continue
+                result.push(doc[i]);
+                i += 1;
+            } else {
+                result.push(doc[i]);
+                i += 1;
+            }
+        }
+
+        result
     }
 
-    /// Decode dictionary references
-    fn dictionary_decode(&self, _doc: &[u8], _dict: &HashMap<String, u32>) -> Vec<u8> {
-        // TODO: Implement dictionary decoding
-        _doc.to_vec()
+    /// Decode dictionary references back to original strings
+    fn dictionary_decode(&self, doc: &[u8], dict: &HashMap<String, u32>) -> Vec<u8> {
+        if dict.is_empty() {
+            return doc.to_vec();
+        }
+
+        // Build reverse dictionary (id -> string)
+        let reverse: HashMap<u32, &str> = dict.iter().map(|(s, id)| (*id, s.as_str())).collect();
+
+        let mut result = Vec::with_capacity(doc.len());
+        let mut i = 0;
+
+        while i < doc.len() {
+            if doc[i] == Self::DICT_MARKER && i + 4 < doc.len() {
+                let dict_id = u32::from_le_bytes([doc[i + 1], doc[i + 2], doc[i + 3], doc[i + 4]]);
+                if let Some(s) = reverse.get(&dict_id) {
+                    // Restore the original quoted string
+                    result.push(b'"');
+                    result.extend_from_slice(s.as_bytes());
+                    result.push(b'"');
+                    i += 5; // marker + 4 bytes
+                    continue;
+                }
+            }
+            result.push(doc[i]);
+            i += 1;
+        }
+
+        result
     }
 
-    /// Apply compression to encoded documents
+    /// Apply LZ4 compression to length-prefixed concatenated documents
     fn apply_compression(&self, documents: &[Vec<u8>]) -> Result<Vec<u8>> {
         // Concatenate documents with length prefixes
         let mut combined = Vec::new();
@@ -130,17 +198,18 @@ impl DocumentCompressor {
             combined.extend_from_slice(doc);
         }
 
-        // Apply LZ4 compression
-        // TODO: Use lz4 crate for actual compression
-        Ok(combined)
+        // Apply LZ4 block compression
+        let compressed = lz4_flex::compress_prepend_size(&combined);
+        Ok(compressed)
     }
 
-    /// Decompress documents
+    /// Decompress LZ4 data and split into individual documents
     fn apply_decompression(&self, data: &[u8], count: usize) -> Result<Vec<Vec<u8>>> {
-        // TODO: Apply LZ4 decompression first
-        let decompressed = data;
+        // Decompress LZ4 block
+        let decompressed = lz4_flex::decompress_size_prepended(data)
+            .map_err(|e| anyhow::anyhow!("LZ4 decompression failed: {}", e))?;
 
-        // Split into individual documents
+        // Split into individual documents using length prefixes
         let mut documents = Vec::with_capacity(count);
         let mut i = 0;
 
@@ -202,5 +271,70 @@ mod tests {
         for (original, recovered) in documents.iter().zip(decompressed.iter()) {
             assert_eq!(original, recovered);
         }
+    }
+
+    #[test]
+    fn test_lz4_compression_reduces_size() {
+        let mut compressor = DocumentCompressor::new();
+
+        // Create highly compressible data (repeated JSON structures)
+        let documents: Vec<Vec<u8>> = (0..100)
+            .map(|i| format!(r#"{{"user_id":{},"status":"active","role":"engineer","department":"engineering"}}"#, i).into_bytes())
+            .collect();
+
+        let compressed = compressor.compress(&documents).unwrap();
+        let total_raw: usize = documents.iter().map(|d| d.len()).sum();
+
+        // LZ4 should compress repeated structures significantly
+        assert!(
+            compressed.data.len() < total_raw,
+            "compressed {} should be smaller than raw {}",
+            compressed.data.len(),
+            total_raw
+        );
+
+        // Verify roundtrip
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        assert_eq!(documents, decompressed);
+    }
+
+    #[test]
+    fn test_dictionary_encoding_roundtrip() {
+        let mut compressor = DocumentCompressor::new();
+
+        // Documents with repeated string values trigger dictionary building
+        let documents = vec![
+            br#"{"department":"engineering","status":"active"}"#.to_vec(),
+            br#"{"department":"engineering","status":"active"}"#.to_vec(),
+            br#"{"department":"engineering","status":"inactive"}"#.to_vec(),
+        ];
+
+        let compressed = compressor.compress(&documents).unwrap();
+        assert!(!compressed.dictionary.is_empty(), "dictionary should be non-empty");
+
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        assert_eq!(documents, decompressed);
+    }
+
+    #[test]
+    fn test_empty_documents() {
+        let mut compressor = DocumentCompressor::new();
+        let documents: Vec<Vec<u8>> = vec![];
+
+        let compressed = compressor.compress(&documents).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+
+        assert!(decompressed.is_empty());
+    }
+
+    #[test]
+    fn test_single_document() {
+        let mut compressor = DocumentCompressor::new();
+        let documents = vec![br#"{"hello":"world"}"#.to_vec()];
+
+        let compressed = compressor.compress(&documents).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+
+        assert_eq!(documents, decompressed);
     }
 }

@@ -111,15 +111,28 @@ impl FloydWarshallAPSP {
                 ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
             })?;
 
-        // Initialize edges from CSR (O(E) operation)
+        // Initialize edges from CSR with weight lookup
         for (from_idx, dist_row) in dist.iter_mut().enumerate().take(node_count) {
             let neighbors = csr_out.get_neighbors(from_idx).unwrap_or(&[]);
+            let edge_ids = csr_out.get_edge_ids(from_idx).unwrap_or(&[]);
 
-            for &to_idx in neighbors {
+            for (i, &to_idx) in neighbors.iter().enumerate() {
                 if to_idx < node_count {
-                    // Unweighted graph: all edges have weight 1.0
-                    // TODO: Support weighted graphs by looking up edge weights
-                    dist_row[to_idx] = 1.0;
+                    // Look up actual edge weight from edge metadata via edge ID
+                    let weight = if i < edge_ids.len() {
+                        self.engine
+                            .memory_pool
+                            .edges
+                            .get(&edge_ids[i])
+                            .and_then(|e| e.weight)
+                            .unwrap_or(1.0)
+                    } else {
+                        1.0
+                    };
+                    // Keep minimum weight for parallel edges
+                    if weight < dist_row[to_idx] {
+                        dist_row[to_idx] = weight;
+                    }
                 }
             }
         }
@@ -677,6 +690,75 @@ mod tests {
                 .expect("Distance n2->n4 should exist")
                 .is_infinite()
         ); // n2 -> n4 (disconnected)
+    }
+
+    #[tokio::test]
+    async fn test_floyd_warshall_weighted_edges() {
+        let engine = Arc::new(OrionGraphEngine::new());
+
+        // Create a 3-node graph with varying weights
+        for i in 1..=3 {
+            let node = Node {
+                id: format!("n{}", i),
+                labels: vec![],
+                properties: std::collections::HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            engine.as_ref().insert_node(node).await.unwrap();
+        }
+
+        // n1 --5.0--> n2 --3.0--> n3
+        // n1 ----------10.0------> n3  (direct but heavier)
+        let edges = vec![
+            Edge {
+                id: "e1".to_string(),
+                from_node_id: "n1".to_string(),
+                to_node_id: "n2".to_string(),
+                edge_type: "ROAD".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(5.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+            Edge {
+                id: "e2".to_string(),
+                from_node_id: "n2".to_string(),
+                to_node_id: "n3".to_string(),
+                edge_type: "ROAD".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(3.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+            Edge {
+                id: "e3".to_string(),
+                from_node_id: "n1".to_string(),
+                to_node_id: "n3".to_string(),
+                edge_type: "ROAD".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(10.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        ];
+        for edge in edges {
+            engine.as_ref().insert_edge(edge).await.unwrap();
+        }
+
+        let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
+        let result = floyd.execute(NoInput).unwrap();
+
+        // Shortest n1→n3 should be via n2: 5 + 3 = 8 (not 10 direct)
+        let d_n1_n3 = result
+            .get(&("n1".to_string(), "n3".to_string()))
+            .expect("n1→n3 distance should exist");
+        assert!(
+            (*d_n1_n3 - 8.0).abs() < f64::EPSILON,
+            "Expected 8.0 via n2, got {}",
+            d_n1_n3
+        );
     }
 
     #[test]

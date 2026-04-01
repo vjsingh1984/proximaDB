@@ -10,8 +10,8 @@
 use chrono::{DateTime, Duration, Utc};
 use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::engines::impls::tst::{
-    ASOFJoin, DownsampleAggregation, DownsampleConfig, DownsampleInterval, OHLC,
-    PartitionDuration, TimeSeriesConfig, TimeSeriesEngine,
+    ASOFJoin, DownsampleAggregation, DownsampleConfig, DownsampleInterval, OHLC, PartitionDuration,
+    TimeSeriesConfig, TimeSeriesEngine,
 };
 use std::collections::HashMap;
 use tempfile::TempDir;
