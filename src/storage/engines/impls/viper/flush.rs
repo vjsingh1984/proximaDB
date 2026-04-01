@@ -495,7 +495,7 @@ impl Flush {
 
         // Step 3: Check if HybridParquetWriter already handled atomic write
         let final_file_path = if parquet_data_or_path.len() > 4
-            && &parquet_data_or_path[0..4] == &[0xFF, 0xFF, 0xFF, 0xFF]
+            && parquet_data_or_path[0..4] == [0xFF, 0xFF, 0xFF, 0xFF]
         {
             // HybridParquetWriter already wrote the file atomically
             let path_str = String::from_utf8_lossy(&parquet_data_or_path[4..]);
@@ -505,7 +505,7 @@ impl Flush {
             );
             path_str.to_string()
         } else if parquet_data_or_path.len() > 4
-            && &parquet_data_or_path[0..4] == &[0xFA, 0xCE, 0xF1, 0x1E]
+            && parquet_data_or_path[0..4] == [0xFA, 0xCE, 0xF1, 0x1E]
         {
             // Legacy path: Extract temp file path from marker
             let temp_path_str = String::from_utf8_lossy(&parquet_data_or_path[4..]);
@@ -579,7 +579,7 @@ impl Flush {
         info!("🔄 VIPER: Step 5 - Updating collection metadata_info");
         // Calculate actual data size (either from file or buffer)
         let data_size = if parquet_data_or_path.len() > 4
-            && &parquet_data_or_path[0..4] == &[0xFA, 0xCE, 0xF1, 0x1E]
+            && parquet_data_or_path[0..4] == [0xFA, 0xCE, 0xF1, 0x1E]
         {
             // Legacy path marker - get file size from final path
             let fs = self.filesystem_factory.get_filesystem(&final_file_path)?;
@@ -589,7 +589,7 @@ impl Flush {
                 0
             }
         } else if parquet_data_or_path.len() > 4
-            && &parquet_data_or_path[0..4] == &[0xFF, 0xFF, 0xFF, 0xFF]
+            && parquet_data_or_path[0..4] == [0xFF, 0xFF, 0xFF, 0xFF]
         {
             // File already written marker - use captured file size from stats
             file_size_for_stats as usize

@@ -954,6 +954,7 @@ impl FileSystem for LocalFileSystem {
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(true)
                 .open(&resolved_path)
                 .await
         } else {

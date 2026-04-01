@@ -279,6 +279,7 @@ impl DiskCsrStorage {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&offsets_path)
             .map_err(|e| io_error(format!("Failed to create offsets file: {}", e)))?;
 
@@ -296,6 +297,7 @@ impl DiskCsrStorage {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&targets_path)
             .map_err(|e| io_error(format!("Failed to create targets file: {}", e)))?;
 
@@ -309,6 +311,7 @@ impl DiskCsrStorage {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&edge_ids_path)
             .map_err(|e| io_error(format!("Failed to create edge_ids file: {}", e)))?;
 

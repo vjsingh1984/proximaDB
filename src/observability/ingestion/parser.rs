@@ -227,8 +227,8 @@ impl LogParser {
         let mut parsed = log.clone();
 
         // LEEF:Version|Vendor|Product|Version|EventID|Extension
-        if message.starts_with("LEEF:") {
-            let parts: Vec<&str> = message[5..].splitn(6, '|').collect();
+        if let Some(leef_body) = message.strip_prefix("LEEF:") {
+            let parts: Vec<&str> = leef_body.splitn(6, '|').collect();
             if parts.len() >= 5 {
                 parsed.source = Some(format!("{} {}", parts[1], parts[2]));
                 parsed.message = parts[4].to_string();

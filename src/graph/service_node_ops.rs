@@ -127,10 +127,7 @@ impl super::GraphOperationsService {
                         let key = super::index_key_for_value(filter_val);
                         if let Some(ids_vec) = index_map.get(&key) {
                             let id_set: HashSet<NodeId> = ids_vec.iter().cloned().collect();
-                            candidates = candidates
-                                .into_iter()
-                                .filter(|id| id_set.contains(id))
-                                .collect();
+                            candidates.retain(|id| id_set.contains(id));
                         } else {
                             // No matches for this property value; result is empty
                             candidates.clear();
@@ -165,10 +162,7 @@ impl super::GraphOperationsService {
                         {
                             matched.extend(ids.iter().cloned());
                         }
-                        candidates = candidates
-                            .into_iter()
-                            .filter(|id| matched.contains(id))
-                            .collect();
+                        candidates.retain(|id| matched.contains(id));
                     }
                 }
                 Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
@@ -221,10 +215,7 @@ impl super::GraphOperationsService {
                             }
                             _ => {}
                         }
-                        candidates = candidates
-                            .into_iter()
-                            .filter(|id| matched.contains(id))
-                            .collect();
+                        candidates.retain(|id| matched.contains(id));
                     } else if let Some(map_lock) =
                         self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
@@ -274,10 +265,7 @@ impl super::GraphOperationsService {
                             }
                             _ => {}
                         }
-                        candidates = candidates
-                            .into_iter()
-                            .filter(|id| matched.contains(id))
-                            .collect();
+                        candidates.retain(|id| matched.contains(id));
                     }
                 }
                 _ => {}

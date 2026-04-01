@@ -108,15 +108,15 @@ impl PromQLParser {
     fn parse_grouping(s: &str) -> Result<(Vec<String>, bool)> {
         let s = s.trim();
 
-        if s.starts_with("by") {
-            let rest = s[2..].trim();
+        if let Some(rest) = s.strip_prefix("by") {
+            let rest = rest.trim();
             if rest.starts_with('(') {
                 let labels = Self::extract_parentheses(rest)?;
                 let label_list = Self::parse_label_list(labels)?;
                 return Ok((label_list, false));
             }
-        } else if s.starts_with("without") {
-            let rest = s[7..].trim();
+        } else if let Some(rest) = s.strip_prefix("without") {
+            let rest = rest.trim();
             if rest.starts_with('(') {
                 let labels = Self::extract_parentheses(rest)?;
                 let label_list = Self::parse_label_list(labels)?;

@@ -345,7 +345,7 @@ impl PartitionPruner {
         partition_spec: &CatalogPartitionSpec,
     ) -> bool {
         // Find the partition field
-        let partition_field = match partition_spec.fields.iter().find(|f| &f.name == field) {
+        let partition_field = match partition_spec.fields.iter().find(|f| f.name == field) {
             Some(f) => f,
             None => return true, // Non-partition field, can't prune
         };

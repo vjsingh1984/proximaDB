@@ -1399,7 +1399,7 @@ impl FilesystemFactory {
                 Ok(format!("/{}", absolute_path))
             } else {
                 // Implicit relative path: file://relative/path (treat as relative)
-                let relative_path = &url[7..]; // Remove "file://" prefix
+                let relative_path = url.strip_prefix("file://").unwrap_or(url); // Remove "file://" prefix
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Implicit relative path: '{}'",
                     relative_path
