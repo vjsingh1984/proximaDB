@@ -602,11 +602,7 @@ impl HealthService for HealthServiceImpl {
             loop {
                 interval.tick().await;
 
-                let status = if service.is_empty() {
-                    ServingStatus::Serving
-                } else {
-                    ServingStatus::Serving
-                };
+                let status = ServingStatus::Serving;
 
                 let response = HealthCheckResponse {
                     status: status as i32,

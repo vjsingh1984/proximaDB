@@ -27,7 +27,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::{
     Arc, RwLock,
-    atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
 };
 use tracing::info;
 
@@ -145,8 +145,8 @@ pub struct AxisHnswIndex {
     /// HNSW-specific: Entry point for search
     entry_point: RwLock<Option<usize>>,
 
-    /// Random number generator state
-    rng_state: Arc<RwLock<u64>>,
+    /// Random number generator state (lock-free AtomicU64 for concurrent inserts)
+    rng_state: AtomicU64,
 
     /// Algorithm type for trait requirement
     algorithm_type: IndexAlgorithm,
@@ -219,7 +219,7 @@ impl AxisHnswIndex {
             layers: DashMap::new(),
             max_layer: AtomicUsize::new(0),
             entry_point: RwLock::new(None),
-            rng_state: Arc::new(RwLock::new(42)), // Deterministic seed for reproducibility
+            rng_state: AtomicU64::new(42), // Deterministic seed for reproducibility
             algorithm_type,
 
             // EventLog-based vector consumption (no queue consumer needed)
@@ -251,29 +251,39 @@ impl AxisHnswIndex {
         }
     }
 
-    /// Generate random level for new node using exponential decay
+    /// Generate random level for new node using exponential decay.
+    /// Lock-free: uses atomic CAS on the RNG state so concurrent inserts
+    /// don't serialize behind a write lock.
     fn get_random_level(&self) -> usize {
-        let mut rng = self
-            .rng_state
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut level = 0;
-        let _ml = 1.0 / (2.0_f32.ln()); // 1/ln(2) ≈ 1.44
 
-        let mut random_val = self.fast_random(&mut rng) as f32 / u32::MAX as f32;
+        let mut random_val = self.fast_random_atomic() as f32 / u32::MAX as f32;
 
         while random_val < 0.5 && level < self.config.max_layers {
             level += 1;
-            random_val = self.fast_random(&mut rng) as f32 / u32::MAX as f32;
+            random_val = self.fast_random_atomic() as f32 / u32::MAX as f32;
         }
 
         level
     }
 
-    /// Fast pseudo-random number generator (Linear Congruential Generator)
-    fn fast_random(&self, state: &mut u64) -> u32 {
-        *state = state.wrapping_mul(1664525).wrapping_add(1013904223);
-        (*state >> 32) as u32
+    /// Lock-free LCG using atomic compare-and-swap.
+    /// Each thread reads the current state, computes the next state, and attempts
+    /// to CAS. On contention, the retry re-reads the (now-advanced) state,
+    /// which is correct for an LCG — the sequence just skips ahead.
+    fn fast_random_atomic(&self) -> u32 {
+        loop {
+            let current = self.rng_state.load(AtomicOrdering::Relaxed);
+            let next = current.wrapping_mul(1664525).wrapping_add(1013904223);
+            if self.rng_state.compare_exchange_weak(
+                current,
+                next,
+                AtomicOrdering::Relaxed,
+                AtomicOrdering::Relaxed,
+            ).is_ok() {
+                return (next >> 32) as u32;
+            }
+        }
     }
 
     /// Search for ef closest candidates in a specific layer

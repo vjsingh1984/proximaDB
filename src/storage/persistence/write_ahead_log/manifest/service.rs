@@ -822,7 +822,7 @@ impl GlobalManifestService {
     /// Get the current LSN (last allocated LSN, or 0 if none allocated)
     pub async fn current_lsn(&self) -> u64 {
         let next = self.lsn_allocator.current().await;
-        if next > 1 { next - 1 } else { 0 }
+        next.saturating_sub(1)
     }
 
     /// Get all entries up to (and including) a specific LSN

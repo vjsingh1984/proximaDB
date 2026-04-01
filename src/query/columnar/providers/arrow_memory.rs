@@ -286,11 +286,7 @@ impl ArrowInMemoryProvider {
             }
 
             // Calculate start and end within this batch
-            let start = if rows_skipped < offset {
-                offset - rows_skipped
-            } else {
-                0
-            };
+            let start = offset.saturating_sub(rows_skipped);
 
             let remaining = limit.saturating_sub(rows_collected);
             let end = (start + remaining).min(batch_rows);
