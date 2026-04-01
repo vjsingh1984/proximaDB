@@ -150,7 +150,7 @@ impl NovaFlushOperations {
             dimension,
             hybrid_config,
             &full_path,
-            &*self.filesystem,
+            &self.filesystem,
             filterable_columns,
             metadata_collector,
         )

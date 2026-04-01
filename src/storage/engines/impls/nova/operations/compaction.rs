@@ -308,7 +308,7 @@ impl NovaCompactionOperations {
             dimension,
             hybrid_config,
             output_path,
-            &*self.filesystem,
+            &self.filesystem,
             None, // filterable_columns
             None, // metadata_collector
         )

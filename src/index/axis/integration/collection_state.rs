@@ -277,7 +277,7 @@ impl CollectionStateManager {
                     started_at,
                     ..
                 } => {
-                    let from_tier = Self::state_to_tier(&*from);
+                    let from_tier = Self::state_to_tier(&from);
                     (from_tier, to, started_at)
                 }
                 _ => {

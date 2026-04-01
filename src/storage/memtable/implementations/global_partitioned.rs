@@ -1028,7 +1028,7 @@ impl GlobalPartitionedMemtable {
         F: FnOnce(&mut MemtableMetrics),
     {
         let mut metrics = self.metrics.write().await;
-        updater(&mut *metrics);
+        updater(&mut metrics);
         Ok(())
     }
 

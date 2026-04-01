@@ -976,7 +976,7 @@ impl HybridQueryEngine {
 
         // Calculate similarity for current node
         let node_similarity = if let Some(node) = self.graph_memory.get_node(current_node_id) {
-            self.calculate_node_similarity(&*node, query_vector)?
+            self.calculate_node_similarity(&node, query_vector)?
         } else {
             return Ok(());
         };

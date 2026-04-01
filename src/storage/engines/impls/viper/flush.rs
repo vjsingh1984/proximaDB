@@ -429,7 +429,7 @@ impl Flush {
             vector_dimensions as usize,
             hybrid_config,
             &final_url,
-            &*self.filesystem_factory,
+            &self.filesystem_factory,
             filterable_columns_for_writer, // Pass filterable columns from collection config
             Some(Box::new(viper_collector)), // Pass VIPER metadata collector for centroid computation
         ).await {
