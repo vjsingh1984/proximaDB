@@ -2048,11 +2048,11 @@ impl UnifiedParquetReader {
             };
 
             let version = version_array
-                .and_then(|arr| Some(arr.value(row_idx)))
+                .map(|arr| arr.value(row_idx))
                 .unwrap_or(0);
 
             let timestamp = timestamp_array
-                .and_then(|arr| Some(arr.value(row_idx)))
+                .map(|arr| arr.value(row_idx))
                 .unwrap_or(0);
 
             records.push(VectorRecord {

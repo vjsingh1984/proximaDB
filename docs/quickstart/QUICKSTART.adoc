@@ -496,13 +496,13 @@ client = connect(config=config)
 
 [source,python]
 ----
-from proximadb_sdk.models_v2 import CollectionConfig, DistanceMetric, StorageEngine
+from proximadb_sdk.models import CollectionConfig, DistanceMetric
 
 config = CollectionConfig(
     name="optimized_collection",
     dimension=1536,  # OpenAI embedding size
     distance_metric=DistanceMetric.COSINE,
-    storage_engine=StorageEngine.SST,  # LSM-tree storage
+    storage_engine="sst",  # LSM-tree storage
     metadata={
         "description": "Optimized for large-scale search",
         "index_type": "HNSW"

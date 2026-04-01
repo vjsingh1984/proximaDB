@@ -35,8 +35,8 @@ def test_imports():
         return False
 
     try:
-        from proximadb_sdk.models_v2 import CollectionConfig
-        print("  ✅ CollectionConfig (models_v2)")
+        from proximadb_sdk.models import CollectionConfig
+        print("  ✅ CollectionConfig (models)")
     except ImportError as e:
         print(f"  ❌ models: {e}")
         return False
@@ -63,10 +63,10 @@ def test_dependencies():
     print("\n🔍 Testing dependencies...")
 
     dependencies = [
-        ("numpy", "np"),
+        ("numpy", "numpy"),
         ("httpx", "httpx"),
         ("grpcio", "grpc"),
-        ("protobuf", "protobuf"),
+        ("protobuf", "google.protobuf"),
         ("pydantic", "pydantic"),
     ]
 
@@ -103,13 +103,12 @@ def test_config_models():
     print("\n🔍 Testing configuration models...")
 
     try:
-        from proximadb_sdk.models_v2 import CollectionConfig, DistanceMetric, StorageEngine
+        from proximadb_sdk.models import CollectionConfig, DistanceMetric
 
         config = CollectionConfig(
             name="test_collection",
             dimension=384,
-            distance_metric=DistanceMetric.COSINE,
-            storage_engine=StorageEngine.VIPER
+            distance_metric=DistanceMetric.COSINE
         )
 
         assert config.name == "test_collection"
