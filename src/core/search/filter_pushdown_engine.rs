@@ -241,12 +241,8 @@ impl FilterPushdownPlanner {
                 let mut all_conditions = Vec::new();
                 for cond in conditions {
                     let nested_filter = self.convert_to_storage_filter(cond)?;
-                    // If nested is also And, merge conditions
-                    if nested_filter.logic == FilterLogic::And {
-                        all_conditions.extend(nested_filter.conditions);
-                    } else {
-                        all_conditions.extend(nested_filter.conditions);
-                    }
+                    // Merge all nested conditions
+                    all_conditions.extend(nested_filter.conditions);
                 }
 
                 Ok(StorageFilter {
@@ -260,12 +256,8 @@ impl FilterPushdownPlanner {
                 let mut all_conditions = Vec::new();
                 for cond in conditions {
                     let nested_filter = self.convert_to_storage_filter(cond)?;
-                    // If nested is also Or, merge conditions
-                    if nested_filter.logic == FilterLogic::Or {
-                        all_conditions.extend(nested_filter.conditions);
-                    } else {
-                        all_conditions.extend(nested_filter.conditions);
-                    }
+                    // Merge all nested conditions
+                    all_conditions.extend(nested_filter.conditions);
                 }
 
                 Ok(StorageFilter {

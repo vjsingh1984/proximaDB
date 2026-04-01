@@ -176,11 +176,7 @@ pub async fn breadth_first_search(
     let mut result_nodes = Vec::new();
     let mut result_node_ids = Vec::new();
     let mut traversed_edges = Vec::new(); // NEW
-    let mut paths = if config.track_paths {
-        std::collections::HashMap::new()
-    } else {
-        std::collections::HashMap::new()
-    };
+    let mut paths = std::collections::HashMap::new();
 
     let mut stats = TraversalStats::default();
 
@@ -381,11 +377,7 @@ pub async fn depth_first_search(
     let mut result_nodes = Vec::new();
     let mut result_node_ids = Vec::new();
     let mut traversed_edges = Vec::new(); // NEW
-    let mut paths = if config.track_paths {
-        std::collections::HashMap::new()
-    } else {
-        std::collections::HashMap::new()
-    };
+    let mut paths = std::collections::HashMap::new();
 
     let mut stats = TraversalStats::default();
 

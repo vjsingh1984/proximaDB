@@ -169,11 +169,9 @@ impl EmbeddingProvider {
 
     fn infer_dimension(model_name: &str) -> usize {
         // Common sentence-transformer dimensions
-        if model_name.contains("MiniLM-L6") {
-            384
-        } else if model_name.contains("MiniLM-L12") {
-            384
-        } else if model_name.contains("bge-small") {
+        if model_name.contains("MiniLM-L6")
+            || model_name.contains("MiniLM-L12")
+            || model_name.contains("bge-small") {
             384
         } else if model_name.contains("bge-base") {
             768
