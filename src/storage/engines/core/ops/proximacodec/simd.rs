@@ -1047,6 +1047,7 @@ pub fn simd_frame_of_reference_decode_f32(
 /// # Arguments
 /// * `values` - Input f32 values
 /// * `bits` - Bit width after zigzag encoding (1-32)
+///
 /// Zigzag encoding - delegates to baseline
 ///
 /// **Why no SIMD?** Zigzag transformation is simple bit manipulation:

@@ -10,6 +10,7 @@
 //! This module provides a single IVF implementation that internally manages:
 //! - Inelastic centroid store (always in memory)
 //! - Elastic posting list store (tierable)
+//!
 //! Both stores are properly partitioned by collection_id.
 
 use anyhow::{Result, anyhow};

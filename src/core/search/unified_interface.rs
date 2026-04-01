@@ -51,6 +51,7 @@ pub struct SearchPlan {
     /// Minimum score threshold for results (dynamically updated during search)
     /// - None: No minimum threshold (useful for full fidelity searches)
     /// - Some(score): Only return results with score >= this value
+    ///
     /// Engines can update this as they find better results
     pub min_score: Option<f32>,
 

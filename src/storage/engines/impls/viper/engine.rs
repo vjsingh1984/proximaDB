@@ -12,6 +12,7 @@
 //! - Handle flush operations from WAL to persistent storage
 //! - Perform compaction to optimize storage layout
 //! - Provide direct vector search on Parquet files (baseline functionality)
+//!
 //! NOT Responsible For:
 //! - ML clustering (belongs in AXIS indexing service)
 //! - Index management (AXIS responsibility)

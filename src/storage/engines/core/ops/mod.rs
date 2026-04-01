@@ -62,6 +62,7 @@ pub mod proximacodec;
 /// - unified_proxima_simd.obsolete/
 // pub mod proximaencoder;  // OBSOLETE - use proximacodec instead
 // pub mod unified_proxima_simd;  // OBSOLETE - use proximacodec instead
+//
 /// SIMD configuration system for fine-tuning optimization behavior
 pub mod simd_config;
 

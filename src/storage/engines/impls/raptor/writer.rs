@@ -408,6 +408,7 @@ impl IvfClusteringBuilder {
     /// - d₃: Distance variance within cluster (compactness measure)
     /// - d₄: Minimum inter-centroid distance (cluster separation)
     /// - d₅: Maximum inter-centroid distance (global structure preservation)
+    ///
     /// Cluster vectors into row groups using k²+p×(k+p) strategy
     pub fn cluster_vectors_into_rowgroups(
         &mut self,
@@ -4799,6 +4800,7 @@ impl RaptorWriter {
     /// - Row group clustering via distance-aware algorithms
     /// - Fast similarity search within storage pages
     /// - Boosting calculations during component assignment
+    ///
     /// Build hybrid IVF+Graph structure using k-means clustering with local edges
     /// Combines IVF clustering (k clusters) with local graph connectivity (edges within clusters)
     fn build_ivf_clusters(&mut self) -> Result<()> {
