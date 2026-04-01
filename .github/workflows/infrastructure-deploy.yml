@@ -1,0 +1,576 @@
+# ProximaDB Infrastructure CI/CD Pipeline
+#
+# Purpose: Automate Terraform and Helm deployments
+# Triggered by: Push to main, manual workflow dispatch, or PR comments
+#
+# Environments:
+# - dev: Development environment (auto-deploy on push to main)
+# - staging: Staging environment (manual approval required)
+# - production: Production environment (manual approval required)
+
+name: Infrastructure Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/**'
+      - '.github/workflows/infrastructure-deploy.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+env:
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: '1.5.7'
+  HELM_VERSION: '3.12.0'
+  KUBECTL_VERSION: '1.29.0'
+
+jobs:
+  # ============================================================================
+  # Terraform Validation
+  # ============================================================================
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        working-directory: infrastructure/terraform
+        run: terraform fmt -recursive -check
+
+      - name: Terraform Init (Dev)
+        working-directory: infrastructure/terraform/environments/dev
+        run: terraform init -backend=false
+
+      - name: Terraform Validate (Dev)
+        working-directory: infrastructure/terraform/environments/dev
+        run: terraform validate
+
+      - name: Terraform Init (Staging)
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform init -backend=false
+
+      - name: Terraform Validate (Staging)
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform validate
+
+      - name: Terraform Init (Production)
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform init -backend=false
+
+      - name: Terraform Validate (Production)
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform validate
+
+      - name: Terraform Security Scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infrastructure/terraform
+          framework: terraform
+          output_format: cli
+          soft_fail: false
+
+  # ============================================================================
+  # Helm Chart Validation
+  # ============================================================================
+  helm-validate:
+    name: Helm Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Helm Lint
+        working-directory: infrastructure/helm/proximadb
+        run: helm lint .
+
+      - name: Helm Template (Dry Run)
+        working-directory: infrastructure/helm/proximadb
+        run: helm template test . --debug
+
+      - name: Helm Unit Tests
+        working-directory: infrastructure/helm/proximadb
+        run: |
+          # Install helm-unit-test plugin
+          helm plugin install https://github.com/quintush/helm-unittest
+          helm unittest .
+
+  # ============================================================================
+  # Terraform Plan (Dev)
+  # ============================================================================
+  terraform-plan-dev:
+    name: Terraform Plan (Dev)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [terraform-validate, helm-validate]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/environments/dev
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=environments/dev/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true" \
+            -backend-config="dynamodb_table=${{ secrets.TERRAFORM_LOCK_TABLE }}"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: infrastructure/terraform/environments/dev
+        run: terraform plan -out=tfplan -no-color
+
+      - name: Save Plan Output
+        working-directory: infrastructure/terraform/environments/dev
+        run: terraform show -no-color tfplan > plan.txt
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: tfplan-dev
+          path: infrastructure/terraform/environments/dev/plan.txt
+
+      - name: Comment PR with Plan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('infrastructure/terraform/environments/dev/plan.txt', 'utf8');
+            const output = `#### Terraform Plan (Dev) 📖
+            <details><summary>Show Plan</summary>
+            \`\`\`terraform
+            ${plan}
+            \`\`\`
+            </details>
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # ============================================================================
+  # Terraform Apply (Dev)
+  # ============================================================================
+  terraform-apply-dev:
+    name: Terraform Apply (Dev)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: terraform-plan-dev
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: dev
+      url: https://proximadb-dev.example.com
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/environments/dev
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=environments/dev/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true" \
+            -backend-config="dynamodb_table=${{ secrets.TERRAFORM_LOCK_TABLE }}"
+
+      - name: Terraform Apply
+        working-directory: infrastructure/terraform/environments/dev
+        run: terraform apply -auto-approve tfplan
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name proximadb-dev \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy ProximaDB Helm Chart
+        working-directory: infrastructure/helm/proximadb
+        run: |
+          helm upgrade --install proximadb . \
+            --namespace proximadb \
+            --create-namespace \
+            --values ../../terraform/environments/dev/helm-values.yaml \
+            --wait \
+            --timeout 10m
+
+      - name: Verify Deployment
+        run: |
+          kubectl wait --for=condition=ready pod \
+            -l app=proximadb \
+            -n proximadb \
+            --timeout=300s
+
+      - name: Health Check
+        run: |
+          kubectl port-forward svc/proximadb 5678:5678 -n proximadb &
+          sleep 10
+          curl -f http://localhost:5678/health || exit 1
+
+  # ============================================================================
+  # Terraform Plan (Staging)
+  # ============================================================================
+  terraform-plan-staging:
+    name: Terraform Plan (Staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [terraform-validate, helm-validate]
+    if: github.event.inputs.environment == 'staging'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/environments/staging
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=environments/staging/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true" \
+            -backend-config="dynamodb_table=${{ secrets.TERRAFORM_LOCK_TABLE }}"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform plan -out=tfplan -no-color
+
+      - name: Save Plan Output
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform show -no-color tfplan > plan.txt
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: tfplan-staging
+          path: infrastructure/terraform/environments/staging/plan.txt
+
+  # ============================================================================
+  # Terraform Apply (Staging)
+  # ============================================================================
+  terraform-apply-staging:
+    name: Terraform Apply (Staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: terraform-plan-staging
+    if: github.event.inputs.environment == 'staging' && github.event.inputs.action == 'apply'
+    environment:
+      name: staging
+      url: https://proximadb-staging.example.com
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/environments/staging
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=environments/staging/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true" \
+            -backend-config="dynamodb_table=${{ secrets.TERRAFORM_LOCK_TABLE }}"
+
+      - name: Terraform Apply
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform apply -auto-approve tfplan
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name proximadb-staging \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy ProximaDB Helm Chart
+        working-directory: infrastructure/helm/proximadb
+        run: |
+          helm upgrade --install proximadb . \
+            --namespace proximadb \
+            --create-namespace \
+            --values ../../terraform/environments/staging/helm-values.yaml \
+            --wait \
+            --timeout 10m
+
+  # ============================================================================
+  # Terraform Plan (Production)
+  # ============================================================================
+  terraform-plan-production:
+    name: Terraform Plan (Production)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [terraform-validate, helm-validate]
+    if: github.event.inputs.environment == 'production'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/environments/production
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=environments/production/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true" \
+            -backend-config="dynamodb_table=${{ secrets.TERRAFORM_LOCK_TABLE }}"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform plan -out=tfplan -no-color
+
+      - name: Save Plan Output
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform show -no-color tfplan > plan.txt
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: tfplan-production
+          path: infrastructure/terraform/environments/production/plan.txt
+
+  # ============================================================================
+  # Terraform Apply (Production)
+  # ============================================================================
+  terraform-apply-production:
+    name: Terraform Apply (Production)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: terraform-plan-production
+    if: github.event.inputs.environment == 'production' && github.event.inputs.action == 'apply'
+    environment:
+      name: production
+      url: https://proximadb.example.com
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infrastructure/terraform/environments/production
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TERRAFORM_STATE_BUCKET }}" \
+            -backend-config="key=environments/production/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true" \
+            -backend-config="dynamodb_table=${{ secrets.TERRAFORM_LOCK_TABLE }}"
+
+      - name: Terraform Apply
+        working-directory: infrastructure/terraform/environments/production
+        run: terraform apply -auto-approve tfplan
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name proximadb-production \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy ProximaDB Helm Chart
+        working-directory: infrastructure/helm/proximadb
+        run: |
+          helm upgrade --install proximadb . \
+            --namespace proximadb \
+            --create-namespace \
+            --values ../../terraform/environments/production/helm-values.yaml \
+            --wait \
+            --timeout 10m
+
+      - name: Verify Deployment
+        run: |
+          kubectl wait --for=condition=ready pod \
+            -l app=proximadb \
+            -n proximadb \
+            --timeout=300s
+
+      - name: Health Check
+        run: |
+          kubectl port-forward svc/proximadb 5678:5678 -n proximadb &
+          sleep 10
+          curl -f http://localhost:5678/health || exit 1
+
+      - name: Run Smoke Tests
+        run: |
+          # TODO: Add smoke tests
+          echo "Running smoke tests..."
+
+  # ============================================================================
+  # Post-Deploy Monitoring
+  # ============================================================================
+  post-deploy-monitoring:
+    name: Post-Deploy Monitoring
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [terraform-apply-dev]
+    if: always() && needs.terraform-apply-dev.result == 'success'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name proximadb-dev \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Check Pod Health
+        run: |
+          kubectl get pods -n proximadb
+          kubectl top pods -n proximadb
+
+      - name: Check Service Health
+        run: |
+          kubectl get svc -n proximadb
+
+      - name: Check HPA Status
+        run: |
+          kubectl get hpa -n proximadb
+
+      - name: Check Events
+        run: |
+          kubectl get events -n proximadb --sort-by='.lastTimestamp' | tail -20
+
+      - name: Notify on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            core.warning('Post-deployment monitoring detected issues. Please check the logs.')
