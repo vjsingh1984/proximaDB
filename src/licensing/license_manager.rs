@@ -334,7 +334,7 @@ impl LicenseManager {
 
         // No valid license found - return trial license
         warn!("⚠️ No valid license found, using trial license");
-        Ok(self.create_trial_license().await?)
+        self.create_trial_license().await
     }
 
     /// Create trial license for new installations

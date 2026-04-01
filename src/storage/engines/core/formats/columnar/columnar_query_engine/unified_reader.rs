@@ -1037,7 +1037,7 @@ impl UnifiedParquetReader {
             crate::storage::engines::core::formats::columnar::MetadataFilter::from_filter_expression(fe)
         });
 
-        while let Some(batch) = reader.next() {
+        for batch in reader {
             let batch = batch?;
 
             if let Some(filter_expr) = filter_expression {
@@ -1172,7 +1172,7 @@ impl UnifiedParquetReader {
             crate::storage::engines::core::formats::columnar::MetadataFilter::from_filter_expression(fe)
         });
 
-        while let Some(batch) = reader.next() {
+        for batch in reader {
             let batch = batch?;
 
             if let Some(ref metadata_filter) = vectorized_filter {

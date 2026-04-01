@@ -165,7 +165,7 @@ impl FormatRegistry {
         let priority = detector.priority();
         detectors.push(detector);
         // Sort by priority (higher first)
-        detectors.sort_by(|a, b| b.priority().cmp(&a.priority()));
+        detectors.sort_by_key(|d| std::cmp::Reverse(d.priority()));
         debug!("Registered format detector with priority {}", priority);
     }
 

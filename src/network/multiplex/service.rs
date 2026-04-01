@@ -70,7 +70,7 @@ impl MultiplexService {
         config: MultiplexConfig,
     ) -> Self {
         // Sort detectors by priority (highest first)
-        detectors.sort_by(|a, b| b.priority().cmp(&a.priority()));
+        detectors.sort_by_key(|d| std::cmp::Reverse(d.priority()));
 
         Self {
             detectors: Arc::new(detectors),

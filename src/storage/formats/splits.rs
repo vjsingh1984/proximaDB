@@ -642,7 +642,7 @@ impl SplitPlanner {
 
         // Sort splits by cost (descending) for better load balancing
         let mut sorted_splits = splits;
-        sorted_splits.sort_by(|a, b| b.estimated_cost().cmp(&a.estimated_cost()));
+        sorted_splits.sort_by_key(|s| std::cmp::Reverse(s.estimated_cost()));
 
         // Greedy assignment to partition with lowest cost
         for split in sorted_splits {

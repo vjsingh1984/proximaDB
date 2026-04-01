@@ -110,14 +110,14 @@ impl OptimizedNovaOperations {
                 self.prune_row_groups_with_metadata(&_parquet_metadata, _query)?;
 
             // Phase 2: Columnar filtering with SIMD using actual Parquet metadata
-            return Ok(self
+            return self
                 .execute_columnar_search_with_metadata(
                     &_parquet_metadata,
                     &_candidate_row_groups,
                     _query,
                     _top_k,
                 )
-                .await?);
+                .await;
         }
     }
 

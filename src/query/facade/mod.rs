@@ -474,7 +474,7 @@ impl UnifiedQueryFacade {
         }
 
         // Sort by priority (highest first)
-        candidates.sort_by(|a, b| b.priority().cmp(&a.priority()));
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.priority()));
 
         Ok(candidates.first().ok_or_else(|| {
             anyhow!(

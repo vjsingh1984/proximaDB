@@ -17,6 +17,7 @@
 //! - ML clustering (belongs in AXIS indexing service)
 //! - Index management (AXIS responsibility)
 //! - Query optimization strategies (AXIS layer)
+//!
 //! Architecture:
 //! - VIPER provides baseline search that works for ALL collections
 //! - AXIS can optionally add ML clustering as an optimization layer
@@ -1138,7 +1139,7 @@ impl ViperEngine {
             };
             let mut batch_reader = reader_builder.build()?;
             // Process each record batch
-            while let Some(batch) = batch_reader.next() {
+            for batch in &mut batch_reader {
                 let batch = batch?;
 
                 // Get ID column
@@ -1477,9 +1478,11 @@ impl ViperEngine {
     /// - ML-driven cluster optimization for large collections
     /// - Direct search for small collections
     /// - Hybrid strategies combining clustering with metadata filtering
-    /// Public search method for testing - requires collection_id and storage URL
+    ///
+    /// Public search method for testing - requires collection_id and storage URL.
+    ///
     /// **Note**: This is a convenience method primarily intended for testing.
-    /// Production code should use `search_vectors_unified` via the UnifiedStorageEngine trait
+    /// Production code should use `search_vectors_unified` via the `UnifiedStorageEngine` trait
     /// for full control over search parameters including distance metrics and filters.
     pub async fn search_vectors(
         &self,

@@ -344,8 +344,9 @@ pub struct FlushCompletionResult {
 /// - **Strategy-specific serialization** with shared deserialization in global memtable
 /// - **Collection-specific storage locations** from collection metadata
 /// - **Atomic disk synchronization** using TransactionCoordinator
-/// Collection assignment info with storage location and critical config
-/// The collection_id is the HashMap key, so not stored here
+///
+/// Collection assignment info with storage location and critical config.
+/// The collection_id is the HashMap key, so not stored here.
 #[derive(Debug, Clone)]
 pub struct CollectionAssignment {
     /// Base storage location for this collection (e.g., "file:///data/disk1" or "s3://bucket/path")

@@ -389,7 +389,7 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
         let floats = try_cast_slice::<u8, f32>(&raw_bytes)
             .map_err(|e| anyhow::anyhow!("Failed to cast bytes to f32: {}", e))?;
 
-        Ok(FixedVector::new(floats.to_vec())?)
+        FixedVector::new(floats.to_vec())
     }
 
     /// Serialize batch of fixed vectors efficiently  

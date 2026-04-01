@@ -1818,10 +1818,9 @@ impl UnifiedHandlers {
 
         // Also support ? placeholders (common in many SQL dialects)
         let mut result = String::new();
-        let mut chars = processed.chars().peekable();
         let mut param_index = 0;
 
-        while let Some(ch) = chars.next() {
+        for ch in processed.chars() {
             if ch == '?' && param_index < parameters.len() {
                 result.push_str(&self.format_sql_value(&parameters[param_index])?);
                 param_index += 1;

@@ -863,7 +863,7 @@ impl CollectionService {
                 // Take the first IndexConfig from proto (index_configs is a Vec)
                 if let Some(first_config) = config.index_configs.first() {
                     // Convert from proto IndexConfig to internal IndexConfig
-                    return Ok(self.convert_proto_index_config(first_config)?);
+                    return self.convert_proto_index_config(first_config);
                 }
             }
 
