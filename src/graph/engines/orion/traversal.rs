@@ -968,7 +968,7 @@ pub async fn dijkstra_shortest_path(
 
             let should_update = distances
                 .get(neighbor_id)
-                .is_none_or(|.map_or(true, |&existing_dist| new_distance < existing_dist)existing_dist| new_distance < existing_dist);
+                .is_none_or(|&existing_dist| new_distance < existing_dist);
 
             if should_update {
                 distances.insert(neighbor_id.clone(), new_distance);

@@ -1,0 +1,30 @@
+apiVersion: v2
+name: proximadb
+description: ProximaDB Cloud Service - High-performance vector database
+type: application
+version: 0.1.0
+appVersion: "0.2.0"
+keywords:
+  - vector-database
+  - semantic-search
+  - embeddings
+  - machine-learning
+  - graph-database
+home: https://github.com/vjsingh1984/proximadb
+sources:
+  - https://github.com/vjsingh1984/proximadb
+maintainers:
+  - name: Vijaykumar Singh
+    email: singhvjd@gmail.com
+    url: https://github.com/vjsingh1984
+engine: gotpl
+kubeVersion: ">=1.26.0-0"
+icon: https://proximadb.com/logo.png
+annotations:
+  artifacthub.io/links: |
+    - name: support
+      url: https://github.com/vjsingh1984/proximadb/issues
+    - name: documentation
+      url: https://proximadb.com/docs
+  artifacthub.io/operator: "true"
+  artifacthub.io/prerelease: "false"
