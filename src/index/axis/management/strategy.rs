@@ -14,9 +14,11 @@ use crate::index::axis::types::{
     ResultCombination, RoutingRule, TextAnalyzer, TokenFilter, Tokenizer,
 };
 
-// Type aliases for compatibility
+/// Type alias for `IndexSelectionStrategy` for compatibility
 pub type IndexStrategy = IndexSelectionStrategy;
+/// Type alias for `IndexStrategyBuilder` for compatibility
 pub type StrategySelector = IndexStrategyBuilder;
+/// Type alias for `OptimizationConfig` for compatibility
 pub type StrategyRecommendation = OptimizationConfig;
 
 /// Optimization goals for index selection
@@ -35,9 +37,13 @@ pub enum OptimizationGoal {
 /// Configuration for index optimization
 #[derive(Debug, Clone)]
 pub struct OptimizationConfig {
+    /// Primary optimization goal
     pub goal: OptimizationGoal,
+    /// Maximum memory budget in gigabytes
     pub max_memory_gb: Option<f64>,
+    /// Target query latency in milliseconds
     pub target_latency_ms: Option<f64>,
+    /// Minimum required recall accuracy (0.0–1.0)
     pub min_accuracy: Option<f32>,
 }
 
@@ -55,23 +61,35 @@ impl Default for OptimizationConfig {
 /// Collection statistics for strategy selection
 #[derive(Debug, Clone)]
 pub struct CollectionStatistics {
+    /// Total number of vectors in the collection
     pub total_vectors: usize,
+    /// Dimensionality of each vector
     pub vector_dimension: usize,
-    pub avg_vector_sparsity: f32, // % of zero elements
+    /// Average fraction of zero elements per vector (0.0–1.0)
+    pub avg_vector_sparsity: f32,
+    /// Whether the collection has associated metadata fields
     pub has_metadata: bool,
+    /// Cardinality per metadata field (field name → distinct value count)
     pub metadata_cardinality: HashMap<String, usize>,
+    /// Whether the collection contains full-text searchable fields
     pub has_text_fields: bool,
-    pub update_frequency: f32, // updates per second
+    /// Estimated write rate in updates per second
+    pub update_frequency: f32,
 }
 
 /// Query patterns for strategy optimization
 #[derive(Debug, Clone)]
 pub struct QueryPatterns {
+    /// Average query throughput in queries per second
     pub avg_queries_per_second: f32,
-    pub filter_usage_ratio: f32, // % queries with filters
-    pub text_search_ratio: f32,  // % queries with text search
-    pub typical_k: usize,        // typical number of results requested
-    pub recall_requirement: f32, // required recall rate
+    /// Fraction of queries that include metadata filters (0.0–1.0)
+    pub filter_usage_ratio: f32,
+    /// Fraction of queries that include full-text search (0.0–1.0)
+    pub text_search_ratio: f32,
+    /// Typical number of nearest neighbours requested per query
+    pub typical_k: usize,
+    /// Required recall rate for vector search (0.0–1.0)
+    pub recall_requirement: f32,
 }
 
 /// Automatic index strategy builder
@@ -89,6 +107,7 @@ pub struct IndexStrategyBuilder {
 }
 
 impl IndexStrategyBuilder {
+    /// Create a new strategy builder from collection statistics and observed query patterns
     pub fn new(collection_stats: CollectionStatistics, query_patterns: QueryPatterns) -> Self {
         Self {
             collection_stats,
@@ -97,6 +116,7 @@ impl IndexStrategyBuilder {
         }
     }
 
+    /// Override the optimization configuration
     pub fn with_optimization(mut self, config: OptimizationConfig) -> Self {
         self.optimization_config = config;
         self
@@ -256,20 +276,29 @@ impl IndexStrategyBuilder {
 /// Runtime index strategy that can adapt based on performance
 #[derive(Debug, Clone)]
 pub struct AdaptiveIndexStrategy {
+    /// The initial index selection strategy to adapt from
     pub base_strategy: IndexSelectionStrategy,
+    /// Ring buffer of recent query performance observations
     pub performance_history: Vec<QueryPerformance>,
+    /// When `false`, the strategy is frozen and will not self-tune
     pub adaptation_enabled: bool,
 }
 
+/// Observed performance for a single query execution
 #[derive(Debug, Clone)]
 pub struct QueryPerformance {
+    /// Logical query type (e.g. `"knn"`, `"hybrid"`, `"filter"`)
     pub query_type: String,
+    /// Wall-clock latency in milliseconds
     pub latency_ms: f64,
+    /// Measured recall against ground truth (0.0–1.0)
     pub recall: f32,
+    /// Indices into `base_strategy.indexes` that were consulted
     pub indexes_used: Vec<usize>,
 }
 
 impl AdaptiveIndexStrategy {
+    /// Create a new adaptive strategy around an existing base strategy
     pub fn new(base_strategy: IndexSelectionStrategy) -> Self {
         Self {
             base_strategy,

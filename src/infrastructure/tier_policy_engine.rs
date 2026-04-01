@@ -977,11 +977,12 @@ pub struct GlobalMetricsCollector {
     collection_metrics: HashMap<String, CollectionTierMetrics>,
 }
 
+/// Aggregate usage statistics for a single infrastructure tier across all collections
 #[derive(Debug, Clone)]
 pub struct TierUsageStats {
     /// Total capacity across all collections
     pub total_capacity_bytes: usize,
-    /// Used capacity across all collections  
+    /// Used capacity across all collections
     pub used_capacity_bytes: usize,
     /// Operations per second across all collections
     pub operations_per_second: f64,
@@ -1025,6 +1026,7 @@ impl Default for GlobalMetricsCollector {
 }
 
 impl GlobalMemory {
+    /// Create a new `GlobalMemory` using the detected system memory as the budget
     pub fn new() -> Self {
         Self {
             total_memory_budget: Self::get_system_memory(),
@@ -1409,13 +1411,17 @@ impl Default for GlobalTier {
     }
 }
 
+/// Aggregate response describing actions taken across all collections during a memory pressure event
 #[derive(Debug)]
 pub struct GlobalPressureResponse {
+    /// Total bytes freed across all collections
     pub total_memory_freed: usize,
+    /// Per-collection actions taken to relieve pressure
     pub collection_actions: HashMap<String, MemoryPressureAction>,
 }
 
 impl GlobalPressureResponse {
+    /// Record that items from a collection were promoted to a slower tier
     pub fn add_promotion(&mut self, collection_id: String, promoted: usize) {
         self.collection_actions.insert(
             collection_id,
@@ -1426,6 +1432,7 @@ impl GlobalPressureResponse {
         );
     }
 
+    /// Record that items from a collection were evicted from memory
     pub fn add_eviction(&mut self, collection_id: String, evicted: usize) {
         self.collection_actions.insert(
             collection_id,
@@ -1437,19 +1444,30 @@ impl GlobalPressureResponse {
     }
 }
 
+/// Action taken for a single collection during a memory pressure response
 #[derive(Debug)]
 pub enum MemoryPressureAction {
+    /// Items were promoted to a slower (durable) tier to free memory
     Promoted {
+        /// Number of items promoted
         items: usize,
+        /// Bytes freed from memory by the promotion
         bytes: usize,
     },
+    /// Items were evicted entirely to free memory
     Evicted {
+        /// Number of items evicted
         items: usize,
+        /// Bytes freed from memory by the eviction
         bytes: usize,
     },
+    /// A mix of promotions and evictions was performed
     Hybrid {
+        /// Number of items promoted to a slower tier
         promoted: usize,
+        /// Number of items evicted
         evicted: usize,
+        /// Total bytes freed from memory
         bytes_freed: usize,
     },
 }
@@ -1628,6 +1646,7 @@ impl SmartTierPolicy {
         policy
     }
 
+    /// Create a default tier policy optimized for cache workloads
     pub fn for_cache_workload() -> Self {
         let available_tiers = vec![
             InfrastructureTier::Memory,
@@ -1742,6 +1761,7 @@ impl SmartTierPolicy {
         policy
     }
 
+    /// Create a default tier policy optimized for hybrid (mixed read/write) workloads
     pub fn for_hybrid_workload() -> Self {
         let available_tiers = vec![
             InfrastructureTier::Memory,

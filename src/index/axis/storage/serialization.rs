@@ -68,6 +68,7 @@ pub enum SerializationError {
     NotSupported(String),
 }
 
+/// Convenience `Result` alias using [`SerializationError`] as the error type
 pub type Result<T> = std::result::Result<T, SerializationError>;
 
 /// Index types that can be serialized
