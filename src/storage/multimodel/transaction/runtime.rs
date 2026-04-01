@@ -4,22 +4,29 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 
-use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData};
+use crate::proto::proximadb_v1::{
+    DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData, VectorRecord,
+};
 use crate::storage::multimodel::facade::MultiModelStorageFacade;
 
 use super::coordinator::{TransactionConfig, TransactionCoordinator};
 use super::isolation::IsolationLevel;
-use super::participants::{DocumentStoreParticipant, ObservabilityStoreParticipant};
+use super::participants::{
+    DocumentStoreParticipant, GraphEdge, GraphNode, GraphStoreParticipant,
+    ObservabilityStoreParticipant, VectorStoreParticipant,
+};
 use super::two_phase_commit::ParticipantType;
 
 /// Runtime wrapper that wires real store-backed participants into the
 /// multi-model transaction coordinator and exposes staging methods for
-/// document and observability writes.
+/// document, observability, vector, and graph writes.
 pub struct TransactionalMultiModelFacade {
     storage: Arc<MultiModelStorageFacade>,
     coordinator: Arc<TransactionCoordinator>,
     document_participant: Option<Arc<DocumentStoreParticipant>>,
     observability_participant: Option<Arc<ObservabilityStoreParticipant>>,
+    vector_participant: Option<Arc<VectorStoreParticipant>>,
+    graph_participant: Option<Arc<GraphStoreParticipant>>,
 }
 
 impl TransactionalMultiModelFacade {
@@ -37,6 +44,11 @@ impl TransactionalMultiModelFacade {
             .map(ObservabilityStoreParticipant::new)
             .map(Arc::new);
 
+        // Vector and graph participants are wired when their write-operation
+        // adapters are provided via `with_vector_participant` / `with_graph_participant`.
+        let vector_participant: Option<Arc<VectorStoreParticipant>> = None;
+        let graph_participant: Option<Arc<GraphStoreParticipant>> = None;
+
         if let Some(participant) = &document_participant {
             coordinator.register_participant(participant.clone()).await;
         }
@@ -49,7 +61,35 @@ impl TransactionalMultiModelFacade {
             coordinator,
             document_participant,
             observability_participant,
+            vector_participant,
+            graph_participant,
         }
+    }
+
+    /// Attach a vector store participant backed by a [`VectorWriteOperations`] service.
+    pub async fn with_vector_participant(
+        mut self,
+        service: Arc<dyn super::participants::VectorWriteOperations>,
+    ) -> Self {
+        let participant = Arc::new(VectorStoreParticipant::new(service));
+        self.coordinator
+            .register_participant(participant.clone())
+            .await;
+        self.vector_participant = Some(participant);
+        self
+    }
+
+    /// Attach a graph store participant backed by a [`GraphWriteOperations`] service.
+    pub async fn with_graph_participant(
+        mut self,
+        service: Arc<dyn super::participants::GraphWriteOperations>,
+    ) -> Self {
+        let participant = Arc::new(GraphStoreParticipant::new(service));
+        self.coordinator
+            .register_participant(participant.clone())
+            .await;
+        self.graph_participant = Some(participant);
+        self
     }
 
     pub fn storage(&self) -> &Arc<MultiModelStorageFacade> {
@@ -76,6 +116,12 @@ impl TransactionalMultiModelFacade {
             participant.clear_staged(transaction_id).await;
         }
         if let Some(ref participant) = self.observability_participant {
+            participant.clear_staged(transaction_id).await;
+        }
+        if let Some(ref participant) = self.vector_participant {
+            participant.clear_staged(transaction_id).await;
+        }
+        if let Some(ref participant) = self.graph_participant {
             participant.clear_staged(transaction_id).await;
         }
 
@@ -214,6 +260,92 @@ impl TransactionalMultiModelFacade {
                 "observability",
                 &Self::observability_write_key("traces", namespace),
             )
+            .await
+    }
+
+    // -- Vector staging methods --
+
+    pub async fn insert_vectors(
+        &self,
+        transaction_id: &str,
+        collection: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<()> {
+        let participant = self.vector_participant.as_ref().ok_or_else(|| {
+            anyhow!("Vector transactional participant is not configured on this facade")
+        })?;
+        self.coordinator
+            .involve_store(transaction_id, ParticipantType::Vector)
+            .await?;
+        participant
+            .stage_insert(transaction_id, collection, vectors)
+            .await?;
+        self.coordinator
+            .record_write(transaction_id, "vector", collection)
+            .await
+    }
+
+    pub async fn delete_vectors(
+        &self,
+        transaction_id: &str,
+        collection: &str,
+        ids: Vec<String>,
+    ) -> Result<()> {
+        let participant = self.vector_participant.as_ref().ok_or_else(|| {
+            anyhow!("Vector transactional participant is not configured on this facade")
+        })?;
+        self.coordinator
+            .involve_store(transaction_id, ParticipantType::Vector)
+            .await?;
+        participant
+            .stage_delete(transaction_id, collection, ids)
+            .await?;
+        self.coordinator
+            .record_delete(transaction_id, "vector", collection)
+            .await
+    }
+
+    // -- Graph staging methods --
+
+    pub async fn create_graph_node(
+        &self,
+        transaction_id: &str,
+        graph_id: &str,
+        node: GraphNode,
+    ) -> Result<()> {
+        let participant = self.graph_participant.as_ref().ok_or_else(|| {
+            anyhow!("Graph transactional participant is not configured on this facade")
+        })?;
+        self.coordinator
+            .involve_store(transaction_id, ParticipantType::Graph)
+            .await?;
+        let node_id = node.id.clone();
+        participant
+            .stage_create_node(transaction_id, graph_id, node)
+            .await?;
+        self.coordinator
+            .record_write(transaction_id, "graph", &node_id)
+            .await
+    }
+
+    pub async fn create_graph_edge(
+        &self,
+        transaction_id: &str,
+        graph_id: &str,
+        edge: GraphEdge,
+    ) -> Result<()> {
+        let participant = self.graph_participant.as_ref().ok_or_else(|| {
+            anyhow!("Graph transactional participant is not configured on this facade")
+        })?;
+        self.coordinator
+            .involve_store(transaction_id, ParticipantType::Graph)
+            .await?;
+        let edge_id = edge.id.clone();
+        participant
+            .stage_create_edge(transaction_id, graph_id, edge)
+            .await?;
+        self.coordinator
+            .record_write(transaction_id, "graph", &edge_id)
             .await
     }
 

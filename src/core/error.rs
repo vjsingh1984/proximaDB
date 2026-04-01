@@ -185,6 +185,10 @@ pub enum StorageError {
         /// Actual dimension of the provided vector
         actual: usize,
     },
+
+    /// A durable write during transaction commit failed
+    #[error("Transaction commit failed: {0}")]
+    TransactionCommitFailed(String),
 }
 
 /// Errors from the Raft consensus layer
@@ -500,6 +504,9 @@ impl From<StorageError> for crate::core::errors::StorageError {
             StorageError::CollectionNotFound(id) => crate::core::errors::StorageError::InvalidOperation(format!("Collection not found: {}", id)),
             StorageError::InvalidDimension { expected, actual } => {
                 crate::core::errors::StorageError::InvalidOperation(format!("Dimension mismatch: expected {}, got {}", expected, actual))
+            }
+            StorageError::TransactionCommitFailed(msg) => {
+                crate::core::errors::StorageError::InvalidOperation(format!("Transaction commit failed: {}", msg))
             }
         }
     }

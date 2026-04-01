@@ -365,24 +365,37 @@ impl PromQLParser {
 pub enum PromQLExpr {
     /// Vector selector (instant or range)
     VectorSelector {
+        /// Metric name to select.
         name: String,
+        /// Label matchers for filtering time series.
         matchers: Vec<LabelMatcher>,
+        /// Optional range duration for range vectors.
         range: Option<Duration>,
+        /// Optional offset to shift the evaluation time.
         offset: Option<Duration>,
     },
     /// Aggregation operation
     Aggregation {
+        /// The aggregation operator (sum, avg, etc.).
         op: AggregationOp,
+        /// The expression to aggregate over.
         expr: Box<PromQLExpr>,
+        /// Labels to group by.
         by: Vec<String>,
+        /// If true, aggregate without the specified labels.
         without: bool,
+        /// Optional numeric parameter (e.g., quantile value, top-k count).
         param: Option<f64>,
     },
     /// Binary operation
     Binary {
+        /// The binary operator.
         op: BinaryOp,
+        /// Left-hand side expression.
         lhs: Box<PromQLExpr>,
+        /// Right-hand side expression.
         rhs: Box<PromQLExpr>,
+        /// Optional vector matching configuration.
         matching: Option<VectorMatching>,
     },
     /// Scalar value
@@ -392,87 +405,131 @@ pub enum PromQLExpr {
 /// Label matcher
 #[derive(Debug, Clone)]
 pub struct LabelMatcher {
+    /// Label name to match against.
     pub name: String,
+    /// Match operation (equality, regex, etc.).
     pub op: MatchOp,
+    /// Value to compare or match.
     pub value: String,
 }
 
 /// Label match operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchOp {
+    /// Exact equality (`=`).
     Equal,
+    /// Not equal (`!=`).
     NotEqual,
+    /// Regular expression match (`=~`).
     Regex,
+    /// Negated regular expression (`!~`).
     NotRegex,
 }
 
 /// Aggregation operator
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AggregationOp {
+    /// Sum of values.
     Sum,
+    /// Arithmetic mean.
     Avg,
+    /// Minimum value.
     Min,
+    /// Maximum value.
     Max,
+    /// Count of elements.
     Count,
+    /// Standard deviation.
     Stddev,
+    /// Per-second rate of increase.
     Rate,
+    /// Instantaneous rate of increase.
     Irate,
+    /// Total increase over a range.
     Increase,
+    /// Histogram quantile calculation.
     HistogramQuantile,
+    /// Top K elements by value.
     TopK,
+    /// Bottom K elements by value.
     BottomK,
+    /// Count of each distinct value.
     CountValues,
+    /// Arbitrary quantile over dimensions.
     Quantile,
 }
 
 /// Binary operator
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryOp {
+    /// Addition (`+`).
     Add,
+    /// Subtraction (`-`).
     Sub,
+    /// Multiplication (`*`).
     Mul,
+    /// Division (`/`).
     Div,
+    /// Modulo (`%`).
     Mod,
+    /// Exponentiation (`^`).
     Pow,
+    /// Equality comparison (`==`).
     Eq,
+    /// Inequality comparison (`!=`).
     Ne,
+    /// Greater than (`>`).
     Gt,
+    /// Less than (`<`).
     Lt,
+    /// Greater than or equal (`>=`).
     Ge,
+    /// Less than or equal (`<=`).
     Le,
+    /// Logical AND (set intersection).
     And,
+    /// Logical OR (set union).
     Or,
+    /// Set difference (elements in LHS not in RHS).
     Unless,
 }
 
 /// Vector matching configuration
 #[derive(Debug, Clone)]
 pub struct VectorMatching {
+    /// Labels to match on (for `on(...)` clause).
     pub on: Vec<String>,
+    /// Labels to ignore during matching (for `ignoring(...)` clause).
     pub ignoring: Vec<String>,
+    /// Whether to use `group_left` many-to-one matching.
     pub group_left: bool,
+    /// Whether to use `group_right` one-to-many matching.
     pub group_right: bool,
 }
 
 /// Duration in nanoseconds
 #[derive(Debug, Clone, Copy)]
 pub struct Duration {
+    /// Duration value in nanoseconds.
     pub nanoseconds: i64,
 }
 
 impl Duration {
+    /// Create a duration from a number of minutes.
     pub fn from_minutes(m: i64) -> Self {
         Self {
             nanoseconds: m * 60_000_000_000,
         }
     }
 
+    /// Create a duration from a number of hours.
     pub fn from_hours(h: i64) -> Self {
         Self {
             nanoseconds: h * 3_600_000_000_000,
         }
     }
 
+    /// Convert this duration to seconds as a floating-point value.
     pub fn as_seconds(&self) -> f64 {
         self.nanoseconds as f64 / 1_000_000_000.0
     }

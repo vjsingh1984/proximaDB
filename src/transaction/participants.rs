@@ -121,7 +121,7 @@ pub struct VectorEngineParticipant {
     id: String,
 
     /// Transaction buffer
-    buffer: TransactionBuffer,
+    pub(crate) buffer: TransactionBuffer,
 
     /// Health flag
     healthy: Arc<RwLock<bool>>,
@@ -204,7 +204,7 @@ impl TransactionParticipant for VectorEngineParticipant {
         if let Some(ref writer) = self.durable_writer {
             for op in &operations {
                 writer(op).map_err(|e| {
-                    ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                    ProximaDBError::Storage(crate::core::error::StorageError::TransactionCommitFailed(
                         format!("durable commit failed for {}: {}", self.id, e),
                     ))
                 })?;
@@ -257,7 +257,7 @@ impl TransactionParticipant for VectorEngineParticipant {
 /// Document storage engine transaction participant
 pub struct DocumentEngineParticipant {
     id: String,
-    buffer: TransactionBuffer,
+    pub(crate) buffer: TransactionBuffer,
     healthy: Arc<RwLock<bool>>,
     durable_writer: Option<DurableWriteFn>,
 }
@@ -302,7 +302,7 @@ impl TransactionParticipant for DocumentEngineParticipant {
         if let Some(ref writer) = self.durable_writer {
             for op in &operations {
                 writer(op).map_err(|e| {
-                    ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                    ProximaDBError::Storage(crate::core::error::StorageError::TransactionCommitFailed(
                         format!("durable commit failed for {}: {}", self.id, e),
                     ))
                 })?;
@@ -371,7 +371,7 @@ impl TransactionParticipant for GraphEngineParticipant {
         if let Some(ref writer) = self.durable_writer {
             for op in &operations {
                 writer(op).map_err(|e| {
-                    ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                    ProximaDBError::Storage(crate::core::error::StorageError::TransactionCommitFailed(
                         format!("durable commit failed for {}: {}", self.id, e),
                     ))
                 })?;
@@ -440,7 +440,7 @@ impl TransactionParticipant for TimeSeriesEngineParticipant {
         if let Some(ref writer) = self.durable_writer {
             for op in &operations {
                 writer(op).map_err(|e| {
-                    ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(
+                    ProximaDBError::Storage(crate::core::error::StorageError::TransactionCommitFailed(
                         format!("durable commit failed for {}: {}", self.id, e),
                     ))
                 })?;

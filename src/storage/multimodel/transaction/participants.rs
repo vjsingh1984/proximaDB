@@ -11,7 +11,9 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use tokio::sync::RwLock;
 
-use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData};
+use crate::proto::proximadb_v1::{
+    DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData, VectorRecord,
+};
 use crate::storage::traits::{DocumentStorageOperations, ObservabilityStorageOperations};
 
 use super::two_phase_commit::{CommitResult, ParticipantType, PrepareResult, TwoPhaseParticipant};
@@ -463,6 +465,492 @@ impl TwoPhaseParticipant for ObservabilityStoreParticipant {
 
     fn participant_type(&self) -> ParticipantType {
         ParticipantType::Observability
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vector store participant
+// ---------------------------------------------------------------------------
+
+/// Operations that a vector storage service must support for transactional writes.
+///
+/// This is intentionally minimal — only the write-path methods needed by the
+/// 2PC participant. Read-path operations remain on the broader service traits.
+#[async_trait::async_trait]
+pub trait VectorWriteOperations: Send + Sync {
+    /// Insert a batch of vectors into a collection.
+    async fn insert_vectors(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<u64>;
+
+    /// Delete vectors by their IDs.
+    async fn delete_vectors(
+        &self,
+        collection_id: &str,
+        ids: Vec<String>,
+    ) -> Result<u64>;
+}
+
+/// Staged vector operations buffered until commit.
+#[derive(Debug, Clone)]
+pub enum StagedVectorOperation {
+    Insert {
+        collection: String,
+        vectors: Vec<VectorRecord>,
+    },
+    Delete {
+        collection: String,
+        ids: Vec<String>,
+    },
+}
+
+/// Vector-service-backed participant for multi-model 2PC.
+pub struct VectorStoreParticipant {
+    service: Arc<dyn VectorWriteOperations>,
+    transactions: RwLock<HashMap<String, ParticipantTransactionState<StagedVectorOperation>>>,
+}
+
+impl VectorStoreParticipant {
+    pub fn new(service: Arc<dyn VectorWriteOperations>) -> Self {
+        Self {
+            service,
+            transactions: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub async fn stage_insert(
+        &self,
+        transaction_id: &str,
+        collection: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<()> {
+        self.stage_operation(
+            transaction_id,
+            StagedVectorOperation::Insert {
+                collection: collection.to_string(),
+                vectors,
+            },
+        )
+        .await
+    }
+
+    pub async fn stage_delete(
+        &self,
+        transaction_id: &str,
+        collection: &str,
+        ids: Vec<String>,
+    ) -> Result<()> {
+        self.stage_operation(
+            transaction_id,
+            StagedVectorOperation::Delete {
+                collection: collection.to_string(),
+                ids,
+            },
+        )
+        .await
+    }
+
+    pub async fn staged_operation_count(&self, transaction_id: &str) -> usize {
+        let transactions = self.transactions.read().await;
+        transactions.get(transaction_id).map_or(0, |state| {
+            state
+                .operations
+                .len()
+                .saturating_sub(state.next_commit_index)
+        })
+    }
+
+    pub async fn clear_staged(&self, transaction_id: &str) {
+        let mut transactions = self.transactions.write().await;
+        transactions.remove(transaction_id);
+    }
+
+    async fn stage_operation(
+        &self,
+        transaction_id: &str,
+        operation: StagedVectorOperation,
+    ) -> Result<()> {
+        let mut transactions = self.transactions.write().await;
+        let state = transactions
+            .entry(transaction_id.to_string())
+            .or_insert_with(ParticipantTransactionState::default);
+
+        if state.prepared {
+            return Err(anyhow!(
+                "Transaction {} is already prepared and cannot accept new vector writes",
+                transaction_id
+            ));
+        }
+
+        state.operations.push(operation);
+        Ok(())
+    }
+
+    async fn apply_operation(&self, operation: &StagedVectorOperation) -> Result<()> {
+        match operation {
+            StagedVectorOperation::Insert {
+                collection,
+                vectors,
+            } => {
+                self.service
+                    .insert_vectors(collection, vectors.clone())
+                    .await?;
+            }
+            StagedVectorOperation::Delete { collection, ids } => {
+                self.service
+                    .delete_vectors(collection, ids.clone())
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl TwoPhaseParticipant for VectorStoreParticipant {
+    async fn prepare(&self, transaction_id: &str) -> PrepareResult {
+        let mut transactions = self.transactions.write().await;
+        if let Some(state) = transactions.get_mut(transaction_id) {
+            state.prepared = true;
+        }
+        PrepareResult::Yes
+    }
+
+    async fn commit(&self, transaction_id: &str) -> CommitResult {
+        loop {
+            let next_operation = {
+                let transactions = self.transactions.read().await;
+                match transactions.get(transaction_id) {
+                    Some(state) => {
+                        if !state.prepared {
+                            return CommitResult::Failed(format!(
+                                "Transaction {} was not prepared before vector commit",
+                                transaction_id
+                            ));
+                        }
+                        state.operations.get(state.next_commit_index).cloned()
+                    }
+                    None => return CommitResult::Success,
+                }
+            };
+
+            let Some(operation) = next_operation else {
+                let mut transactions = self.transactions.write().await;
+                transactions.remove(transaction_id);
+                return CommitResult::Success;
+            };
+
+            if let Err(error) = self.apply_operation(&operation).await {
+                return CommitResult::Failed(format!(
+                    "Vector participant failed to commit {}: {error}",
+                    transaction_id
+                ));
+            }
+
+            let mut transactions = self.transactions.write().await;
+            let should_remove = if let Some(state) = transactions.get_mut(transaction_id) {
+                if state.next_commit_index < state.operations.len() {
+                    state.next_commit_index += 1;
+                }
+                state.next_commit_index >= state.operations.len()
+            } else {
+                true
+            };
+
+            if should_remove {
+                transactions.remove(transaction_id);
+                return CommitResult::Success;
+            }
+        }
+    }
+
+    async fn abort(&self, transaction_id: &str) -> CommitResult {
+        let mut transactions = self.transactions.write().await;
+        transactions.remove(transaction_id);
+        CommitResult::Success
+    }
+
+    fn participant_type(&self) -> ParticipantType {
+        ParticipantType::Vector
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Graph store participant
+// ---------------------------------------------------------------------------
+
+/// Operations that a graph service must support for transactional writes.
+#[async_trait::async_trait]
+pub trait GraphWriteOperations: Send + Sync {
+    /// Create a node in a graph.
+    async fn create_node(
+        &self,
+        graph_id: &str,
+        node: GraphNode,
+    ) -> Result<()>;
+
+    /// Create an edge in a graph.
+    async fn create_edge(
+        &self,
+        graph_id: &str,
+        edge: GraphEdge,
+    ) -> Result<()>;
+
+    /// Delete a node by ID.
+    async fn delete_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<()>;
+
+    /// Delete an edge by ID.
+    async fn delete_edge(
+        &self,
+        graph_id: &str,
+        edge_id: &str,
+    ) -> Result<()>;
+}
+
+/// Lightweight node representation for staged graph transactions.
+#[derive(Debug, Clone)]
+pub struct GraphNode {
+    pub id: String,
+    pub label: String,
+    pub properties: HashMap<String, String>,
+}
+
+/// Lightweight edge representation for staged graph transactions.
+#[derive(Debug, Clone)]
+pub struct GraphEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub edge_type: String,
+    pub properties: HashMap<String, String>,
+}
+
+/// Staged graph operations buffered until commit.
+#[derive(Debug, Clone)]
+pub enum StagedGraphOperation {
+    CreateNode {
+        graph_id: String,
+        node: GraphNode,
+    },
+    CreateEdge {
+        graph_id: String,
+        edge: GraphEdge,
+    },
+    DeleteNode {
+        graph_id: String,
+        node_id: String,
+    },
+    DeleteEdge {
+        graph_id: String,
+        edge_id: String,
+    },
+}
+
+/// Graph-service-backed participant for multi-model 2PC.
+pub struct GraphStoreParticipant {
+    service: Arc<dyn GraphWriteOperations>,
+    transactions: RwLock<HashMap<String, ParticipantTransactionState<StagedGraphOperation>>>,
+}
+
+impl GraphStoreParticipant {
+    pub fn new(service: Arc<dyn GraphWriteOperations>) -> Self {
+        Self {
+            service,
+            transactions: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub async fn stage_create_node(
+        &self,
+        transaction_id: &str,
+        graph_id: &str,
+        node: GraphNode,
+    ) -> Result<()> {
+        self.stage_operation(
+            transaction_id,
+            StagedGraphOperation::CreateNode {
+                graph_id: graph_id.to_string(),
+                node,
+            },
+        )
+        .await
+    }
+
+    pub async fn stage_create_edge(
+        &self,
+        transaction_id: &str,
+        graph_id: &str,
+        edge: GraphEdge,
+    ) -> Result<()> {
+        self.stage_operation(
+            transaction_id,
+            StagedGraphOperation::CreateEdge {
+                graph_id: graph_id.to_string(),
+                edge,
+            },
+        )
+        .await
+    }
+
+    pub async fn stage_delete_node(
+        &self,
+        transaction_id: &str,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<()> {
+        self.stage_operation(
+            transaction_id,
+            StagedGraphOperation::DeleteNode {
+                graph_id: graph_id.to_string(),
+                node_id: node_id.to_string(),
+            },
+        )
+        .await
+    }
+
+    pub async fn stage_delete_edge(
+        &self,
+        transaction_id: &str,
+        graph_id: &str,
+        edge_id: &str,
+    ) -> Result<()> {
+        self.stage_operation(
+            transaction_id,
+            StagedGraphOperation::DeleteEdge {
+                graph_id: graph_id.to_string(),
+                edge_id: edge_id.to_string(),
+            },
+        )
+        .await
+    }
+
+    pub async fn staged_operation_count(&self, transaction_id: &str) -> usize {
+        let transactions = self.transactions.read().await;
+        transactions.get(transaction_id).map_or(0, |state| {
+            state
+                .operations
+                .len()
+                .saturating_sub(state.next_commit_index)
+        })
+    }
+
+    pub async fn clear_staged(&self, transaction_id: &str) {
+        let mut transactions = self.transactions.write().await;
+        transactions.remove(transaction_id);
+    }
+
+    async fn stage_operation(
+        &self,
+        transaction_id: &str,
+        operation: StagedGraphOperation,
+    ) -> Result<()> {
+        let mut transactions = self.transactions.write().await;
+        let state = transactions
+            .entry(transaction_id.to_string())
+            .or_insert_with(ParticipantTransactionState::default);
+
+        if state.prepared {
+            return Err(anyhow!(
+                "Transaction {} is already prepared and cannot accept new graph writes",
+                transaction_id
+            ));
+        }
+
+        state.operations.push(operation);
+        Ok(())
+    }
+
+    async fn apply_operation(&self, operation: &StagedGraphOperation) -> Result<()> {
+        match operation {
+            StagedGraphOperation::CreateNode { graph_id, node } => {
+                self.service.create_node(graph_id, node.clone()).await?;
+            }
+            StagedGraphOperation::CreateEdge { graph_id, edge } => {
+                self.service.create_edge(graph_id, edge.clone()).await?;
+            }
+            StagedGraphOperation::DeleteNode { graph_id, node_id } => {
+                self.service.delete_node(graph_id, node_id).await?;
+            }
+            StagedGraphOperation::DeleteEdge { graph_id, edge_id } => {
+                self.service.delete_edge(graph_id, edge_id).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl TwoPhaseParticipant for GraphStoreParticipant {
+    async fn prepare(&self, transaction_id: &str) -> PrepareResult {
+        let mut transactions = self.transactions.write().await;
+        if let Some(state) = transactions.get_mut(transaction_id) {
+            state.prepared = true;
+        }
+        PrepareResult::Yes
+    }
+
+    async fn commit(&self, transaction_id: &str) -> CommitResult {
+        loop {
+            let next_operation = {
+                let transactions = self.transactions.read().await;
+                match transactions.get(transaction_id) {
+                    Some(state) => {
+                        if !state.prepared {
+                            return CommitResult::Failed(format!(
+                                "Transaction {} was not prepared before graph commit",
+                                transaction_id
+                            ));
+                        }
+                        state.operations.get(state.next_commit_index).cloned()
+                    }
+                    None => return CommitResult::Success,
+                }
+            };
+
+            let Some(operation) = next_operation else {
+                let mut transactions = self.transactions.write().await;
+                transactions.remove(transaction_id);
+                return CommitResult::Success;
+            };
+
+            if let Err(error) = self.apply_operation(&operation).await {
+                return CommitResult::Failed(format!(
+                    "Graph participant failed to commit {}: {error}",
+                    transaction_id
+                ));
+            }
+
+            let mut transactions = self.transactions.write().await;
+            let should_remove = if let Some(state) = transactions.get_mut(transaction_id) {
+                if state.next_commit_index < state.operations.len() {
+                    state.next_commit_index += 1;
+                }
+                state.next_commit_index >= state.operations.len()
+            } else {
+                true
+            };
+
+            if should_remove {
+                transactions.remove(transaction_id);
+                return CommitResult::Success;
+            }
+        }
+    }
+
+    async fn abort(&self, transaction_id: &str) -> CommitResult {
+        let mut transactions = self.transactions.write().await;
+        transactions.remove(transaction_id);
+        CommitResult::Success
+    }
+
+    fn participant_type(&self) -> ParticipantType {
+        ParticipantType::Graph
     }
 }
 

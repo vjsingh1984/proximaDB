@@ -488,6 +488,7 @@ pub struct BetweennessCentrality {
 }
 
 impl BetweennessCentrality {
+    /// Create a new betweenness centrality calculator for the given graph engine.
     pub fn new(engine: Arc<OrionGraphEngine>, normalized: bool) -> Self {
         Self { engine, normalized }
     }

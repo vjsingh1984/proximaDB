@@ -71,6 +71,7 @@
 //! - **Production-ready atomic multi-model writes**: Not yet fully wired
 
 pub mod coordinator;
+pub mod engine_wiring;
 pub mod participants;
 pub mod two_phase_commit;
 pub mod wal_coordinator;
