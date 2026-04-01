@@ -150,16 +150,19 @@ impl PartialEq for Candidate {
 
 impl Eq for Candidate {}
 
-impl PartialOrd for Candidate {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+impl Ord for Candidate {
+    fn cmp(&self, other: &Self) -> Ordering {
         // Reverse order for min-heap
-        other.similarity.partial_cmp(&self.similarity)
+        other
+            .similarity
+            .partial_cmp(&self.similarity)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
-impl Ord for Candidate {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+impl PartialOrd for Candidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

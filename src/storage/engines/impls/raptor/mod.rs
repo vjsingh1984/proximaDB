@@ -144,6 +144,7 @@ pub use common::{
 pub use config::{AccuracyLevel, CompactionConfig, CompressionStrategy, PxKStrategy, RaptorConfig};
 pub use consolidated_compactor::RaptorCompactor;
 pub use consolidated_reader::{IntraRowgroupMatrix, RaptorReader}; // Use consolidated reader
+#[allow(deprecated)]
 pub use engine::RaptorEngine;
 pub use writer::RaptorWriter; // Use consolidated compactor
 // IvfManager removed - Matrix Trinity handles clustering via centroids

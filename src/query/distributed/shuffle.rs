@@ -114,31 +114,30 @@ impl PartialEq for ShuffleKey {
 impl Eq for ShuffleKey {}
 
 // Implement PartialOrd for ShuffleKey (required for sorting)
-impl PartialOrd for ShuffleKey {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+impl Ord for ShuffleKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self, other) {
-            (ShuffleKey::String(a), ShuffleKey::String(b)) => a.partial_cmp(b),
-            (ShuffleKey::Integer(a), ShuffleKey::Integer(b)) => a.partial_cmp(b),
-            (ShuffleKey::Float(a), ShuffleKey::Float(b)) => a.partial_cmp(b),
-            (ShuffleKey::Composite(a), ShuffleKey::Composite(b)) => {
-                // Lexicographic comparison for composite keys
-                a.partial_cmp(b)
+            (ShuffleKey::String(a), ShuffleKey::String(b)) => a.cmp(b),
+            (ShuffleKey::Integer(a), ShuffleKey::Integer(b)) => a.cmp(b),
+            (ShuffleKey::Float(a), ShuffleKey::Float(b)) => {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
             }
+            (ShuffleKey::Composite(a), ShuffleKey::Composite(b)) => a.cmp(b),
             // Define cross-type ordering for consistency: String < Integer < Float < Composite
-            (ShuffleKey::String(_), _) => Some(std::cmp::Ordering::Less),
-            (_, ShuffleKey::String(_)) => Some(std::cmp::Ordering::Greater),
-            (ShuffleKey::Integer(_), ShuffleKey::Float(_)) => Some(std::cmp::Ordering::Less),
-            (ShuffleKey::Integer(_), ShuffleKey::Composite(_)) => Some(std::cmp::Ordering::Less),
-            (ShuffleKey::Float(_), ShuffleKey::Integer(_)) => Some(std::cmp::Ordering::Greater),
-            (ShuffleKey::Float(_), ShuffleKey::Composite(_)) => Some(std::cmp::Ordering::Less),
-            (ShuffleKey::Composite(_), _) => Some(std::cmp::Ordering::Greater),
+            (ShuffleKey::String(_), _) => std::cmp::Ordering::Less,
+            (_, ShuffleKey::String(_)) => std::cmp::Ordering::Greater,
+            (ShuffleKey::Integer(_), ShuffleKey::Float(_)) => std::cmp::Ordering::Less,
+            (ShuffleKey::Integer(_), ShuffleKey::Composite(_)) => std::cmp::Ordering::Less,
+            (ShuffleKey::Float(_), ShuffleKey::Integer(_)) => std::cmp::Ordering::Greater,
+            (ShuffleKey::Float(_), ShuffleKey::Composite(_)) => std::cmp::Ordering::Less,
+            (ShuffleKey::Composite(_), _) => std::cmp::Ordering::Greater,
         }
     }
 }
 
-impl Ord for ShuffleKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+impl PartialOrd for ShuffleKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

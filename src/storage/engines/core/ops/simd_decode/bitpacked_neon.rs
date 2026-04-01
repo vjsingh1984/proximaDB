@@ -655,10 +655,10 @@ fn prefix_sum_i64(output: &mut [i64], count: usize, base: i64) {
     }
 
     // Prefix sum requires sequential accumulation
-    output[0] = base + output[0];
+    output[0] += base;
 
     for i in 1..count {
-        output[i] = output[i - 1] + output[i];
+        output[i] += output[i - 1];
     }
 }
 

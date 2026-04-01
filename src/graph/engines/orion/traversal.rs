@@ -441,7 +441,7 @@ pub async fn depth_first_search(
         if config
             .early_stop
             .as_ref()
-            .is_some_and(|early_stop| early_stop(&[current_node_id.clone()]))
+            .is_some_and(|early_stop| early_stop(std::slice::from_ref(&current_node_id)))
         {
             break;
         }
@@ -867,16 +867,19 @@ pub async fn dijkstra_shortest_path(
 
     impl Eq for DijkstraNode {}
 
-    impl PartialOrd for DijkstraNode {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    impl Ord for DijkstraNode {
+        fn cmp(&self, other: &Self) -> Ordering {
             // Reverse ordering for min-heap
-            other.distance.partial_cmp(&self.distance)
+            other
+                .distance
+                .partial_cmp(&self.distance)
+                .unwrap_or(Ordering::Equal)
         }
     }
 
-    impl Ord for DijkstraNode {
-        fn cmp(&self, other: &Self) -> Ordering {
-            self.partial_cmp(other).unwrap_or(Ordering::Equal)
+    impl PartialOrd for DijkstraNode {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 
@@ -1016,15 +1019,18 @@ pub async fn astar_shortest_path(
     }
 
     impl Eq for AStarNode {}
-    impl PartialOrd for AStarNode {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            // Min-heap on f_cost
-            other.f_cost.partial_cmp(&self.f_cost)
-        }
-    }
     impl Ord for AStarNode {
         fn cmp(&self, other: &Self) -> Ordering {
-            self.partial_cmp(other).unwrap_or(Ordering::Equal)
+            // Min-heap on f_cost
+            other
+                .f_cost
+                .partial_cmp(&self.f_cost)
+                .unwrap_or(Ordering::Equal)
+        }
+    }
+    impl PartialOrd for AStarNode {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 
@@ -1272,15 +1278,18 @@ pub async fn vector_guided_astar(
     }
 
     impl Eq for AStarNode {}
-    impl PartialOrd for AStarNode {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            // Min-heap on f_cost
-            other.f_cost.partial_cmp(&self.f_cost)
-        }
-    }
     impl Ord for AStarNode {
         fn cmp(&self, other: &Self) -> Ordering {
-            self.partial_cmp(other).unwrap_or(Ordering::Equal)
+            // Min-heap on f_cost
+            other
+                .f_cost
+                .partial_cmp(&self.f_cost)
+                .unwrap_or(Ordering::Equal)
+        }
+    }
+    impl PartialOrd for AStarNode {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 
@@ -1451,14 +1460,16 @@ pub async fn k_shortest_paths(
             dist: f64,
         }
         impl Eq for QN {}
-        impl PartialOrd for QN {
-            fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-                o.dist.partial_cmp(&self.dist)
-            }
-        }
         impl Ord for QN {
             fn cmp(&self, o: &Self) -> Ordering {
-                self.partial_cmp(o).unwrap_or(Ordering::Equal)
+                o.dist
+                    .partial_cmp(&self.dist)
+                    .unwrap_or(Ordering::Equal)
+            }
+        }
+        impl PartialOrd for QN {
+            fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+                Some(self.cmp(o))
             }
         }
 
@@ -1570,14 +1581,16 @@ pub async fn k_shortest_paths(
         }
     }
     impl Eq for Cand {}
-    impl PartialOrd for Cand {
-        fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-            o.cost.partial_cmp(&self.cost)
-        }
-    }
     impl Ord for Cand {
         fn cmp(&self, o: &Self) -> Ordering {
-            self.partial_cmp(o).unwrap_or(Ordering::Equal)
+            o.cost
+                .partial_cmp(&self.cost)
+                .unwrap_or(Ordering::Equal)
+        }
+    }
+    impl PartialOrd for Cand {
+        fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+            Some(self.cmp(o))
         }
     }
     let mut b: BinaryHeap<Cand> = BinaryHeap::new();

@@ -16,8 +16,10 @@ pub mod viper; // Vector-optimized Intelligent Parquet with Efficient Retrieval
 pub use eventlog::EventLogEngine;
 pub use helix::HelixEngine;
 pub use nova::NovaEngine;
+#[allow(deprecated)]
 pub use raptor::RaptorEngine;
 pub use sst::SstEngine;
+#[allow(deprecated)]
 pub use swift::SwiftEngine;
 pub use tst::TimeSeriesEngine;
 pub use viper::ViperEngine;

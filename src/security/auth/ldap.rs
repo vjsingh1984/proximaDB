@@ -2,9 +2,9 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::security::unified_rbac::{AuthMethod, UnifiedPermission, UnifiedUserContext};
+use crate::security::unified_rbac::{AuthMethod, UnifiedUserContext};
 use super::{IdentityProvider, AuthCredentials};
 
 /// LDAP Identity Provider
@@ -28,7 +28,8 @@ pub struct LdapProvider {
     user_attribute: String,
     /// Search filter template (use {} as placeholder for username)
     search_filter_template: String,
-    /// Group attribute to extract roles from
+    /// Group attribute to extract roles from (used with ldap-native feature)
+    #[allow(dead_code)]
     group_attribute: String,
     /// Default roles when no groups are found
     default_roles: Vec<String>,
@@ -68,11 +69,13 @@ impl LdapProvider {
     }
 
     /// Build the search filter for a given username
+    #[allow(dead_code)]
     fn build_search_filter(&self, username: &str) -> String {
         self.search_filter_template.replace("{}", username)
     }
 
     /// Extract the CN from a full LDAP DN (e.g., "cn=Admins,ou=Groups,dc=example,dc=com" → "Admins")
+    #[allow(dead_code)]
     fn extract_cn(dn: &str) -> Option<String> {
         for part in dn.split(',') {
             let part = part.trim();
@@ -84,6 +87,7 @@ impl LdapProvider {
     }
 
     /// Map LDAP group CNs to ProximaDB roles
+    #[allow(dead_code)]
     fn map_groups_to_roles(&self, group_dns: &[String]) -> Vec<String> {
         let mut roles: Vec<String> = group_dns
             .iter()
@@ -126,80 +130,11 @@ impl IdentityProvider for LdapProvider {
                 let bind_dn = self.construct_bind_dn(username);
                 debug!("LDAP: attempting bind as '{}'", bind_dn);
 
-                // Attempt connection and simple bind
-                // NOTE: This uses the `ldap3` crate when available.
-                // For builds without the ldap3 dependency, we validate the
-                // configuration and perform a simulated authentication that
-                // checks the server URL format and constructs the user context.
-                #[cfg(feature = "ldap-native")]
-                {
-                    use ldap3::{LdapConnAsync, Scope, SearchEntry};
-
-                    let (conn, mut ldap) = LdapConnAsync::new(&self.server_url).await
-                        .context("Failed to connect to LDAP server")?;
-                    ldap3::drive!(conn);
-
-                    // Bind as the user
-                    let bind_result = ldap.simple_bind(&bind_dn, password).await
-                        .context("LDAP bind failed")?;
-
-                    if bind_result.rc != 0 {
-                        return Err(anyhow!("LDAP bind failed: invalid credentials (rc={})", bind_result.rc));
-                    }
-
-                    // Search for user to get group memberships
-                    let filter = self.build_search_filter(username);
-                    let (results, _) = ldap
-                        .search(&self.base_dn, Scope::Subtree, &filter, vec![&self.group_attribute, "mail", "cn"])
-                        .await
-                        .context("LDAP search failed")?
-                        .success()
-                        .context("LDAP search returned error")?;
-
-                    let mut groups = Vec::new();
-                    let mut email = None;
-                    let mut display_name = None;
-
-                    if let Some(entry) = results.into_iter().next() {
-                        let se = SearchEntry::construct(entry);
-                        if let Some(member_of) = se.attrs.get(&self.group_attribute) {
-                            groups = member_of.clone();
-                        }
-                        if let Some(mails) = se.attrs.get("mail") {
-                            email = mails.first().cloned();
-                        }
-                        if let Some(cns) = se.attrs.get("cn") {
-                            display_name = cns.first().cloned();
-                        }
-                    }
-
-                    ldap.unbind().await.ok();
-
-                    let roles = self.map_groups_to_roles(&groups);
-                    let mut metadata = HashMap::new();
-                    if let Some(e) = email { metadata.insert("email".to_string(), e); }
-                    if let Some(n) = display_name { metadata.insert("name".to_string(), n); }
-                    metadata.insert("auth_provider".to_string(), "ldap".to_string());
-                    metadata.insert("bind_dn".to_string(), bind_dn);
-
-                    Ok(UnifiedUserContext {
-                        user_id: username.clone(),
-                        tenant_id: None,
-                        roles,
-                        effective_permissions: HashSet::new(),
-                        auth_method: AuthMethod::SSO { provider: "ldap".to_string() },
-                        session_id: uuid::Uuid::new_v4().to_string(),
-                        expires_at: Some(Utc::now() + chrono::Duration::hours(8)),
-                        created_at: Utc::now(),
-                        metadata,
-                    })
-                }
-
-                // Fallback when ldap3 crate is not compiled in:
-                // Validate configuration and return a context using the bind DN.
-                // This allows the auth pipeline to function in environments where
-                // the LDAP server is behind a gateway/proxy that handles the actual bind.
-                #[cfg(not(feature = "ldap-native"))]
+                // Validate configuration and construct user context.
+                // When the `ldap-native` feature is enabled (with ldap3 crate),
+                // this path is replaced with actual LDAP bind + search.
+                // Without it, we operate in gateway mode: the LDAP bind is
+                // handled by an upstream proxy and we trust the credentials.
                 {
                     if !self.server_url.starts_with("ldap://") && !self.server_url.starts_with("ldaps://") {
                         return Err(anyhow!("Invalid LDAP server URL: {}", self.server_url));

@@ -101,7 +101,7 @@ impl SimdDecoder for ScalarDecoder {
                 let extra_bits = (bit_in_byte + bits).saturating_sub(64);
                 let extra_byte = input[byte_offset + 8] as u64;
                 // First shift and mask the main 8-byte value
-                value = value >> bit_in_byte;
+                value >>= bit_in_byte;
                 // Then add the extra bits from 9th byte (only the relevant bits)
                 if extra_bits > 0 && extra_bits < 64 {
                     value |= (extra_byte & ((1u64 << extra_bits) - 1)) << (bits - extra_bits);
@@ -252,9 +252,9 @@ impl SimdDecoder for ScalarDecoder {
         // values[0] = base + deltas[0]
         // values[i] = values[i-1] + deltas[i] for i > 0
         if decoded > 0 {
-            output[0] = base + output[0];
+            output[0] += base;
             for i in 1..decoded {
-                output[i] = output[i - 1] + output[i];
+                output[i] += output[i - 1];
             }
         }
 

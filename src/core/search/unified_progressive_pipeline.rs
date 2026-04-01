@@ -160,7 +160,7 @@ impl Ord for StageCandidate {
 
 impl PartialOrd for StageCandidate {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.score.partial_cmp(&other.score)
+        Some(self.cmp(other))
     }
 }
 
@@ -753,8 +753,7 @@ impl UnifiedProgressiveSearchPipeline {
         candidates
             .into_iter()
             .take(top_k)
-            .enumerate()
-            .map(|(_rank, candidate)| {
+            .map(|candidate| {
                 let _json_metadata = self.convert_metadata(&candidate.record);
                 // Convert metadata directly to SqlValue format
                 let metadata: std::collections::HashMap<

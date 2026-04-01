@@ -305,7 +305,7 @@ impl LouvainCommunityDetection {
             .map(|(idx, &cid)| (cid, idx))
             .collect();
 
-        let super_node_count = community_ids.len();
+        let _super_node_count = community_ids.len();
 
         // 2. Accumulate inter-community edge weights
         //    Key: (from_super, to_super), Value: aggregated weight (edge count)

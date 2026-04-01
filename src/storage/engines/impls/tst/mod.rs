@@ -1640,9 +1640,12 @@ impl Clone for TimeSeriesEngine {
                 let fs_config = FilesystemConfig::default();
                 futures::executor::block_on(async { FilesystemFactory::create(fs_config).await })
                     .unwrap_or_else(|_| {
-                        // Fallback: use a minimal factory (this is a simplified approach)
-                        // In production, you'd want proper error handling here
-                        unsafe { std::mem::zeroed() }
+                        // Fallback: create a factory with default config
+                        let fallback_config = FilesystemConfig::default();
+                        futures::executor::block_on(async {
+                            FilesystemFactory::create(fallback_config).await
+                        })
+                        .expect("Failed to create fallback FilesystemFactory")
                     })
             },
             wal_writer: None, // WAL writer is not cloned; clones are for scan iterators only

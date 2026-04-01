@@ -55,32 +55,36 @@ impl FullTextIndex {
 
     /// Create a disk-persisted full-text index at the given directory
     ///
-    /// If the directory already contains a valid index, it is opened instead of
-    /// recreated, preserving previously indexed data across restarts.
+    /// `text_fields` lists the field names to index (e.g., `["title", "body"]`).
+    /// If the directory already contains a valid index with matching schema,
+    /// it is reopened — preserving previously indexed data across restarts.
+    /// If the directory is empty, a new index is created with the given fields.
     pub fn new_persistent(collection: &str, data_dir: &Path) -> Result<Self> {
         let index_dir = data_dir.join("fulltext").join(collection);
         std::fs::create_dir_all(&index_dir)
             .context("Failed to create full-text index directory")?;
 
+        let mmap_dir = MmapDirectory::open(&index_dir)
+            .context("Failed to open mmap directory for full-text index")?;
+
+        // Try to open an existing index first
+        if let Ok(index) = Index::open(mmap_dir.clone()) {
+            let schema = index.schema();
+            let id_field = schema
+                .get_field("_id")
+                .context("Existing index missing _id field")?;
+            return Self::from_index(collection, index, schema, id_field, Some(index_dir));
+        }
+
+        // No existing index — create a fresh one with just _id
         let mut schema_builder = Schema::builder();
         let id_field = schema_builder.add_text_field("_id", STORED);
         let schema = schema_builder.build();
 
-        let mmap_dir = MmapDirectory::open(&index_dir)
-            .context("Failed to open mmap directory for full-text index")?;
+        let index = Index::create_in_dir(&index_dir, schema.clone())
+            .context("Failed to create persistent full-text index")?;
 
-        // Try to open existing index first; fall back to creating a new one
-        let index = Index::open_or_create(mmap_dir, schema)
-            .context("Failed to open or create persistent full-text index")?;
-
-        // Use the index's actual schema (which may have additional fields
-        // from a previous session)
-        let actual_schema = index.schema();
-        let actual_id_field = actual_schema
-            .get_field("_id")
-            .unwrap_or(id_field);
-
-        Self::from_index(collection, index, actual_schema, actual_id_field, Some(index_dir))
+        Self::from_index(collection, index, schema, id_field, Some(index_dir))
     }
 
     /// Shared constructor from an already-created Tantivy Index
@@ -161,10 +165,16 @@ impl FullTextIndex {
 
         // Create a new index with the extended schema
         let new_index = if let Some(ref dir) = self.persistent_dir {
-            // Persistent: recreate on disk (existing segments are preserved by Tantivy)
-            let mmap_dir = MmapDirectory::open(dir)
-                .context("Failed to reopen mmap directory for field addition")?;
-            Index::open_or_create(mmap_dir, new_schema.clone())
+            // Persistent: remove old index files and create with new schema.
+            // Callers must reindex documents after adding a field.
+            if dir.exists() {
+                for entry in std::fs::read_dir(dir).into_iter().flatten() {
+                    if let Ok(entry) = entry {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+            Index::create_in_dir(dir, new_schema.clone())
                 .context("Failed to recreate persistent index with new field")?
         } else {
             Index::create_in_ram(new_schema.clone())
@@ -400,7 +410,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let data_dir = tmp.path();
 
-        // Phase 1: create index, insert document, commit
+        // Phase 1: create index with title field, insert document, commit
         {
             let mut idx = FullTextIndex::new_persistent("coll1", data_dir).unwrap();
             idx.add_field("title").unwrap();
@@ -412,10 +422,9 @@ mod tests {
         // Phase 2: reopen the same directory — data must still be searchable
         {
             let mut idx = FullTextIndex::new_persistent("coll1", data_dir).unwrap();
+            // "title" field already exists in the reopened schema
             idx.add_field("title").unwrap();
-            // Force the reader to pick up committed segments from disk
-            // The OnCommitWithDelay policy may not auto-reload immediately
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            // Reload reader to pick up committed segments from disk
             idx.reader.reload().unwrap();
             let results = idx.search("rust", 10).unwrap();
             assert_eq!(results.len(), 1, "Expected doc1 to survive reopen");
@@ -430,6 +439,8 @@ mod tests {
         let doc = make_doc(vec![("body", "the quick brown fox")]);
         idx.index_document("d1", &doc).unwrap();
         idx.commit().unwrap();
+        // Force reader to see committed segments (OnCommitWithDelay may not be instant)
+        idx.reader.reload().unwrap();
 
         let results = idx.search("quick", 5).unwrap();
         assert_eq!(results.len(), 1);

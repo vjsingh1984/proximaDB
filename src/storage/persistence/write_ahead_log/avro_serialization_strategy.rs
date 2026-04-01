@@ -185,11 +185,11 @@ impl WALBatchStrategy for AvroSerializationStrategy {
             let serialized = self.serializer.serialize_batch(&batch.vector_records)?;
 
             // Determine if we should sync based on sync mode
-            let should_sync = match self.config.performance.sync_mode {
-                crate::storage::persistence::write_ahead_log::config::SyncMode::Always => true,
-                crate::storage::persistence::write_ahead_log::config::SyncMode::PerBatch => true,
-                _ => false,
-            };
+            let should_sync = matches!(
+                self.config.performance.sync_mode,
+                crate::storage::persistence::write_ahead_log::config::SyncMode::Always
+                    | crate::storage::persistence::write_ahead_log::config::SyncMode::PerBatch
+            );
 
             self.disk_manager
                 .write_batch_with_sync(

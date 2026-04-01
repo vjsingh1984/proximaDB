@@ -663,7 +663,7 @@ impl SwiftEngine {
                 // TODO: Implement progressive search using quantization engine
                 // For now, simulate with placeholder results
                 for block in &superblock.blocks {
-                    for (_record_idx, record) in block.records.iter().enumerate() {
+                    for record in block.records.iter() {
                         // Compute approximate distance
                         let distance = query
                             .iter()
@@ -1379,7 +1379,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                             if let Some(orchestrator) =
                                 crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
                                 && let Some(vector_cache) = orchestrator.get_vector_cache() {
-                                    vector_cache.put(cache_key, record.clone()).await;
+                                    let _ = vector_cache.put(cache_key, record.clone()).await;
                                 }
                             return Ok(Some(record.clone()));
                         }

@@ -306,6 +306,7 @@ enum CriterionSuite {
 
 // ============= Distance Computation Benchmarks =============
 
+#[allow(dead_code)]
 fn benchmark_distance_metrics(
     dimensions: &[usize],
     iterations: usize,
@@ -384,6 +385,7 @@ fn benchmark_distance_metrics(
 
 // ============= Vector Operations Benchmarks =============
 
+#[allow(dead_code)]
 fn benchmark_vector_operations(dimensions: &[usize], num_vectors: usize) -> Result<()> {
     println!("Starting Vector Operations Benchmarks");
     println!("Dimensions: {:?}, Vectors: {}", dimensions, num_vectors);
@@ -443,6 +445,7 @@ fn benchmark_vector_operations(dimensions: &[usize], num_vectors: usize) -> Resu
 
 // ============= Index Operations Benchmarks =============
 
+#[allow(dead_code)]
 async fn benchmark_index_operations(
     dimensions: &[usize],
     num_vectors: usize,
@@ -474,6 +477,7 @@ async fn benchmark_index_operations(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn benchmark_hnsw(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
     println!("  HNSW Index:");
 
@@ -516,6 +520,7 @@ async fn benchmark_hnsw(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn benchmark_lsh(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
     println!("  LSH Index:");
 

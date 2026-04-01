@@ -160,7 +160,7 @@ impl EngineMigrator {
 
         for (order, collection_id) in collections.iter().enumerate() {
             let plan = self.create_collection_plan(collection_id, order).await?;
-            total_duration = total_duration + plan.estimated_time;
+            total_duration += plan.estimated_time;
             total_data_size += plan.data_size_bytes;
             collection_plans.push(plan);
         }

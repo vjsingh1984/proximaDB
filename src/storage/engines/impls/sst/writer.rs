@@ -683,7 +683,7 @@ impl SstableWriter {
 
         // Create block headers for each data block
         let mut block_headers = Vec::new();
-        for (_i, block) in data_blocks.iter().enumerate() {
+        for block in data_blocks.iter() {
             let header = SstBlockHeader {
                 offset: 0,            // Will be calculated during writing
                 compressed_size: 0,   // Will be calculated during compression

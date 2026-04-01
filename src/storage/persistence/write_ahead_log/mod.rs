@@ -2170,11 +2170,10 @@ impl WriteAheadLogManager {
             };
 
             // Determine if we should sync based on sync mode
-            let should_sync = match self.config.performance.sync_mode {
-                config::SyncMode::Always => true,
-                config::SyncMode::PerBatch => true,
-                _ => false,
-            };
+            let should_sync = matches!(
+                self.config.performance.sync_mode,
+                config::SyncMode::Always | config::SyncMode::PerBatch
+            );
             trace!("WAL: should_sync = {}", should_sync);
 
             // Get base location for this collection from metadata provider
@@ -2319,11 +2318,10 @@ impl WriteAheadLogManager {
                 .context("Failed to serialize batch for WAL")?;
 
             // Determine if we should sync based on sync mode
-            let should_sync = match self.config.performance.sync_mode {
-                config::SyncMode::Always => true,
-                config::SyncMode::PerBatch => true,
-                _ => false,
-            };
+            let should_sync = matches!(
+                self.config.performance.sync_mode,
+                config::SyncMode::Always | config::SyncMode::PerBatch
+            );
 
             // Get base location for this collection from metadata provider
             // CRITICAL FIX: Query collection metadata for actual storage_assignment

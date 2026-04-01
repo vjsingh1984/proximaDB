@@ -148,15 +148,10 @@ pub fn dijkstra_generic(
         dist: f64,
     }
     impl Eq for QN {}
-    impl PartialOrd for QN {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            other.dist.partial_cmp(&self.dist)
-        }
-    }
     impl Ord for QN {
         fn cmp(&self, other: &Self) -> Ordering {
             // Reverse ordering for min-heap behavior
-            self.partial_cmp(other).unwrap_or_else(|| {
+            other.dist.partial_cmp(&self.dist).unwrap_or_else(|| {
                 // Fallback when distances are NaN (compare node IDs)
                 match self.node_id.cmp(&other.node_id) {
                     Ordering::Less => Ordering::Greater,
@@ -164,6 +159,11 @@ pub fn dijkstra_generic(
                     Ordering::Equal => Ordering::Equal,
                 }
             })
+        }
+    }
+    impl PartialOrd for QN {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 

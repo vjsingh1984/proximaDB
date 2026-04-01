@@ -196,16 +196,20 @@ impl PartialEq for ProgressiveCandidate {
 }
 
 impl Eq for ProgressiveCandidate {}
-impl PartialOrd for ProgressiveCandidate {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        // Reverse for min-heap (best candidates first)
-        other.similarity.partial_cmp(&self.similarity)
-    }
-}
 
 impl Ord for ProgressiveCandidate {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+        // Reverse for min-heap (best candidates first)
+        other
+            .similarity
+            .partial_cmp(&self.similarity)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
+impl PartialOrd for ProgressiveCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

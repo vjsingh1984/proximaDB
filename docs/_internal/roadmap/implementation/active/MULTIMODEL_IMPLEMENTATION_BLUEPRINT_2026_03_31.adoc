@@ -3,12 +3,13 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
-:last-updated: 2026-03-31
+:last-updated: 2026-04-01
 
 [.lead]
 ADR-style execution blueprint for moving ProximaDB from broad but uneven multi-model behavior to a canonical, capability-driven, native-storage, operator-grade platform. This document converts the March 2026 re-evaluation into the first 10 engineering epics, their ownership boundaries, acceptance criteria, and dependencies.
 
 Sprint-board companion:: link:E1_E3_SPRINT_BOARD_MATRIX_2026_03_31.adoc[E1-E3 Sprint Board Matrix]
+Design-resolution companion:: link:E1_E3_OPEN_TICKET_DESIGN_RESOLUTION_2026_04_01.adoc[E1-E3 Open Ticket Design Resolution (2026-04-01)]
 
 == Purpose
 

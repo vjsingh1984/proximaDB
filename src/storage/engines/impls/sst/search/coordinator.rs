@@ -233,7 +233,7 @@ impl SearchCoordinator {
 
             if max_score > 0.0 {
                 for result in &mut results {
-                    result.score = result.score / max_score;
+                    result.score /= max_score;
                 }
                 debug!("📈 Normalized scores by max score: {}", max_score);
             }

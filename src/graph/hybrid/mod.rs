@@ -506,16 +506,18 @@ impl PartialEq for SemanticTraversalNode {
 
 impl Eq for SemanticTraversalNode {}
 
-impl PartialOrd for SemanticTraversalNode {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+impl Ord for SemanticTraversalNode {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Higher similarity scores have higher priority
-        self.similarity_score.partial_cmp(&other.similarity_score)
+        self.similarity_score
+            .partial_cmp(&other.similarity_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
-impl Ord for SemanticTraversalNode {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+impl PartialOrd for SemanticTraversalNode {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

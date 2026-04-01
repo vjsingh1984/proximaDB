@@ -6,7 +6,7 @@
 
 This document provides a quick reference to ProximaDB's current roadmap status and implementation plans. For detailed quarterly plans and historical context, see the subdirectories.
 
-**Last Updated**: December 2025
+**Last Updated**: April 2026
 
 == Roadmap Organization
 
@@ -21,6 +21,7 @@ This document provides a quick reference to ProximaDB's current roadmap status a
 === Multi-Model Implementation Blueprint (2026-03-31)
 **Status**: Active +
 **Location**: link:active/MULTIMODEL_IMPLEMENTATION_BLUEPRINT_2026_03_31.adoc[active/MULTIMODEL_IMPLEMENTATION_BLUEPRINT_2026_03_31.adoc]
+**Design Resolution**: link:active/E1_E3_OPEN_TICKET_DESIGN_RESOLUTION_2026_04_01.adoc[active/E1_E3_OPEN_TICKET_DESIGN_RESOLUTION_2026_04_01.adoc]
 
 Key focus areas:
 * Capability-driven planning and supported-surface generation

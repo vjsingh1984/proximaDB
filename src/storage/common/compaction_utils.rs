@@ -156,7 +156,7 @@ impl CompactionFileDiscovery {
                 // Check if file can be compacted using unified handler
                 let handler = FlushHandlerFactory::create(engine_type);
                 let can_compact = handler
-                    .can_compact_files(collection_id, &[file_path.clone()])
+                    .can_compact_files(collection_id, std::slice::from_ref(&file_path))
                     .await
                     .unwrap_or(false);
 

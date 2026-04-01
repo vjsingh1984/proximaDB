@@ -2696,7 +2696,7 @@ impl RaptorWriter {
             // Quantize vector using unified engine
             let quantized_batch = self
                 .quantization_engine
-                .quantize_batch(&[vector.vector.clone()], Some(&[id.clone()]))
+                .quantize_batch(std::slice::from_ref(&vector.vector), Some(std::slice::from_ref(&id)))
                 .await?;
             let quantized = quantized_batch
                 .into_iter()

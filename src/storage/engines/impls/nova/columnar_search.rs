@@ -99,16 +99,19 @@ impl PartialEq for SearchCandidate {
 
 impl Eq for SearchCandidate {}
 
-impl PartialOrd for SearchCandidate {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+impl Ord for SearchCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Reverse for min-heap (best candidates first)
-        other.similarity.partial_cmp(&self.similarity)
+        other
+            .similarity
+            .partial_cmp(&self.similarity)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
-impl Ord for SearchCandidate {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+impl PartialOrd for SearchCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

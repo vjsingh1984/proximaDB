@@ -121,7 +121,9 @@ struct MigrationResult {
     bytes_processed: u64,
     duration_ms: u64,
     error: Option<String>,
+    #[allow(dead_code)]
     old_version: u32,
+    #[allow(dead_code)]
     new_version: u32,
 }
 
@@ -131,8 +133,10 @@ struct ValidationResult {
     collection_name: String,
     is_valid: bool,
     source_row_count: u64,
+    #[allow(dead_code)]
     target_row_count: u64,
     schema_matches: bool,
+    #[allow(dead_code)]
     checksum_matches: Option<bool>,
     warnings: Vec<String>,
     errors: Vec<String>,

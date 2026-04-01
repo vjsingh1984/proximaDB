@@ -22,16 +22,20 @@ impl PartialEq for MinHeapEntry {
 
 impl Eq for MinHeapEntry {}
 
-impl PartialOrd for MinHeapEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+impl Ord for MinHeapEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
         // Reverse ordering for min-heap (lowest score at top)
-        other.record.score.partial_cmp(&self.record.score)
+        other
+            .record
+            .score
+            .partial_cmp(&self.record.score)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
-impl Ord for MinHeapEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+impl PartialOrd for MinHeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

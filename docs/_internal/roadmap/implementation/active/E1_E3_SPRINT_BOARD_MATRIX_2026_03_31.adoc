@@ -3,10 +3,17 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
-:last-updated: 2026-03-31
+:last-updated: 2026-04-01
 
 [.lead]
 Sprint-board-ready subtask matrix for E1 through E3. This document converts the three execution tickets into assignable work chunks with sequencing, owner lanes, dependencies, and parallelization guidance.
+
+Issue-pack companion:: link:E1_E3_GITHUB_ISSUE_PACK_2026_03_31.md[E1-E3 GitHub Issue Pack] +
+Board import companions:: link:E1_E3_SPRINT_BOARD_IMPORT_2026_03_31.csv[E1-E3 Sprint Board Import (CSV)], link:E1_E3_SPRINT_BOARD_IMPORT_2026_03_31.md[E1-E3 Sprint Board Import (Markdown)]
+Design-resolution companion:: link:E1_E3_OPEN_TICKET_DESIGN_RESOLUTION_2026_04_01.adoc[E1-E3 Open Ticket Design Resolution (2026-04-01)] +
+Automation helper:: `/Users/vijaysingh/code/proximaDB/scripts/github/create_e1_e3_issues.py` +
+Shell wrapper:: `/Users/vijaysingh/code/proximaDB/scripts/github/create_e1_e3_issues.sh` +
+Assignment helper:: `/Users/vijaysingh/code/proximaDB/scripts/github/assign_e1_e3_issues.py`
 
 == Scope
 
@@ -457,4 +464,3 @@ If only 2 engineers are available:
 * Replace lane owners with named engineers before moving tasks into active sprint columns.
 * Keep SB-07, SB-13, and SB-20 visible even if they are deferred; they are the closure criteria for the tranche.
 * Do not pull E4 work into the board until SB-18 and SB-19 are complete or explicitly descoped.
-

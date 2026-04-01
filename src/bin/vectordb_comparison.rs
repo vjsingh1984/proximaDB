@@ -142,7 +142,7 @@ impl ComparisonRunner {
         _dataset_name: &str,
         num_vectors: usize,
         dimensions: usize,
-        num_queries: usize,
+        _num_queries: usize,
     ) -> Result<ComparisonResult, String> {
         // In production, this would:
         // 1. Connect to ProximaDB
