@@ -288,16 +288,26 @@ impl ContextualBanditPlanner {
         best_action
     }
 
-    /// ε-greedy action selection
-    fn epsilon_greedy_select(
+    /// ε-greedy action selection (uses instance exploration rate)
+    fn _epsilon_greedy_select(
         &self,
         state: &PlannerState,
         action_space: &ActionSpace,
     ) -> ExecutionAction {
+        self.epsilon_greedy_select_with_rate(state, action_space, self.exploration_rate)
+    }
+
+    /// ε-greedy action selection with explicit exploration rate
+    fn epsilon_greedy_select_with_rate(
+        &self,
+        state: &PlannerState,
+        action_space: &ActionSpace,
+        rate: f32,
+    ) -> ExecutionAction {
         let mut rng = rand::thread_rng();
         let uniform = Uniform::new(0.0_f32, 1.0);
 
-        if uniform.sample(&mut rng) < self.exploration_rate {
+        if uniform.sample(&mut rng) < rate {
             // Explore: random action
             action_space.random_action().clone()
         } else {
@@ -362,6 +372,10 @@ impl ContextualBanditPlanner {
             .update(&features, error);
 
         self.total_updates += 1;
+
+        // Track per-engine learning maturity
+        let engine_name = state.storage_engine.to_string();
+        *self.engine_update_counts.entry(engine_name).or_insert(0) += 1;
 
         // Decay exploration rate over time
         if self.total_updates.is_multiple_of(1000) && self.exploration_rate > 0.01 {
