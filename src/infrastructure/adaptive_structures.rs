@@ -135,24 +135,35 @@ pub enum BackendType {
 pub enum IndexStructure {
     /// DashMap for lock-free concurrent operations
     DashMap {
+        /// Number of entries to pre-allocate in the underlying map
         initial_capacity: usize,
+        /// Optional soft memory ceiling in megabytes
         memory_limit_mb: Option<usize>,
     },
     /// HashMap with RwLock for simple cases
-    RwLockHashMap { initial_capacity: usize },
+    RwLockHashMap {
+        /// Number of entries to pre-allocate in the underlying map
+        initial_capacity: usize,
+    },
 }
 
-/// Cache-specific data structures  
+/// Cache-specific data structures
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CacheStructure {
     /// Moka cache with automatic eviction
     Moka {
+        /// Maximum number of entries the cache will hold
         max_capacity: u64,
+        /// Optional duration after which an entry is evicted regardless of access
         time_to_live: Option<Duration>,
+        /// Optional duration of inactivity after which an entry is evicted
         time_to_idle: Option<Duration>,
     },
     /// LRU cache for simple eviction
-    Lru { max_capacity: usize },
+    Lru {
+        /// Maximum number of entries before oldest entries are evicted
+        max_capacity: usize,
+    },
 }
 
 /// Hybrid structure that can switch between backends
@@ -192,18 +203,29 @@ pub struct ReloadStrategy {
     pub axis_storage_path: String,
 }
 
+/// Eviction policy controlling how data is removed from a tier
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvictionPolicy {
     /// Never evict, promote to next tier
     NeverEvict,
     /// LRU-based eviction
-    Lru { max_entries: usize },
+    Lru {
+        /// Maximum number of entries before LRU eviction begins
+        max_entries: usize,
+    },
     /// Size-based eviction
-    SizeBased { max_memory_mb: usize },
+    SizeBased {
+        /// Maximum total memory in megabytes before eviction begins
+        max_memory_mb: usize,
+    },
     /// Time-based eviction
-    TimeBased { max_age: Duration },
+    TimeBased {
+        /// Maximum age of an entry before it is evicted
+        max_age: Duration,
+    },
 }
 
+/// Criteria that determine when data should be promoted to a faster tier
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromotionCriteria {
     /// Minimum access frequency for promotion
@@ -214,6 +236,7 @@ pub struct PromotionCriteria {
     pub min_promotion_tier: InfrastructureTier,
 }
 
+/// Criteria that determine when data should be demoted to a slower tier
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DemotionCriteria {
     /// Maximum idle time before demotion
@@ -271,6 +294,7 @@ pub struct AdaptiveStoreConfig {
     pub metrics_config: MetricsConfig,
 }
 
+/// Tier management settings for an adaptive store
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TierConfig {
     /// Enable tier management
@@ -283,6 +307,7 @@ pub struct TierConfig {
     pub max_concurrent_operations: usize,
 }
 
+/// Metrics collection configuration for an adaptive store
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetricsConfig {
     /// Enable detailed workload metrics

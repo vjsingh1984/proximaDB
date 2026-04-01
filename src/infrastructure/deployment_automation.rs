@@ -33,8 +33,11 @@ pub struct DeploymentConfig {
 /// Environment types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Environment {
+    /// Local development environment with relaxed constraints
     Development,
+    /// Pre-production staging environment for integration testing
     Staging,
+    /// Live production environment with full constraints enforced
     Production,
 }
 
@@ -104,8 +107,11 @@ pub struct ContainerConfig {
 /// Container pull policy
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PullPolicy {
+    /// Always pull a fresh image before starting the container
     Always,
+    /// Pull the image only when it is not already present locally
     IfNotPresent,
+    /// Never pull; fail if the image is not already present locally
     Never,
 }
 
@@ -123,8 +129,11 @@ pub struct NetworkConfig {
 /// Network modes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NetworkMode {
+    /// Container-to-container bridged networking (default Docker mode)
     Bridge,
+    /// Share the host network namespace directly
     Host,
+    /// Multi-host overlay network for container orchestration clusters
     Overlay,
 }
 
@@ -142,8 +151,11 @@ pub struct LoadBalancerConfig {
 /// Load balancer types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LoadBalancerType {
+    /// Layer-7 application load balancer (HTTP/HTTPS routing)
     ApplicationLB,
+    /// Layer-4 network load balancer (TCP/UDP routing)
     NetworkLB,
+    /// Classic/legacy load balancer
     Classic,
 }
 
@@ -211,11 +223,17 @@ pub struct RollbackConfig {
 /// Deployment status
 #[derive(Debug, Clone)]
 pub enum DeploymentStatus {
+    /// Deployment is queued and has not yet started
     Pending,
+    /// Deployment is actively being applied
     InProgress,
+    /// Deployment completed successfully and all health checks pass
     Healthy,
+    /// Deployment completed but health checks are failing
     Unhealthy,
+    /// Deployment terminated with an unrecoverable error
     Failed,
+    /// Deployment was reverted to a previous version
     RolledBack,
 }
 

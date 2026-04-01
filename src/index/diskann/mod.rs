@@ -254,10 +254,15 @@ impl DiskANNIndex {
 /// DiskANN index statistics
 #[derive(Debug, Clone)]
 pub struct DiskANNStats {
+    /// Index identifier.
     pub id: String,
+    /// Vector dimension.
     pub dimension: usize,
+    /// Number of vectors in the index.
     pub num_vectors: usize,
+    /// Maximum degree (number of neighbors per node).
     pub max_degree: usize,
+    /// Whether the Vamana graph has been built.
     pub is_built: bool,
 }
 

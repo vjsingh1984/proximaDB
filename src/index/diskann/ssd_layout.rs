@@ -443,11 +443,17 @@ impl SsdLayoutOptimizer {
 /// Layout statistics for analysis
 #[derive(Debug, Clone)]
 pub struct LayoutStats {
+    /// Total number of nodes in the SSD layout.
     pub total_nodes: usize,
+    /// Number of landmark nodes (entry points for search).
     pub landmark_count: usize,
+    /// Average degree (neighbors) across all nodes.
     pub avg_degree: f64,
+    /// Maximum degree across all nodes.
     pub max_degree: usize,
+    /// Ratio of sequential I/O accesses during typical searches.
     pub sequential_access_ratio: f64,
+    /// Estimated cache hit rate based on the layout.
     pub estimated_cache_hit_rate: f64,
 }
 

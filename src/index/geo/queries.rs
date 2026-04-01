@@ -15,16 +15,30 @@ use super::types::{GeoBoundingBox, GeoDistanceUnit, GeoPoint, GeoPolygon};
 pub enum GeoQuery {
     /// Find all points within a distance from a center point
     WithinDistance {
+        /// Center point for the distance query.
         center: GeoPoint,
+        /// Search radius.
         radius: f64,
+        /// Unit for the radius value.
         unit: GeoDistanceUnit,
     },
     /// Find all points within a bounding box
-    WithinBox { bbox: GeoBoundingBox },
+    WithinBox {
+        /// Bounding box to search within.
+        bbox: GeoBoundingBox,
+    },
     /// Find all points within a polygon
-    WithinPolygon { polygon: GeoPolygon },
+    WithinPolygon {
+        /// Polygon boundary to search within.
+        polygon: GeoPolygon,
+    },
     /// Find the K nearest points to a center
-    NearestK { center: GeoPoint, k: usize },
+    NearestK {
+        /// Center point for the nearest-neighbor query.
+        center: GeoPoint,
+        /// Number of nearest neighbors to return.
+        k: usize,
+    },
 }
 
 impl GeoQuery {

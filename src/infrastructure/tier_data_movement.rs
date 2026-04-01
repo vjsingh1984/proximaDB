@@ -49,17 +49,23 @@ pub enum TierDataFormat {
 
 /// Tier data movement coordinator
 pub struct TierDataMovement {
+    /// Collection this coordinator operates on
     collection_id: String,
+    /// Storage engine that determines the on-disk serialization format
     storage_engine: StorageEngineType,
 }
 
+/// The storage engine implementation that determines the on-disk data format
 #[derive(Debug, Clone)]
 pub enum StorageEngineType {
+    /// Sorted String Table engine (ProximaBlocks hybrid columnar format)
     SST,
+    /// VIPER columnar Parquet-based engine
     VIPER,
 }
 
 impl TierDataMovement {
+    /// Create a new coordinator for the given collection and storage engine type
     pub fn new(collection_id: String, storage_engine: StorageEngineType) -> Self {
         Self {
             collection_id,
@@ -423,16 +429,23 @@ impl TierDataMovement {
     }
 }
 
+/// Result of a tier promotion operation
 #[derive(Debug)]
 pub struct PromotionResult {
+    /// Number of items successfully promoted to the faster tier
     pub items_promoted: usize,
+    /// Total bytes written to the destination tier
     pub bytes_written: usize,
 }
 
+/// Result of a tier demotion operation
 #[derive(Debug)]
 pub struct DemotionResult {
+    /// Number of items successfully demoted to the slower tier
     pub items_demoted: usize,
+    /// Total bytes written to the destination tier
     pub bytes_written: usize,
+    /// Total bytes freed from the source tier
     pub bytes_freed: usize,
 }
 

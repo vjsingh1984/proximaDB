@@ -66,6 +66,7 @@ pub struct WorkloadMetrics {
 }
 
 impl WorkloadMetrics {
+    /// Create a new zeroed `WorkloadMetrics` for the given workload pattern
     pub fn new(pattern: WorkloadPattern) -> Self {
         Self {
             pattern,
@@ -115,38 +116,54 @@ pub enum InfrastructureTier {
     Memory,
 
     /// L2: Fast NVMe SSD storage - high-speed acceleration
-    NvmeSsd { mount_path: String },
+    NvmeSsd {
+        /// Filesystem mount path for this NVMe device
+        mount_path: String,
+    },
 
-    /// L3: Traditional spinning disk storage - moderate acceleration  
-    HardDisk { mount_path: String },
+    /// L3: Traditional spinning disk storage - moderate acceleration
+    HardDisk {
+        /// Filesystem mount path for this HDD
+        mount_path: String,
+    },
 
     /// L4: Local fast cloud storage (single AZ) - cloud acceleration
     CloudExpressOneZone {
+        /// Cloud provider and bucket configuration
         provider: CloudProvider,
+        /// Cloud region identifier (e.g., "us-east-1")
         region: String,
     },
 
     /// L5: Standard cloud storage (multi-AZ) - baseline cloud durability
     CloudStandard {
+        /// Cloud provider and bucket configuration
         provider: CloudProvider,
+        /// Cloud region identifier (e.g., "us-east-1")
         region: String,
     },
 
     /// L6: Infrequent access cloud storage - cost-optimized durability
     CloudInfrequentAccess {
+        /// Cloud provider and bucket configuration
         provider: CloudProvider,
+        /// Cloud region identifier (e.g., "us-east-1")
         region: String,
     },
 
     /// L7: Archive storage (retrieval time in minutes/hours) - long-term durability
     CloudArchive {
+        /// Cloud provider and bucket configuration
         provider: CloudProvider,
+        /// Cloud region identifier (e.g., "us-east-1")
         region: String,
     },
 
     /// L8: Deep archive (retrieval time in hours) - maximum durability, lowest cost
     CloudDeepArchive {
+        /// Cloud provider and bucket configuration
         provider: CloudProvider,
+        /// Cloud region identifier (e.g., "us-east-1")
         region: String,
     },
 }
@@ -181,54 +198,81 @@ impl InfrastructureTier {
     }
 }
 
+/// Cloud storage provider configuration
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CloudProvider {
     /// AWS S3 with various storage classes
     AwsS3 {
+        /// S3 bucket name
         bucket: String,
+        /// S3 storage class for cost/access-time trade-off
         storage_class: AwsStorageClass,
+        /// Whether S3 lifecycle policies are enabled for automatic tiering
         lifecycle_enabled: bool,
     },
 
     /// Azure Blob Storage with access tiers
     AzureBlob {
+        /// Azure storage account name
         account: String,
+        /// Blob container name
         container: String,
+        /// Azure access tier for cost/access-time trade-off
         access_tier: AzureAccessTier,
     },
 
     /// Google Cloud Storage with storage classes
     GoogleCloud {
+        /// GCS bucket name
         bucket: String,
+        /// GCS storage class for cost/access-time trade-off
         storage_class: GcsStorageClass,
+        /// Whether GCS AutoClass is enabled for automatic storage class transitions
         auto_class: bool,
     },
 }
 
+/// AWS S3 storage class selection
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AwsStorageClass {
-    Standard,           // $0.023/GB/month, ms access
-    ExpressOneZone,     // $0.16/GB/month, single-digit ms access
-    StandardIA,         // $0.0125/GB/month, 30-day minimum
-    OneZoneIA,          // $0.01/GB/month, single AZ
-    Glacier,            // $0.004/GB/month, 1-5 min retrieval
-    GlacierDeepArchive, // $0.00099/GB/month, 12-hour retrieval
-    IntelligentTiering, // Auto-optimization based on access
+    /// $0.023/GB/month, millisecond access
+    Standard,
+    /// $0.16/GB/month, single-digit millisecond access (single AZ)
+    ExpressOneZone,
+    /// $0.0125/GB/month, 30-day minimum storage
+    StandardIA,
+    /// $0.01/GB/month, single AZ, 30-day minimum storage
+    OneZoneIA,
+    /// $0.004/GB/month, 1-5 minute retrieval
+    Glacier,
+    /// $0.00099/GB/month, 12-hour retrieval
+    GlacierDeepArchive,
+    /// Auto-optimizes storage class based on access patterns
+    IntelligentTiering,
 }
 
+/// Azure Blob Storage access tier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AzureAccessTier {
-    Hot,     // $0.0184/GB/month, immediate access
-    Cool,    // $0.01/GB/month, 30-day minimum
-    Archive, // $0.00099/GB/month, hours retrieval
+    /// $0.0184/GB/month, immediate millisecond access
+    Hot,
+    /// $0.01/GB/month, immediate access, 30-day minimum storage
+    Cool,
+    /// $0.00099/GB/month, retrieval measured in hours
+    Archive,
 }
 
+/// Google Cloud Storage storage class
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GcsStorageClass {
-    Standard, // $0.020/GB/month, immediate access
-    Nearline, // $0.010/GB/month, 30-day minimum
-    Coldline, // $0.004/GB/month, 90-day minimum
-    Archive,  // $0.0012/GB/month, 365-day minimum
+    /// $0.020/GB/month, immediate millisecond access
+    Standard,
+    /// $0.010/GB/month, immediate access, 30-day minimum storage
+    Nearline,
+    /// $0.004/GB/month, immediate access, 90-day minimum storage
+    Coldline,
+    /// $0.0012/GB/month, retrieval measured in hours, 365-day minimum storage
+    Archive,
 }
 
 /// Collection storage configuration from metadata
@@ -250,6 +294,7 @@ pub struct CollectionStorageConfig {
     pub storage_limits: CollectionStorageLimits,
 }
 
+/// Per-collection resource limits applied during tier placement decisions
 #[derive(Debug, Clone)]
 pub struct CollectionStorageLimits {
     /// Maximum memory allocation for this collection (bytes)
@@ -455,6 +500,7 @@ pub struct SmartTierPolicy {
     cost_optimization: CostOptimization,
 }
 
+/// Workload type classification that drives tier placement decisions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WorkloadType {
     /// Index workload: NEVER evict, promote to persistent storage
@@ -485,6 +531,7 @@ pub enum WorkloadType {
     Mixed,
 }
 
+/// Data durability preference used when selecting storage placement
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DurabilityPreference {
     /// Maximum durability (multi-region replication)
@@ -497,6 +544,7 @@ pub enum DurabilityPreference {
     CostOptimized,
 }
 
+/// Physical and cost characteristics of a single storage tier
 #[derive(Debug, Clone)]
 pub struct TierConfig {
     /// Maximum capacity for this tier (bytes)
@@ -518,6 +566,7 @@ pub struct TierConfig {
     min_storage_duration: Option<Duration>,
 }
 
+/// A single data placement rule that maps a condition to a target tier
 #[derive(Debug, Clone)]
 pub struct PlacementRule {
     /// Condition to match
@@ -530,34 +579,44 @@ pub struct PlacementRule {
     priority: u8,
 }
 
+/// Condition expression used to match data for tier placement
 #[derive(Debug, Clone)]
 pub enum PlacementCondition {
     /// Size-based placement
     SizeRange {
+        /// Optional lower bound (inclusive) in bytes
         min_bytes: Option<usize>,
+        /// Optional upper bound (inclusive) in bytes
         max_bytes: Option<usize>,
     },
 
     /// Access frequency-based placement
     AccessFrequency {
+        /// Optional minimum accesses per day to match
         min_accesses_per_day: Option<f64>,
+        /// Optional maximum accesses per day to match
         max_accesses_per_day: Option<f64>,
     },
 
     /// Age-based placement
     Age {
+        /// Optional minimum data age in days to match
         min_age_days: Option<u32>,
+        /// Optional maximum data age in days to match
         max_age_days: Option<u32>,
     },
 
-    /// Collection-specific rules
+    /// Collection-specific rules matched against regex patterns
     Collection {
-        collection_patterns: Vec<String>, // regex patterns
+        /// Regex patterns matched against collection IDs
+        collection_patterns: Vec<String>,
     },
 
     /// Business priority-based placement
     Priority {
+        /// Optional minimum priority value to match
         min_priority: Option<u8>,
+        /// Optional maximum priority value to match
         max_priority: Option<u8>,
     },
 
@@ -568,6 +627,7 @@ pub enum PlacementCondition {
     Or(Vec<PlacementCondition>),
 }
 
+/// Memory utilization thresholds that trigger tier promotion and eviction
 #[derive(Debug, Clone)]
 pub struct MemoryThresholds {
     /// Start promoting data to next tier (0.0-1.0)
@@ -583,6 +643,7 @@ pub struct MemoryThresholds {
     target_utilization: f64,
 }
 
+/// Cost-based optimization settings for tier management
 #[derive(Debug, Clone)]
 pub struct CostOptimization {
     /// Maximum total monthly cost (USD)
@@ -889,6 +950,7 @@ pub struct GlobalTier {
     collection_policies: HashMap<String, SmartTierPolicy>,
 }
 
+/// Global memory manager that tracks per-collection allocations across the server
 #[derive(Debug)]
 pub struct GlobalMemory {
     /// Total server memory budget
@@ -903,6 +965,7 @@ pub struct GlobalMemory {
     collection_priorities: HashMap<String, u8>,
 }
 
+/// Aggregates tier-usage and collection performance metrics across the entire server
 #[derive(Debug)]
 pub struct GlobalMetricsCollector {
     /// Cross-collection tier usage metrics
@@ -926,15 +989,21 @@ pub struct TierUsageStats {
     pub avg_access_latency_ms: f64,
 }
 
+/// Tier metrics snapshot for a single collection
 #[derive(Debug, Clone)]
 pub struct CollectionTierMetrics {
+    /// Unique identifier of the collection
     pub collection_id: String,
-    pub tier_distribution: HashMap<InfrastructureTier, usize>, // bytes per tier
+    /// Bytes stored per infrastructure tier
+    pub tier_distribution: HashMap<InfrastructureTier, usize>,
+    /// Access pattern statistics for this collection
     pub access_patterns: AccessPatternMetrics,
+    /// Cost metrics for this collection
     pub cost_metrics: CostMetrics,
 }
 
 impl GlobalMetricsCollector {
+    /// Create a new empty metrics collector
     pub fn new() -> Self {
         Self {
             tier_usage_stats: HashMap::new(),
@@ -942,6 +1011,7 @@ impl GlobalMetricsCollector {
         }
     }
 
+    /// Register a collection so it appears in future metrics aggregation
     pub fn register_collection(&mut self, _collection_id: &str) {
         // Initialize collection metrics (implementation placeholder)
         // In production, this would track actual collection usage

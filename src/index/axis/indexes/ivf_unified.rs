@@ -452,6 +452,7 @@ pub struct ProductQuantizer {
 }
 
 impl ProductQuantizer {
+    /// Create a new product quantizer with the given dimension and number of subspaces.
     pub fn new(dimension: usize, n_subspaces: usize) -> Self {
         let subspace_dim = dimension / n_subspaces;
         Self {
@@ -919,6 +920,7 @@ impl UnifiedIvfIndex {
         centroids
     }
 
+    /// Create a new unified IVF index with the default FP32 extraction mode.
     pub fn new(collection_id: String, config: UnifiedIvfConfig) -> Result<Self> {
         Self::new_with_extraction_mode(collection_id, config, ExtractionMode::Fp32Only)
     }

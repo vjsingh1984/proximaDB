@@ -119,7 +119,10 @@ pub struct MigrationStep {
 #[derive(Debug, Clone)]
 pub enum MigrationStepType {
     /// Create new index structure
-    CreateNewIndex { index_spec: IndexSpecification },
+    CreateNewIndex {
+        /// Specification for the new index to create.
+        index_spec: IndexSpecification,
+    },
 
     /// Copy data from old to new index.
     CopyData {

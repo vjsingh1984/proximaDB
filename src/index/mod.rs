@@ -77,6 +77,7 @@
 pub mod axis;
 pub mod config;
 pub mod diskann;
+/// Geo-spatial indexing (geohash-based).
 pub mod geo;
 
 // Re-export main types for easier access

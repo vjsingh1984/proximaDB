@@ -307,9 +307,13 @@ where
 /// Access information for cache analysis
 #[derive(Debug, Clone)]
 pub struct AccessInfo {
+    /// Time when this item was first inserted
     pub timestamp: Instant,
+    /// Time of the most recent access
     pub last_accessed: Instant,
+    /// Total number of times this item has been accessed
     pub access_count: usize,
+    /// Estimated size of this item in bytes
     pub size_bytes: usize,
 }
 
@@ -335,6 +339,7 @@ pub struct AtomicMetrics {
 }
 
 impl AtomicMetrics {
+    /// Create a new zeroed metrics instance
     pub fn new() -> Self {
         Self {
             entries: AtomicUsize::new(0),
@@ -348,14 +353,17 @@ impl AtomicMetrics {
         }
     }
 
+    /// Increment the entry counter by one
     pub fn increment_entries(&self) {
         self.entries.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Decrement the entry counter by one
     pub fn decrement_entries(&self) {
         self.entries.fetch_sub(1, Ordering::Relaxed);
     }
 
+    /// Add a signed delta to the entry counter
     pub fn add_entries(&self, delta: i64) {
         if delta >= 0 {
             self.entries.fetch_add(delta as usize, Ordering::Relaxed);
@@ -364,6 +372,7 @@ impl AtomicMetrics {
         }
     }
 
+    /// Add a signed delta to the memory usage counter in bytes
     pub fn add_memory_bytes(&self, delta: i64) {
         if delta >= 0 {
             self.memory_bytes
@@ -374,36 +383,43 @@ impl AtomicMetrics {
         }
     }
 
+    /// Record a cache hit and increment operation count
     pub fn record_hit(&self) {
         self.hits.fetch_add(1, Ordering::Relaxed);
         self.operations.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record a cache miss and increment operation count
     pub fn record_miss(&self) {
         self.misses.fetch_add(1, Ordering::Relaxed);
         self.operations.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record a successful operation with its duration
     pub fn record_success(&self, duration: Duration) {
         self.successful.fetch_add(1, Ordering::Relaxed);
         self.total_time_ns
             .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
+    /// Record a failed operation with its duration
     pub fn record_failure(&self, duration: Duration) {
         self.failed.fetch_add(1, Ordering::Relaxed);
         self.total_time_ns
             .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
+    /// Return the current entry count
     pub fn entries(&self) -> usize {
         self.entries.load(Ordering::Relaxed)
     }
 
+    /// Return the current memory usage in bytes
     pub fn memory_bytes(&self) -> usize {
         self.memory_bytes.load(Ordering::Relaxed)
     }
 
+    /// Return the cache hit rate as a fraction in [0.0, 1.0]
     pub fn hit_rate(&self) -> f64 {
         let total = self.operations.load(Ordering::Relaxed);
         if total == 0 {
@@ -412,6 +428,7 @@ impl AtomicMetrics {
         self.hits.load(Ordering::Relaxed) as f64 / total as f64
     }
 
+    /// Record a named operation with its duration (increments operation and success counters)
     pub fn record_operation(&self, _op_name: &str, duration: Duration) {
         self.operations.fetch_add(1, Ordering::Relaxed);
         self.successful.fetch_add(1, Ordering::Relaxed);
@@ -419,6 +436,7 @@ impl AtomicMetrics {
             .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
+    /// Return the average operation duration across all recorded operations
     pub fn avg_operation_time(&self) -> Duration {
         let total_ops =
             self.successful.load(Ordering::Relaxed) + self.failed.load(Ordering::Relaxed);
@@ -430,6 +448,7 @@ impl AtomicMetrics {
         Duration::from_nanos(avg_ns)
     }
 
+    /// Capture a consistent point-in-time snapshot of all metrics
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
             entries: self.entries(),
@@ -461,12 +480,19 @@ impl Default for AtomicMetrics {
 /// Snapshot of metrics at a point in time
 #[derive(Debug, Clone, Default)]
 pub struct MetricsSnapshot {
+    /// Number of entries currently stored
     pub entries: usize,
+    /// Estimated total memory consumption in bytes
     pub memory_bytes: usize,
+    /// Total number of operations recorded
     pub operations: u64,
+    /// Total number of cache hits
     pub hits: u64,
+    /// Total number of cache misses
     pub misses: u64,
+    /// Hit rate as a percentage [0.0, 100.0]
     pub hit_rate: f64,
+    /// Average duration per operation
     pub avg_operation_time: Duration,
 }
 
@@ -488,6 +514,7 @@ where
     K1: Hash + Eq + Clone + Send + Sync + 'static,
     K2: Hash + Eq + Clone + Send + Sync + 'static,
 {
+    /// Create a new empty bidirectional mapping
     pub fn new() -> Self {
         Self {
             forward: DashMap::new(),
@@ -547,14 +574,17 @@ where
         }
     }
 
+    /// Return the number of mappings stored
     pub fn len(&self) -> usize {
         self.forward.len()
     }
 
+    /// Return true if no mappings are stored
     pub fn is_empty(&self) -> bool {
         self.forward.is_empty()
     }
 
+    /// Return a point-in-time metrics snapshot for this mapping
     pub fn metrics(&self) -> MetricsSnapshot {
         self.metrics.snapshot()
     }
@@ -586,43 +616,51 @@ where
     K: Hash + Eq + Clone + Send + Sync + 'static,
     V: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
+    /// Create a new unbounded typed storage instance
     pub fn new() -> Self {
         Self {
             inner: ConcurrentStorage::new(),
         }
     }
 
+    /// Create a typed storage instance with a maximum entry capacity
     pub fn with_capacity(max_capacity: usize) -> Self {
         Self {
             inner: ConcurrentStorage::with_capacity(max_capacity),
         }
     }
 
-    /// All methods delegate to inner storage
+    /// Insert a key-value pair, returning the previous value if one existed
     pub fn insert(&self, key: K, value: V) -> Result<Option<V>> {
         self.inner.insert(key, value)
     }
 
+    /// Retrieve a value by key, returning `None` if the key is not present
     pub fn get(&self, key: &K) -> Option<V> {
         self.inner.get(key)
     }
 
+    /// Remove and return the value associated with the given key
     pub fn remove(&self, key: &K) -> Option<V> {
         self.inner.remove(key)
     }
 
+    /// Return true if the given key exists in the storage
     pub fn contains(&self, key: &K) -> bool {
         self.inner.contains(key)
     }
 
+    /// Return the number of entries currently stored
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
+    /// Return true if no entries are stored
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
+    /// Return a point-in-time metrics snapshot
     pub fn metrics(&self) -> MetricsSnapshot {
         self.inner.metrics()
     }

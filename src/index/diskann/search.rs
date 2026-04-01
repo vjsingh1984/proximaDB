@@ -434,10 +434,15 @@ impl DiskANNSearch {
 /// Summary statistics for multiple searches
 #[derive(Debug, Clone)]
 pub struct SearchStatsSummary {
+    /// Total number of searches performed.
     pub total_searches: usize,
+    /// Average number of graph nodes visited per search.
     pub avg_nodes_visited: f64,
+    /// Average number of distance computations per search.
     pub avg_distance_computations: f64,
+    /// Average search latency in microseconds.
     pub avg_latency_us: f64,
+    /// Average cache hit rate across searches.
     pub avg_cache_hit_rate: f64,
 }
 
