@@ -183,35 +183,55 @@ pub struct DailyUsage {
 /// Peak usage metrics for capacity planning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeakUsageMetrics {
+    /// Peak queries per second during the period.
     pub peak_qps: f64,
+    /// Peak number of concurrent users.
     pub peak_concurrent_users: u32,
+    /// Peak storage usage in gigabytes.
     pub peak_storage_gb: f64,
+    /// Peak AI requests per hour.
     pub peak_ai_requests_per_hour: u32,
 }
 
 /// Pricing configuration for enterprise billing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricingConfig {
-    pub search_cost_per_1k: f64,            // Cost per 1000 vector searches
-    pub insertion_cost_per_1k: f64,         // Cost per 1000 vector insertions
-    pub ai_cost_per_1k_tokens: f64,         // Cost per 1000 AI tokens
-    pub storage_cost_per_gb: f64,           // Monthly cost per GB storage
-    pub compute_cost_per_hour: f64,         // Cost per compute hour
-    pub transfer_cost_per_gb: f64,          // Cost per GB data transfer
-    pub collection_creation_base_cost: f64, // Base cost for collection creation
-    pub executive_dashboard_cost: f64,      // Cost per executive dashboard generation
-    pub natural_language_query_cost: f64,   // Cost per natural language query
-    pub billing_threshold: f64,             // Trigger billing at this cost amount
-    pub billing_frequency_days: u32,        // Bill every N days
+    /// Cost per 1000 vector searches.
+    pub search_cost_per_1k: f64,
+    /// Cost per 1000 vector insertions.
+    pub insertion_cost_per_1k: f64,
+    /// Cost per 1000 AI tokens.
+    pub ai_cost_per_1k_tokens: f64,
+    /// Monthly cost per GB of storage.
+    pub storage_cost_per_gb: f64,
+    /// Cost per compute hour.
+    pub compute_cost_per_hour: f64,
+    /// Cost per GB of data transfer.
+    pub transfer_cost_per_gb: f64,
+    /// Base cost for collection creation.
+    pub collection_creation_base_cost: f64,
+    /// Cost per executive dashboard generation.
+    pub executive_dashboard_cost: f64,
+    /// Cost per natural language query.
+    pub natural_language_query_cost: f64,
+    /// Cost threshold that triggers billing.
+    pub billing_threshold: f64,
+    /// Billing cycle length in days.
+    pub billing_frequency_days: u32,
+    /// Volume discount tiers for enterprise customers.
     pub enterprise_discount_tiers: Vec<DiscountTier>,
 }
 
 /// Discount tiers for enterprise customers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscountTier {
+    /// Name of the discount tier (e.g., "Silver", "Gold", "Platinum").
     pub name: String,
+    /// Minimum monthly spend in USD to qualify.
     pub min_monthly_spend: f64,
+    /// Discount percentage applied to the total bill.
     pub discount_percentage: f64,
+    /// Additional benefits included in this tier.
     pub additional_benefits: Vec<String>,
 }
 
@@ -690,6 +710,7 @@ impl UsageAggregate {
 }
 
 impl DailyUsage {
+    /// Create a new daily usage record for the given date string (YYYY-MM-DD).
     pub fn new(date: &str) -> Self {
         Self {
             date: date.to_string(),
@@ -732,19 +753,28 @@ impl std::fmt::Display for UsageEventType {
 /// Trait for billing provider integration
 #[async_trait::async_trait]
 pub trait BillingProvider: Send + Sync {
+    /// Process billing for a tenant based on their aggregated usage.
     async fn process_billing(&self, tenant_id: &str, usage: &UsageAggregate) -> Result<()>;
 }
 
 /// Billing period options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BillingPeriod {
+    /// Daily billing cycle.
     Daily,
+    /// Weekly billing cycle.
     Weekly,
+    /// Monthly billing cycle.
     Monthly,
+    /// Quarterly billing cycle.
     Quarterly,
+    /// Annual billing cycle.
     Annual,
+    /// Custom billing period with explicit start and end dates.
     Custom {
+        /// Start of the billing period.
         start: DateTime<Utc>,
+        /// End of the billing period.
         end: DateTime<Utc>,
     },
 }
@@ -752,85 +782,125 @@ pub enum BillingPeriod {
 /// Usage summary for customer dashboards
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageSummary {
+    /// Tenant identifier.
     pub tenant_id: String,
+    /// Billing period this summary covers.
     pub period: BillingPeriod,
+    /// Total cost in USD for this period.
     pub total_cost: f64,
+    /// Breakdown of costs by category.
     pub usage_breakdown: UsageBreakdown,
+    /// Usage trends and forecasting data.
     pub trending: UsageTrends,
+    /// Cost optimization recommendations.
     pub recommendations: Vec<CostOptimizationRecommendation>,
+    /// Peak usage metrics during this period.
     pub peak_metrics: PeakUsageMetrics,
 }
 
 /// Cost breakdown by category
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageBreakdown {
+    /// Percentage of total cost from storage.
     pub storage_cost_percentage: f64,
+    /// Percentage of total cost from searches.
     pub search_cost_percentage: f64,
+    /// Percentage of total cost from AI operations.
     pub ai_cost_percentage: f64,
+    /// Top cost drivers identified in the period.
     pub top_cost_drivers: Vec<String>,
 }
 
 /// Usage trends for forecasting
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageTrends {
+    /// Week-over-week growth rate as a percentage.
     pub week_over_week_growth: f64,
+    /// Overall cost trend direction.
     pub cost_trend: TrendDirection,
+    /// Detected usage pattern.
     pub usage_pattern: UsagePattern,
+    /// Forecasted cost for the next month in USD.
     pub forecast_next_month: f64,
 }
 
 /// Trend directions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TrendDirection {
+    /// Costs are increasing over time.
     Increasing,
+    /// Costs are decreasing over time.
     Decreasing,
+    /// Costs are relatively stable.
     Stable,
 }
 
 /// Usage patterns
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UsagePattern {
+    /// Usage concentrated during business hours (9-5 weekdays).
     BusinessHours,
+    /// Consistent usage around the clock.
     AlwaysOn,
+    /// Unpredictable spikes in usage.
     Bursty,
+    /// Usage concentrated on weekends.
     Weekend,
 }
 
 /// Cost optimization recommendations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostOptimizationRecommendation {
+    /// Category of the recommendation.
     pub recommendation_type: RecommendationType,
+    /// Short title for the recommendation.
     pub title: String,
+    /// Detailed description of the optimization.
     pub description: String,
+    /// Estimated monthly savings in USD.
     pub estimated_savings_usd: f64,
+    /// Level of effort required to implement.
     pub implementation_effort: ImplementationEffort,
+    /// Priority ranking for this recommendation.
     pub priority: RecommendationPriority,
 }
 
 /// Types of cost optimization recommendations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecommendationType {
+    /// Optimize storage usage (compression, tiering, cleanup).
     StorageOptimization,
+    /// Optimize AI token usage (caching, batching).
     AIOptimization,
+    /// Upgrade to a more cost-effective plan.
     PlanUpgrade,
+    /// Improve caching to reduce redundant operations.
     CacheOptimization,
+    /// Optimize query patterns to reduce cost.
     QueryOptimization,
 }
 
 /// Implementation effort levels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImplementationEffort {
+    /// Minimal effort (configuration change or toggle).
     Low,
+    /// Moderate effort (code or architecture changes).
     Medium,
+    /// Significant effort (major redesign or migration).
     High,
 }
 
 /// Recommendation priority levels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecommendationPriority {
+    /// Low priority — nice to have.
     Low,
+    /// Medium priority — should address soon.
     Medium,
+    /// High priority — address this billing cycle.
     High,
+    /// Critical — immediate action needed.
     Critical,
 }
 
