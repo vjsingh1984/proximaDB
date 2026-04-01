@@ -1738,15 +1738,11 @@ impl UnifiedStorageEngine for SwiftEngine {
     }
 
     fn supports_feature(&self, feature: &str) -> bool {
-        match feature {
-            "id_lookup" => true,
-            "similarity_search" => true,
-            "progressive_search" => true,
-            "quantization" => true,
-            "compression" => true,
-            "batch_operations" => true,
-            _ => false,
-        }
+        matches!(
+            feature,
+            "id_lookup" | "similarity_search" | "progressive_search" | "quantization"
+                | "compression" | "batch_operations"
+        )
     }
 }
 

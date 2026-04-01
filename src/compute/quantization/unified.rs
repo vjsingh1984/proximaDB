@@ -1700,15 +1700,15 @@ impl UnifiedQuantizationEngine {
         let data_type = &data.quantization_level.level_type;
 
         // Check if both have the same variant
-        let same_type = match (query_type, data_type) {
-            (Some(QuantizationLevel::None(_)), Some(QuantizationLevel::None(_))) => true,
-            (Some(QuantizationLevel::Uniform(_)), Some(QuantizationLevel::Uniform(_))) => true,
-            (Some(QuantizationLevel::Pq(_)), Some(QuantizationLevel::Pq(_))) => true,
-            (Some(QuantizationLevel::Scalar(_)), Some(QuantizationLevel::Scalar(_))) => true,
-            (Some(QuantizationLevel::Binary(_)), Some(QuantizationLevel::Binary(_))) => true,
-            (Some(QuantizationLevel::Custom(_)), Some(QuantizationLevel::Custom(_))) => true,
-            _ => false,
-        };
+        let same_type = matches!(
+            (query_type, data_type),
+            (Some(QuantizationLevel::None(_)), Some(QuantizationLevel::None(_)))
+                | (Some(QuantizationLevel::Uniform(_)), Some(QuantizationLevel::Uniform(_)))
+                | (Some(QuantizationLevel::Pq(_)), Some(QuantizationLevel::Pq(_)))
+                | (Some(QuantizationLevel::Scalar(_)), Some(QuantizationLevel::Scalar(_)))
+                | (Some(QuantizationLevel::Binary(_)), Some(QuantizationLevel::Binary(_)))
+                | (Some(QuantizationLevel::Custom(_)), Some(QuantizationLevel::Custom(_)))
+        );
 
         if !same_type {
             debug!("⚠️ Quantization level mismatch");

@@ -63,10 +63,7 @@ pub trait DistanceMetricExt {
 
 impl DistanceMetricExt for DistanceMetric {
     fn is_similarity(&self) -> bool {
-        match self {
-            DistanceMetric::DotProduct => true,
-            _ => false,
-        }
+        matches!(self, DistanceMetric::DotProduct)
     }
 }
 #[cfg(feature = "gpu")]
@@ -1878,10 +1875,7 @@ impl UnifiedDistanceCompute {
 
     /// Check if a metric is similarity-based (higher = better)
     pub fn is_similarity_metric(&self, metric: &DistanceMetric) -> bool {
-        match metric {
-            DistanceMetric::DotProduct => true,
-            _ => false,
-        }
+        matches!(metric, DistanceMetric::DotProduct)
     }
 
     /// Get metric properties

@@ -682,11 +682,9 @@ impl StorageFormat {
 
     /// Check if this format supports hardware acceleration
     pub fn supports_hardware_acceleration(&self) -> bool {
-        match self {
-            StorageFormat::FP32 => true,
-            StorageFormat::QuantizedINT8 { .. } => true,
-            StorageFormat::Binary => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            StorageFormat::FP32 | StorageFormat::QuantizedINT8 { .. } | StorageFormat::Binary
+        )
     }
 }

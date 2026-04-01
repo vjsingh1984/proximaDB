@@ -236,12 +236,12 @@ pub enum MetadataValueType {
 
 /// Helper function to check if a metadata value matches an expected type
 fn matches_type(value: &Option<metadata_item::Value>, expected: &MetadataValueType) -> bool {
-    match (value, expected) {
-        (Some(metadata_item::Value::StringValue(_)), MetadataValueType::String) => true,
-        (Some(metadata_item::Value::NumberValue(_)), MetadataValueType::Number) => true,
-        (Some(metadata_item::Value::BoolValue(_)), MetadataValueType::Boolean) => true,
-        _ => false,
-    }
+    matches!(
+        (value, expected),
+        (Some(metadata_item::Value::StringValue(_)), MetadataValueType::String)
+            | (Some(metadata_item::Value::NumberValue(_)), MetadataValueType::Number)
+            | (Some(metadata_item::Value::BoolValue(_)), MetadataValueType::Boolean)
+    )
 }
 
 #[cfg(test)]

@@ -1603,17 +1603,11 @@ impl UnifiedStorageEngine for NovaEngine {
     }
 
     fn supports_feature(&self, feature: &str) -> bool {
-        match feature {
-            "id_lookup" => true,
-            "similarity_search" => true,
-            "columnar_search" => true,
-            "quantization" => true,
-            "compression" => true,
-            "batch_operations" => true,
-            "predicate_pushdown" => true,
-            "projection" => true,
-            _ => false,
-        }
+        matches!(
+            feature,
+            "id_lookup" | "similarity_search" | "columnar_search" | "quantization"
+                | "compression" | "batch_operations" | "predicate_pushdown" | "projection"
+        )
     }
 }
 
