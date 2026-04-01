@@ -115,10 +115,10 @@ pub async fn auth_middleware<B>(
 
     let api_key = match auth_header {
         Some(header_value) => {
-            if header_value.starts_with("Bearer ") {
-                header_value.strip_prefix("Bearer ").unwrap_or(header_value)
-            } else if header_value.starts_with("API-Key ") {
-                &header_value[8..] // Remove "API-Key " prefix
+            if let Some(key) = header_value.strip_prefix("Bearer ") {
+                key
+            } else if let Some(key) = header_value.strip_prefix("API-Key ") {
+                key
             } else {
                 header_value // Use as-is for simple API key
             }

@@ -675,8 +675,8 @@ impl ObservabilityStrategy {
         // Check for operators
         let ops = [">=", "<=", ">", "<", "="];
         for op in &ops {
-            if s.starts_with(op) {
-                let rest = s[op.len()..].trim();
+            if let Some(rest) = s.strip_prefix(op) {
+                let rest = rest.trim();
                 // Try to parse the number
                 let num_str: String = rest.chars().take_while(|c| c.is_numeric()).collect();
                 if let Ok(value) = num_str.parse::<i64>() {

@@ -202,8 +202,8 @@ impl LdapAuthProvider {
 
                 // Parse LDAP search results to extract group CNs
                 for line in output_str.lines() {
-                    if line.starts_with("cn: ") > .then(|| line.strip_prefix("cn: ").unwrap()).map(|s| s.trim()) {
-                        let group_name = line[4..].trim();
+                    if let Some(group_name) = line.strip_prefix("cn: ") {
+                        let group_name = group_name.trim();
                         // Map LDAP groups to ProximaDB roles
                         if let Some(role) = self.role_mapping.get(group_name) {
                             roles.push(role.clone());
