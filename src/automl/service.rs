@@ -66,100 +66,145 @@ impl Default for AutoMLConfig {
 /// Optimization request
 #[derive(Debug, Clone)]
 pub struct OptimizationRequest {
+    /// Identifier of the collection to optimize
     pub collection_id: String,
+    /// Category of optimization to apply
     pub optimization_type: OptimizationType,
+    /// How urgently the optimization should be scheduled
     pub urgency: OptimizationUrgency,
+    /// Snapshot of current performance and resource state used to guide optimization
     pub context: OptimizationContext,
 }
 
 /// Types of optimization
 #[derive(Debug, Clone, PartialEq)]
 pub enum OptimizationType {
+    /// Choose the most appropriate ANN index algorithm
     IndexSelection,
+    /// Choose the best quantization scheme for memory/accuracy trade-off
     QuantizationLevel,
+    /// Switch to a storage engine better suited to the workload
     EngineSelection,
+    /// Tune cache size and eviction policy
     CacheConfiguration,
+    /// Tune algorithm-specific parameters (e.g. HNSW `M`, `ef_search`)
     HyperparameterTuning,
+    /// Re-configure the system to match an observed workload shift
     WorkloadAdaptation,
 }
 
 /// Optimization urgency levels
 #[derive(Debug, Clone, PartialEq)]
 pub enum OptimizationUrgency {
-    Critical, // Performance degradation detected
-    High,     // Significant improvement opportunity
-    Normal,   // Regular optimization cycle
-    Low,      // Minor improvements possible
+    /// Performance degradation detected; immediate action required
+    Critical,
+    /// Significant improvement opportunity identified
+    High,
+    /// Part of the regular periodic optimization cycle
+    Normal,
+    /// Minor improvements possible; low priority
+    Low,
 }
 
 /// Optimization context with relevant metrics
 #[derive(Debug, Clone)]
 pub struct OptimizationContext {
+    /// Current query performance numbers at the time the request was created
     pub current_performance: PerformanceMetrics,
+    /// Characterisation of the workload mix seen by the collection
     pub workload_characteristics: WorkloadCharacteristics,
+    /// System resource utilisation at the time the request was created
     pub resource_usage: ResourceUsage,
 }
 
 /// Performance metrics
 #[derive(Debug, Clone)]
 pub struct PerformanceMetrics {
+    /// Median (P50) query end-to-end latency in milliseconds
     pub query_latency_p50: f64,
+    /// 99th-percentile query end-to-end latency in milliseconds
     pub query_latency_p99: f64,
+    /// Observed query throughput in queries per second
     pub throughput_qps: f64,
+    /// Fraction of queries that completed without error (0.0–1.0)
     pub success_rate: f64,
 }
 
 /// Workload characteristics
 #[derive(Debug, Clone)]
 pub struct WorkloadCharacteristics {
+    /// Ratio of read operations to write operations (e.g. 5.0 = five reads per write)
     pub read_write_ratio: f64,
+    /// Typical complexity level of queries observed on this collection
     pub query_complexity: QueryComplexity,
+    /// Dominant data-access pattern observed on this collection
     pub access_pattern: AccessPattern,
+    /// Rate at which new vectors are being added (vectors per second)
     pub data_growth_rate: f64,
 }
 
 /// Query complexity levels
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryComplexity {
-    Simple,  // Point queries
-    Medium,  // Range/filter queries
-    Complex, // Multi-index/join queries
+    /// Simple point (k-NN) queries with no additional filters
+    Simple,
+    /// Range or pre-filter queries that narrow the candidate set before ANN search
+    Medium,
+    /// Multi-index or join-style queries combining vector and metadata predicates
+    Complex,
 }
 
 /// Data access patterns
 #[derive(Debug, Clone, PartialEq)]
 pub enum AccessPattern {
+    /// No temporal or spatial locality; accesses are uniformly distributed
     Random,
+    /// Accesses follow a sequential scan order through the collection
     Sequential,
-    Temporal, // Recent data accessed more
-    Hotspot,  // Specific data accessed frequently
+    /// Recently inserted vectors are accessed more frequently than older ones
+    Temporal,
+    /// A small subset of vectors accounts for the majority of accesses
+    Hotspot,
 }
 
 /// Resource usage metrics
 #[derive(Debug, Clone)]
 pub struct ResourceUsage {
+    /// CPU utilisation as a percentage (0.0–100.0)
     pub cpu_usage_percent: f64,
+    /// Current resident memory consumption in MB
     pub memory_usage_mb: u64,
+    /// Disk I/O throughput in MB/s
     pub disk_io_mb_per_sec: f64,
+    /// Network I/O throughput in MB/s
     pub network_io_mb_per_sec: f64,
 }
 
 /// Optimization result
 #[derive(Debug, Clone)]
 pub struct OptimizationResult {
+    /// Unique identifier for this optimization run
     pub request_id: String,
+    /// `true` if the optimization applied at least one improvement
     pub success: bool,
+    /// List of individual metric improvements achieved by this run
     pub improvements: Vec<Improvement>,
+    /// Wall-clock time (milliseconds) taken to complete the optimization
     pub execution_time_ms: u64,
+    /// Human-readable error description if `success` is `false`
     pub error: Option<String>,
 }
 
 /// Performance improvement details
 #[derive(Debug, Clone)]
 pub struct Improvement {
+    /// Name of the metric that was improved (e.g. `"query_latency"`, `"memory_usage"`)
     pub metric: String,
+    /// Metric value before the optimization was applied
     pub before: f64,
+    /// Metric value after the optimization was applied
     pub after: f64,
+    /// Relative improvement as a percentage: `(before - after) / before * 100`
     pub improvement_percent: f64,
 }
 

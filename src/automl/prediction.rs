@@ -81,8 +81,11 @@ impl TrainingDataBuffer {
 /// Training sample for model learning
 #[derive(Debug, Clone)]
 pub struct TrainingSample {
+    /// Input feature vector describing collection and system state
     pub features: FeatureVector,
+    /// Observed performance metric used as the prediction target
     pub target: TargetMetric,
+    /// Wall-clock time when this sample was collected
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
@@ -90,25 +93,38 @@ pub struct TrainingSample {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureVector {
     // Data characteristics
+    /// Total number of vectors stored in the collection
     pub vector_count: f64,
+    /// Number of dimensions per vector
     pub vector_dimension: f64,
+    /// Fraction of vector components that are zero (0.0–1.0)
     pub sparsity: f64,
 
     // Workload characteristics
+    /// Fraction of operations that are reads (0.0–1.0)
     pub read_ratio: f64,
+    /// Fraction of operations that are writes (0.0–1.0)
     pub write_ratio: f64,
+    /// Relative complexity of queries (1.0 = simple ANN, higher = filtered/multi-stage)
     pub query_complexity: f64,
+    /// Typical number of vectors per insert/search batch
     pub batch_size: f64,
 
     // Index configuration
-    pub index_type: f64, // Encoded index type
+    /// Numerically encoded index algorithm (1 = HNSW, 2 = IVF, 3 = LSH, 0 = unknown)
+    pub index_type: f64,
+    /// Numerically encoded quantization level (0 = none, 1 = binary, 2 = INT8, …)
     pub quantization_level: f64,
+    /// Size of the read cache allocated to this collection (MB)
     pub cache_size_mb: f64,
 
     // Resource usage
+    /// Number of CPU cores available to the server
     pub cpu_cores: f64,
+    /// Total system memory available (GB)
     pub memory_gb: f64,
-    pub disk_type: f64, // 0 = HDD, 1 = SSD, 2 = NVMe
+    /// Encoded storage medium type (0 = HDD, 1 = SSD, 2 = NVMe)
+    pub disk_type: f64,
 }
 
 impl FeatureVector {
@@ -159,9 +175,13 @@ impl FeatureVector {
 /// Target metric for prediction
 #[derive(Debug, Clone)]
 pub enum TargetMetric {
+    /// End-to-end query latency in milliseconds
     QueryLatency(f64),
+    /// Sustained query throughput in queries per second
     Throughput(f64),
+    /// Peak memory consumption of the collection in MB
     MemoryUsage(f64),
+    /// Time required to build the index from scratch in seconds
     IndexBuildTime(f64),
 }
 
@@ -583,17 +603,24 @@ fn model_type_name(model: &PredictionModel) -> String {
 /// Prediction result
 #[derive(Debug, Clone)]
 pub struct PredictionResult {
+    /// Predicted metric value (units depend on the target metric being predicted)
     pub value: f64,
+    /// Model confidence in this prediction (0.0 = uncertain, 1.0 = highly confident)
     pub confidence: f64,
+    /// Human-readable name of the model that produced this prediction
     pub model_type: String,
 }
 
 /// Model accuracy metrics
 #[derive(Debug, Clone)]
 pub struct ModelMetrics {
-    pub mse: f64,      // Mean squared error
-    pub mae: f64,      // Mean absolute error
-    pub r2_score: f64, // R-squared score
+    /// Mean squared error between predicted and actual values
+    pub mse: f64,
+    /// Mean absolute error between predicted and actual values
+    pub mae: f64,
+    /// Coefficient of determination (R²); 1.0 is a perfect fit
+    pub r2_score: f64,
+    /// Number of labelled samples used to train the model
     pub training_samples: usize,
 }
 

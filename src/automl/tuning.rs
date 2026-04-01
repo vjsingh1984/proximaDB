@@ -45,17 +45,24 @@ impl Default for TuningConfig {
 /// Hyperparameter definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HyperParameter {
+    /// Unique name used to identify this parameter in trial result maps
     pub name: String,
+    /// Rust type of the parameter value
     pub param_type: ParameterType,
+    /// Domain over which the tuner is allowed to search
     pub search_space: SearchSpace,
 }
 
 /// Parameter types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParameterType {
+    /// 64-bit signed integer parameter
     Integer,
+    /// 64-bit floating-point parameter
     Float,
+    /// String-valued parameter drawn from a fixed set of choices
     Categorical,
+    /// Boolean flag parameter
     Boolean,
 }
 
@@ -63,41 +70,75 @@ pub enum ParameterType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SearchSpace {
     /// Continuous range [min, max]
-    Continuous { min: f64, max: f64 },
+    Continuous {
+        /// Lower bound of the continuous range (inclusive)
+        min: f64,
+        /// Upper bound of the continuous range (inclusive)
+        max: f64,
+    },
     /// Discrete range [min, max, step]
-    Discrete { min: i64, max: i64, step: i64 },
+    Discrete {
+        /// Minimum integer value (inclusive)
+        min: i64,
+        /// Maximum integer value (inclusive)
+        max: i64,
+        /// Step size between consecutive candidate values
+        step: i64,
+    },
     /// Categorical choices
-    Categorical { choices: Vec<String> },
+    Categorical {
+        /// Exhaustive list of allowed string values
+        choices: Vec<String>,
+    },
     /// Logarithmic scale [min, max]
-    LogScale { min: f64, max: f64 },
+    LogScale {
+        /// Lower bound in the original (non-log) domain (must be positive)
+        min: f64,
+        /// Upper bound in the original (non-log) domain (must be positive)
+        max: f64,
+    },
 }
 
 /// Trial result
 #[derive(Debug, Clone)]
 pub struct TrialResult {
+    /// Unique identifier for this individual trial
     pub trial_id: String,
+    /// Hyperparameter values sampled for this trial
     pub parameters: HashMap<String, ParameterValue>,
+    /// Objective score returned by the user-supplied evaluation function (higher is better)
     pub score: f64,
+    /// Wall-clock time (milliseconds) the objective function took to evaluate
     pub duration_ms: u64,
+    /// Terminal state of this trial
     pub status: TrialStatus,
 }
 
 /// Parameter value
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParameterValue {
+    /// 64-bit signed integer value
     Integer(i64),
+    /// 64-bit floating-point value
     Float(f64),
+    /// String value (used for categorical parameters)
     String(String),
+    /// Boolean flag value
     Boolean(bool),
 }
 
 /// Trial status
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrialStatus {
+    /// The objective function is still being evaluated
     Running,
+    /// The objective function returned successfully
     Completed,
+    /// The objective function returned an error
     Failed,
+    /// The trial exceeded the per-trial wall-clock budget
     Timeout,
+    /// The trial was pruned by the early-stopping policy
     EarlyStopped,
 }
 
@@ -110,9 +151,14 @@ pub enum TuningAlgorithm {
     Random,
     /// Grid search
     Grid,
-    /// Hyperband
-    Hyperband { max_iter: usize, eta: f64 },
-    /// Optuna-style algorithm
+    /// Hyperband successive halving
+    Hyperband {
+        /// Maximum resource budget per configuration (e.g. iterations or epochs)
+        max_iter: usize,
+        /// Halving ratio controlling how aggressively low-scoring configs are pruned
+        eta: f64,
+    },
+    /// Optuna-style algorithm (delegates to TPE internally)
     Optuna,
 }
 

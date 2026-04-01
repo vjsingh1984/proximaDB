@@ -30,21 +30,32 @@ use tokio::sync::RwLock;
 /// AutoML Framework status
 #[derive(Debug, Clone)]
 pub struct AutoMLStatus {
+    /// Whether the AutoML framework is currently active
     pub enabled: bool,
+    /// Number of optimization tasks currently in progress
     pub active_optimizations: usize,
+    /// Cumulative count of all optimization runs since startup
     pub total_optimizations: u64,
+    /// Average performance improvement (%) across all completed optimizations
     pub average_improvement: f64,
+    /// Timestamp of the most recent completed optimization, or `None` if none have run
     pub last_optimization: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// AutoML Framework metrics
 #[derive(Debug, Clone)]
 pub struct AutoMLMetrics {
+    /// Total number of performance predictions issued
     pub predictions_made: u64,
+    /// Number of predictions that fell within the acceptable error margin
     pub predictions_accurate: u64,
+    /// Count of optimization runs that produced a measurable improvement
     pub optimizations_successful: u64,
+    /// Count of optimization runs that ended in error or produced no improvement
     pub optimizations_failed: u64,
+    /// Mean wall-clock time (milliseconds) spent per optimization run
     pub average_optimization_time_ms: f64,
+    /// Cumulative query runtime saved (milliseconds) across all successful optimizations
     pub total_runtime_saved_ms: u64,
 }
 

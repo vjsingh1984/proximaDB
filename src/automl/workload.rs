@@ -132,12 +132,19 @@ impl WorkloadTimeSeries {
 /// Workload statistics
 #[derive(Debug, Clone)]
 pub struct WorkloadStatistics {
+    /// Mean read throughput over the observation window (operations per second)
     pub avg_reads_per_sec: f64,
+    /// Mean write throughput over the observation window (operations per second)
     pub avg_writes_per_sec: f64,
+    /// Ratio of average reads to average writes; `INFINITY` when there are no writes
     pub read_write_ratio: f64,
+    /// Median (P50) query latency observed during the window (milliseconds)
     pub query_latency_p50: f64,
+    /// 99th-percentile query latency observed during the window (milliseconds)
     pub query_latency_p99: f64,
+    /// Square-root of the sum of read and write throughput variances; higher means more bursty traffic
     pub burstiness_score: f64,
+    /// Stability of the workload pattern (0.0 = volatile, 1.0 = perfectly stable)
     pub pattern_stability: f64,
 }
 
