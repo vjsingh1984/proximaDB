@@ -303,7 +303,7 @@ impl CompactionTaskBuilder {
                     });
                 l0_total_size_mb >= config.l0_size_threshold_mb
             }
-            "hybrid" | _ => {
+            _ => {
                 // Use both count and size thresholds
                 let count_triggered = file_discovery.should_trigger_compaction(
                     &filtered_files,
@@ -375,7 +375,7 @@ impl CompactionTaskBuilder {
                         });
                     level_total_size_mb >= level_size_threshold_mb
                 }
-                "hybrid" | _ => {
+                _ => {
                     let count_triggered = file_discovery.should_trigger_compaction(
                         &filtered_files,
                         level,

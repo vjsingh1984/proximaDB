@@ -268,7 +268,7 @@ fn get_platform_capability() -> PlatformCapability {
                 trace!("Using ARM NEON SIMD from global hardware detection");
                 PlatformCapability::ArmNeon
             }
-            HardwareBackend::Scalar | _ => {
+            _ => {
                 trace!("Using scalar implementation from global hardware detection");
                 PlatformCapability::Scalar
             }

@@ -356,7 +356,7 @@ async fn metrics_endpoint(
             let metrics = state.metrics_collector.current_metrics().await;
             serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
-        "prometheus" | _ => {
+        _ => {
             let metrics = state.metrics_collector.current_metrics().await;
             use crate::metrics::exporters::PrometheusExporter;
             let exporter = PrometheusExporter::new();

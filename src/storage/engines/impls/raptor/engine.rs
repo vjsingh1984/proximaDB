@@ -1423,7 +1423,7 @@ impl RaptorEngine {
                 // Quantized tensor encoding
                 self.deserialize_quantized_tensor_batch(&data[1..])
             }
-            0xA0 | _ => {
+            _ => {
                 // Raw tensors or standard Arrow IPC format
                 // For backward compatibility or non-encoded data
                 use arrow_ipc::reader::StreamReader;

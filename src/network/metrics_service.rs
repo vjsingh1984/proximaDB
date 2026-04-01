@@ -139,7 +139,7 @@ async fn metrics_endpoint(
             let metrics = metrics_collector.current_metrics().await;
             serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
-        "prometheus" | _ => {
+        _ => {
             let metrics = metrics_collector.current_metrics().await;
             let exporter = PrometheusExporter::new();
             exporter
