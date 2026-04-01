@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn test_simple_equality() {
         let schema = test_schema();
-        let expr = col("id").eq(Expr::Literal(ScalarValue::Utf8(Some("test".to_string()))));
+        let expr = col("id").eq(Expr::Literal(ScalarValue::Utf8(Some("test".to_string())), None));
 
         let result = convert_expr_to_filter(&expr, &schema);
         assert!(result.is_ok());
@@ -343,7 +343,7 @@ mod tests {
     fn test_and_expression() {
         let schema = test_schema();
         let expr = col("id")
-            .eq(Expr::Literal(ScalarValue::Utf8(Some("test".to_string()))))
+            .eq(Expr::Literal(ScalarValue::Utf8(Some("test".to_string())), None))
             .and(col("id").is_not_null());
 
         let result = convert_expr_to_filter(&expr, &schema);
@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn test_invalid_column() {
         let schema = test_schema();
-        let expr = col("nonexistent").eq(Expr::Literal(ScalarValue::Int64(Some(42))));
+        let expr = col("nonexistent").eq(Expr::Literal(ScalarValue::Int64(Some(42)), None));
 
         let result = convert_expr_to_filter(&expr, &schema);
         assert!(result.is_err());

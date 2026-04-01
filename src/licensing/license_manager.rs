@@ -23,63 +23,102 @@ pub struct LicenseManager {
 /// License configuration for different deployment models
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicenseConfig {
+    /// The deployment model that determines how license validation is performed.
     pub deployment_model: DeploymentModel,
+    /// Whether the license manager may contact the ProximaDB licensing service for online validation.
     pub enable_phone_home: bool,
+    /// When `true`, only offline (cryptographic) validation is performed; no network calls are made.
     pub offline_validation_only: bool,
+    /// Interval in hours between periodic license re-validation checks.
     pub license_check_interval_hours: u32,
+    /// Number of days after license expiry during which the system continues operating in grace-period mode.
     pub grace_period_days: u32,
+    /// Whether anonymised usage analytics may be collected and reported.
     pub enable_usage_analytics: bool,
 }
 
 /// Deployment models for license management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeploymentModel {
-    SaaSHosted,  // ProximaDB-hosted SaaS
-    CustomerVPC, // Customer VPC with limited connectivity
-    AirGapped,   // Completely air-gapped on-premises
-    Hybrid,      // Mixed deployment with some connectivity
+    /// ProximaDB-hosted SaaS deployment with full online connectivity.
+    SaaSHosted,
+    /// Customer-managed VPC deployment with limited or controlled outbound connectivity.
+    CustomerVPC,
+    /// Completely air-gapped on-premises deployment with no external network access.
+    AirGapped,
+    /// Mixed deployment where some nodes have connectivity and others do not.
+    Hybrid,
 }
 
 /// Complete license information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicenseInfo {
+    /// Unique identifier for this license.
     pub license_id: String,
+    /// Identifier of the customer that owns this license.
     pub customer_id: String,
+    /// Human-readable name of the customer.
     pub customer_name: String,
+    /// The license tier that governs which features and limits apply.
     pub license_tier: LicenseTier,
+    /// Timestamp at which this license was issued.
     pub issued_at: DateTime<Utc>,
+    /// Optional expiry timestamp; `None` means the license never expires.
     pub expires_at: Option<DateTime<Utc>>,
+    /// Feature entitlements granted by this license.
     pub feature_entitlements: FeatureEntitlements,
+    /// Usage limits imposed by this license.
     pub usage_limits: UsageLimits,
-    pub license_token: String, // Cryptographically signed offline token
+    /// Cryptographically signed offline token used for air-gapped validation.
+    pub license_token: String,
+    /// Support tier included with this license.
     pub support_tier: SupportTier,
 }
 
 /// License tiers with different capabilities and limits
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LicenseTier {
+    /// Free/trial tier with restricted features.
     Free {
+        /// Number of days the trial is valid.
         trial_days: u32,
+        /// List of feature identifiers that are unavailable in the free tier.
         feature_restrictions: Vec<String>,
     },
+    /// Developer tier for individual developers with a monthly subscription.
     Developer {
+        /// Monthly subscription price in USD.
         monthly_price: f64,
+        /// Usage limits that apply to this developer license.
         usage_limits: DeveloperLimits,
     },
+    /// Professional tier with advanced features and higher usage limits.
     Professional {
+        /// Monthly subscription price in USD.
         monthly_price: f64,
+        /// Usage limits that apply to this professional license.
         usage_limits: ProfessionalLimits,
+        /// Additional advanced features enabled at this tier.
         advanced_features: Vec<String>,
     },
+    /// Standard enterprise tier with custom pricing and unlimited usage.
     Enterprise {
+        /// Whether pricing is negotiated individually with the customer.
         custom_pricing: bool,
+        /// Whether usage is unlimited (no hard caps).
         unlimited_usage: bool,
+        /// Enterprise-specific feature identifiers enabled for this customer.
         custom_features: Vec<String>,
+        /// SLA guarantee identifiers included in this enterprise contract.
         sla_guarantees: Vec<String>,
     },
+    /// Bespoke enterprise tier for customers with unique contractual requirements.
     CustomEnterprise {
+        /// Arbitrary key-value pairs encoding custom contractual terms.
         custom_terms: HashMap<String, String>,
+        /// Feature identifiers negotiated exclusively for this customer.
         bespoke_features: Vec<String>,
+        /// Whether a dedicated support team is assigned to this customer.
         dedicated_support: bool,
     },
 }
@@ -99,100 +138,152 @@ impl std::fmt::Display for LicenseTier {
 /// Feature entitlements based on license tier
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureEntitlements {
+    /// AI and LLM-related capabilities granted by this license.
     pub ai_capabilities: AICapabilities,
+    /// Multi-tenancy capabilities granted by this license.
     pub multi_tenant_features: MultiTenantFeatures,
+    /// Performance and storage capabilities granted by this license.
     pub performance_features: PerformanceFeatures,
+    /// Security and compliance capabilities granted by this license.
     pub security_features: SecurityFeatures,
+    /// Enterprise-grade capabilities granted by this license.
     pub enterprise_features: EnterpriseFeatures,
 }
 
 /// AI capability entitlements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AICapabilities {
+    /// Whether natural language query processing is enabled.
     pub natural_language_queries: bool,
+    /// Whether AI-powered executive dashboards are enabled.
     pub executive_dashboards: bool,
+    /// List of LLM provider identifiers the customer may use (e.g. `"OpenAI"`, `"Anthropic"`).
     pub llm_providers_allowed: Vec<String>,
+    /// Monthly cap on AI queries; `None` means unlimited.
     pub ai_queries_per_month: Option<u32>,
+    /// Whether advanced AI features beyond basic NL queries are enabled.
     pub advanced_ai_features: bool,
 }
 
 /// Multi-tenant feature entitlements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiTenantFeatures {
+    /// Maximum number of tenants allowed; `None` means unlimited.
     pub max_tenants: Option<u32>,
+    /// The level of isolation enforced between tenants.
     pub tenant_isolation_level: IsolationLevel,
+    /// Whether advanced RBAC features (custom roles, fine-grained policies) are enabled.
     pub rbac_advanced_features: bool,
+    /// Whether per-tenant configuration overrides are allowed.
     pub custom_tenant_configuration: bool,
 }
 
 /// Performance feature entitlements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceFeatures {
+    /// List of storage engine identifiers the customer may activate (e.g. `"SST"`, `"VIPER"`).
     pub storage_engines_allowed: Vec<String>,
+    /// Maximum queries per second allowed; `None` means unlimited.
     pub max_qps: Option<u32>,
+    /// Whether advanced in-memory caching tiers are enabled.
     pub advanced_caching: bool,
+    /// Whether detailed performance metrics and monitoring dashboards are enabled.
     pub performance_monitoring: bool,
+    /// Whether bespoke performance tuning and optimisation services are included.
     pub custom_optimization: bool,
 }
 
 /// Security feature entitlements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityFeatures {
+    /// Whether SAML/OIDC single sign-on integration is enabled.
     pub sso_integration: bool,
+    /// Whether immutable audit logging of all data access events is enabled.
     pub audit_logging: bool,
+    /// Compliance frameworks supported (e.g. `"SOC2"`, `"GDPR"`, `"HIPAA"`).
     pub compliance_frameworks: Vec<String>,
+    /// Whether advanced at-rest and in-transit encryption options are enabled.
     pub advanced_encryption: bool,
+    /// Whether real-time security event monitoring and alerting is enabled.
     pub security_monitoring: bool,
 }
 
 /// Enterprise feature entitlements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnterpriseFeatures {
+    /// Whether automated deployment tooling (Terraform modules, Helm charts, etc.) is included.
     pub deployment_automation: bool,
+    /// Whether bespoke third-party integration development is included.
     pub custom_integrations: bool,
+    /// Whether a dedicated customer success manager is assigned.
     pub dedicated_support: bool,
+    /// Whether contractual SLA guarantees (uptime, response times) are in effect.
     pub sla_guarantees: bool,
+    /// Whether custom feature development for the customer is included.
     pub custom_development: bool,
 }
 
 /// Usage limits based on license tier
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageLimits {
+    /// Maximum number of collections that may be created; `None` means unlimited.
     pub max_collections: Option<u32>,
+    /// Maximum total number of vectors across all collections; `None` means unlimited.
     pub max_vectors_total: Option<u64>,
+    /// Maximum total storage in gigabytes; `None` means unlimited.
     pub max_storage_gb: Option<u32>,
+    /// Maximum number of API calls per calendar month; `None` means unlimited.
     pub max_api_calls_per_month: Option<u32>,
+    /// Maximum number of AI/LLM queries per calendar month; `None` means unlimited.
     pub max_ai_queries_per_month: Option<u32>,
+    /// Maximum number of concurrent authenticated users; `None` means unlimited.
     pub max_concurrent_users: Option<u32>,
 }
 
 /// Support tier levels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SupportTier {
-    Community,  // Forum support only
-    Standard,   // Email support
-    Priority,   // Priority support with SLA
-    Dedicated,  // Dedicated customer success manager
-    WhiteGlove, // 24/7 white-glove support
+    /// Community forum support only; no direct vendor contact.
+    Community,
+    /// Standard email-based support with best-effort response times.
+    Standard,
+    /// Priority support channel with contractual response-time SLAs.
+    Priority,
+    /// Dedicated customer success manager with proactive engagement.
+    Dedicated,
+    /// 24/7 white-glove support with an assigned engineering team.
+    WhiteGlove,
 }
 
 /// License status and validation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LicenseStatus {
+    /// License is active and all checks passed.
     Valid,
+    /// License has passed its expiry date and the grace period has also elapsed.
     Expired,
+    /// One or more usage limits defined in the license have been exceeded.
     ExceededLimits,
+    /// The cryptographic signature on the license token is invalid.
     InvalidSignature,
+    /// No license was found in any expected location.
     NotFound,
-    GracePeriod { days_remaining: u32 },
+    /// License has expired but the system is operating within the grace period.
+    GracePeriod {
+        /// Number of days remaining in the grace period.
+        days_remaining: u32,
+    },
 }
 
 /// Isolation levels for multi-tenancy
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IsolationLevel {
-    Basic,    // Basic tenant separation
-    Enhanced, // Advanced isolation with monitoring
-    Complete, // Full enterprise isolation with audit
+    /// Namespace-level tenant separation with shared resources.
+    Basic,
+    /// Advanced isolation with per-tenant resource quotas and access monitoring.
+    Enhanced,
+    /// Full enterprise isolation with hardware-level separation and comprehensive audit trails.
+    Complete,
 }
 
 impl LicenseManager {
@@ -595,37 +686,54 @@ impl LicenseManager {
 /// Usage context for license validation
 #[derive(Debug, Clone)]
 pub struct UsageContext {
+    /// Identifier of the user making the request.
     pub user_id: String,
+    /// Identifier of the tenant making the request, if multi-tenancy is enabled.
     pub tenant_id: Option<String>,
+    /// Total number of collections that currently exist.
     pub current_collections: u32,
+    /// Total number of vectors stored across all collections.
     pub current_vectors: u64,
+    /// Number of API calls already made today.
     pub api_calls_today: u32,
+    /// Number of AI/LLM queries already made today.
     pub ai_queries_today: u32,
+    /// Number of users currently authenticated and active.
     pub concurrent_users: u32,
 }
 
 /// Usage validation result
 #[derive(Debug, Clone)]
 pub struct UsageValidation {
+    /// `true` if all usage metrics are within their configured limits.
     pub within_limits: bool,
+    /// Human-readable descriptions of any limits that have been exceeded.
     pub exceeded_limits: Vec<String>,
 }
 
 /// Feature validation result
 #[derive(Debug, Clone)]
 pub struct FeatureValidation {
+    /// `true` if the requested feature access is permitted.
     pub allowed: bool,
+    /// Human-readable explanation of why access was granted or denied.
     pub reason: String,
+    /// Descriptions of any usage limits that contributed to a denial.
     pub limits_exceeded: Vec<String>,
+    /// Optional recommendation for a license upgrade that would grant access.
     pub upgrade_required: Option<LicenseUpgradeRecommendation>,
 }
 
 /// License upgrade recommendation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicenseUpgradeRecommendation {
+    /// Name of the license tier being recommended (e.g. `"Professional"`, `"Enterprise"`).
     pub recommended_tier: String,
+    /// Explanation of why this upgrade is recommended.
     pub reason: String,
+    /// List of benefits the customer would gain by upgrading to the recommended tier.
     pub benefits: Vec<String>,
+    /// Estimated monthly cost in USD for the recommended tier.
     pub estimated_monthly_cost: f64,
 }
 
@@ -820,17 +928,25 @@ impl Default for LicenseConfig {
 use super::offline_validation::OfflineLicenseValidator;
 use super::tier_enforcement::TierEnforcement;
 
+/// Usage limits that apply to the Developer license tier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeveloperLimits {
+    /// Maximum number of collections the developer account may create.
     pub max_collections: u32,
+    /// Maximum total number of vectors that may be stored.
     pub max_vectors: u64,
+    /// Maximum number of API calls permitted per day.
     pub max_api_calls_daily: u32,
 }
 
+/// Usage limits that apply to the Professional license tier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfessionalLimits {
+    /// Maximum number of collections that may be created.
     pub max_collections: u32,
+    /// Maximum total number of vectors that may be stored.
     pub max_vectors: u64,
+    /// Maximum number of tenants that may be provisioned.
     pub max_tenants: u32,
 }
 

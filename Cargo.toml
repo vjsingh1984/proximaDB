@@ -342,8 +342,7 @@ unified-facade-routing = []
 graph-first-sks = []
 
 # DataFusion integration for compute engine compatibility
-# NOTE: Disabled by default due to Arrow version mismatch (DataFusion 45.x uses Arrow 54.x)
-# TODO: Upgrade when DataFusion releases version with Arrow 57.x support
+# DataFusion 51.x uses Arrow 57.x — versions are aligned as of 2026-04
 datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
 
 # ============================================================================

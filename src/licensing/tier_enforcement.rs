@@ -17,78 +17,120 @@ pub struct TierEnforcement {
 /// Configuration for license enforcement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnforcementConfig {
+    /// When `true`, limits are enforced strictly and requests that exceed them are blocked immediately.
     pub strict_enforcement: bool,
+    /// Number of hours after a soft limit is hit before enforcement escalates.
     pub grace_period_hours: u32,
-    pub warning_threshold_percentage: f64, // Warn at 80% of limit
+    /// Fraction of a limit at which a warning is emitted (e.g. `0.8` means warn at 80%).
+    pub warning_threshold_percentage: f64,
+    /// Whether to emit log warnings when usage approaches a configured threshold.
     pub enable_usage_warnings: bool,
 }
 
 /// Tier definition with limits and features
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TierDefinition {
+    /// Human-readable name of this tier (e.g. `"Free"`, `"Professional"`).
     pub tier_name: String,
-    pub tier_level: u32, // 0=Free, 1=Developer, 2=Professional, 3=Enterprise
+    /// Numeric level used for tier comparisons: 0=Free, 1=Developer, 2=Professional, 3=Enterprise.
+    pub tier_level: u32,
+    /// Per-feature limits keyed by feature identifier.
     pub feature_limits: HashMap<String, FeatureLimit>,
+    /// Per-feature usage quotas keyed by feature identifier.
     pub usage_quotas: HashMap<String, UsageQuota>,
+    /// Feature identifiers explicitly permitted at this tier.
     pub allowed_features: Vec<String>,
+    /// Feature identifiers that are blocked at this tier.
     pub restricted_features: Vec<String>,
 }
 
 /// Feature limit definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureLimit {
+    /// The category of limit being applied.
     pub limit_type: LimitType,
+    /// The concrete value or ceiling for this limit.
     pub limit_value: LimitValue,
+    /// The action to take when the limit is exceeded.
     pub enforcement_action: EnforcementAction,
+    /// Optional fraction of the limit at which a warning is emitted (e.g. `0.8`).
     pub warning_threshold: Option<f64>,
 }
 
 /// Types of limits
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LimitType {
-    HardLimit,  // Absolute limit, cannot exceed
-    SoftLimit,  // Warning limit, can exceed temporarily
-    Rate,       // Rate limiting (requests per time period)
-    Concurrent, // Concurrent resource limits
+    /// Absolute ceiling that cannot be exceeded under any circumstances.
+    HardLimit,
+    /// Advisory limit that triggers a warning but may be temporarily exceeded.
+    SoftLimit,
+    /// Rate-based limit expressed as a number of requests within a time window.
+    Rate,
+    /// Limit on the number of resources that may be used simultaneously.
+    Concurrent,
 }
 
 /// Limit values
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LimitValue {
+    /// Absolute count ceiling (e.g. maximum number of collections).
     Count(u64),
+    /// Fractional percentage ceiling expressed as a value between 0.0 and 100.0.
     Percentage(f64),
-    Rate { requests: u32, period_seconds: u32 },
+    /// Rate limit expressed as a maximum number of requests within a rolling time window.
+    Rate {
+        /// Maximum number of requests allowed within the time window.
+        requests: u32,
+        /// Length of the rolling time window in seconds.
+        period_seconds: u32,
+    },
+    /// Boolean flag indicating whether a feature is simply on or off.
     Boolean(bool),
 }
 
 /// Enforcement actions when limits are exceeded
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EnforcementAction {
-    Allow,    // Allow the request
-    Block,    // Block the request
-    Warn,     // Allow but warn
-    Throttle, // Rate limit the requests
-    Redirect, // Redirect to upgrade page
+    /// Allow the request to proceed without any restriction.
+    Allow,
+    /// Reject the request with an appropriate error response.
+    Block,
+    /// Allow the request but emit a warning to the caller and operator logs.
+    Warn,
+    /// Apply rate limiting so that requests are slowed rather than outright rejected.
+    Throttle,
+    /// Redirect the caller to a license upgrade or information page.
+    Redirect,
 }
 
 /// Usage quota tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageQuota {
+    /// Human-readable identifier for this quota (e.g. `"ai_queries_monthly"`).
     pub quota_name: String,
+    /// The maximum usage allowed within one reset period.
     pub limit: u64,
+    /// Usage accumulated since the last reset.
     pub current_usage: u64,
+    /// How often the quota counter is reset to zero.
     pub reset_period: ResetPeriod,
+    /// Timestamp of the most recent quota reset.
     pub last_reset: DateTime<Utc>,
 }
 
 /// Reset periods for usage quotas
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ResetPeriod {
+    /// Quota counter resets at the top of every hour.
     Hourly,
+    /// Quota counter resets at midnight UTC each day.
     Daily,
+    /// Quota counter resets every seven days.
     Weekly,
+    /// Quota counter resets on the first day of each calendar month.
     Monthly,
-    Never, // One-time limits
+    /// Counter never resets; this is a one-time lifetime limit.
+    Never,
 }
 
 impl TierEnforcement {
@@ -334,16 +376,22 @@ impl Default for TierEnforcement {
 /// Enforcement result
 #[derive(Debug, Clone)]
 pub struct EnforcementResult {
+    /// `true` if the request is permitted to proceed.
     pub allowed: bool,
+    /// The enforcement action that was applied or recommended.
     pub action: EnforcementAction,
+    /// Human-readable explanation of the enforcement decision.
     pub reason: String,
+    /// Current usage as a fraction of the applicable limit (0.0–1.0+).
     pub usage_percentage: f64,
+    /// Name of the license tier recommended for upgrade, if access was denied.
     pub upgrade_recommendation: Option<String>,
 }
 
-/// Allow action for positive enforcement results
+/// Allow action for positive enforcement results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Allow {
+    /// The request is allowed to proceed.
     Allow,
 }
 

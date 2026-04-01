@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_datafusion_table_creation() {
-        use super::proxima_scan_exec::NullSplitReader;
+        use crate::datafusion::proxima_scan_exec::NullSplitReader;
 
         let schema = test_schema();
         let info = CollectionInfo::new("test_collection".to_string(), 128, EngineType::Sst)
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_datafusion_table_with_splits() {
-        use super::proxima_scan_exec::NullSplitReader;
+        use crate::datafusion::proxima_scan_exec::NullSplitReader;
 
         let schema = test_schema();
         let info = CollectionInfo::new("test".to_string(), 128, EngineType::Viper);
@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_datafusion_table_debug() {
-        use super::proxima_scan_exec::NullSplitReader;
+        use crate::datafusion::proxima_scan_exec::NullSplitReader;
 
         let schema = test_schema();
         let info = CollectionInfo::new("my_vectors".to_string(), 768, EngineType::Nova)
@@ -683,12 +683,12 @@ mod tests {
 
         let debug_str = format!("{:?}", table);
         assert!(debug_str.contains("my_vectors"));
-        assert!(debug_str.contains("NOVA"));
+        assert!(debug_str.contains("Nova"));
     }
 
     #[tokio::test]
     async fn test_datafusion_table_get_splits() {
-        use super::proxima_scan_exec::NullSplitReader;
+        use crate::datafusion::proxima_scan_exec::NullSplitReader;
 
         let schema = test_schema();
         let info = CollectionInfo::new("test".to_string(), 128, EngineType::Swift);

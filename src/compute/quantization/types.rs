@@ -12,7 +12,7 @@ pub struct UnifiedQuantizationLevel {
 }
 
 /// Quantization level types
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum QuantizationLevel {
     None(NoQuantization),
     Uniform(UniformQuantization),
@@ -25,7 +25,7 @@ pub enum QuantizationLevel {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct NoQuantization {}
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UniformQuantization {
     pub bits: i32,
     pub scale: Option<f32>,
@@ -43,7 +43,7 @@ impl std::hash::Hash for UniformQuantization {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ProductQuantization {
     pub bits_per_code: i32,
     pub num_subvectors: i32,
@@ -51,7 +51,7 @@ pub struct ProductQuantization {
     pub adaptive_subvectors: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScalarQuantization {
     pub bits: i32,
     pub scale: f32,
@@ -70,7 +70,7 @@ impl std::hash::Hash for ScalarQuantization {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BinaryQuantization {
     pub threshold: Option<f32>,
     pub sign_based: bool,
@@ -85,7 +85,7 @@ impl std::hash::Hash for BinaryQuantization {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomQuantization {
     pub type_id: String,
     pub bits_per_element: i32,

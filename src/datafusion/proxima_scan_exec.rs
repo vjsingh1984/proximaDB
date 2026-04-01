@@ -199,11 +199,11 @@ impl ProximaScanExec {
 
     /// Apply schema projection.
     fn project_schema(schema: &SchemaRef, projection: &Option<Vec<usize>>) -> SchemaRef {
-        if let Some(ref proj) = projection {
+        if let Some(proj) = projection {
             let fields: Vec<_> = proj
                 .iter()
-                .filter_map(|&i| schema.field(i).ok())
-                .cloned()
+                .filter_map(|&i| schema.fields().get(i))
+                .map(|f| f.as_ref().clone())
                 .collect();
             Arc::new(arrow_schema::Schema::new(fields))
         } else {
