@@ -833,7 +833,7 @@ fn resolve_adjacent_node_id(
 
 fn binding_is_compatible(existing: Option<&BoundValue>, candidate: &BoundValue) -> bool {
     existing
-        .map_or(true, |current| current.identity() == candidate.identity())
+        .is_none_or(|current| current.identity() == candidate.identity())
 }
 
 fn matches_where_clause(binding: &BindingRow, clause: &WhereClause) -> bool {

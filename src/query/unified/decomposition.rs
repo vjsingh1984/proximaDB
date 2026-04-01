@@ -517,7 +517,7 @@ impl QueryDecomposer {
             let ascending = caps
                 .get(2)
                 // TD-007: unwrap_or with safe default - true means ascending order
-                .map_or(true, |m| m.as_str().to_uppercase() != "DESC");
+                .is_none_or(|m| m.as_str().to_uppercase() != "DESC");
             DocumentSort { path, ascending }
         })
     }
@@ -542,7 +542,7 @@ impl QueryDecomposer {
             let ascending = caps
                 .get(2)
                 // TD-007: unwrap_or with safe default - true means ascending order
-                .map_or(true, |m| m.as_str().to_uppercase() != "DESC");
+                .is_none_or(|m| m.as_str().to_uppercase() != "DESC");
             OrderBy { field, ascending }
         })
     }

@@ -328,7 +328,7 @@ impl CompiledFilter {
             CompiledFilter::NotEquals { field, value } => {
                 metadata
                     .get(field)
-                    .map_or(true, |v| !Self::values_equal(v, value)) // Field not present is "not equal"
+                    .is_none_or(|v| !Self::values_equal(v, value)) // Field not present is "not equal"
             }
 
             CompiledFilter::GreaterThan { field, value } => metadata
@@ -380,7 +380,7 @@ impl CompiledFilter {
 
             CompiledFilter::NotIn { field, values } => metadata
                 .get(field)
-                .map_or(true, |v| !values.iter().any(|val| Self::values_equal(v, val))),
+                .is_none_or(|v| !values.iter().any(|val| Self::values_equal(v, val))),
 
             CompiledFilter::Between { field, min, max } => metadata
                 .get(field)

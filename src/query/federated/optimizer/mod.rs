@@ -1341,7 +1341,7 @@ impl JoinOrderOptimizer {
                     // Update best if this is better
                     let is_better = best_entry
                         .as_ref()
-                        .map_or(true, |e| join_cost < e.cost);
+                        .is_none_or(|e| join_cost < e.cost);
 
                     if is_better {
                         let plan = PlanNode {

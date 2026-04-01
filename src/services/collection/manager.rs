@@ -665,7 +665,7 @@ impl CollectionService {
             if storage_config
                 .storage_path
                 .as_ref()
-                .map_or(false, |p| !p.is_empty())
+                .is_some_and(|p| !p.is_empty())
             {
                 // User provided storage location
                 storage_config.storage_path.clone().unwrap_or_default()

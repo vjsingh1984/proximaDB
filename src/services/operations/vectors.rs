@@ -333,7 +333,7 @@ impl VectorOperationsService {
         let include_metadata = req
             .include_fields
             .as_ref()
-            .map_or(true, |f| f.metadata);
+            .is_none_or(|f| f.metadata);
 
         let cfg = Some(UnifiedSearchConfig {
             optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
@@ -2143,7 +2143,7 @@ impl VectorOperationsService {
                     // A record with vector=None is NOT a tombstone - it's just missing vector data
                     let is_explicit_empty_vector =
                         r.vector.as_ref().is_some_and(|v| v.is_empty());
-                    let is_expired = r.expires_at.map_or(false, |e| e <= current_time_secs);
+                    let is_expired = r.expires_at.is_some_and(|e| e <= current_time_secs);
                     let is_tombstone = is_explicit_empty_vector && is_expired;
 
                     if is_tombstone {
@@ -2740,7 +2740,7 @@ impl VectorOperationsService {
             // INLINE: Dimension check (simple integer comparison)
             // Skip dimension check for tombstones (empty vector + expires_at in past indicates deletion)
             let is_tombstone = vector.vector.is_empty()
-                && vector.expires_at.map_or(false, |e| e <= current_time_secs);
+                && vector.expires_at.is_some_and(|e| e <= current_time_secs);
             if !is_tombstone
                 && expected_dimension > 0
                 && vector.vector.len() != expected_dimension as usize

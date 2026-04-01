@@ -1871,7 +1871,7 @@ impl StorageQueryContext {
         self.metadata
             .quantization_config
             .as_ref()
-            .map_or(true, |qc| qc.enable_simd_acceleration)
+            .is_none_or(|qc| qc.enable_simd_acceleration)
     }
 
     /// Get the parsed quantization config

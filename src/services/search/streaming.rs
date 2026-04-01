@@ -205,7 +205,7 @@ impl StreamingSearchService {
     ) -> Self {
         let config = config.clone();
         let buffer_size = config.as_ref().map_or(1000, |c| c.buffer_size);
-        let concurrent_search = config.as_ref().map_or(true, |c| c.concurrent_search);
+        let concurrent_search = config.as_ref().is_none_or(|c| c.concurrent_search);
         let max_concurrent_tasks = config.as_ref().map_or(8, |c| c.max_concurrent_tasks);
 
         info!(
