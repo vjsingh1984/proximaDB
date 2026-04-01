@@ -478,15 +478,8 @@ impl ViperFactory {
         _config: &ViperConfiguration,
         collection_config: Option<&CollectionConfig>,
     ) -> String {
-        if let Some(config) = collection_config {
-            if !config.filterable_metadata_fields.is_empty() {
-                "viper".to_string()
-            } else {
-                "viper".to_string()
-            }
-        } else {
-            "viper".to_string()
-        }
+        // All VIPER engines use the same recommendation
+        "viper".to_string()
     }
 
     fn select_processor_strategy(

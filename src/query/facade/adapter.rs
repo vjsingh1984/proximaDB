@@ -295,10 +295,8 @@ impl QueryFacadeAdapter {
         // Detect fusion strategy from query (if UNION is present)
         let fusion_strategy = if sql_upper.contains("UNION ALL") {
             "Union".to_string()
-        } else if sql_upper.contains("INTERSECT") {
+        } else if sql_upper.contains("INTERSECT") || components.len() > 1 {
             "Intersection".to_string()
-        } else if components.len() > 1 {
-            "Intersection".to_string() // Default for multi-model
         } else {
             "None".to_string()
         };

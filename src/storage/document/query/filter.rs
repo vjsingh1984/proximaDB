@@ -101,9 +101,7 @@ impl FilterEvaluator {
         let json_value = self.sql_object_to_json(document);
 
         // Normalize path: $.field or field -> $.field
-        let normalized_path = if path.starts_with("$.") {
-            path.to_string()
-        } else if path.starts_with('$') {
+        let normalized_path = if path.starts_with("$.") || path.starts_with('$') {
             path.to_string()
         } else {
             format!("$.{}", path)

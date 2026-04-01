@@ -737,9 +737,7 @@ impl AggregationExecutor {
 
     /// Normalize a JSON path expression
     fn normalize_path(&self, path: &str) -> String {
-        if path.starts_with("$.") {
-            path.to_string()
-        } else if path.starts_with('$') {
+        if path.starts_with("$.") || path.starts_with('$') {
             path.to_string()
         } else {
             format!("$.{}", path)
