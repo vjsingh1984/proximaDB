@@ -322,7 +322,7 @@ impl ObservabilityService {
             samples.retain(|sample| {
                 labels
                     .iter()
-                    .all(|(k, v)| sample.labels.get(k).map_or(false, |sv| sv == v))
+                    .all(|(k, v)| sample.labels.get(k).is_some_and(|sv| sv == v))
             });
         }
 

@@ -750,15 +750,13 @@ fn condition_matches_record(
     use super::FilterCondition;
 
     match condition {
-        FilterCondition::Equals(column, value) => {
-            metadata.get(column).map_or(false, |v| v == value)
-        }
-        FilterCondition::Range(column, min, max) => metadata.get(column).map_or(false, |v| {
+        FilterCondition::Equals(column, value) => metadata.get(column) == Some(value),
+        FilterCondition::Range(column, min, max) => metadata.get(column).is_some_and(|v| {
             compare_json_values(v, min, std::cmp::Ordering::Greater).unwrap_or(false)
                 && compare_json_values(v, max, std::cmp::Ordering::Less).unwrap_or(false)
         }),
         FilterCondition::In(column, values) => {
-            metadata.get(column).map_or(false, |v| values.contains(v))
+            metadata.get(column).is_some_and(|v| values.contains(v))
         }
         FilterCondition::IsNull(column) => {
             !metadata.contains_key(column) || metadata[column].is_null()

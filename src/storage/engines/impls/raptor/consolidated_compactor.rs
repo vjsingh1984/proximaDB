@@ -322,7 +322,7 @@ impl RaptorCompactor {
         for vector in vectors.drain(..) {
             let should_keep = latest_by_id
                 .get(&vector.id)
-                .map_or(true, |existing| {
+                .is_none_or(|existing| {
                     // Keep if newer version or same version with earlier timestamp
                     vector.version.unwrap_or(0) > existing.version.unwrap_or(0)
                         || (vector.version == existing.version

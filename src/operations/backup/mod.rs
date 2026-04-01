@@ -374,7 +374,7 @@ impl BackupManager {
                                 .data_files
                                 .iter()
                                 .find(|f| f.relative_path == relative_path)
-                                .map_or(true, |f| f.modified_time != modified_time); // File not in previous backup
+                                .is_none_or(|f| f.modified_time != modified_time); // File not in previous backup
 
                             if should_backup {
                                 changed_files.push(path);
@@ -447,7 +447,7 @@ impl BackupManager {
         let mut entries = tokio::fs::read_dir(&wal_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "wal") {
+            if path.extension().is_some_and(|e| e == "wal") {
                 let file_name = path
                     .file_name()
                     .ok_or_else(|| anyhow::anyhow!("Path {:?} has no file name", path))?

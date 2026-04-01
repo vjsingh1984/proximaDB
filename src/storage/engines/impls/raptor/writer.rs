@@ -3984,7 +3984,7 @@ impl RaptorWriter {
     fn should_start_new_rowgroup(&self) -> bool {
         self.row_groups
             .last()
-            .map_or(true, |rg| rg.vector_count >= self.config.rowgroup_size)
+            .is_none_or(|rg| rg.vector_count >= self.config.rowgroup_size)
     }
 
     async fn compress_rowgroup(&self, batch: &RecordBatch) -> Result<Vec<u8>> {

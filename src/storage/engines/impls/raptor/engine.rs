@@ -1089,7 +1089,7 @@ impl RaptorEngine {
                                         if let Some(ref f) = filter {
                                             let mut matches = true;
                                             for (key, value) in f {
-                                                let filter_matches = record.metadata.get(key).map_or(false, |sql_val| {
+                                                let filter_matches = record.metadata.get(key).is_some_and(|sql_val| {
                                                     if let Some(val) = &sql_val.value {
                                                         use crate::proto::proximadb_v1::sql_value::Value;
                                                         match val {

@@ -946,7 +946,7 @@ impl DistributedCollectionOps {
 
     /// Check if tenant-based routing should be used based on shard partition config
     fn should_use_tenant_routing(&self, shards: &[Shard]) -> bool {
-        shards.first().map_or(false, |s| {
+        shards.first().is_some_and(|s| {
             matches!(
                 s.partition_config.as_ref().map(|c| &c.strategy),
                 Some(super::shard::PartitionStrategy::Tenant)
@@ -957,7 +957,7 @@ impl DistributedCollectionOps {
 
     /// Check if domain-based routing should be used based on shard partition config
     fn should_use_domain_routing(&self, shards: &[Shard]) -> bool {
-        shards.first().map_or(false, |s| {
+        shards.first().is_some_and(|s| {
             matches!(
                 s.partition_config.as_ref().map(|c| &c.strategy),
                 Some(super::shard::PartitionStrategy::Domain)

@@ -635,7 +635,7 @@ impl WALFlushCoordinator {
         let flush_states = self.flush_states.read().await;
         flush_states
             .get(collection_id)
-            .map_or(true, |state| state.uses_disk_wal) // Default to disk WAL
+            .is_none_or(|state| state.uses_disk_wal) // Default to disk WAL
     }
 
     /// Get pending flushes for a collection

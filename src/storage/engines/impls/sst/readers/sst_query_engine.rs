@@ -2154,7 +2154,7 @@ impl UnifiedSstableReader {
                 // Fast tombstone check (most common early exit)
                 // A tombstone is indicated by expires_at being set and in the past
                 let current_time = chrono::Utc::now().timestamp_millis();
-                if record.expires_at.map_or(false, |expires_at| {
+                if record.expires_at.is_some_and(|expires_at| {
                     expires_at > 0 && expires_at < current_time
                 }) {
                     tombstones += 1;
@@ -6199,7 +6199,7 @@ impl ReadingStrategySelector {
                 // Check if record is a tombstone (expired or empty vector)
                 let is_tombstone = record
                     .expires_at
-                    .map_or(false, |exp| exp < chrono::Utc::now().timestamp())
+                    .is_some_and(|exp| exp < chrono::Utc::now().timestamp())
                     || record.vector.is_empty();
 
                 if is_tombstone {

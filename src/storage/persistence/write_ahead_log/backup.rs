@@ -825,7 +825,7 @@ impl BackupCoordinator {
                                     if existing.is_none() || {
                                         let existing_meta = existing.and_then(|id| backups.get(id));
                                         existing_meta
-                                            .map_or(true, |m| metadata.started_at > m.started_at)
+                                            .is_none_or(|m| metadata.started_at > m.started_at)
                                     } {
                                         last_backup.insert(
                                             metadata.backup_type,

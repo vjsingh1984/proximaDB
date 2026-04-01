@@ -427,7 +427,7 @@ impl SstCompactor {
                 // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
                 let tombstone_expired = versions.iter().any(|r| {
                     r.vector.is_empty()
-                        && r.expires_at.map_or(false, |exp| exp <= current_time as i64)
+                        && r.expires_at.is_some_and(|exp| exp <= current_time as i64)
                 });
 
                 if tombstone_expired {
@@ -453,7 +453,7 @@ impl SstCompactor {
             // Check for expired records (via expires_at without empty vector)
             let has_expired = versions
                 .iter()
-                .any(|r| r.expires_at.map_or(false, |exp| exp < current_time as i64));
+                .any(|r| r.expires_at.is_some_and(|exp| exp < current_time as i64));
             if has_expired {
                 debug!("Skipping expired record: {}", id);
                 stats.deleted_vector_ids.push(id.clone());
@@ -630,7 +630,7 @@ impl SstCompactor {
                 // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
                 let tombstone_expired = versions.iter().any(|r| {
                     r.vector.is_empty()
-                        && r.expires_at.map_or(false, |exp| exp <= current_time as i64)
+                        && r.expires_at.is_some_and(|exp| exp <= current_time as i64)
                 });
 
                 if tombstone_expired {
@@ -656,7 +656,7 @@ impl SstCompactor {
             // Check for expired records (via expires_at without empty vector)
             let has_expired = versions
                 .iter()
-                .any(|r| r.expires_at.map_or(false, |exp| exp < current_time as i64));
+                .any(|r| r.expires_at.is_some_and(|exp| exp < current_time as i64));
             if has_expired {
                 debug!("Skipping expired record: {}", id);
                 stats.deleted_vector_ids.push(id.clone());

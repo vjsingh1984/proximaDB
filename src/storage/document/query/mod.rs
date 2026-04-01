@@ -207,7 +207,7 @@ impl QueryExecutor {
             .filter(|doc| {
                 candidate_ids
                     .as_ref()
-                    .map_or(true, |ids| ids.contains(doc.id.as_str()))
+                    .is_none_or(|ids| ids.contains(doc.id.as_str()))
             })
             .cloned()
             .collect();

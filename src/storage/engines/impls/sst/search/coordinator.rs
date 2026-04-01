@@ -176,8 +176,8 @@ impl SearchCoordinator {
             .into_iter()
             .filter(|r| {
                 // Tombstone check: empty vector + expires_at in past
-                let is_empty_vector = r.vector.as_ref().map_or(true, |v| v.is_empty());
-                let is_expired = r.expires_at.map_or(false, |e| e <= current_time_secs);
+                let is_empty_vector = r.vector.as_ref().is_none_or(|v| v.is_empty());
+                let is_expired = r.expires_at.is_some_and(|e| e <= current_time_secs);
                 let is_tombstone = is_empty_vector && is_expired;
 
                 // Keep records that are NOT tombstones AND have valid vectors

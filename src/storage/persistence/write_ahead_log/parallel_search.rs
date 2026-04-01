@@ -141,7 +141,7 @@ impl ParallelWALSearch {
             .filter_map(|record| {
                 // Skip tombstones (empty vector + expires_at in past or 0)
                 let is_tombstone = record.vector.is_empty()
-                    && record.expires_at.map_or(false, |e| e <= current_time_secs);
+                    && record.expires_at.is_some_and(|e| e <= current_time_secs);
                 if is_tombstone {
                     return None;
                 }

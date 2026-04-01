@@ -645,7 +645,7 @@ impl RoaringBitmap {
 
         self.containers
             .get(&high)
-            .map_or(false, |container| container.contains(low))
+            .is_some_and(|container| container.contains(low))
     }
 
     /// Get the number of elements in the bitmap

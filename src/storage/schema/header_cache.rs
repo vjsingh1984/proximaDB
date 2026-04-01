@@ -357,7 +357,7 @@ impl ScalarPredicate {
                 bounds
                     .min
                     .compare(v)
-                    .map_or(true, |o| o == std::cmp::Ordering::Less)
+                    .is_none_or(|o| o == std::cmp::Ordering::Less)
             }
             Le(v) => {
                 // min <= v
@@ -371,7 +371,7 @@ impl ScalarPredicate {
                 bounds
                     .max
                     .compare(v)
-                    .map_or(true, |o| o == std::cmp::Ordering::Greater)
+                    .is_none_or(|o| o == std::cmp::Ordering::Greater)
             }
             Ge(v) => {
                 // max >= v

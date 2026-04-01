@@ -452,7 +452,7 @@ impl FilterRule {
 
             MetadataCondition::In { values } => value.is_some_and(|v| values.contains(v)),
 
-            MetadataCondition::IsNull => value.map_or(true, |v| v.is_null()),
+            MetadataCondition::IsNull => value.is_none_or(|v| v.is_null()),
 
             MetadataCondition::IsNotNull => value.is_some_and(|v| !v.is_null()),
         }

@@ -249,7 +249,7 @@ impl RowValue {
 
     /// Check if column is null
     pub fn is_null(&self, column: &str) -> bool {
-        self.values.get(column).map_or(true, |v| v.is_none())
+        self.values.get(column).is_none_or(|v| v.is_none())
     }
 
     /// Get values for columns as a tuple

@@ -661,7 +661,7 @@ impl ColumnarSchemaBuilder {
                 && filterable.data_type == FilterableData::String
                 && filterable
                     .estimated_cardinality
-                    .map_or(false, |c| c < 10000)
+                    .is_some_and(|c| c < 10000)
             {
                 Field::new(&filterable.name, data_type, filterable.nullable).with_metadata(
                     HashMap::from([("encoding".to_string(), "dictionary".to_string())]),

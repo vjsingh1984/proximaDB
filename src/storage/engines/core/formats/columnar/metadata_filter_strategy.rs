@@ -434,15 +434,15 @@ impl MetadataFilterAnalyzer {
 
             // Type mismatch - try numeric coercion
             (serde_json::Value::Number(a), serde_json::Value::String(e)) => {
-                e.parse::<f64>().map_or(false, |e_num| {
+                e.parse::<f64>().is_ok_and(|e_num| {
                     a.as_f64()
-                        .map_or(false, |a_num| (a_num - e_num).abs() < 1e-9)
+                        .is_some_and(|a_num| (a_num - e_num).abs() < 1e-9)
                 })
             }
             (serde_json::Value::String(a), serde_json::Value::Number(e)) => {
-                a.parse::<f64>().map_or(false, |a_num| {
+                a.parse::<f64>().is_ok_and(|a_num| {
                     e.as_f64()
-                        .map_or(false, |e_num| (a_num - e_num).abs() < 1e-9)
+                        .is_some_and(|e_num| (a_num - e_num).abs() < 1e-9)
                 })
             }
 

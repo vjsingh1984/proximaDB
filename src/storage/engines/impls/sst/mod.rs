@@ -1924,7 +1924,7 @@ mod block_operations {
         block
             .quantized_vectors
             .as_ref()
-            .map_or(false, |v| !v.is_empty())
+            .is_some_and(|v| !v.is_empty())
     }
 
     /// Get memory savings from quantization

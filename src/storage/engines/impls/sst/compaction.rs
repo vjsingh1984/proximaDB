@@ -831,12 +831,12 @@ impl Compaction {
             let is_tombstone = vector_record.vector.is_empty()
                 && vector_record
                     .expires_at
-                    .map_or(false, |e| e <= current_time_secs);
+                    .is_some_and(|e| e <= current_time_secs);
 
             // Check if record is expired (TTL-based expiry for non-tombstones)
             // This is different from tombstones - these are regular records that have expired
             let is_expired = !is_tombstone
-                && vector_record.expires_at.map_or(false, |expires_at| {
+                && vector_record.expires_at.is_some_and(|expires_at| {
                     expires_at > 0 && expires_at < current_time_secs
                 });
 

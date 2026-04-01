@@ -164,7 +164,7 @@ impl ResultSet {
         }
 
         // Check against minimum score
-        self.min_score().map_or(true, |min| score > min)
+        self.min_score().is_none_or(|min| score > min)
     }
 
     /// Get a result by vector ID

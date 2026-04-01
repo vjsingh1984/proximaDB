@@ -354,7 +354,7 @@ impl ObservabilityQueryEngine {
             logs.retain(|log| {
                 log.service
                     .as_ref()
-                    .map_or(false, |s| params.services.contains(s))
+                    .is_some_and(|s| params.services.contains(s))
             });
         }
 
@@ -362,7 +362,7 @@ impl ObservabilityQueryEngine {
             logs.retain(|log| {
                 log.source
                     .as_ref()
-                    .map_or(false, |s| params.sources.contains(s))
+                    .is_some_and(|s| params.sources.contains(s))
             });
         }
 

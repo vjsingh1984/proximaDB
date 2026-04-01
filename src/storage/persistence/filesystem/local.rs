@@ -485,7 +485,7 @@ impl FileSystem for LocalFileSystem {
             }
 
         // Check if file exists and handle overwrite option
-        if !options.as_ref().map_or(true, |o| o.overwrite) && resolved_path.exists() {
+        if !options.as_ref().is_none_or(|o| o.overwrite) && resolved_path.exists() {
             return Err(FilesystemError::AlreadyExists(
                 resolved_path.display().to_string(),
             ));

@@ -203,7 +203,7 @@ impl MetadataCondition {
 
         match self.operator {
             ConditionOperator::Exists => field_value.is_some(),
-            ConditionOperator::IsNull => field_value.as_ref().map_or(true, |v| v.is_null()),
+            ConditionOperator::IsNull => field_value.as_ref().is_none_or(|v| v.is_null()),
             _ => {
                 let Some(ref actual) = field_value else {
                     return false;

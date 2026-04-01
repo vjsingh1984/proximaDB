@@ -485,7 +485,7 @@ impl CollectionPartition {
                         let is_tombstone = vector_record.vector.is_empty()
                             && vector_record
                                 .expires_at
-                                .map_or(false, |e| e <= current_time_secs);
+                                .is_some_and(|e| e <= current_time_secs);
                         if is_tombstone {
                             // Remove any previous version from results (tombstone shadows it)
                             id_to_latest.remove(vector_id);

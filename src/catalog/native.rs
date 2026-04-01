@@ -508,7 +508,7 @@ impl Catalog for NativeCatalog {
         if let Ok(mut entries) = fs::read_dir(&tables_dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "json")
+                if path.extension().is_some_and(|ext| ext == "json")
                     && let Some(stem) = path.file_stem() {
                         let name = stem.to_string_lossy().to_string();
                         identifiers.push(TableIdentifier::new(namespace.to_vec(), name));
