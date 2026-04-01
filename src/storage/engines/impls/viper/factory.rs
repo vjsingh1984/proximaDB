@@ -476,7 +476,7 @@ impl ViperFactory {
     fn select_schema_strategy(
         &self,
         _config: &ViperConfiguration,
-        collection_config: Option<&CollectionConfig>,
+        _collection_config: Option<&CollectionConfig>,
     ) -> String {
         // All VIPER engines use the same recommendation
         "viper".to_string()

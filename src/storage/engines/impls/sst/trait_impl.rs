@@ -48,7 +48,7 @@ impl UnifiedStorageEngine for SstEngine {
     fn get_filesystem_factory(
         &self,
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        self.filesystem()
+        self.filesystem().as_ref()
     }
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {

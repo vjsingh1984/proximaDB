@@ -599,12 +599,15 @@ impl From<crate::proto::proximadb_v1::CollectionStats> for CollectionStats {
 ///
 /// # Usage
 /// ```ignore
-/// impl_engine_identity!(SstEngine, "sst", PROXIMADB_VERSION, Sst, self.filesystem());
-/// impl_engine_identity!(ViperEngine, "VIPER", PROXIMADB_VERSION, Viper, &self.filesystem_factory);
+/// // Inside `impl UnifiedStorageEngine for MyEngine { ... }`:
+/// crate::impl_engine_identity!("NOVA", crate::version::PROXIMADB_VERSION, Nova, filesystem_factory);
+/// // For engines with private fields accessed via method:
+/// crate::impl_engine_identity!("sst", crate::version::PROXIMADB_VERSION, Sst, filesystem());
 /// ```
 #[macro_export]
 macro_rules! impl_engine_identity {
-    ($engine:ty, $name:expr, $version:expr, $strategy:ident, $fs_expr:expr) => {
+    // Variant 1: field is accessed directly (public field)
+    ($name:expr, $version:expr, $strategy:ident, $fs_field:ident) => {
         fn engine_name(&self) -> &'static str {
             $name
         }
@@ -620,7 +623,27 @@ macro_rules! impl_engine_identity {
         fn get_filesystem_factory(
             &self,
         ) -> &$crate::storage::persistence::filesystem::FilesystemFactory {
-            $fs_expr
+            &self.$fs_field
+        }
+    };
+    // Variant 2: field is accessed via method call (private field)
+    ($name:expr, $version:expr, $strategy:ident, $fs_method:ident ()) => {
+        fn engine_name(&self) -> &'static str {
+            $name
+        }
+
+        fn engine_version(&self) -> &'static str {
+            $version
+        }
+
+        fn strategy(&self) -> $crate::storage::traits::StorageEngineStrategy {
+            $crate::storage::traits::StorageEngineStrategy::$strategy
+        }
+
+        fn get_filesystem_factory(
+            &self,
+        ) -> &$crate::storage::persistence::filesystem::FilesystemFactory {
+            self.$fs_method()
         }
     };
 }

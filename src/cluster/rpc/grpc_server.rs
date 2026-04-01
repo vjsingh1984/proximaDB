@@ -594,7 +594,7 @@ impl HealthService for HealthServiceImpl {
         debug!(service = %req.service, "Health watch requested");
 
         let (tx, rx) = tokio::sync::mpsc::channel(16);
-        let service = req.service;
+        let _service = req.service;
 
         // Spawn a task to periodically send health updates
         tokio::spawn(async move {

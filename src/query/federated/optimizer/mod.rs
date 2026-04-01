@@ -857,13 +857,12 @@ impl RuntimeStatisticsCollector {
     pub fn record_feedback(&self, feedback: &ExecutionFeedback) {
         self.update_cardinality_history(feedback);
         self.update_latency_history(feedback);
-        if let Some(rows_scanned) = feedback.rows_scanned {
-            if rows_scanned > 0 && feedback.actual_cardinality > 0 {
-                self.update_selectivity_history(
-                    &feedback.operation_key,
-                    feedback.actual_cardinality as f64 / rows_scanned as f64,
-                );
-            }
+        if let Some(rows_scanned) = feedback.rows_scanned
+            && rows_scanned > 0 && feedback.actual_cardinality > 0 {
+            self.update_selectivity_history(
+                &feedback.operation_key,
+                feedback.actual_cardinality as f64 / rows_scanned as f64,
+            );
         }
     }
 

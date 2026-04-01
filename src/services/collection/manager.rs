@@ -1346,23 +1346,21 @@ impl CollectionService {
         // If compression explicitly requested, validate and use it
         if let Some(config) = requested {
             // Validate compression level if specified
-            if let Some(level) = config.level {
-                if let Ok(CompressionAlgorithm::CompressionZstd) = CompressionAlgorithm::try_from(config.algorithm) {
-                    if !(1..=22).contains(&level) {
-                        warn!("Invalid ZSTD compression level {}, using default 3", level);
-                        return Some(CompressionConfig {
-                            algorithm: config.algorithm,
-                            level: Some(3),
-                            adaptive: config.adaptive,
-                            min_ratio: config.min_ratio,
-                            enable_quantization: config.enable_quantization,
-                            quantization_type: config.quantization_type.clone(),
-                            normalization_method: config.normalization_method.clone(),
-                            block_size_kb: config.block_size_kb,
-                            dynamic_block_sizing: config.dynamic_block_sizing,
-                        });
-                    }
-                }
+            if let Some(level) = config.level
+                && let Ok(CompressionAlgorithm::CompressionZstd) = CompressionAlgorithm::try_from(config.algorithm)
+                && !(1..=22).contains(&level) {
+                warn!("Invalid ZSTD compression level {}, using default 3", level);
+                return Some(CompressionConfig {
+                    algorithm: config.algorithm,
+                    level: Some(3),
+                    adaptive: config.adaptive,
+                    min_ratio: config.min_ratio,
+                    enable_quantization: config.enable_quantization,
+                    quantization_type: config.quantization_type.clone(),
+                    normalization_method: config.normalization_method.clone(),
+                    block_size_kb: config.block_size_kb,
+                    dynamic_block_sizing: config.dynamic_block_sizing,
+                });
             }
             return Some(config.clone());
         }

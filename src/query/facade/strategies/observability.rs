@@ -928,11 +928,10 @@ impl ObservabilityStrategy {
             }
 
         // Look for timestamp > N style
-        if let Some(pos) = upper.find("TIMESTAMP") {
-            if (upper[pos..].starts_with("TIMESTAMP >") || upper[pos..].starts_with("TIMESTAMP >"))
-                && let Some(value) = self.extract_numeric_comparison(&content[pos + 9..]) {
-                    start_ns = value;
-                }
+        if let Some(pos) = upper.find("TIMESTAMP")
+            && (upper[pos..].starts_with("TIMESTAMP >") || upper[pos..].starts_with("TIMESTAMP >"))
+            && let Some(value) = self.extract_numeric_comparison(&content[pos + 9..]) {
+            start_ns = value;
         }
 
         (start_ns, end_ns)

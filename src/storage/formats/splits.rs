@@ -378,19 +378,18 @@ impl FileSplit {
     /// Get the maximum radius from centroid for this split.
     fn get_max_radius(&self) -> Option<f32> {
         // Try to get from spatial bounds
-        if let Some(ref spatial) = self.statistics.spatial_bounds {
-            if let SpatialBounds::BoundingBox {
-                    min_corner,
-                    max_corner,
-                } = spatial {
-                // Calculate diagonal as conservative radius estimate
-                let diagonal_sq: f32 = min_corner
-                    .iter()
-                    .zip(max_corner.iter())
-                    .map(|(a, b)| (b - a).powi(2))
-                    .sum();
-                return Some(diagonal_sq.sqrt() / 2.0);
-            }
+        if let Some(ref spatial) = self.statistics.spatial_bounds
+            && let SpatialBounds::BoundingBox {
+                min_corner,
+                max_corner,
+            } = spatial {
+            // Calculate diagonal as conservative radius estimate
+            let diagonal_sq: f32 = min_corner
+                .iter()
+                .zip(max_corner.iter())
+                .map(|(a, b)| (b - a).powi(2))
+                .sum();
+            return Some(diagonal_sq.sqrt() / 2.0);
         }
         None
     }

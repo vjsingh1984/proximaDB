@@ -1893,7 +1893,7 @@ impl SmartTierPolicy {
                 mount_path: "/mnt/nvme".to_string(),
             },
             WorkloadType::Cache { .. } => InfrastructureTier::Memory,
-            WorkloadType::Mixed { .. } => InfrastructureTier::NvmeSsd {
+            WorkloadType::Mixed => InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
             WorkloadType::Hybrid { .. } => InfrastructureTier::CloudStandard {
