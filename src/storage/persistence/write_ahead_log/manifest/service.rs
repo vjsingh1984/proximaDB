@@ -785,7 +785,7 @@ impl GlobalManifestService {
             }
 
             // Parse max_lsn from filename: manifest_{min_lsn}_{max_lsn}.jsonl
-            if let Some(filename) = entry.url.split('/').last()
+            if let Some(filename) = entry.url.split('/').next_back()
                 && let Some(max_lsn_str) = filename
                     .strip_prefix("manifest_")
                     .and_then(|s| s.strip_suffix(".jsonl"))

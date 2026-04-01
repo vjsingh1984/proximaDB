@@ -558,7 +558,7 @@ impl RecoveryManager {
                         // CRITICAL: Mark as flushed BEFORE deleting WAL file
                         // This ensures manifest is updated even if deletion fails
                         match crate::storage::persistence::write_ahead_log::manifest::mark_flushed(
-                            &[e.batch_id.clone()],
+                            std::slice::from_ref(&e.batch_id),
                         )
                         .await
                         {
@@ -631,7 +631,7 @@ impl RecoveryManager {
             .await
             .unwrap_or_default();
         for fi in listed {
-            if let Some(name) = fi.file_url.split('/').last()
+            if let Some(name) = fi.file_url.split('/').next_back()
                 && entries.iter().any(|m| m.file_path.ends_with(name)) {
                     continue;
                 }

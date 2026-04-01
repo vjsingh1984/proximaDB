@@ -240,7 +240,7 @@ impl WriteAheadLogDiskManager {
 
         // Register in global manifest
         let checksum = Crc32::checksum(&data_to_write);
-        let file_name = file_url.split('/').last().unwrap_or("").to_string();
+        let file_name = file_url.split('/').next_back().unwrap_or("").to_string();
 
         use crate::storage::persistence::write_ahead_log::manifest;
         if let Some(manifest_service) = manifest::get_service() {
@@ -477,7 +477,7 @@ impl WriteAheadLogDiskManager {
     /// Parse a WAL filename to extract metadata
     fn parse_wal_filename(&self, path: &str, collection_id: &str) -> Option<WalFileInfo> {
         // Use last path segment as filename regardless of scheme
-        let file_name = path.split('/').last()?;
+        let file_name = path.split('/').next_back()?;
 
         // Expected format: <batch_id>.<format>
         let parts: Vec<&str> = file_name.split('.').collect();

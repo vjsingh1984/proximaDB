@@ -148,7 +148,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Extract collection_id from cloud URL filename since VectorRecord no longer stores it
             // Expected format: write_buffer_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
             let _collection_id = {
-                if let Some(filename) = cloud_url.split('/').last() {
+                if let Some(filename) = cloud_url.split('/').next_back() {
                     let path_parts: Vec<&str> = filename.split('_').collect();
                     if path_parts.len() >= 4
                         && path_parts[0] == "write"

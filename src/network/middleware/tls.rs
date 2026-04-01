@@ -339,42 +339,42 @@ fn validate_certificate(
         let fingerprint = &info.fingerprint;
 
         // Check serial against revoked certificate list
-        if let Some(ref revoked_serials) = config.revoked_serials {
-            if revoked_serials.contains(serial) {
-                warn!(
-                    "TLS client certificate revoked: serial={}, fingerprint={}",
-                    serial, fingerprint
-                );
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    Json(TlsCertErrorResponse {
-                        error: "certificate_revoked".to_string(),
-                        message: format!(
-                            "Client certificate has been revoked (serial: {})",
-                            serial
-                        ),
-                        code: 401,
-                    }),
-                ));
-            }
+        if let Some(ref revoked_serials) = config.revoked_serials
+            && revoked_serials.contains(serial)
+        {
+            warn!(
+                "TLS client certificate revoked: serial={}, fingerprint={}",
+                serial, fingerprint
+            );
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(TlsCertErrorResponse {
+                    error: "certificate_revoked".to_string(),
+                    message: format!(
+                        "Client certificate has been revoked (serial: {})",
+                        serial
+                    ),
+                    code: 401,
+                }),
+            ));
         }
 
         // Check fingerprint against revoked fingerprint list
-        if let Some(ref revoked_fps) = config.revoked_fingerprints {
-            if revoked_fps.contains(fingerprint) {
-                warn!(
-                    "TLS client certificate revoked by fingerprint: {}",
-                    fingerprint
-                );
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    Json(TlsCertErrorResponse {
-                        error: "certificate_revoked".to_string(),
-                        message: "Client certificate has been revoked".to_string(),
-                        code: 401,
-                    }),
-                ));
-            }
+        if let Some(ref revoked_fps) = config.revoked_fingerprints
+            && revoked_fps.contains(fingerprint)
+        {
+            warn!(
+                "TLS client certificate revoked by fingerprint: {}",
+                fingerprint
+            );
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(TlsCertErrorResponse {
+                    error: "certificate_revoked".to_string(),
+                    message: "Client certificate has been revoked".to_string(),
+                    code: 401,
+                }),
+            ));
         }
 
         debug!(

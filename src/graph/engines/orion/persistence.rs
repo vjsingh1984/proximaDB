@@ -888,20 +888,21 @@ impl OrionPersistence {
 
         // Truncate WAL: remove all segment files so replay is a no-op after
         // a clean checkpoint.  The next write re-creates segment files.
-        if let Some(ref wal_path) = self.wal_path {
-            if wal_path.exists() {
+        if let Some(ref wal_path) = self.wal_path
+            && wal_path.exists()
+        {
                 match std::fs::read_dir(wal_path) {
                     Ok(entries) => {
                         for entry in entries.flatten() {
                             let path = entry.path();
-                            if path.is_file() {
-                                if let Err(e) = std::fs::remove_file(&path) {
-                                    tracing::warn!(
-                                        "Failed to truncate WAL segment {:?}: {}",
-                                        path,
-                                        e
-                                    );
-                                }
+                            if path.is_file()
+                                && let Err(e) = std::fs::remove_file(&path)
+                            {
+                                tracing::warn!(
+                                    "Failed to truncate WAL segment {:?}: {}",
+                                    path,
+                                    e
+                                );
                             }
                         }
                         info!(
@@ -913,7 +914,6 @@ impl OrionPersistence {
                         tracing::warn!("Failed to read WAL directory for truncation: {}", e);
                     }
                 }
-            }
         }
 
         Ok(snapshot_path)

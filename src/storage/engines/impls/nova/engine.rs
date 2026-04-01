@@ -1271,19 +1271,19 @@ impl NovaEngine {
                     version: None,
                     similarity: r.similarity,
                     timestamp: None,
-                    source: r.source.and_then(|sc| match sc.data {
+                    source: r.source.map(|sc| match sc.data {
                         Some(crate::proto::proximadb_v1::source_content::Data::TextContent(
                             text,
-                        )) => Some(text),
+                        )) => text,
                         Some(
                             crate::proto::proximadb_v1::source_content::Data::ExternalReference(
                                 url,
                             ),
-                        ) => Some(url),
+                        ) => url,
                         Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(
                             _,
-                        )) => Some("[Binary Content]".to_string()),
-                        None => Some("[Empty Content]".to_string()),
+                        )) => "[Binary Content]".to_string(),
+                        None => "[Empty Content]".to_string(),
                     }),
                     expanded_context: r
                         .expanded_context

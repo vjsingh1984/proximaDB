@@ -1109,11 +1109,11 @@ impl QueryExecutor {
         fields: &std::collections::HashMap<String, serde_json::Value>,
         key: &str,
     ) -> Option<String> {
-        fields.get(key).and_then(|v| match v {
-            serde_json::Value::String(s) => Some(s.clone()),
-            serde_json::Value::Number(n) => Some(n.to_string()),
-            serde_json::Value::Bool(b) => Some(b.to_string()),
-            other => Some(other.to_string()),
+        fields.get(key).map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            other => other.to_string(),
         })
     }
 

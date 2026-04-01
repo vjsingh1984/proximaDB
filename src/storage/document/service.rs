@@ -815,7 +815,7 @@ impl DocumentService {
                 let values = path.evaluate(document);
                 if let Some(value) = values.into_iter().next() {
                     // Use the field name as key (simplified - doesn't handle nested paths)
-                    let key = field.split('.').last().unwrap_or(field);
+                    let key = field.split('.').next_back().unwrap_or(field);
                     projected.fields.insert(key.to_string(), value);
                 }
             } else if let Some(value) = document.fields.get(field) {

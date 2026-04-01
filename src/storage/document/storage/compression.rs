@@ -135,16 +135,15 @@ impl DocumentCompressor {
                         end += 1;
                     }
                 }
-                if end < doc.len() {
-                    if let Ok(s) = std::str::from_utf8(&doc[start..end]) {
-                        if let Some(&dict_id) = self.string_dictionary.get(s) {
-                            // Replace with marker + dict ID
-                            result.push(Self::DICT_MARKER);
-                            result.extend_from_slice(&dict_id.to_le_bytes());
-                            i = end + 1; // skip past closing quote
-                            continue;
-                        }
-                    }
+                if end < doc.len()
+                    && let Ok(s) = std::str::from_utf8(&doc[start..end])
+                    && let Some(&dict_id) = self.string_dictionary.get(s)
+                {
+                    // Replace with marker + dict ID
+                    result.push(Self::DICT_MARKER);
+                    result.extend_from_slice(&dict_id.to_le_bytes());
+                    i = end + 1; // skip past closing quote
+                    continue;
                 }
                 // No dictionary hit — copy the character and continue
                 result.push(doc[i]);

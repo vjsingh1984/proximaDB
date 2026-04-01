@@ -226,17 +226,17 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
             version: native.version,
             similarity: native.similarity,
             timestamp: native.timestamp,
-            source: native.source.as_ref().and_then(|sc| match &sc.data {
+            source: native.source.as_ref().map(|sc| match &sc.data {
                 Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => {
-                    Some(text.clone())
+                    text.clone()
                 }
                 Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => {
-                    Some(url.clone())
+                    url.clone()
                 }
                 Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => {
-                    Some("[Binary Content]".to_string())
+                    "[Binary Content]".to_string()
                 }
-                None => Some("[Empty Content]".to_string()),
+                None => "[Empty Content]".to_string(),
             }),
             expanded_context: native
                 .expanded_context
@@ -295,17 +295,17 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
             version: native.version,
             similarity: native.similarity,
             timestamp: native.timestamp,
-            source: native.source.as_ref().and_then(|sc| match &sc.data {
+            source: native.source.as_ref().map(|sc| match &sc.data {
                 Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => {
-                    Some(text.clone())
+                    text.clone()
                 }
                 Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => {
-                    Some(url.clone())
+                    url.clone()
                 }
                 Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => {
-                    Some("[Binary Content]".to_string())
+                    "[Binary Content]".to_string()
                 }
-                None => Some("[Empty Content]".to_string()),
+                None => "[Empty Content]".to_string(),
             }),
             expanded_context: native
                 .expanded_context

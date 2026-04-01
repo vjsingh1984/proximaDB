@@ -3,12 +3,13 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::security::unified_rbac::{AuthMethod, UnifiedPermission, UnifiedUserContext};
+use crate::security::unified_rbac::{AuthMethod, UnifiedUserContext};
 use super::{IdentityProvider, AuthCredentials};
 
 /// OIDC Discovery document (subset of fields we need)
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct OidcDiscovery {
     issuer: String,
@@ -17,11 +18,13 @@ struct OidcDiscovery {
 }
 
 /// JWKS key set (simplified — supports RSA and symmetric validation)
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct JwksKeySet {
     keys: Vec<JwksKey>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct JwksKey {
     kid: Option<String>,
@@ -32,15 +35,6 @@ struct JwksKey {
     n: Option<String>,
     #[serde(default)]
     e: Option<String>,
-}
-
-/// JWT header (decoded without verification to extract kid)
-#[derive(Debug, Deserialize)]
-struct JwtHeader {
-    #[serde(default)]
-    kid: Option<String>,
-    #[serde(default)]
-    alg: String,
 }
 
 /// JWT claims we care about
@@ -56,7 +50,8 @@ struct JwtClaims {
     /// Expiration (Unix timestamp)
     #[serde(default)]
     exp: Option<i64>,
-    /// Issued at
+    /// Issued at (reserved for token freshness validation)
+    #[allow(dead_code)]
     #[serde(default)]
     iat: Option<i64>,
     /// Email
@@ -91,6 +86,7 @@ pub struct OidcProvider {
     issuer: String,
     client_id: String,
     /// Cached JWKS keys (populated on first auth or health check)
+    #[allow(dead_code)]
     jwks_cache: tokio::sync::RwLock<Option<JwksKeySet>>,
     /// Default roles assigned when token has no role claims
     default_roles: Vec<String>,
@@ -129,14 +125,14 @@ impl OidcProvider {
     /// Validate JWT claims against this provider's configuration
     fn validate_claims(&self, claims: &JwtClaims) -> Result<()> {
         // Validate issuer
-        if let Some(ref iss) = claims.iss {
-            if iss != &self.issuer {
-                return Err(anyhow!(
-                    "Issuer mismatch: expected '{}', got '{}'",
-                    self.issuer,
-                    iss
-                ));
-            }
+        if let Some(ref iss) = claims.iss
+            && iss != &self.issuer
+        {
+            return Err(anyhow!(
+                "Issuer mismatch: expected '{}', got '{}'",
+                self.issuer,
+                iss
+            ));
         }
 
         // Validate audience (must contain our client_id)

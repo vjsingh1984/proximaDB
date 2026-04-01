@@ -615,7 +615,7 @@ impl UnifiedAuthService {
                 map.get(&x509_parser::oid_registry::OID_X509_EXT_SUBJECT_KEY_IDENTIFIER)
                     .cloned()
             })
-            .and_then(|ext| Some(ext.value.to_vec()));
+            .map(|ext| ext.value.to_vec());
 
         if let (Some(aki), Some(ski)) = (&client_aki, &ca_ski)
             && aki != ski {
