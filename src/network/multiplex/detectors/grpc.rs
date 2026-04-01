@@ -76,7 +76,7 @@ impl GrpcDetector {
 
         // Method names are typically PascalCase and don't have dots
         // Service names often have package prefix with dots
-        service.contains('.') || (service.chars().next().map_or(false, |c| c.is_uppercase()))
+        service.contains('.') || (service.chars().next().is_some_and(|c| c.is_uppercase()))
     }
 }
 

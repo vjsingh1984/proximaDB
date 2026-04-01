@@ -87,7 +87,7 @@ impl<K, V> Node<K, V> {
     /// Check whether this node's TTL has expired
     fn is_expired(&self) -> bool {
         self.expires_at
-            .map_or(false, |expires| Instant::now() > expires)
+            .is_some_and(|expires| Instant::now() > expires)
     }
 }
 
