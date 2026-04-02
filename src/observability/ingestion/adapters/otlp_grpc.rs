@@ -145,7 +145,7 @@ pub fn convert_status_code_str(code: &str) -> SpanStatusCode {
     match code {
         "STATUS_CODE_OK" => SpanStatusCode::Ok,
         "STATUS_CODE_ERROR" => SpanStatusCode::Error,
-        "STATUS_CODE_UNSET" | _ => SpanStatusCode::Unset,
+        _ => SpanStatusCode::Unset,
     }
 }
 

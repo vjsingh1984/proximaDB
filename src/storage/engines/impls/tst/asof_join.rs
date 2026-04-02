@@ -105,6 +105,12 @@ impl ASOFJoin {
     }
 }
 
+impl Default for ASOFJoin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// ASOF join query
 #[derive(Debug, Clone)]
 pub struct ASOFJoinQuery {

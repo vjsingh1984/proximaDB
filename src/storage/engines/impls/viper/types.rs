@@ -526,7 +526,7 @@ impl ViperEngineConfig {
                 "snappy" => ParquetCompression::Snappy,
                 "gzip" => ParquetCompression::Gzip,
                 "lz4" => ParquetCompression::Lz4,
-                "none" | _ => ParquetCompression::None,
+                _ => ParquetCompression::None,
             },
             row_group_size: config.row_group_size,
             enable_background_compaction: true,

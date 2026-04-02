@@ -350,7 +350,7 @@ impl DefaultVectorRecordBridge {
                 }
                 Ok(Arc::new(builder.finish()))
             }
-            DataType::Utf8 | _ => {
+            _ => {
                 // Default to string for all other types
                 let mut builder = StringBuilder::new();
                 for record in records {

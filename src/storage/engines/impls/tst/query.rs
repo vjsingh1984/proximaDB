@@ -30,6 +30,12 @@ impl TimeSeriesQueryOptimizer {
     }
 }
 
+impl Default for TimeSeriesQueryOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Optimized query plan
 #[derive(Debug)]
 pub struct OptimizedQuery {
