@@ -474,6 +474,11 @@ pub trait SerializableIndex: Send + Sync {
 
     /// Serialize internal data (without header)
     fn serialize_internal(&self) -> Result<Vec<u8>>;
+
+    /// Check if index is empty
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Serializable HNSW configuration (mirrors AxisHnswConfig)
