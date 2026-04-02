@@ -496,10 +496,10 @@ impl FileSystem for LocalFileSystem {
             match encryption.encrypt_file(path, data) {
                 Ok(encrypted) => encrypted,
                 Err(e) => {
-                    return Err(FilesystemError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Encryption failed for {}: {}", path, e),
-                    )));
+                    return Err(FilesystemError::Io(std::io::Error::other(format!(
+                        "Encryption failed for {}: {}",
+                        path, e
+                    ))));
                 }
             }
         } else {

@@ -73,10 +73,7 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Helper to convert IO errors to StorageError
 fn io_error(msg: String) -> ProximaDBError {
-    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        msg,
-    )))
+    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(msg)))
 }
 
 /// Configuration for disk-based CSR storage
