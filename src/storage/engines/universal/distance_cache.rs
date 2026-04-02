@@ -107,12 +107,12 @@ impl DistanceTableCache {
                 };
 
                 if let Ok(updated_data) = serde_json::to_vec(&updated_table) {
-                    let _ = self.cache_orchestrator.put(
+                    drop(self.cache_orchestrator.put(
                         CacheType::DistanceTable,
                         cache_key,
                         updated_data,
                         None,
-                    );
+                    ));
                 }
 
                 return Ok(cached_table.distances);
@@ -129,9 +129,10 @@ impl DistanceTableCache {
         };
 
         if let Ok(cached_data) = serde_json::to_vec(&cached_table) {
-            let _ =
+            drop(
                 self.cache_orchestrator
-                    .put(CacheType::DistanceTable, cache_key, cached_data, None);
+                    .put(CacheType::DistanceTable, cache_key, cached_data, None),
+            );
         }
 
         Ok(distances)
@@ -215,12 +216,12 @@ impl DistanceTableCache {
                 };
 
                 if let Ok(cached_data) = serde_json::to_vec(&cached_table) {
-                    let _ = self.cache_orchestrator.put(
+                    drop(self.cache_orchestrator.put(
                         CacheType::DistanceTable,
                         cache_key,
                         cached_data,
                         None,
-                    );
+                    ));
                 }
             }
         }

@@ -129,7 +129,7 @@ impl ExecutionPlanner {
             };
 
             if let Ok(cached_data) = serde_json::to_vec(&cached_plan) {
-                let _ = cache_orchestrator.put(CacheType::QueryPlan, cache_key, cached_data, None);
+                drop(cache_orchestrator.put(CacheType::QueryPlan, cache_key, cached_data, None));
             }
         }
 
