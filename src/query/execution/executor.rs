@@ -1592,7 +1592,7 @@ impl QueryExecutor {
     ) -> std::collections::HashMap<String, serde_json::Value> {
         metadata
             .iter()
-            .filter_map(|(key, sql_value)| {
+            .map(|(key, sql_value)| {
                 // Demonstrate efficient HashMap iteration (vs Vec<MetadataItem> linear scan)
                 let json_value = match &sql_value.value {
                     Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
@@ -1621,7 +1621,7 @@ impl QueryExecutor {
                     }
                     None => serde_json::Value::Null,
                 };
-                Some((key.clone(), json_value))
+                (key.clone(), json_value)
             })
             .collect()
     }
