@@ -74,11 +74,17 @@ pub type Result<T> = std::result::Result<T, SerializationError>;
 /// Index types that can be serialized
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Index {
+    /// Hierarchical Navigable Small World graph index
     Hnsw,
+    /// Inverted File index with optional product quantization
     Ivf,
+    /// Locality Sensitive Hashing index
     Lsh,
+    /// Annoy tree-based approximate nearest neighbour index
     Annoy,
+    /// Product Quantization index
     Pq,
+    /// Flat brute-force index (exact search)
     Flat,
 }
 
@@ -454,11 +460,16 @@ pub trait SerializableIndex: Send + Sync {
 /// Serializable HNSW configuration (mirrors AxisHnswConfig)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableHnswConfig {
+    /// Number of bidirectional links per node (M parameter)
     pub m: usize,
+    /// Size of the candidate list during index construction
     pub ef_construction: usize,
+    /// Size of the candidate list during search
     pub ef: usize,
+    /// Maximum number of graph layers
     pub max_layers: usize,
-    pub distance_metric: u8, // 0=L2, 1=Cosine, 2=DotProduct
+    /// Distance metric code: 0=L2, 1=Cosine, 2=DotProduct
+    pub distance_metric: u8,
 }
 
 /// Serializable ID mapping data
@@ -473,16 +484,21 @@ pub struct SerializableIdMapping {
 /// Serializable vector data (ID + raw bytes)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableVector {
+    /// External vector identifier
     pub id: String,
+    /// Raw vector bytes (layout depends on quantization settings)
     pub data: Vec<u8>,
 }
 
 /// Serializable collection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableCollectionConfig {
+    /// Vector dimensionality
     pub dimension: usize,
+    /// Whether quantization is enabled for this collection
     pub is_quantized: bool,
-    pub quantization_method: Option<u8>, // 0=INT8, 1=PQ8, 2=PQ4, 3=Binary
+    /// Quantization method code: 0=INT8, 1=PQ8, 2=PQ4, 3=Binary
+    pub quantization_method: Option<u8>,
 }
 
 /// Complete serializable HNSW state
@@ -511,6 +527,7 @@ pub struct SerializableHnswState {
 }
 
 impl SerializableHnswState {
+    /// Current serialization format version; older versions are backward-compatible
     pub const CURRENT_VERSION: u32 = 1;
 }
 
@@ -716,6 +733,7 @@ pub struct DeltaManager {
 }
 
 impl DeltaManager {
+    /// Create a new delta manager with the given maximum delta count before a checkpoint is forced
     pub fn new(max_deltas: usize) -> Self {
         Self {
             base_checkpoint: None,

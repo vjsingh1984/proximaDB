@@ -32,21 +32,26 @@ use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstab
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
-// Type alias for compatibility
+/// Type alias for [`PostingListEntry`] for compatibility
 pub type PostingEntry = PostingListEntry;
 
 /// Posting list entry
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PostingListEntry {
+    /// External identifier of the vector belonging to this cluster
     pub vector_id: String,
+    /// Pre-computed distance from this vector to its cluster centroid
     pub distance_to_centroid: f32,
 }
 
 /// Complete posting list for a cluster
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PostingList {
+    /// Index of the IVF cluster this posting list belongs to
     pub cluster_id: usize,
+    /// Ordered list of vector entries assigned to this cluster
     pub entries: Vec<PostingListEntry>,
+    /// Timestamp of the most recent access, used for LRU eviction
     pub last_accessed: std::time::SystemTime,
 }
 
@@ -54,26 +59,35 @@ pub struct PostingList {
 pub enum PostingListStorage {
     /// In-memory storage with bincode serialization
     Memory {
-        cache: Arc<dashmap::DashMap<usize, Vec<u8>>>, // cluster_id -> bincode bytes
+        /// Map from cluster ID to bincode-encoded posting list bytes
+        cache: Arc<dashmap::DashMap<usize, Vec<u8>>>,
     },
     /// SST-based disk storage
     SstDisk {
+        /// Filesystem root path for SST files
         base_path: String,
+        /// Collection identifier used to scope file paths
         collection_id: String,
     },
     /// VIPER-based disk storage
     ViperDisk {
+        /// Filesystem root path for Parquet/VIPER files
         base_path: String,
+        /// Collection identifier used to scope file paths
         collection_id: String,
     },
     /// Cloud storage (S3, etc.) using SST format
     CloudSst {
+        /// S3 bucket name
         bucket: String,
+        /// Collection identifier used to scope object keys
         collection_id: String,
     },
     /// Cloud storage using VIPER format
     CloudViper {
+        /// S3 bucket name
         bucket: String,
+        /// Collection identifier used to scope object keys
         collection_id: String,
     },
 }
@@ -354,7 +368,9 @@ impl PostingListStorage {
 /// Storage engine type for posting lists
 #[derive(Debug, Clone, Copy)]
 pub enum StorageEngineType {
+    /// Sorted String Table engine — optimised for bloom-filter lookups
     SST,
+    /// VIPER columnar engine — optimised for analytical scans (Parquet)
     VIPER,
 }
 
@@ -379,6 +395,10 @@ pub struct TieredPostingListManager {
 }
 
 impl TieredPostingListManager {
+    /// Create a new tiered posting list manager.
+    ///
+    /// Providing `disk_path` enables the NVMe/SSD tier and `cloud_bucket`
+    /// enables the cloud tier.  Either may be `None` to disable that tier.
     pub fn new(
         collection_id: String,
         engine_type: StorageEngineType,

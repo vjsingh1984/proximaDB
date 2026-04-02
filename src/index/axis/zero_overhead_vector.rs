@@ -160,17 +160,25 @@ impl ZeroOverheadVector {
 /// Configuration for a zero-overhead collection
 #[derive(Debug, Clone)]
 pub struct CollectionConfig {
+    /// Number of dimensions in each vector
     pub dimension: usize,
+    /// Whether vectors are stored in quantized form
     pub is_quantized: bool,
+    /// Quantization scheme applied to vectors, if any
     pub quantization_method: Option<QuantizationMethod>,
 }
 
+/// Quantization method applied to stored vectors
 #[derive(Debug, Clone, Copy)]
 pub enum QuantizationMethod {
-    INT8,   // 1 byte per dimension
-    PQ8,    // 1 byte per dimension (product quantization)
-    PQ4,    // 4 bits per dimension
-    Binary, // 1 bit per dimension
+    /// Scalar quantization: 1 byte per dimension
+    INT8,
+    /// Product quantization with 1 byte per sub-space (PQ-8)
+    PQ8,
+    /// Product quantization with 4 bits per sub-space (PQ-4)
+    PQ4,
+    /// Binary quantization: 1 bit per dimension
+    Binary,
 }
 
 impl CollectionConfig {

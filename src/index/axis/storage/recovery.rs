@@ -69,24 +69,35 @@ impl Default for RecoveryConfig {
     }
 }
 
-// Type aliases for compatibility
+/// Convenience type alias for recovery operation results
 pub type RecoveryResult = Result<RecoveryStats, SerializationError>;
+/// Type alias for `RecoveryConfig` for compatibility
 pub type RecoveryStrategy = RecoveryConfig;
 
 /// Recovery status for a collection
 #[derive(Debug, Clone)]
 pub enum RecoveryStatus {
+    /// Recovery has not been initiated yet
     NotStarted,
+    /// Recovery is currently running
     InProgress {
+        /// Wall-clock instant when recovery started
         started_at: Instant,
+        /// Completion percentage (0.0–100.0)
         progress_percent: f32,
     },
+    /// Recovery finished successfully
     Completed {
+        /// Total time taken for recovery
         duration: Duration,
+        /// Number of vectors that were restored
         vectors_recovered: usize,
     },
+    /// Recovery failed with an error
     Failed {
+        /// Human-readable error description
         error: String,
+        /// Number of retry attempts made so far
         retry_count: u32,
     },
 }
@@ -94,11 +105,17 @@ pub enum RecoveryStatus {
 /// Recovery statistics
 #[derive(Debug, Clone, Default)]
 pub struct RecoveryStats {
+    /// Number of collections successfully recovered
     pub collections_recovered: u32,
+    /// Number of collections whose recovery failed
     pub collections_failed: u32,
+    /// Total number of vectors restored across all collections
     pub total_vectors_recovered: u64,
+    /// Total bytes loaded from persistent storage
     pub total_bytes_loaded: u64,
+    /// Cumulative wall-clock time spent on recovery
     pub total_recovery_time: Duration,
+    /// Instant of the most recent recovery run
     pub last_recovery: Option<Instant>,
 }
 

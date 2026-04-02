@@ -846,6 +846,7 @@ where
     K: Hash + Eq + Clone + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
+    /// Create a DashMap-backed index backend with the given initial capacity
     pub async fn new_dashmap(
         collection_id: String,
         initial_capacity: usize,

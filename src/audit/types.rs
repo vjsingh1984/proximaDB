@@ -9,54 +9,87 @@ use std::collections::HashMap;
 /// Comprehensive audit event structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
+    /// Unique identifier for this audit event
     pub event_id: String,
+    /// Timestamp when the event occurred (UTC)
     pub timestamp: DateTime<Utc>,
+    /// Category of audit event (authentication, data access, etc.)
     pub event_type: AuditEventType,
+    /// Identifier of the user who triggered the event, if applicable
     pub user_id: Option<String>,
+    /// Resource that was acted upon
     pub resource: AuditResource,
+    /// Specific action that was performed on the resource
     pub action: String,
+    /// Outcome of the action (success, failure, or partial)
     pub result: AuditResult,
+    /// Additional structured metadata associated with this event
     pub details: HashMap<String, serde_json::Value>,
+    /// Source IP address of the request, if available
     pub ip_address: Option<String>,
+    /// HTTP User-Agent header from the request, if available
     pub user_agent: Option<String>,
+    /// Correlation ID of the originating request, if available
     pub request_id: Option<String>,
+    /// Tenant context in which the event occurred, if applicable
     pub tenant_id: Option<String>,
+    /// Session identifier for grouping related events
     pub session_id: Option<String>,
+    /// Computed risk score in the range [0.0, 1.0]; higher means riskier
     pub risk_score: Option<f64>,
 }
 
 /// Types of audit events
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuditEventType {
+    /// User login, logout, token issuance, or credential verification
     Authentication,
+    /// Access-control decisions such as permission checks and role evaluation
     Authorization,
+    /// Read operations against stored data (queries, exports, views)
     DataAccess,
+    /// Write operations that create, update, or delete stored data
     DataModification,
+    /// Changes to system or tenant configuration settings
     SystemConfiguration,
+    /// Security-relevant actions such as alerts, policy violations, or anomalies
     SecurityEvent,
+    /// Compliance-framework-related events (SOC2, GDPR, HIPAA controls)
     ComplianceEvent,
+    /// Performance metrics and SLA-related events
     PerformanceEvent,
+    /// Tenant lifecycle operations (create, update, suspend, delete)
     TenantManagement,
+    /// External API calls made to or from the system
     APIAccess,
 }
 
 /// Resource being audited
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditResource {
-    pub resource_type: String, // "collection", "vector", "tenant", "user", "system"
+    /// Category of the resource (e.g., "collection", "vector", "tenant", "user", "system")
+    pub resource_type: String,
+    /// Unique identifier of the resource within its type
     pub resource_id: String,
+    /// Optional parent resource for hierarchical resource trees (e.g., tenant -> collection -> vector)
     pub parent_resource: Option<Box<AuditResource>>,
 }
 
 /// Result of the audited operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditResult {
+    /// The operation completed successfully without errors or warnings
     Success,
+    /// The operation failed; includes an error code and human-readable message
     Failure {
+        /// Machine-readable error code (e.g., "AUTH_FAILED", "PERMISSION_DENIED")
         error_code: String,
+        /// Human-readable description of the failure reason
         error_message: String,
     },
+    /// The operation completed with non-fatal warnings
     Partial {
+        /// List of warning messages describing partial failure conditions
         warnings: Vec<String>,
     },
 }
@@ -64,34 +97,53 @@ pub enum AuditResult {
 /// Security alert generated from audit analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityAlert {
+    /// Unique identifier for this security alert
     pub alert_id: String,
+    /// Timestamp when the alert was detected (UTC)
     pub timestamp: DateTime<Utc>,
+    /// Category of security threat that triggered the alert
     pub alert_type: SecurityAlertType,
+    /// Severity level used for prioritizing alert response
     pub severity: SecurityAlertSeverity,
+    /// Human-readable explanation of why the alert was generated
     pub description: String,
+    /// Identifier of the user associated with the suspicious activity, if known
     pub user_id: Option<String>,
+    /// Source IP address associated with the suspicious activity, if known
     pub ip_address: Option<String>,
+    /// ID of the audit event that triggered this alert
     pub related_event_id: String,
 }
 
 /// Types of security alerts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SecurityAlertType {
+    /// Unusual authentication patterns such as repeated failures or logins from unexpected locations
     SuspiciousAuthActivity,
+    /// Attempt by a user from one tenant to access resources belonging to another tenant
     CrossTenantAccess,
+    /// Attempt to gain higher privileges than those currently assigned
     PrivilegeEscalation,
+    /// Suspected large-scale extraction of sensitive data outside normal usage patterns
     DataExfiltration,
+    /// API access attempted without valid credentials or from an unauthorized source
     UnauthorizedAPIAccess,
+    /// Repeated rapid authentication attempts indicating a brute-force password attack
     BruteForceAttack,
+    /// Data access volume or patterns that deviate significantly from the user's baseline
     AnomalousDataAccess,
 }
 
 /// Security alert severity levels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SecurityAlertSeverity {
+    /// Informational; minimal risk, no immediate action required
     Low,
+    /// Notable anomaly; should be reviewed during normal operations
     Medium,
+    /// Significant threat; requires prompt investigation
     High,
+    /// Immediate threat to security or compliance; requires urgent response
     Critical,
 }
 

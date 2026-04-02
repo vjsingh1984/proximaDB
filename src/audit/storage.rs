@@ -37,12 +37,19 @@ pub trait AuditStorage {
 /// Audit statistics for reporting
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditStatistics {
+    /// Total number of audit events in the reporting period
     pub total_events: u64,
+    /// Breakdown of event counts grouped by event type
     pub events_by_type: std::collections::HashMap<AuditEventType, u64>,
+    /// Number of distinct users who generated at least one event in the period
     pub unique_users: u64,
+    /// Number of distinct tenants that had activity in the period
     pub unique_tenants: u64,
+    /// Percentage of events that resulted in `AuditResult::Success` (0.0 – 100.0)
     pub success_rate: f64,
+    /// Start of the statistics window (UTC)
     pub period_start: DateTime<Utc>,
+    /// End of the statistics window (UTC)
     pub period_end: DateTime<Utc>,
 }
 
@@ -57,6 +64,8 @@ pub struct FileAuditStorage {
 }
 
 impl FileAuditStorage {
+    /// Create a new `FileAuditStorage` that writes JSONL audit logs to the given directory.
+    /// The directory is created automatically if it does not already exist.
     pub async fn new(directory: String) -> Result<Self> {
         // Ensure directory exists
         tokio::fs::create_dir_all(&directory)
@@ -310,6 +319,8 @@ pub struct DatabaseAuditStorage {
 }
 
 impl DatabaseAuditStorage {
+    /// Create a new `DatabaseAuditStorage` backed by the given connection string.
+    /// This is a placeholder implementation; actual database setup is not yet performed.
     pub async fn new(connection_string: String) -> Result<Self> {
         // Placeholder for database initialization
         // Real implementation would:

@@ -70,8 +70,11 @@ pub struct CrossProviderEventCorrelator {
 /// Event correlation rule definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventCorrelationRule {
+    /// Human-readable name identifying this correlation rule
     pub rule_name: String,
+    /// Regex or sequence pattern used to match event chains
     pub pattern: String,
+    /// Minimum confidence score [0.0, 1.0] required to accept a match for this rule
     pub confidence_threshold: f64,
 }
 
@@ -115,48 +118,71 @@ pub struct AuditCorrelationSession {
 /// Enterprise audit event structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
+    /// Unique identifier for this audit event
     pub event_id: String,
+    /// Category of event (e.g., "authentication", "data_access")
     pub event_type: String,
+    /// Timestamp when the event was recorded (UTC)
     pub timestamp: DateTime<Utc>,
+    /// Name of the cloud or identity provider that generated the event (e.g., "aws", "okta")
     pub provider: String,
+    /// User or principal associated with the event, if available
     pub user_context: Option<String>,
+    /// Identifier of the resource that was acted upon
     pub resource: String,
+    /// Specific action performed on the resource
     pub action: String,
+    /// Outcome of the action (e.g., "success", "failure")
     pub outcome: String,
+    /// Arbitrary provider-specific key-value metadata attached to this event
     pub metadata: HashMap<String, String>,
 }
 
 /// Correlation analysis result
 #[derive(Debug)]
 pub struct EventSequenceAnalysis {
+    /// Ordered sequence of correlated audit events
     pub event_sequence: Vec<AuditEvent>,
+    /// Confidence score [0.0, 1.0] for the correlation hypothesis
     pub confidence: f64,
+    /// Human-readable summary of the correlation analysis result
     pub analysis_summary: String,
 }
 
 /// Anomaly detection result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditAnomaly {
+    /// Unique identifier for this anomaly
     pub anomaly_id: String,
+    /// Machine-readable anomaly category (e.g., "unusual_access_pattern")
     pub anomaly_type: String,
+    /// Severity level of the anomaly (e.g., "low", "medium", "high", "critical")
     pub severity: String,
+    /// Human-readable description of the detected anomaly
     pub description: String,
+    /// Timestamp when the anomaly was detected (UTC)
     pub detected_at: DateTime<Utc>,
 }
 
 /// Compliance analysis result
 #[derive(Debug)]
 pub struct ComplianceAnalysis {
+    /// Overall compliance status for the evaluated framework (e.g., "compliant", "non-compliant")
     pub compliance_status: String,
+    /// List of specific compliance violations detected during analysis
     pub violations: Vec<String>,
+    /// Actionable recommendations to address violations or improve compliance posture
     pub recommendations: Vec<String>,
 }
 
-// Supporting types
+/// Lifecycle status of an audit correlation session
 #[derive(Debug, Clone)]
 pub enum CorrelationStatus {
+    /// Session is currently collecting and correlating events
     Active,
+    /// Correlation analysis has finished successfully
     Completed,
+    /// Correlation analysis failed before producing a result
     Failed,
 }
 
@@ -188,11 +214,16 @@ pub struct ReportingConfiguration {
     format: String,
 }
 
+/// Storage backend options for audit event persistence
 #[derive(Debug)]
 pub enum StorageBackend {
+    /// Local filesystem storage
     Local,
+    /// Amazon S3 object storage
     S3,
+    /// Azure Blob Storage
     Azure,
+    /// Google Cloud Storage
     GCS,
 }
 
@@ -208,13 +239,24 @@ pub struct RetentionPolicy {
 }
 
 // Provider integration stubs
+
+/// Integration stub for AWS CloudTrail audit log ingestion
 pub struct AWSCloudTrailIntegration;
+
+/// Integration stub for Azure Activity Log ingestion
 pub struct AzureActivityLogIntegration;
+
+/// Integration stub for Google Cloud Audit Logs ingestion
 pub struct GCPCloudAuditIntegration;
+
+/// Integration stub for Okta System Log ingestion
 pub struct OktaSystemLogIntegration;
+
+/// Integration stub for generic SIEM (Security Information and Event Management) systems
 pub struct GenericSIEMIntegration;
 
 impl AuditCorrelationEngine {
+    /// Create a new `AuditCorrelationEngine` with default provider integrations and configuration
     pub async fn new() -> Result<Self> {
         Ok(Self {
             correlation_sessions: Arc::new(DashMap::new()),
@@ -259,6 +301,7 @@ impl AuditCorrelationEngine {
         })
     }
 
+    /// Correlate a list of audit events and return a sequence analysis with a confidence score
     pub async fn correlate_events(&self, events: Vec<AuditEvent>) -> Result<EventSequenceAnalysis> {
         info!("Correlating {} audit events", events.len());
 
@@ -272,6 +315,7 @@ impl AuditCorrelationEngine {
         })
     }
 
+    /// Analyse a slice of audit events and return any detected anomalies
     pub async fn detect_anomalies(&self, events: &[AuditEvent]) -> Result<Vec<AuditAnomaly>> {
         debug!("Detecting anomalies in {} events", events.len());
 
@@ -285,6 +329,7 @@ impl AuditCorrelationEngine {
         }])
     }
 
+    /// Generate a compliance analysis report for the specified framework (e.g., "SOC2", "GDPR")
     pub async fn generate_compliance_report(&self, framework: &str) -> Result<ComplianceAnalysis> {
         info!("Generating compliance report for framework: {}", framework);
 
@@ -297,6 +342,7 @@ impl AuditCorrelationEngine {
 }
 
 impl CrossProviderEventCorrelator {
+    /// Create a new `CrossProviderEventCorrelator` with an empty rule set and default thresholds
     pub fn new() -> Self {
         Self {
             correlation_rules: vec![],
@@ -305,6 +351,7 @@ impl CrossProviderEventCorrelator {
         }
     }
 
+    /// Correlate audit events that originate from different cloud or identity providers
     pub async fn correlate_cross_provider_events(
         &self,
         events: &[AuditEvent],

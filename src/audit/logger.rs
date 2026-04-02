@@ -32,13 +32,21 @@ pub struct AuditLogger {
 /// Configuration for audit logging
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditConfig {
+    /// Master switch to enable or disable all audit logging
     pub enable_audit_logging: bool,
+    /// Backend storage target for persisting audit events
     pub storage_backend: AuditStorageBackend,
+    /// When true, sensitive fields (IP, user agent, secrets) are encrypted before storage
     pub encryption_enabled: bool,
+    /// Optional HTTP endpoint to which audit events are forwarded in real time
     pub external_audit_endpoint: Option<String>,
+    /// Number of days to retain audit log files before automatic deletion
     pub retention_days: u32,
+    /// When true, security alerts are dispatched in real time via webhook or email
     pub enable_real_time_alerts: bool,
+    /// Optional webhook URL for delivering real-time security alert payloads
     pub alert_webhook_url: Option<String>,
+    /// Compliance frameworks to tag against audit events (e.g., "SOC2", "GDPR", "HIPAA")
     pub compliance_frameworks: Vec<String>,
 }
 
@@ -62,18 +70,28 @@ impl Default for AuditConfig {
 /// Audit storage backend options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditStorageBackend {
+    /// Store audit logs as JSONL files in the specified local directory
     File {
+        /// Absolute path to the directory where audit log files are written
         directory: String,
     },
+    /// Store audit events in a relational database
     Database {
+        /// Database connection string (e.g., "postgres://user:pass@host/db")
         connection_string: String,
     },
+    /// Store audit logs in an Amazon S3 bucket
     S3 {
+        /// S3 bucket name
         bucket: String,
+        /// AWS region where the bucket resides (e.g., "us-east-1")
         region: String,
     },
+    /// Write to a primary backend and mirror to a secondary backend
     Combined {
+        /// Primary storage backend that receives all writes first
         primary: Box<AuditStorageBackend>,
+        /// Secondary (mirror) storage backend for redundancy
         secondary: Box<AuditStorageBackend>,
     },
 }
@@ -109,11 +127,17 @@ pub struct AlertSender {
 /// Email configuration for alerts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailConfig {
+    /// Hostname or IP address of the SMTP relay server
     pub smtp_server: String,
+    /// TCP port of the SMTP relay server (typically 25, 465, or 587)
     pub smtp_port: u16,
+    /// SMTP authentication username
     pub username: String,
+    /// SMTP authentication password (stored in plaintext; prefer injecting via secrets manager)
     pub password: String,
+    /// Email address that appears in the "From" header of alert messages
     pub from_address: String,
+    /// List of email addresses that receive alert notifications
     pub to_addresses: Vec<String>,
 }
 
@@ -650,14 +674,20 @@ impl AuditLogger {
 /// IP geolocation information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpGeolocation {
+    /// Country name or ISO 3166-1 alpha-2 code (e.g., "US")
     pub country: String,
+    /// State, province, or administrative region name
     pub region: String,
+    /// City name
     pub city: String,
+    /// Geographic latitude in decimal degrees, if available
     pub latitude: Option<f64>,
+    /// Geographic longitude in decimal degrees, if available
     pub longitude: Option<f64>,
 }
 
 impl EncryptionKey {
+    /// Create an `EncryptionKey`. If `enabled` is `false` a zeroed dummy key is returned; otherwise a cryptographically random 256-bit key is generated.
     pub fn new(enabled: bool) -> Result<Self> {
         if !enabled {
             // Return dummy key when encryption is disabled
@@ -678,12 +708,14 @@ impl EncryptionKey {
         })
     }
 
+    /// Encrypt `data` using the configured algorithm. Returns the ciphertext as a byte vector.
     pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
         // Placeholder for actual encryption
         // Real implementation would use the configured algorithm
         Ok(data.to_vec())
     }
 
+    /// Decrypt `data` using the configured algorithm. Returns the plaintext as a byte vector.
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
         // Placeholder for actual decryption
         Ok(data.to_vec())
@@ -691,6 +723,7 @@ impl EncryptionKey {
 }
 
 impl AlertSender {
+    /// Create a new `AlertSender` from the given `AuditConfig`, wiring up the optional webhook URL
     pub fn new(config: &AuditConfig) -> Result<Self> {
         Ok(Self {
             webhook_url: config.alert_webhook_url.clone(),
@@ -698,6 +731,7 @@ impl AlertSender {
         })
     }
 
+    /// Dispatch the security alert payload to the configured webhook (if any)
     pub async fn send_alert(&self, alert: &SecurityAlert) -> Result<()> {
         if let Some(ref webhook_url) = self.webhook_url {
             let client = reqwest::Client::new();

@@ -53,26 +53,43 @@ pub enum StorageLocation {
     /// In-memory with bincode format
     Memory,
     /// NVMe SSD with SST/VIPER format
-    NvmeSsd { path: PathBuf },
-    /// HDD with SST/VIPER format  
-    HardDisk { path: PathBuf },
+    NvmeSsd {
+        /// Root directory on the NVMe SSD
+        path: PathBuf,
+    },
+    /// HDD with SST/VIPER format
+    HardDisk {
+        /// Root directory on the hard disk
+        path: PathBuf,
+    },
     /// S3 Express One Zone with SST/VIPER format
-    S3Express { bucket: String, prefix: String },
+    S3Express {
+        /// S3 bucket name
+        bucket: String,
+        /// Key prefix used to scope objects within the bucket
+        prefix: String,
+    },
 }
 
 /// Storage engine type
 #[derive(Debug, Clone, Copy)]
 pub enum StorageEngine {
+    /// Sorted String Table engine — bloom-filter accelerated key lookup
     SST,
+    /// VIPER columnar engine — Parquet-based analytical storage
     VIPER,
 }
 
 /// Index storage configuration
 #[derive(Debug, Clone)]
 pub struct IndexStorageConfig {
+    /// Physical location where index data resides
     pub storage_location: StorageLocation,
+    /// Serialization engine used for on-disk/cloud data
     pub storage_engine: StorageEngine,
+    /// Maximum number of items to keep in the memory cache
     pub cache_size: usize,
+    /// Fraction of cache capacity (0.0–1.0) that triggers LRU eviction
     pub eviction_threshold: f64,
 }
 
@@ -104,6 +121,10 @@ pub struct UniversalIndexStorage<T: IndexData> {
 }
 
 impl<T: IndexData> UniversalIndexStorage<T> {
+    /// Create a new `UniversalIndexStorage` instance.
+    ///
+    /// Storage tiers are auto-detected from the environment.  Set
+    /// `PROXIMADB_S3_BUCKET` to enable the cloud tier.
     pub fn new(
         collection_id: String,
         index_type: String,
@@ -597,8 +618,11 @@ impl<T: IndexData> UniversalIndexStorage<T> {
 /// Example implementation for HNSW graph nodes
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HnswNode {
+    /// Internal node identifier (dense index into the node array)
     pub id: usize,
+    /// Graph layer this node resides in (0 = bottom/largest layer)
     pub layer: usize,
+    /// Neighbour node IDs in the same layer
     pub connections: Vec<usize>,
 }
 
@@ -615,8 +639,11 @@ impl IndexData for HnswNode {
 /// Example implementation for LSH hash buckets
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LshBucket {
+    /// Index of the LSH hash table this bucket belongs to
     pub table_id: usize,
+    /// Hash value that identifies this bucket within its table
     pub hash: u64,
+    /// External vector IDs that hash to this bucket
     pub vector_ids: Vec<String>,
 }
 
