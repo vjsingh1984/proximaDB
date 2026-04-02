@@ -247,12 +247,6 @@ impl From<crate::query::capability::CapabilityCheckError> for ApiError {
     }
 }
 
-/// Convert CapabilityError to ApiError for rich error information
-impl From<crate::errors::capability_error::CapabilityError> for ApiError {
-    fn from(err: crate::errors::capability_error::CapabilityError) -> Self {
-        ApiError::UnsupportedCapability(err.to_string())
-    }
-}
 
 /// Convert ProtocolError to ApiError for unified error handling
 impl From<crate::core::error::ProtocolError> for ApiError {

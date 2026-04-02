@@ -45,11 +45,12 @@
 
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result};
 use tracing::{debug, info, warn, instrument};
 
 use crate::query::capability::{Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet};
-use crate::query::federated::optimizer::PlanNode;
+use crate::query::federated::optimizer::{PlanNode, PlanNodeType};
+use crate::storage::multimodel::ModelType;
 
 /// Validation result with detailed information
 #[derive(Debug, Clone)]
@@ -357,10 +358,8 @@ impl PlanValidator {
 mod tests {
     use super::*;
     use crate::query::capability::{Capability, CapabilitySet};
-    use crate::query::federated::optimizer::{
-        ModelType, PlanNode, PlanNodeType, Predicate, PredicateValue,
-    };
-    use std::collections::HashMap;
+    use crate::query::federated::optimizer::{PlanNode, PlanNodeType};
+    use crate::storage::multimodel::ModelType;
     use std::sync::Arc;
 
     fn create_test_registry() -> Arc<CapabilityRegistry> {

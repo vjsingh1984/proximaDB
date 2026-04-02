@@ -296,14 +296,6 @@ impl From<CapabilityCheckError> for CapabilityError {
     }
 }
 
-/// Convert CapabilityError to ApiError
-/// This integrates capability errors into the unified error handling system
-impl From<CapabilityError> for crate::errors::ApiError {
-    fn from(err: CapabilityError) -> Self {
-        // For now, we'll map to InvalidArgument, but we could add a new variant
-        crate::errors::ApiError::InvalidArgument(err.to_string())
-    }
-}
 
 // ============================================================================
 // UNIT TESTS
