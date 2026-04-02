@@ -569,7 +569,7 @@ impl FederatedExecutor {
             let label = cypher
                 .split(':')
                 .nth(1)
-                .and_then(|s| s.split(|c| matches!(c, ')' | ' ' | '{')).next())
+                .and_then(|s| s.split([')', ' ', '{']).next())
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty());
 

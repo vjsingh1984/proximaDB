@@ -2044,17 +2044,15 @@ impl UnifiedHandlers {
             .collect();
 
         // Infer column types from first row
-        let columns = if let Some(first_row) = rows.first() {
-            if let serde_json::Value::Object(map) = first_row {
-                map.iter()
-                    .map(|(key, value)| {
-                        let type_name = self.infer_json_type(value);
-                        (key.clone(), type_name)
-                    })
-                    .collect()
-            } else {
-                vec![]
-            }
+        let columns = if let Some(first_row) = rows.first()
+            && let serde_json::Value::Object(map) = first_row
+        {
+            map.iter()
+                .map(|(key, value)| {
+                    let type_name = self.infer_json_type(value);
+                    (key.clone(), type_name)
+                })
+                .collect()
         } else {
             vec![]
         };

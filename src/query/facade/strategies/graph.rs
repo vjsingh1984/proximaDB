@@ -152,7 +152,7 @@ impl GraphStrategy {
                 let edge_type = &bracket_rest[..bracket_end];
                 // Handle type with properties like :KNOWS {weight: 1}
                 let type_name = edge_type
-                    .split(|c| matches!(c, ' ' | '{'))
+                    .split([' ', '{'])
                     .next()
                     .unwrap_or(edge_type);
                 if !type_name.is_empty() {

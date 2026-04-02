@@ -1987,12 +1987,9 @@ impl UnifiedStorageEngine for ViperEngine {
             crate::storage::engines::impls::viper::eventlog_flush::ViperFlushNotifier::new();
         // Extract the file path from engine_metrics
         let file_paths = if let Some(path_value) = flush_result.engine_metrics.get("parquet_files")
+            && let serde_json::Value::String(path) = path_value
         {
-            if let serde_json::Value::String(path) = path_value {
-                vec![path.clone()]
-            } else {
-                vec![]
-            }
+            vec![path.clone()]
         } else {
             vec![]
         };

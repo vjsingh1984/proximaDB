@@ -1008,11 +1008,10 @@ impl DdlService {
                     props.insert("ef_construction".to_string(), ef.to_string());
                 }
             }
-            IndexType::Ivf { nlist } => {
-                if let Some(n) = nlist {
-                    props.insert("nlist".to_string(), n.to_string());
-                }
+            IndexType::Ivf { nlist: Some(n) } => {
+                props.insert("nlist".to_string(), n.to_string());
             }
+            IndexType::Ivf { .. } => {}
             IndexType::Pq { m, nbits } => {
                 if let Some(m_val) = m {
                     props.insert("m".to_string(), m_val.to_string());

@@ -132,7 +132,7 @@ impl ObservabilityStrategy {
         let content = content.trim();
 
         // Find the closing paren or comma
-        let end = content.find(|c| matches!(c, ')' | ','))?;
+        let end = content.find([')', ','])?;
         let arg = content[..end].trim();
 
         // Remove quotes

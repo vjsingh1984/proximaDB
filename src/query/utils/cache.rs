@@ -26,6 +26,12 @@ impl<K: Eq + Hash, V> ShardedMapCache<K, V> {
     }
 }
 
+impl<K: Eq + Hash, V> Default for ShardedMapCache<K, V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<K: Eq + Hash, V> Cache<K, V> for ShardedMapCache<K, V> {
     fn get(&self, key: &K) -> Option<Arc<V>> {
         self.inner.get(key).map(|v| v.clone())
