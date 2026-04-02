@@ -504,7 +504,7 @@ impl UnifiedSwiftReader {
         }
 
         let magic = &data[0..4];
-        if magic != &super::SWIFT_MAGIC {
+        if magic != super::SWIFT_MAGIC {
             return Err(anyhow!("Invalid magic bytes: expected SWFT"));
         }
 

@@ -328,7 +328,7 @@ impl TransactionContext {
     fn extract_ids(operation: &MultiModelOperation) -> Vec<String> {
         match operation {
             MultiModelOperation::Vector(op) => {
-                op.affected_ids().iter().cloned().collect()
+                op.affected_ids().to_vec()
             }
             MultiModelOperation::Document(_) => vec!["*".to_string()], // Filter-based
             MultiModelOperation::Graph(op) => op
