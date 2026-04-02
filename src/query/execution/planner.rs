@@ -576,7 +576,7 @@ impl ExecutionPlanner {
                         return None;
                     }
                 }
-                if out.is_empty() { None } else { Some(out) }
+                out.is_empty().not().then(|| out)
             }
             // '[0.1,0.2,0.3]' string literal
             Expr::Literal(crate::query::ast::Literal::String(s)) => {

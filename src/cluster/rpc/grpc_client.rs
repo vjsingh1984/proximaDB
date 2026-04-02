@@ -563,7 +563,7 @@ impl SearchFanout for GrpcSearchFanout {
             request_id: inner.request_id, shard_id: inner.shard_id,
             results: inner.results.into_iter().map(|r| ShardSearchResult {
                 id: r.id, score: r.score,
-                vector: if r.vector.is_empty() { None } else { Some(r.vector) },
+                vector: r.vector.is_empty().not().then(|| r.vector),
                 metadata: r.metadata,
             }).collect(),
             vectors_scanned: inner.vectors_scanned,
