@@ -2,6 +2,31 @@
 //!
 //! This module contains the actual storage engine implementations.
 //! Each engine uses the core infrastructure but implements its own specific logic.
+//!
+//! ## Engine Implementations
+//!
+//! | Engine | Description | Best Workload |
+//! |--------|-------------|---------------|
+//! | **SST** | Sorted String Table - hybrid columnar OLTP engine (ProximaBlocks) | Real-time queries, frequent updates |
+//! | **VIPER** | Vector-optimized Intelligent Parquet with Efficient Retrieval | Analytics, batch operations |
+//! | **HELIX** | High-Efficiency Locality-Indexed eXecution - PCA + Hilbert clustering | Spatial locality, range queries |
+//! | **NOVA** | Next-gen Optimized Vector Analytics - columnar with quantization | Mixed workloads |
+//! | **SWIFT** | Storage With Instant Fast Traversal - hierarchical SST | High-throughput |
+//! | **RAPTOR** | Row-Aligned Predicated Tensor Optimized Repository | Matrix operations |
+//! | **EventLog** | Event Sourcing Engine - append-only audit logs | Audit trails, event sourcing |
+//! | **TST** | Time-Series Storage - Trading/IoT workloads | Time-series data |
+//!
+//! ## Engine Selection
+//!
+//! Engines are automatically selected based on workload characteristics:
+//! - **OLTP (Online Transaction Processing)**: SST
+//! - **OLAP (Online Analytical Processing)**: VIPER
+//! - **Mixed Workloads**: NOVA
+//! - **Spatial Queries**: HELIX
+//! - **High-Throughput**: SWIFT
+//! - **Matrix Operations**: RAPTOR
+//! - **Audit Logging**: EventLog
+//! - **Time-Series**: TST
 
 pub mod eventlog; // Event Sourcing Engine - append-only audit logs
 pub mod helix; // High-Efficiency Locality-Indexed eXecution - PCA + Hilbert clustering
