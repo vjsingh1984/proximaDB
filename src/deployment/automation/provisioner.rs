@@ -20,68 +20,106 @@ pub struct DeploymentProvisioner {
 /// Enterprise deployment request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnterpriseDeploymentRequest {
+    /// Name of the customer organization requesting deployment
     pub customer_name: String,
+    /// Contact email address for the deployment owner
     pub customer_email: String,
+    /// Human-readable name for this deployment instance
     pub deployment_name: String,
+    /// Unique identifier for the customer tenant
     pub tenant_id: String,
+    /// Auto-detected target environment for deployment
     pub environment: DetectedEnvironment,
+    /// Optional configuration overrides supplied by the customer
     pub custom_configuration: Option<CustomConfiguration>,
+    /// List of AI provider names to integrate (e.g., "OpenAI", "Azure")
     pub ai_providers: Vec<String>,
+    /// Security requirements that must be satisfied by the deployment
     pub security_requirements: SecurityRequirements,
+    /// Performance targets the deployment must meet
     pub performance_requirements: PerformanceRequirements,
 }
 
 /// Custom configuration overrides
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomConfiguration {
+    /// Preferred storage engine name (e.g., "NOVA", "VIPER", "SST"); defaults to auto-detected
     pub storage_engine_preference: Option<String>,
+    /// Override for memory allocated to ProximaDB in megabytes
     pub memory_allocation_mb: Option<u32>,
+    /// Whether to enable GPU acceleration when a compatible GPU is available
     pub enable_gpu_acceleration: Option<bool>,
+    /// Custom network port assignments; uses defaults when absent
     pub custom_ports: Option<PortConfiguration>,
+    /// Backup configuration; uses platform defaults when absent
     pub backup_configuration: Option<BackupConfiguration>,
 }
 
 /// Security requirements for deployment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityRequirements {
+    /// Whether all connections must use TLS encryption
     pub enable_tls: bool,
+    /// Whether mutual TLS with client certificates is required
     pub require_client_certificates: bool,
+    /// Whether all API and data access events must be audit-logged
     pub enable_audit_logging: bool,
+    /// Whether enterprise single sign-on integration must be configured
     pub sso_integration_required: bool,
+    /// Compliance frameworks that must be satisfied (e.g., ["SOC2", "GDPR"])
     pub compliance_frameworks: Vec<String>,
 }
 
 /// Performance requirements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceRequirements {
+    /// Minimum sustained query throughput in queries per second
     pub min_qps: u32,
+    /// Maximum acceptable end-to-end query latency in milliseconds
     pub max_latency_ms: u32,
+    /// Required service availability expressed as a percentage (e.g., 99.9)
     pub availability_percentage: f64,
-    pub backup_rto_hours: u32, // Recovery Time Objective
-    pub backup_rpo_hours: u32, // Recovery Point Objective
+    /// Recovery Time Objective: maximum hours to restore service after failure
+    pub backup_rto_hours: u32,
+    /// Recovery Point Objective: maximum hours of data loss tolerable after failure
+    pub backup_rpo_hours: u32,
 }
 
 /// Deployment result with comprehensive status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeploymentResult {
+    /// Unique identifier assigned to this deployment run
     pub deployment_id: String,
+    /// Overall outcome of the deployment process
     pub status: DeploymentStatus,
+    /// Cloud or infrastructure platform that was targeted
     pub platform_type: PlatformType,
+    /// URLs and addresses for reaching the deployed instance
     pub endpoints: DeploymentEndpoints,
+    /// High-level summary of the applied configuration
     pub configuration_summary: ConfigurationSummary,
+    /// Results of post-deployment health validation checks
     pub health_checks: Vec<HealthCheck>,
+    /// Total elapsed time from deployment start to completion in minutes
     pub deployment_time_minutes: u32,
+    /// Ordered list of recommended actions for the customer to take
     pub next_steps: Vec<NextStep>,
+    /// Optional troubleshooting information when issues were detected
     pub troubleshooting_info: Option<TroubleshootingInfo>,
 }
 
 /// Deployment status tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeploymentStatus {
+    /// Deployment is currently executing
     InProgress,
+    /// All deployment steps and health checks passed
     Succeeded,
+    /// Deployment encountered a fatal error and did not complete
     Failed,
+    /// Deployment completed but one or more health checks reported warnings
     PartiallySucceeded,
+    /// Deployment was automatically rolled back after a failure
     RolledBack,
 }
 
@@ -100,49 +138,73 @@ impl std::fmt::Display for DeploymentStatus {
 /// Deployment endpoints for customer access
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeploymentEndpoints {
+    /// Base URL for the REST API (e.g., "http://host:5678")
     pub rest_api: String,
+    /// Address for the gRPC API (e.g., "grpc://host:5679")
     pub grpc_api: String,
+    /// URL for the web-based management dashboard
     pub dashboard_url: String,
+    /// URL for Prometheus-compatible metrics; absent when monitoring is disabled
     pub monitoring_url: Option<String>,
+    /// URL pointing to the interactive API reference documentation
     pub api_documentation_url: String,
 }
 
 /// Configuration summary for customer reference
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigurationSummary {
+    /// Name of the storage engine selected for this deployment
     pub storage_engine: String,
+    /// Memory reserved for ProximaDB in megabytes
     pub memory_allocation_mb: u32,
+    /// Human-readable capacity estimate (collections, vectors, QPS)
     pub estimated_capacity: String,
+    /// Security features that were activated during deployment
     pub security_features_enabled: Vec<String>,
+    /// AI provider integrations that were configured
     pub ai_providers_configured: Vec<String>,
+    /// Cron expression or description of the automated backup schedule
     pub backup_schedule: String,
 }
 
 /// Health check result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheck {
+    /// Short human-readable identifier for this check (e.g., "REST API Health")
     pub check_name: String,
+    /// Pass/warn/fail outcome of the check
     pub status: HealthStatus,
+    /// Detailed description of the check result or any error encountered
     pub details: String,
+    /// Ordered steps to resolve the issue when status is not Healthy
     pub resolution_steps: Vec<String>,
 }
 
 /// Health status for deployment validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HealthStatus {
+    /// Check passed; component is operating normally
     Healthy,
+    /// Check passed with non-critical concerns; review recommended
     Warning,
+    /// Check failed; component requires attention before production use
     Unhealthy,
+    /// Check could not be completed; status is indeterminate
     Unknown,
 }
 
 /// Next steps for customer after deployment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NextStep {
+    /// 1-based sequence number ordering this step within the post-deployment checklist
     pub step_number: u32,
+    /// Short imperative title summarising the action (e.g., "Verify ProximaDB Access")
     pub title: String,
+    /// Detailed explanation of what to do and why
     pub description: String,
+    /// Optional URL to relevant documentation for this step
     pub documentation_url: Option<String>,
+    /// Approximate time required to complete this step in minutes
     pub estimated_time_minutes: u32,
 }
 
@@ -425,6 +487,7 @@ impl DeploymentProvisioner {
 pub struct ConfigurationGenerator;
 
 impl ConfigurationGenerator {
+    /// Create a new `ConfigurationGenerator` with default settings
     pub fn new() -> Self {
         Self
     }
@@ -489,19 +552,31 @@ impl Default for ConfigurationGenerator {
 /// Enterprise configuration for deployment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnterpriseConfiguration {
+    /// Name of the customer organization this configuration was generated for
     pub customer_name: String,
+    /// Tenant identifier used to isolate this customer's data and resources
     pub tenant_id: String,
+    /// Name of the selected storage engine (e.g., "NOVA", "VIPER", "SST")
     pub storage_engine: String,
+    /// Memory allocated to the ProximaDB process in megabytes
     pub memory_allocation_mb: u32,
+    /// Security features enabled for this deployment
     pub security_features: Vec<String>,
+    /// AI provider integrations configured for this deployment
     pub ai_providers: Vec<String>,
+    /// Cron expression for automated backups (e.g., "0 2 * * *")
     pub backup_schedule: String,
+    /// Whether Prometheus/Grafana monitoring is enabled
     pub monitoring_enabled: bool,
 }
 
 /// Platform deployment trait
 #[async_trait::async_trait]
 pub trait PlatformDeployer: Send + Sync {
+    /// Execute the platform-specific deployment and return the result.
+    ///
+    /// Implementations must provision all required infrastructure resources and
+    /// return the network endpoints, resource identifiers, and deployment logs.
     async fn deploy(
         &self,
         deployment_id: String,
@@ -513,10 +588,15 @@ pub trait PlatformDeployer: Send + Sync {
 /// Platform deployment result
 #[derive(Debug, Clone)]
 pub struct PlatformDeploymentResult {
+    /// Unique identifier for this deployment run, matching the provisioner request
     pub deployment_id: String,
+    /// Platform on which the deployment was executed
     pub platform_type: PlatformType,
+    /// Network addresses for reaching the deployed ProximaDB instance
     pub endpoints: DeploymentEndpoints,
+    /// Platform-specific resource identifiers created during deployment
     pub resource_ids: Vec<String>,
+    /// Human-readable log lines describing each deployment step taken
     pub deployment_logs: Vec<String>,
 }
 
@@ -525,6 +605,7 @@ pub struct PlatformDeploymentResult {
 pub struct KubernetesDeployer;
 
 impl KubernetesDeployer {
+    /// Create a new `KubernetesDeployer`
     pub fn new() -> Self {
         Self
     }
@@ -600,6 +681,7 @@ impl PlatformDeployer for KubernetesDeployer {
 pub struct DockerDeployer;
 
 impl DockerDeployer {
+    /// Create a new `DockerDeployer`
     pub fn new() -> Self {
         Self
     }
@@ -711,9 +793,11 @@ networks:
 }
 
 // Additional platform deployers...
+/// AWS platform deployer implementation
 #[derive(Debug)]
 pub struct AWSDeployer;
 impl AWSDeployer {
+    /// Create a new `AWSDeployer`
     pub fn new() -> Self {
         Self
     }
@@ -750,9 +834,11 @@ impl PlatformDeployer for AWSDeployer {
     }
 }
 
+/// Azure platform deployer implementation
 #[derive(Debug)]
 pub struct AzureDeployer;
 impl AzureDeployer {
+    /// Create a new `AzureDeployer`
     pub fn new() -> Self {
         Self
     }
@@ -794,6 +880,7 @@ impl PlatformDeployer for AzureDeployer {
 pub struct ValidationEngine;
 
 impl ValidationEngine {
+    /// Create a new `ValidationEngine`
     pub fn new() -> Self {
         Self
     }
@@ -965,34 +1052,53 @@ impl Default for ValidationEngine {
 }
 
 // Supporting types
+/// Result returned after configuring monitoring for a deployed instance
 #[derive(Debug, Clone)]
 pub struct MonitoringSetupResult {
+    /// Whether the Grafana/web dashboard was successfully configured
     pub dashboard_configured: bool,
+    /// Whether alerting rules were successfully applied
     pub alerting_configured: bool,
+    /// Whether log aggregation pipelines were successfully configured
     pub logging_configured: bool,
+    /// URLs for the monitoring endpoints created during setup
     pub monitoring_endpoints: Vec<String>,
 }
 
+/// Custom network port assignments for a ProximaDB deployment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortConfiguration {
+    /// TCP port for the REST API (default 5678)
     pub rest_port: u16,
+    /// TCP port for the gRPC API (default 5679)
     pub grpc_port: u16,
+    /// TCP port for the web dashboard (default 8080)
     pub dashboard_port: u16,
+    /// TCP port for Prometheus metrics (default 9090)
     pub metrics_port: u16,
 }
 
+/// Automated backup settings for a deployment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupConfiguration {
+    /// Whether scheduled automated backups are enabled
     pub enable_automated_backup: bool,
+    /// Cron expression defining the backup frequency
     pub backup_schedule: String,
+    /// Number of days to retain backup snapshots before deletion
     pub retention_days: u32,
+    /// Optional object-storage URL where backups are uploaded (e.g., "s3://bucket/prefix")
     pub backup_storage_url: Option<String>,
 }
 
+/// Troubleshooting guidance bundled with a deployment result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TroubleshootingInfo {
+    /// Descriptions of known issues that may affect this deployment
     pub common_issues: Vec<String>,
+    /// Step-by-step instructions for resolving detected issues
     pub resolution_steps: Vec<String>,
+    /// Contact address or URL for reaching enterprise support
     pub support_contact: String,
 }
 
@@ -1114,58 +1220,89 @@ mod tests {
 }
 
 // Additional type definitions for missing structs
+/// Configuration for the monitoring dashboard panel layout
 #[derive(Debug, Clone)]
 pub struct DashboardConfig {
+    /// Whether the dashboard is enabled
     pub enabled: bool,
+    /// How often the dashboard auto-refreshes in seconds
     pub refresh_interval_seconds: u32,
+    /// List of panel names to include in the dashboard layout
     pub panels: Vec<String>,
 }
 
+/// Collection of alerting rules for a deployment
 #[derive(Debug, Clone)]
 pub struct AlertingRules {
+    /// Individual alert rules to apply
     pub rules: Vec<AlertRule>,
 }
 
+/// A single threshold-based alerting rule
 #[derive(Debug, Clone)]
 pub struct AlertRule {
+    /// Unique name identifying this alert rule
     pub name: String,
+    /// Human-readable condition expression (e.g., "cpu_usage > 80%")
     pub condition: String,
+    /// Numeric threshold value that triggers the alert
     pub threshold: f64,
 }
 
+/// Log collection and retention configuration
 #[derive(Debug, Clone)]
 pub struct LoggingConfig {
+    /// Minimum log severity level to capture (e.g., "info", "debug")
     pub log_level: String,
+    /// Number of days to retain collected logs
     pub retention_days: u32,
+    /// Whether log aggregation across nodes is enabled
     pub aggregation_enabled: bool,
 }
 
+/// An individual action within a post-deployment next-steps list
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NextStepAction {
+    /// Categorisation of the action (e.g., "configuration", "verification")
     pub step_type: String,
+    /// Detailed description of what the action entails
     pub description: String,
+    /// Optional URL linking to documentation or tooling for this action
     pub url: Option<String>,
+    /// Approximate time to complete this action in minutes
     pub estimated_time_minutes: u32,
 }
 
+/// Summary of security features enabled for a deployment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityFeatures {
+    /// Whether TLS encryption is active on all connections
     pub tls_enabled: bool,
+    /// Whether audit logging of data access is enabled
     pub audit_logging: bool,
+    /// Whether enterprise SSO integration is configured
     pub sso_integration: bool,
 }
 
+/// Configuration for a single AI provider integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIProviderConfig {
+    /// Name of the AI provider (e.g., "OpenAI", "AzureOpenAI")
     pub provider_name: String,
+    /// Whether this provider integration is active
     pub enabled: bool,
+    /// Provider-specific key-value configuration pairs (e.g., API keys, endpoints)
     pub config: std::collections::HashMap<String, String>,
 }
 
+/// Backup schedule definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupSchedule {
+    /// Human-readable or cron-style frequency expression (e.g., "daily", "0 2 * * *")
     pub frequency: String,
+    /// Number of days to retain backup snapshots
     pub retention_days: u32,
+    /// Backup type identifier (e.g., "full", "incremental")
     pub backup_type: String,
 }
 

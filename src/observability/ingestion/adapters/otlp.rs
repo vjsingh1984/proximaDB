@@ -21,8 +21,7 @@ use tower_http::trace::TraceLayer;
 use super::{AdapterConfig, InputAdapter};
 use crate::observability::ObservabilityService;
 use crate::proto::proximadb_v1::{
-    LogEntry, MetricSample, Severity, SpanKind, SpanStatus, SpanStatusCode, SqlValue, TraceData,
-    sql_value,
+    LogEntry, Severity, SpanKind, SpanStatus, SpanStatusCode, SqlValue, TraceData, sql_value,
 };
 
 /// OTLP adapter for OpenTelemetry protocol
@@ -273,244 +272,6 @@ pub struct OtlpErrorResponse {
     pub message: String,
 }
 
-// ---- OTLP Logs JSON structures ----
-
-/// OTLP log export request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpExportLogsServiceRequest {
-    /// Resource logs
-    #[serde(rename = "resourceLogs")]
-    pub resource_logs: Vec<OtlpResourceLogs>,
-}
-
-/// OTLP resource logs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpResourceLogs {
-    /// Resource attributes
-    pub resource: Option<OtlpResource>,
-    /// Scope logs
-    #[serde(rename = "scopeLogs")]
-    pub scope_logs: Vec<OtlpScopeLogs>,
-    /// Schema URL
-    #[serde(rename = "schemaUrl")]
-    pub schema_url: Option<String>,
-}
-
-/// OTLP scope logs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpScopeLogs {
-    /// Instrumentation scope
-    pub scope: Option<OtlpInstrumentationScope>,
-    /// Log records
-    #[serde(rename = "logRecords")]
-    pub log_records: Vec<OtlpLogRecord>,
-    /// Schema URL
-    #[serde(rename = "schemaUrl")]
-    pub schema_url: Option<String>,
-}
-
-/// OTLP log record
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpLogRecord {
-    /// Timestamp (Unix epoch nanoseconds)
-    #[serde(rename = "timeUnixNano", default)]
-    pub time_unix_nano: String,
-    /// Observed timestamp (Unix epoch nanoseconds)
-    #[serde(rename = "observedTimeUnixNano", default)]
-    pub observed_time_unix_nano: String,
-    /// Severity number (1-24)
-    #[serde(rename = "severityNumber", default)]
-    pub severity_number: i32,
-    /// Severity text
-    #[serde(rename = "severityText", default)]
-    pub severity_text: String,
-    /// Log body
-    pub body: Option<OtlpAnyValue>,
-    /// Attributes
-    #[serde(default)]
-    pub attributes: Vec<OtlpKeyValue>,
-    /// Trace ID (for correlated logs)
-    #[serde(rename = "traceId", default)]
-    pub trace_id: String,
-    /// Span ID (for correlated logs)
-    #[serde(rename = "spanId", default)]
-    pub span_id: String,
-}
-
-/// OTLP log export response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpExportLogsServiceResponse {
-    /// Partial success
-    #[serde(rename = "partialSuccess")]
-    pub partial_success: Option<OtlpLogsPartialSuccess>,
-}
-
-/// OTLP logs partial success
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpLogsPartialSuccess {
-    /// Number of rejected log records
-    #[serde(rename = "rejectedLogRecords")]
-    pub rejected_log_records: i64,
-    /// Error message
-    #[serde(rename = "errorMessage")]
-    pub error_message: String,
-}
-
-// ---- OTLP Metrics JSON structures ----
-
-/// OTLP metric export request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpExportMetricsServiceRequest {
-    /// Resource metrics
-    #[serde(rename = "resourceMetrics")]
-    pub resource_metrics: Vec<OtlpResourceMetrics>,
-}
-
-/// OTLP resource metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpResourceMetrics {
-    /// Resource attributes
-    pub resource: Option<OtlpResource>,
-    /// Scope metrics
-    #[serde(rename = "scopeMetrics")]
-    pub scope_metrics: Vec<OtlpScopeMetrics>,
-    /// Schema URL
-    #[serde(rename = "schemaUrl")]
-    pub schema_url: Option<String>,
-}
-
-/// OTLP scope metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpScopeMetrics {
-    /// Instrumentation scope
-    pub scope: Option<OtlpInstrumentationScope>,
-    /// Metrics
-    pub metrics: Vec<OtlpMetric>,
-    /// Schema URL
-    #[serde(rename = "schemaUrl")]
-    pub schema_url: Option<String>,
-}
-
-/// OTLP metric (supports gauge, sum, histogram)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpMetric {
-    /// Metric name
-    pub name: String,
-    /// Metric description
-    #[serde(default)]
-    pub description: String,
-    /// Metric unit
-    #[serde(default)]
-    pub unit: String,
-    /// Gauge data points
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gauge: Option<OtlpGauge>,
-    /// Sum data points
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sum: Option<OtlpSum>,
-    /// Histogram data points
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub histogram: Option<OtlpHistogram>,
-}
-
-/// OTLP gauge
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpGauge {
-    /// Data points
-    #[serde(rename = "dataPoints")]
-    pub data_points: Vec<OtlpNumberDataPoint>,
-}
-
-/// OTLP sum (counter)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpSum {
-    /// Data points
-    #[serde(rename = "dataPoints")]
-    pub data_points: Vec<OtlpNumberDataPoint>,
-    /// Aggregation temporality
-    #[serde(rename = "aggregationTemporality", default)]
-    pub aggregation_temporality: i32,
-    /// Is monotonic
-    #[serde(rename = "isMonotonic", default)]
-    pub is_monotonic: bool,
-}
-
-/// OTLP histogram
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpHistogram {
-    /// Data points
-    #[serde(rename = "dataPoints")]
-    pub data_points: Vec<OtlpHistogramDataPoint>,
-    /// Aggregation temporality
-    #[serde(rename = "aggregationTemporality", default)]
-    pub aggregation_temporality: i32,
-}
-
-/// OTLP number data point (for gauge and sum)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpNumberDataPoint {
-    /// Attributes
-    #[serde(default)]
-    pub attributes: Vec<OtlpKeyValue>,
-    /// Start time (Unix epoch nanoseconds)
-    #[serde(rename = "startTimeUnixNano", default)]
-    pub start_time_unix_nano: String,
-    /// Time (Unix epoch nanoseconds)
-    #[serde(rename = "timeUnixNano", default)]
-    pub time_unix_nano: String,
-    /// Double value
-    #[serde(rename = "asDouble", skip_serializing_if = "Option::is_none")]
-    pub as_double: Option<f64>,
-    /// Int value
-    #[serde(rename = "asInt", skip_serializing_if = "Option::is_none")]
-    pub as_int: Option<i64>,
-}
-
-/// OTLP histogram data point
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpHistogramDataPoint {
-    /// Attributes
-    #[serde(default)]
-    pub attributes: Vec<OtlpKeyValue>,
-    /// Start time (Unix epoch nanoseconds)
-    #[serde(rename = "startTimeUnixNano", default)]
-    pub start_time_unix_nano: String,
-    /// Time (Unix epoch nanoseconds)
-    #[serde(rename = "timeUnixNano", default)]
-    pub time_unix_nano: String,
-    /// Count
-    #[serde(default)]
-    pub count: u64,
-    /// Sum
-    #[serde(default)]
-    pub sum: Option<f64>,
-    /// Bucket counts
-    #[serde(rename = "bucketCounts", default)]
-    pub bucket_counts: Vec<u64>,
-    /// Explicit bounds
-    #[serde(rename = "explicitBounds", default)]
-    pub explicit_bounds: Vec<f64>,
-}
-
-/// OTLP metric export response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpExportMetricsServiceResponse {
-    /// Partial success
-    #[serde(rename = "partialSuccess")]
-    pub partial_success: Option<OtlpMetricsPartialSuccess>,
-}
-
-/// OTLP metrics partial success
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OtlpMetricsPartialSuccess {
-    /// Number of rejected data points
-    #[serde(rename = "rejectedDataPoints")]
-    pub rejected_data_points: i64,
-    /// Error message
-    #[serde(rename = "errorMessage")]
-    pub error_message: String,
-}
-
 impl OtlpAdapter {
     /// Create a new OTLP adapter
     pub fn new(
@@ -547,7 +308,7 @@ impl OtlpAdapter {
     }
 
     /// Convert OTLP span to ProximaDB TraceData
-    pub fn convert_otlp_span(
+    fn convert_otlp_span(
         &self,
         otlp_span: &OtlpSpan,
         resource_attributes: &HashMap<String, String>,
@@ -725,67 +486,22 @@ impl OtlpAdapter {
         }
     }
 
-    /// Start gRPC server
-    ///
-    /// Uses an HTTP/2 server with JSON content type on the standard OTLP gRPC port (4317).
-    /// This accepts the same JSON payloads as the HTTP transport but on the gRPC service paths,
-    /// providing compatibility with OTLP exporters configured for gRPC transport.
+    /// Start gRPC server on the configured bind address (default OTLP gRPC port: 4317)
     async fn start_grpc(&self) -> Result<()> {
-        use axum::routing::post;
-
-        let state = (
-            self.observability_service.clone(),
-            self.namespace.clone(),
-            self.events_received.clone(),
-        );
-
-        let app = Router::new()
-            // gRPC-style service paths (used by OTLP gRPC exporters with JSON encoding)
-            .route(
-                "/opentelemetry.proto.collector.trace.v1.TraceService/Export",
-                post(otlp_grpc_traces_handler),
-            )
-            .route(
-                "/opentelemetry.proto.collector.logs.v1.LogsService/Export",
-                post(otlp_grpc_logs_handler),
-            )
-            .route(
-                "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
-                post(otlp_grpc_metrics_handler),
-            )
-            // Also serve standard HTTP paths for convenience
-            .route("/v1/traces", post(otlp_traces_handler))
-            .route("/v1/logs", post(otlp_logs_handler))
-            .route("/v1/metrics", post(otlp_metrics_handler))
-            .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()))
-            .with_state(state);
-
-        tracing::info!(
-            "OTLP gRPC adapter listening on {} for traces, logs, and metrics",
-            self.config.bind_address
-        );
-
-        // Store the sender for shutdown
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         *self.shutdown_tx.lock().await = Some(shutdown_tx);
 
-        // Create HTTP/2 server (gRPC transport layer)
-        let addr = self.config.bind_address;
-        let server = hyper::Server::bind(&addr).serve(app.into_make_service());
+        let service = super::otlp_grpc::OtlpGrpcService::new(
+            self.observability_service.clone(),
+            self.namespace.clone(),
+        );
 
-        // Spawn graceful shutdown task
-        let graceful = server.with_graceful_shutdown(async move {
-            shutdown_rx.await.ok();
-            tracing::info!("OTLP gRPC adapter shutting down");
-        });
-
-        // Wait for server to complete
-        graceful
+        service
+            .serve_with_shutdown(self.config.bind_address, shutdown_rx)
             .await
-            .map_err(|e| anyhow::anyhow!("OTLP gRPC server error: {}", e))
     }
 
-    /// Start HTTP server for OTLP trace, log, and metric ingestion
+    /// Start HTTP server for OTLP trace ingestion
     async fn start_http(&self) -> Result<()> {
         use axum::routing::post;
 
@@ -793,8 +509,6 @@ impl OtlpAdapter {
 
         let app = Router::new()
             .route("/v1/traces", post(otlp_traces_handler))
-            .route("/v1/logs", post(otlp_logs_handler))
-            .route("/v1/metrics", post(otlp_metrics_handler))
             .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()))
             .with_state((
                 self.observability_service.clone(),
@@ -803,7 +517,7 @@ impl OtlpAdapter {
             ));
 
         tracing::info!(
-            "OTLP HTTP adapter listening on {} for traces, logs, and metrics",
+            "OTLP HTTP adapter listening on {} for traces",
             self.config.bind_address
         );
 
@@ -874,9 +588,7 @@ async fn otlp_traces_handler(
             for otlp_span in &scope_span.spans {
                 // Convert OTLP span to ProximaDB TraceData
                 let adapter = OtlpAdapter::with_defaults(
-                    "127.0.0.1:4318"
-                        .parse()
-                        .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 4318))),
+                    "127.0.0.1:4318".parse().unwrap(),
                     OtlpTransport::Http,
                     service.clone(),
                 );
@@ -918,298 +630,6 @@ async fn otlp_traces_handler(
             ))
         }
     }
-}
-
-/// OTLP logs HTTP handler
-async fn otlp_logs_handler(
-    State((service, namespace, events_received)): State<(
-        Arc<ObservabilityService>,
-        String,
-        Arc<AtomicU64>,
-    )>,
-    Json(req): Json<OtlpExportLogsServiceRequest>,
-) -> Result<Json<OtlpExportLogsServiceResponse>, (StatusCode, Json<OtlpErrorResponse>)> {
-    let mut logs = Vec::new();
-
-    for resource_log in &req.resource_logs {
-        // Extract resource attributes
-        let resource_attributes: HashMap<String, String> = resource_log
-            .resource
-            .as_ref()
-            .map(|r| extract_resource_attributes(&r.attributes))
-            .unwrap_or_default();
-
-        for scope_log in &resource_log.scope_logs {
-            for log_record in &scope_log.log_records {
-                let timestamp_ns = log_record
-                    .time_unix_nano
-                    .parse::<i64>()
-                    .or_else(|_| log_record.observed_time_unix_nano.parse::<i64>())
-                    .unwrap_or_else(|_| chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
-
-                // Extract body as message string
-                let message = log_record
-                    .body
-                    .as_ref()
-                    .and_then(|v| {
-                        v.string_value
-                            .clone()
-                            .or_else(|| serde_json::to_string(v).ok())
-                    })
-                    .unwrap_or_default();
-
-                // Convert attributes to string map
-                let attributes: HashMap<String, String> = log_record
-                    .attributes
-                    .iter()
-                    .filter_map(|kv| {
-                        otlp_any_value_to_string(&kv.value).map(|v| (kv.key.clone(), v))
-                    })
-                    .collect();
-
-                let source = resource_attributes.get("host.name").cloned();
-                let service_name = resource_attributes.get("service.name").cloned();
-
-                // Build fields from attributes
-                let fields: HashMap<String, SqlValue> = attributes
-                    .into_iter()
-                    .chain(resource_attributes.clone())
-                    .map(|(k, v)| {
-                        (
-                            k,
-                            SqlValue {
-                                value: Some(sql_value::Value::StringValue(v)),
-                            },
-                        )
-                    })
-                    .collect();
-
-                // Add trace correlation fields if present
-                let mut entry_fields = fields;
-                if !log_record.trace_id.is_empty() {
-                    entry_fields.insert(
-                        "trace_id".to_string(),
-                        SqlValue {
-                            value: Some(sql_value::Value::StringValue(log_record.trace_id.clone())),
-                        },
-                    );
-                }
-                if !log_record.span_id.is_empty() {
-                    entry_fields.insert(
-                        "span_id".to_string(),
-                        SqlValue {
-                            value: Some(sql_value::Value::StringValue(log_record.span_id.clone())),
-                        },
-                    );
-                }
-
-                logs.push(LogEntry {
-                    timestamp_ns,
-                    severity: OtlpAdapter::convert_severity(log_record.severity_number) as i32,
-                    message,
-                    fields: entry_fields,
-                    source,
-                    service: service_name,
-                });
-            }
-        }
-    }
-
-    match service.ingest_logs(&namespace, logs, None).await {
-        Ok(result) => {
-            events_received.fetch_add(result.ingested, Ordering::Relaxed);
-            tracing::debug!(
-                "OTLP: Ingested {} logs, {} failed",
-                result.ingested,
-                result.failed
-            );
-
-            Ok(Json(OtlpExportLogsServiceResponse {
-                partial_success: if result.failed > 0 {
-                    Some(OtlpLogsPartialSuccess {
-                        rejected_log_records: result.failed as i64,
-                        error_message: result.errors.join("; "),
-                    })
-                } else {
-                    None
-                },
-            }))
-        }
-        Err(e) => {
-            tracing::error!("OTLP: Failed to ingest logs: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(OtlpErrorResponse {
-                    code: 2,
-                    message: format!("Failed to ingest logs: {}", e),
-                }),
-            ))
-        }
-    }
-}
-
-/// OTLP metrics HTTP handler
-async fn otlp_metrics_handler(
-    State((service, namespace, events_received)): State<(
-        Arc<ObservabilityService>,
-        String,
-        Arc<AtomicU64>,
-    )>,
-    Json(req): Json<OtlpExportMetricsServiceRequest>,
-) -> Result<Json<OtlpExportMetricsServiceResponse>, (StatusCode, Json<OtlpErrorResponse>)> {
-    let mut samples = Vec::new();
-
-    for resource_metric in &req.resource_metrics {
-        let resource_attributes: HashMap<String, String> = resource_metric
-            .resource
-            .as_ref()
-            .map(|r| extract_resource_attributes(&r.attributes))
-            .unwrap_or_default();
-
-        for scope_metric in &resource_metric.scope_metrics {
-            for metric in &scope_metric.metrics {
-                // Extract data points from gauge, sum, or histogram
-                let data_points = extract_metric_data_points(metric);
-
-                for (timestamp_ns, value, point_attributes) in data_points {
-                    // Merge resource attributes with point attributes
-                    let mut labels = resource_attributes.clone();
-                    labels.extend(point_attributes);
-
-                    // Add metric unit as a label if present
-                    if !metric.unit.is_empty() {
-                        labels.insert("unit".to_string(), metric.unit.clone());
-                    }
-
-                    samples.push(MetricSample {
-                        name: metric.name.clone(),
-                        timestamp_ns,
-                        value,
-                        labels,
-                    });
-                }
-            }
-        }
-    }
-
-    match service.ingest_metrics(&namespace, samples).await {
-        Ok(result) => {
-            events_received.fetch_add(result.ingested, Ordering::Relaxed);
-            tracing::debug!(
-                "OTLP: Ingested {} metrics, {} failed",
-                result.ingested,
-                result.failed
-            );
-
-            Ok(Json(OtlpExportMetricsServiceResponse {
-                partial_success: if result.failed > 0 {
-                    Some(OtlpMetricsPartialSuccess {
-                        rejected_data_points: result.failed as i64,
-                        error_message: result.errors.join("; "),
-                    })
-                } else {
-                    None
-                },
-            }))
-        }
-        Err(e) => {
-            tracing::error!("OTLP: Failed to ingest metrics: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(OtlpErrorResponse {
-                    code: 2,
-                    message: format!("Failed to ingest metrics: {}", e),
-                }),
-            ))
-        }
-    }
-}
-
-/// gRPC-style handler for traces (delegates to HTTP handler)
-async fn otlp_grpc_traces_handler(
-    state: State<(Arc<ObservabilityService>, String, Arc<AtomicU64>)>,
-    body: Json<OtlpExportTracesServiceRequest>,
-) -> Result<Json<OtlpExportTracesServiceResponse>, (StatusCode, Json<OtlpErrorResponse>)> {
-    otlp_traces_handler(state, body).await
-}
-
-/// gRPC-style handler for logs (delegates to HTTP handler)
-async fn otlp_grpc_logs_handler(
-    state: State<(Arc<ObservabilityService>, String, Arc<AtomicU64>)>,
-    body: Json<OtlpExportLogsServiceRequest>,
-) -> Result<Json<OtlpExportLogsServiceResponse>, (StatusCode, Json<OtlpErrorResponse>)> {
-    otlp_logs_handler(state, body).await
-}
-
-/// gRPC-style handler for metrics (delegates to HTTP handler)
-async fn otlp_grpc_metrics_handler(
-    state: State<(Arc<ObservabilityService>, String, Arc<AtomicU64>)>,
-    body: Json<OtlpExportMetricsServiceRequest>,
-) -> Result<Json<OtlpExportMetricsServiceResponse>, (StatusCode, Json<OtlpErrorResponse>)> {
-    otlp_metrics_handler(state, body).await
-}
-
-/// Extract resource attributes from OTLP key-value pairs into a string map
-fn extract_resource_attributes(attributes: &[OtlpKeyValue]) -> HashMap<String, String> {
-    attributes
-        .iter()
-        .filter_map(|kv| otlp_any_value_to_string(&kv.value).map(|v| (kv.key.clone(), v)))
-        .collect()
-}
-
-/// Convert an OtlpAnyValue to a string representation
-fn otlp_any_value_to_string(value: &OtlpAnyValue) -> Option<String> {
-    if let Some(s) = &value.string_value {
-        Some(s.clone())
-    } else if let Some(b) = value.bool_value {
-        Some(b.to_string())
-    } else if let Some(i) = value.int_value {
-        Some(i.to_string())
-    } else if let Some(f) = value.double_value {
-        Some(f.to_string())
-    } else { value.bytes_value.as_ref().map(|b| b.clone()) }
-}
-
-/// Extract data points from an OTLP metric as (timestamp_ns, value, labels) tuples
-fn extract_metric_data_points(metric: &OtlpMetric) -> Vec<(i64, f64, HashMap<String, String>)> {
-    let mut points = Vec::new();
-
-    // Extract from gauge
-    if let Some(gauge) = &metric.gauge {
-        for dp in &gauge.data_points {
-            let ts = dp.time_unix_nano.parse::<i64>().unwrap_or(0);
-            let value = dp
-                .as_double
-                .unwrap_or_else(|| dp.as_int.unwrap_or(0) as f64);
-            let labels = extract_resource_attributes(&dp.attributes);
-            points.push((ts, value, labels));
-        }
-    }
-
-    // Extract from sum (counter)
-    if let Some(sum) = &metric.sum {
-        for dp in &sum.data_points {
-            let ts = dp.time_unix_nano.parse::<i64>().unwrap_or(0);
-            let value = dp
-                .as_double
-                .unwrap_or_else(|| dp.as_int.unwrap_or(0) as f64);
-            let labels = extract_resource_attributes(&dp.attributes);
-            points.push((ts, value, labels));
-        }
-    }
-
-    // Extract from histogram (use sum as the representative value)
-    if let Some(histogram) = &metric.histogram {
-        for dp in &histogram.data_points {
-            let ts = dp.time_unix_nano.parse::<i64>().unwrap_or(0);
-            let value = dp.sum.unwrap_or(0.0);
-            let mut labels = extract_resource_attributes(&dp.attributes);
-            labels.insert("_count".to_string(), dp.count.to_string());
-            points.push((ts, value, labels));
-        }
-    }
-
-    points
 }
 
 #[async_trait]

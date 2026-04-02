@@ -21,27 +21,40 @@ use crate::services::operations::VectorOps;
 pub enum DmlStatement {
     /// INSERT INTO table (columns) VALUES (values), ...
     Insert {
+        /// Target table name.
         table_name: String,
+        /// Column names in insertion order.
         columns: Vec<String>,
+        /// Rows to insert; each inner `Vec` is one row of values.
         values: Vec<Vec<SqlValueLiteral>>,
     },
     /// UPDATE table SET col = val, ... WHERE condition
     Update {
+        /// Target table name.
         table_name: String,
+        /// Column-value pairs to set.
         assignments: Vec<(String, SqlValueLiteral)>,
+        /// Optional filter restricting which rows are updated.
         where_clause: Option<WhereClause>,
     },
     /// DELETE FROM table WHERE condition
     Delete {
+        /// Target table name.
         table_name: String,
+        /// Optional filter restricting which rows are deleted.
         where_clause: Option<WhereClause>,
     },
     /// INSERT INTO ... ON CONFLICT DO UPDATE
     Upsert {
+        /// Target table name.
         table_name: String,
+        /// Column names in insertion order.
         columns: Vec<String>,
+        /// Rows to insert or update; each inner `Vec` is one row of values.
         values: Vec<Vec<SqlValueLiteral>>,
+        /// Columns that define the conflict (unique key).
         conflict_columns: Vec<String>,
+        /// Column-value pairs applied when a conflict is detected.
         update_assignments: Vec<(String, SqlValueLiteral)>,
     },
 }
@@ -73,7 +86,9 @@ pub enum SqlValueLiteral {
     Default,
     /// Function call (e.g., NOW(), CURRENT_TIMESTAMP)
     Function {
+        /// SQL function name (case-insensitive).
         name: String,
+        /// Arguments passed to the function.
         args: Vec<SqlValueLiteral>,
     },
 }
@@ -81,7 +96,9 @@ pub enum SqlValueLiteral {
 /// WHERE clause for UPDATE/DELETE
 #[derive(Debug, Clone)]
 pub struct WhereClause {
+    /// Individual conditions that make up the clause.
     pub conditions: Vec<Condition>,
+    /// How conditions are combined (AND / OR).
     pub operator: LogicalOperator,
 }
 
@@ -90,34 +107,54 @@ pub struct WhereClause {
 pub enum Condition {
     /// Simple comparison: column op value
     Comparison {
+        /// Column name to compare.
         column: String,
+        /// Comparison operator to apply.
         operator: ComparisonOperator,
+        /// Right-hand side value.
         value: SqlValueLiteral,
     },
     /// IN list: column IN (values)
     In {
+        /// Column name to test.
         column: String,
+        /// Set of values to test membership against.
         values: Vec<SqlValueLiteral>,
+        /// When `true`, the condition is `NOT IN`.
         negated: bool,
     },
     /// BETWEEN: column BETWEEN low AND high
     Between {
+        /// Column name to test.
         column: String,
+        /// Lower bound (inclusive).
         low: SqlValueLiteral,
+        /// Upper bound (inclusive).
         high: SqlValueLiteral,
+        /// When `true`, the condition is `NOT BETWEEN`.
         negated: bool,
     },
     /// IS NULL / IS NOT NULL
-    IsNull { column: String, negated: bool },
+    IsNull {
+        /// Column name to test.
+        column: String,
+        /// When `true`, the condition is `IS NOT NULL`.
+        negated: bool,
+    },
     /// LIKE pattern match
     Like {
+        /// Column name to test.
         column: String,
+        /// SQL LIKE pattern (supports `%` and `_` wildcards).
         pattern: String,
+        /// When `true`, the condition is `NOT LIKE`.
         negated: bool,
     },
     /// Nested conditions with AND/OR
     Nested {
+        /// Inner conditions to combine.
         conditions: Vec<Condition>,
+        /// Logical operator applied to inner conditions.
         operator: LogicalOperator,
     },
 }
@@ -125,18 +162,26 @@ pub enum Condition {
 /// Comparison operators
 #[derive(Debug, Clone, Copy)]
 pub enum ComparisonOperator {
+    /// `=`
     Equal,
+    /// `<>` or `!=`
     NotEqual,
+    /// `<`
     LessThan,
+    /// `<=`
     LessThanOrEqual,
+    /// `>`
     GreaterThan,
+    /// `>=`
     GreaterThanOrEqual,
 }
 
 /// Logical operators for combining conditions
 #[derive(Debug, Clone, Copy)]
 pub enum LogicalOperator {
+    /// All conditions must be satisfied (SQL `AND`).
     And,
+    /// At least one condition must be satisfied (SQL `OR`).
     Or,
 }
 

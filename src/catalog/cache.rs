@@ -64,19 +64,30 @@ pub struct CatalogCache {
 /// Cache performance statistics
 #[derive(Debug, Clone, Default)]
 pub struct CacheStats {
+    /// Number of namespace cache hits
     pub namespace_hits: u64,
+    /// Number of namespace cache misses
     pub namespace_misses: u64,
+    /// Number of table schema cache hits
     pub table_hits: u64,
+    /// Number of table schema cache misses
     pub table_misses: u64,
+    /// Number of index cache hits
     pub index_hits: u64,
+    /// Number of index cache misses
     pub index_misses: u64,
+    /// Number of statistics cache hits
     pub stats_hits: u64,
+    /// Number of statistics cache misses
     pub stats_misses: u64,
+    /// Total number of entries evicted from the cache
     pub evictions: u64,
+    /// Total number of cache invalidations performed
     pub invalidations: u64,
 }
 
 impl CacheStats {
+    /// Compute the overall cache hit rate as a value in [0.0, 1.0]
     pub fn hit_rate(&self) -> f64 {
         let total_hits = self.namespace_hits + self.table_hits + self.index_hits + self.stats_hits;
         let total_misses =

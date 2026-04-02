@@ -9,17 +9,12 @@
 // - OCSF (Open Cybersecurity Schema Framework)
 // - HTTP (JSON over HTTP)
 
-/// CEF/LEEF adapter for ArcSight and IBM QRadar security log formats.
 pub mod cef_leef;
-/// Fluent Bit/Fluentd forward protocol adapter with MessagePack parsing.
 pub mod fluent;
-/// HTTP/JSON adapter for log ingestion over REST.
 pub mod http;
-/// OCSF (Open Cybersecurity Schema Framework) event adapter.
 pub mod ocsf;
-/// OpenTelemetry Protocol (OTLP) adapter for logs, metrics, and traces.
 pub mod otlp;
-/// Syslog adapter supporting RFC 3164 and RFC 5424 over TCP/UDP.
+pub mod otlp_grpc;
 pub mod syslog;
 
 use std::net::SocketAddr;

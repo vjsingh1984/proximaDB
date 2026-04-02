@@ -544,7 +544,9 @@ pub enum MigrationError {
     /// Invalid migration mode transition
     #[error("Invalid mode transition: {from:?} -> {to:?}")]
     InvalidModeTransition {
+        /// The current (source) migration mode.
         from: MigrationMode,
+        /// The requested (target) migration mode.
         to: MigrationMode,
     },
 

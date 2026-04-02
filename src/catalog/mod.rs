@@ -521,6 +521,7 @@ pub struct TableIdentifier {
 }
 
 impl TableIdentifier {
+    /// Create a new table identifier with the given namespace path and table name
     pub fn new(namespace: Vec<String>, name: String) -> Self {
         Self { namespace, name }
     }

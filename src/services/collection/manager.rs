@@ -166,10 +166,15 @@ impl CollectionService {
         &self.storage_config
     }
 
+    /// Returns `true` if multi-tenant mode is enabled (a tenant manager is configured).
     pub fn multi_tenant_enabled(&self) -> bool {
         self.tenant_manager.is_some()
     }
 
+    /// Load tenant context for the given tenant ID.
+    ///
+    /// Returns `Ok(None)` when multi-tenant mode is disabled.
+    /// Returns an error if the tenant ID is missing or the tenant is not found.
     pub fn load_tenant_context(
         &self,
         tenant_id: Option<&str>,
@@ -312,6 +317,7 @@ impl CollectionService {
         self.metadata_backend.get_collection(collection_name).await
     }
 
+    /// List all collections, filtered to the given tenant context if multi-tenant mode is active.
     pub async fn list_collections_with_tenant_context(
         &self,
         tenant_context: Option<&crate::storage::tenant::TenantContext>,
@@ -1714,10 +1720,15 @@ impl std::fmt::Debug for CollectionService {
 /// Response for collection operations - includes the full collection data
 #[derive(Debug, Clone)]
 pub struct CollectionServiceResponse {
+    /// Whether the operation completed successfully.
     pub success: bool,
-    pub collection: Option<Collection>, // Proto-first architecture
+    /// The collection affected by the operation, if applicable (proto-first architecture).
+    pub collection: Option<Collection>,
+    /// Filesystem path where the collection's data is stored.
     pub storage_path: Option<String>,
+    /// Machine-readable error code when the operation fails.
     pub error_code: Option<String>,
+    /// Wall-clock time taken to process the request, in microseconds.
     pub processing_time_us: i64,
 }
 
@@ -1773,6 +1784,7 @@ pub struct CollectionServiceBuilder {
 }
 
 impl CollectionServiceBuilder {
+    /// Create a new builder with no dependencies configured.
     pub fn new() -> Self {
         Self {
             metadata_backend: None,
@@ -1780,16 +1792,21 @@ impl CollectionServiceBuilder {
         }
     }
 
+    /// Set the metadata backend used for collection persistence.
     pub fn with_metadata_backend(mut self, backend: Arc<dyn InternalCollectionProvider>) -> Self {
         self.metadata_backend = Some(backend);
         self
     }
 
+    /// Set the storage configuration (data paths, engine settings, etc.).
     pub fn with_storage_config(mut self, config: StorageConfig) -> Self {
         self.storage_config = Some(config);
         self
     }
 
+    /// Consume the builder and construct a [`CollectionService`].
+    ///
+    /// Returns an error if the required metadata backend has not been provided.
     pub async fn build(self) -> Result<CollectionService> {
         let metadata_backend = self
             .metadata_backend

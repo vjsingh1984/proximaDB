@@ -246,13 +246,20 @@ use crate::storage::engines::impls::sst::SstEngine;
 /// Optional debug/explain hints for vector planning and pruning.
 #[derive(Debug, Clone, Default)]
 pub struct SearchPlanHints {
+    /// Whether the result was served from the query cache.
     pub cache_hit: bool,
+    /// Number of SST/HELIX files pruned by the query optimizer.
     pub pruned_files: Option<usize>,
+    /// HNSW `ef_search` value used during this query.
     pub ef_search: Option<usize>,
+    /// IVF `nprobe` value (number of cells searched).
     pub nprobe: Option<usize>,
+    /// Total candidate vectors evaluated before final re-ranking.
     pub candidates: Option<usize>,
-    pub progressive_stages: Option<Vec<String>>, // e.g., ["binary", "int8", "pq", "full"]
-    pub recall_estimates: Option<Vec<f32>>,      // optional per-stage recall estimates
+    /// Ordered list of progressive search stages executed (e.g., `["binary", "int8", "pq", "full"]`).
+    pub progressive_stages: Option<Vec<String>>,
+    /// Estimated recall at each progressive stage, if available.
+    pub recall_estimates: Option<Vec<f32>>,
 }
 
 /// Updated Vector Operations Service using consolidated optimizer
@@ -428,6 +435,8 @@ impl VectorOperationsService {
         Ok(())
     }
 
+    /// Execute a v1 vector search after validating that the caller has access to the collection
+    /// under the provided tenant context.
     pub async fn search_v1_with_tenant_context(
         &self,
         req: crate::proto::proximadb_v1::VectorSearchRequest,
@@ -981,6 +990,7 @@ impl VectorOperationsService {
         self.insert_batch_internal(collection_id, vectors).await
     }
 
+    /// Insert a batch of vectors after validating tenant access and injecting tenant metadata.
     pub async fn insert_batch_with_tenant_context(
         &self,
         collection_id: &str,
@@ -2623,6 +2633,9 @@ impl VectorOperationsService {
     }
 
     // Additional service methods
+
+    /// Validate and insert a batch of vectors, returning the response serialized as a protobuf
+    /// byte vector.
     pub async fn handle_vector_batch_proto_vec(
         &self,
         collection_id: &str,
@@ -2683,6 +2696,9 @@ impl VectorOperationsService {
         Ok(serde_json::to_vec(&response)?)
     }
 
+    /// Insert vectors directly into the storage engine without going through the batch pipeline.
+    ///
+    /// Validates the vectors and writes them to the WAL before forwarding to the engine.
     pub async fn insert_vectors_direct(
         &self,
         collection_id: &str,
@@ -2885,6 +2901,10 @@ impl VectorOperationsService {
         Ok(())
     }
 
+    /// Retrieve a single vector record by ID.
+    ///
+    /// Checks the WAL first for unflushed records before falling back to the storage engine.
+    /// `include_vector` and `include_metadata` control which fields are populated in the result.
     pub async fn vector(
         &self,
         collection_id: &str,
@@ -2938,6 +2958,7 @@ impl VectorOperationsService {
         self.vector(collection_id, vector_id, true, true).await
     }
 
+    /// Flush all pending WAL entries across every collection to durable storage.
     pub async fn force_flush_all(&self) -> Result<()> {
         info!("🔄 Force flushing all collections");
 
@@ -2982,6 +3003,7 @@ impl VectorOperationsService {
         Ok(())
     }
 
+    /// Flush all pending WAL entries for a specific collection to durable storage.
     pub async fn force_flush_collection(&self, collection_id: &str) -> Result<()> {
         info!("🔄 Force flushing collection: {}", collection_id);
 
@@ -3024,6 +3046,8 @@ impl VectorOperationsService {
         Ok(())
     }
 
+    /// Collect and return a JSON snapshot of key operational metrics (WAL, storage, query cache,
+    /// and collection counts).
     pub async fn metrics(&self) -> Result<serde_json::Value> {
         // Collect metrics from various components
         let wal_stats = self.wal_manager.stats().await?;
@@ -3065,6 +3089,8 @@ impl VectorOperationsService {
         }))
     }
 
+    /// Perform a health check across all subsystems (WAL, storage engine, query cache) and return
+    /// a JSON report.
     pub async fn health_check(&self) -> Result<serde_json::Value> {
         let _status = "healthy";
         let issues: Vec<String> = Vec::new();

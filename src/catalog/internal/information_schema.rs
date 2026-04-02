@@ -128,20 +128,34 @@ impl InformationSchemaView {
 /// Row in information_schema.tables
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableRow {
+    /// Name of the catalog that contains this table
     pub table_catalog: String,
+    /// Name of the schema that contains this table
     pub table_schema: String,
+    /// Name of the table
     pub table_name: String,
+    /// Table type (e.g., `BASE TABLE`, `VIEW`, `VECTOR COLLECTION`)
     pub table_type: String,
+    /// Name of the self-referencing column for typed tables (SQL standard)
     pub self_referencing_column_name: Option<String>,
+    /// How the self-referencing column value is generated (SQL standard)
     pub reference_generation: Option<String>,
+    /// Catalog of the user-defined type for typed tables
     pub user_defined_type_catalog: Option<String>,
+    /// Schema of the user-defined type for typed tables
     pub user_defined_type_schema: Option<String>,
+    /// Name of the user-defined type for typed tables
     pub user_defined_type_name: Option<String>,
+    /// Whether rows can be inserted into this table (`YES`/`NO`)
     pub is_insertable_into: String,
+    /// Whether this is a typed table (`YES`/`NO`)
     pub is_typed: String,
+    /// Commit action for temporary tables (SQL standard)
     pub commit_action: Option<String>,
     // ProximaDB extensions
+    /// Enforcement mode for multi-model objects (e.g., `STRICT`, `LOOSE`)
     pub enforcement_mode: Option<String>,
+    /// Data model type label (e.g., `RDBMS`, `VECTOR`, `GRAPH`)
     pub model_type: Option<String>,
 }
 
@@ -181,49 +195,93 @@ impl TableRow {
 /// Row in information_schema.columns
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnRow {
+    /// Name of the catalog that contains the table
     pub table_catalog: String,
+    /// Name of the schema that contains the table
     pub table_schema: String,
+    /// Name of the table that owns this column
     pub table_name: String,
+    /// Name of the column
     pub column_name: String,
+    /// 1-based position of the column within the table
     pub ordinal_position: i32,
+    /// Default value expression for the column
     pub column_default: Option<String>,
+    /// Whether the column accepts NULL values (`YES`/`NO`)
     pub is_nullable: String,
+    /// SQL data type name
     pub data_type: String,
+    /// Maximum character length for character types
     pub character_maximum_length: Option<i32>,
+    /// Maximum octet (byte) length for character types
     pub character_octet_length: Option<i32>,
+    /// Numeric precision for numeric types
     pub numeric_precision: Option<i32>,
+    /// Radix of the numeric precision (2 for binary, 10 for decimal)
     pub numeric_precision_radix: Option<i32>,
+    /// Scale (digits after decimal point) for numeric types
     pub numeric_scale: Option<i32>,
+    /// Fractional seconds precision for datetime types
     pub datetime_precision: Option<i32>,
+    /// Interval type qualifier (e.g., `YEAR`, `MONTH`)
     pub interval_type: Option<String>,
+    /// Precision of the interval leading field
     pub interval_precision: Option<i32>,
+    /// Catalog of the character set (SQL standard)
     pub character_set_catalog: Option<String>,
+    /// Schema of the character set (SQL standard)
     pub character_set_schema: Option<String>,
+    /// Name of the character set used for this column
     pub character_set_name: Option<String>,
+    /// Catalog of the collation (SQL standard)
     pub collation_catalog: Option<String>,
+    /// Schema of the collation (SQL standard)
     pub collation_schema: Option<String>,
+    /// Name of the collation used for this column
     pub collation_name: Option<String>,
+    /// Catalog of the domain, if the column is based on a domain
     pub domain_catalog: Option<String>,
+    /// Schema of the domain, if the column is based on a domain
     pub domain_schema: Option<String>,
+    /// Name of the domain, if the column is based on a domain
     pub domain_name: Option<String>,
+    /// Catalog of the user-defined type (SQL standard)
     pub udt_catalog: Option<String>,
+    /// Schema of the user-defined type (SQL standard)
     pub udt_schema: Option<String>,
+    /// Name of the user-defined type (SQL standard)
     pub udt_name: Option<String>,
+    /// Catalog of the scope table for REF columns
     pub scope_catalog: Option<String>,
+    /// Schema of the scope table for REF columns
     pub scope_schema: Option<String>,
+    /// Name of the scope table for REF columns
     pub scope_name: Option<String>,
+    /// Maximum cardinality for array columns
     pub maximum_cardinality: Option<i32>,
+    /// Data type descriptor identifier (SQL standard)
     pub dtd_identifier: Option<String>,
+    /// Whether the column is self-referencing (`YES`/`NO`)
     pub is_self_referencing: String,
+    /// Whether the column is an identity column (`YES`/`NO`)
     pub is_identity: String,
+    /// How the identity value is generated (`ALWAYS` or `BY DEFAULT`)
     pub identity_generation: Option<String>,
+    /// Starting value of the identity sequence
     pub identity_start: Option<String>,
+    /// Increment value of the identity sequence
     pub identity_increment: Option<String>,
+    /// Maximum value of the identity sequence
     pub identity_maximum: Option<String>,
+    /// Minimum value of the identity sequence
     pub identity_minimum: Option<String>,
+    /// Whether the identity sequence cycles (`YES`/`NO`)
     pub identity_cycle: String,
+    /// Whether the column is generated (`ALWAYS`, `NEVER`)
     pub is_generated: String,
+    /// Expression used to compute a generated column's value
     pub generation_expression: Option<String>,
+    /// Whether the column can be updated (`YES`/`NO`)
     pub is_updatable: String,
 }
 
@@ -306,15 +364,25 @@ impl ColumnRow {
 /// Row in information_schema.table_constraints
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableConstraintRow {
+    /// Catalog that owns the constraint
     pub constraint_catalog: String,
+    /// Schema that owns the constraint
     pub constraint_schema: String,
+    /// Name of the constraint
     pub constraint_name: String,
+    /// Catalog of the table the constraint belongs to
     pub table_catalog: String,
+    /// Schema of the table the constraint belongs to
     pub table_schema: String,
+    /// Name of the table the constraint belongs to
     pub table_name: String,
+    /// Constraint type (e.g., `PRIMARY KEY`, `UNIQUE`, `FOREIGN KEY`, `CHECK`)
     pub constraint_type: String,
+    /// Whether the constraint is deferrable (`YES`/`NO`)
     pub is_deferrable: String,
+    /// Whether the constraint is initially deferred (`YES`/`NO`)
     pub initially_deferred: String,
+    /// Whether the constraint is enforced (`YES`/`NO`)
     pub enforced: String,
 }
 
@@ -353,31 +421,51 @@ impl TableConstraintRow {
 /// Row in information_schema.key_column_usage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyColumnUsageRow {
+    /// Catalog that owns the constraint
     pub constraint_catalog: String,
+    /// Schema that owns the constraint
     pub constraint_schema: String,
+    /// Name of the constraint
     pub constraint_name: String,
+    /// Catalog of the table the constraint belongs to
     pub table_catalog: String,
+    /// Schema of the table the constraint belongs to
     pub table_schema: String,
+    /// Name of the table the constraint belongs to
     pub table_name: String,
+    /// Name of the column participating in the key
     pub column_name: String,
+    /// 1-based ordinal position of the column in the key
     pub ordinal_position: i32,
+    /// Ordinal position of this column in the referenced unique constraint (for FKs)
     pub position_in_unique_constraint: Option<i32>,
 }
 
 /// Row in information_schema.referential_constraints
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReferentialConstraintRow {
+    /// Catalog that owns the referential constraint
     pub constraint_catalog: String,
+    /// Schema that owns the referential constraint
     pub constraint_schema: String,
+    /// Name of the referential constraint
     pub constraint_name: String,
+    /// Catalog of the unique constraint being referenced
     pub unique_constraint_catalog: Option<String>,
+    /// Schema of the unique constraint being referenced
     pub unique_constraint_schema: Option<String>,
+    /// Name of the unique constraint being referenced
     pub unique_constraint_name: Option<String>,
+    /// Match option (`FULL`, `PARTIAL`, `NONE`)
     pub match_option: String,
+    /// Referential update rule (e.g., `CASCADE`, `RESTRICT`)
     pub update_rule: String,
+    /// Referential delete rule (e.g., `CASCADE`, `SET NULL`)
     pub delete_rule: String,
     // ProximaDB extensions
+    /// Cross-model reference type (e.g., `TABLE`, `GRAPH_NODE`, `DOCUMENT`, `VECTOR`)
     pub reference_type: Option<String>,
+    /// Name of the referenced cross-model object
     pub referenced_object: Option<String>,
 }
 
@@ -416,16 +504,27 @@ impl ReferentialConstraintRow {
 /// Row in information_schema.vector_collections (ProximaDB extension)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorCollectionRow {
+    /// Catalog that contains the vector collection
     pub collection_catalog: String,
+    /// Schema that contains the vector collection
     pub collection_schema: String,
+    /// Name of the vector collection
     pub collection_name: String,
+    /// Dimensionality of the vectors stored in this collection
     pub dimension: u32,
+    /// Distance metric used for similarity search (e.g., `l2`, `cosine`, `dot_product`)
     pub distance_metric: String,
+    /// Quantization scheme applied to stored vectors (e.g., `SQ8`, `PQ`)
     pub quantization: Option<String>,
+    /// ANN index type (e.g., `HNSW`, `IVF`, `FLAT`)
     pub index_type: Option<String>,
+    /// HNSW M parameter (max connections per layer)
     pub hnsw_m: Option<u32>,
+    /// HNSW ef_construction parameter (build-time search width)
     pub hnsw_ef_construction: Option<u32>,
+    /// Approximate number of vectors currently indexed
     pub vector_count: Option<u64>,
+    /// Enforcement mode for multi-model constraints
     pub enforcement_mode: String,
 }
 
@@ -460,16 +559,27 @@ impl VectorCollectionRow {
 /// Row in information_schema.graphs (ProximaDB extension)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphRow {
+    /// Catalog that contains the graph
     pub graph_catalog: String,
+    /// Schema that contains the graph
     pub graph_schema: String,
+    /// Name of the graph
     pub graph_name: String,
+    /// Graph storage/processing type (e.g., `ORION`, `PULSAR`, `QUASAR`)
     pub graph_type: String,
+    /// Whether the graph permits self-loop edges
     pub allow_self_loops: bool,
+    /// Whether the graph permits multiple edges between the same node pair
     pub allow_multi_edges: bool,
+    /// All registered node label names in the graph
     pub node_labels: Vec<String>,
+    /// All registered edge type names in the graph
     pub edge_types: Vec<String>,
+    /// Approximate number of nodes currently in the graph
     pub node_count: Option<u64>,
+    /// Approximate number of edges currently in the graph
     pub edge_count: Option<u64>,
+    /// Enforcement mode for multi-model constraints
     pub enforcement_mode: String,
 }
 
@@ -504,14 +614,23 @@ impl GraphRow {
 /// Row in information_schema.document_collections (ProximaDB extension)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentCollectionRow {
+    /// Catalog that contains the document collection
     pub collection_catalog: String,
+    /// Schema that contains the document collection
     pub collection_schema: String,
+    /// Name of the document collection
     pub collection_name: String,
+    /// Whether the collection enforces a JSON Schema for its documents
     pub has_json_schema: bool,
+    /// Strategy used to auto-generate document IDs (e.g., `UUID`, `SEQUENCE`)
     pub id_generation: String,
+    /// Whether full-text search indexing is enabled for the collection
     pub enable_full_text: bool,
+    /// JSONPath expressions of fields that have secondary indexes
     pub indexed_paths: Vec<String>,
+    /// Approximate number of documents currently in the collection
     pub document_count: Option<u64>,
+    /// Enforcement mode for multi-model constraints
     pub enforcement_mode: String,
 }
 
@@ -544,14 +663,23 @@ impl DocumentCollectionRow {
 /// Row in information_schema.observability_streams (ProximaDB extension)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservabilityStreamRow {
+    /// Catalog that contains the observability stream
     pub stream_catalog: String,
+    /// Schema that contains the observability stream
     pub stream_schema: String,
+    /// Name of the observability stream
     pub stream_name: String,
+    /// Stream type (e.g., `LOG`, `METRIC`, `TRACE`)
     pub stream_type: String,
+    /// How long events are retained in the stream, in seconds
     pub retention_seconds: u64,
+    /// Pre-aggregation rollup intervals configured for this stream (e.g., `1m`, `5m`, `1h`)
     pub rollup_intervals: Vec<String>,
+    /// Approximate number of events currently stored in the stream
     pub event_count: Option<u64>,
+    /// Unix timestamp (millis) of the oldest event in the stream
     pub oldest_timestamp: Option<i64>,
+    /// Unix timestamp (millis) of the newest event in the stream
     pub newest_timestamp: Option<i64>,
 }
 
@@ -782,27 +910,44 @@ impl InformationSchema {
 /// Row in information_schema.schemata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaRow {
+    /// Name of the catalog that contains this schema
     pub catalog_name: String,
+    /// Name of the schema
     pub schema_name: String,
+    /// Principal that owns the schema
     pub schema_owner: Option<String>,
+    /// Catalog of the default character set for new columns
     pub default_character_set_catalog: Option<String>,
+    /// Schema of the default character set for new columns
     pub default_character_set_schema: Option<String>,
+    /// Name of the default character set for new columns
     pub default_character_set_name: Option<String>,
+    /// SQL-path for schema name resolution
     pub sql_path: Option<String>,
 }
 
 /// Result of an INFORMATION_SCHEMA query
 #[derive(Debug, Clone)]
 pub enum InformationSchemaResult {
+    /// Rows from `information_schema.tables`
     Tables(Vec<TableRow>),
+    /// Rows from `information_schema.columns`
     Columns(Vec<ColumnRow>),
+    /// Rows from `information_schema.table_constraints`
     TableConstraints(Vec<TableConstraintRow>),
+    /// Rows from `information_schema.key_column_usage`
     KeyColumnUsage(Vec<KeyColumnUsageRow>),
+    /// Rows from `information_schema.referential_constraints`
     ReferentialConstraints(Vec<ReferentialConstraintRow>),
+    /// Rows from `information_schema.schemata`
     Schemata(Vec<SchemaRow>),
+    /// Rows from `information_schema.vector_collections` (ProximaDB extension)
     VectorCollections(Vec<VectorCollectionRow>),
+    /// Rows from `information_schema.graphs` (ProximaDB extension)
     Graphs(Vec<GraphRow>),
+    /// Rows from `information_schema.document_collections` (ProximaDB extension)
     DocumentCollections(Vec<DocumentCollectionRow>),
+    /// Rows from `information_schema.observability_streams` (ProximaDB extension)
     ObservabilityStreams(Vec<ObservabilityStreamRow>),
 }
 

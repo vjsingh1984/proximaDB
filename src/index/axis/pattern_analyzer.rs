@@ -256,6 +256,7 @@ impl AxisTieringIntegration {
         }
     }
 
+    /// Map an AXIS [`TierLevel`] to the corresponding [`InfrastructureTier`]
     pub fn map_axis_tier_to_storage(&self, axis_tier: &TierLevel) -> InfrastructureTier {
         match axis_tier {
             TierLevel::Memory => InfrastructureTier::Memory,
@@ -302,13 +303,18 @@ impl AxisTieringIntegration {
     }
 }
 
-/// AXIS operation types for pattern analysis  
+/// AXIS operation types for pattern analysis
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AxisOperation {
+    /// Approximate nearest-neighbour query
     Search,
+    /// Insert a new vector into the index
     Insert,
+    /// Update an existing vector in the index
     Update,
+    /// Delete a vector from the index
     Delete,
+    /// Trigger a full or partial index rebuild
     Rebuild,
 }
 

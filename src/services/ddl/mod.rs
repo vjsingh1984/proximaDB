@@ -24,54 +24,82 @@ use crate::catalog::types::{
 pub enum DdlStatement {
     /// CREATE TABLE [IF NOT EXISTS] table_name (columns...)
     CreateTable {
+        /// Name of the table to create.
         table_name: String,
+        /// Column definitions for the new table.
         columns: Vec<ColumnDefinition>,
+        /// When `true`, silently succeeds if the table already exists.
         if_not_exists: bool,
+        /// Additional table-level properties (e.g., storage options).
         properties: HashMap<String, String>,
     },
     /// DROP TABLE [IF EXISTS] table_name
     DropTable {
+        /// Name of the table to drop.
         table_name: String,
+        /// When `true`, silently succeeds if the table does not exist.
         if_exists: bool,
+        /// When `true`, also removes all underlying data files.
         purge: bool,
     },
     /// ALTER TABLE table_name ADD COLUMN / DROP COLUMN / etc.
     AlterTable {
+        /// Name of the table to alter.
         table_name: String,
+        /// Schema changes to apply.
         changes: Vec<AlterTableChange>,
     },
     /// CREATE INDEX [IF NOT EXISTS] index_name ON table_name (columns)
     CreateIndex {
+        /// Name of the index to create.
         index_name: String,
+        /// Table on which the index is created.
         table_name: String,
+        /// Columns included in the index.
         columns: Vec<String>,
+        /// Index algorithm and its configuration.
         index_type: IndexType,
+        /// When `true`, silently succeeds if the index already exists.
         if_not_exists: bool,
     },
     /// DROP INDEX [IF EXISTS] index_name ON table_name
     DropIndex {
+        /// Name of the index to drop.
         index_name: String,
+        /// Table that owns the index.
         table_name: String,
+        /// When `true`, silently succeeds if the index does not exist.
         if_exists: bool,
     },
     /// CREATE NAMESPACE [IF NOT EXISTS] namespace_name
     CreateNamespace {
+        /// Hierarchical namespace path components.
         namespace: Vec<String>,
+        /// When `true`, silently succeeds if the namespace already exists.
         if_not_exists: bool,
+        /// Additional namespace-level properties.
         properties: HashMap<String, String>,
     },
     /// DROP NAMESPACE [IF EXISTS] namespace_name
     DropNamespace {
+        /// Hierarchical namespace path components.
         namespace: Vec<String>,
+        /// When `true`, silently succeeds if the namespace does not exist.
         if_exists: bool,
+        /// When `true`, also drops all tables contained in the namespace.
         cascade: bool,
     },
     /// CREATE COLLECTION (ProximaDB-specific)
     CreateCollection {
+        /// Name of the vector collection to create.
         collection_name: String,
+        /// Vector dimensionality for this collection.
         dimension: u32,
+        /// Optional storage engine override (e.g., "HELIX", "VIPER").
         engine: Option<String>,
+        /// When `true`, silently succeeds if the collection already exists.
         if_not_exists: bool,
+        /// Additional collection-level properties.
         properties: HashMap<String, String>,
     },
 }
@@ -79,50 +107,80 @@ pub enum DdlStatement {
 /// Column definition for CREATE TABLE
 #[derive(Debug, Clone)]
 pub struct ColumnDefinition {
+    /// Column name.
     pub name: String,
+    /// SQL data type of the column.
     pub data_type: SqlDataType,
+    /// Whether the column accepts NULL values.
     pub nullable: bool,
+    /// SQL expression used as the column's default value, if any.
     pub default_value: Option<String>,
+    /// Optional human-readable description of the column.
     pub comment: Option<String>,
+    /// Whether this column is part of the primary key.
     pub primary_key: bool,
 }
 
 /// SQL data types
 #[derive(Debug, Clone)]
 pub enum SqlDataType {
+    /// SQL BOOLEAN type.
     Boolean,
+    /// 8-bit signed integer (TINYINT).
     TinyInt,
+    /// 16-bit signed integer (SMALLINT).
     SmallInt,
+    /// 32-bit signed integer (INT).
     Int,
+    /// 64-bit signed integer (BIGINT).
     BigInt,
+    /// 32-bit IEEE 754 floating-point (FLOAT).
     Float,
+    /// 64-bit IEEE 754 floating-point (DOUBLE).
     Double,
+    /// Fixed-precision decimal number.
     Decimal {
+        /// Total number of significant digits.
         precision: u32,
+        /// Number of digits after the decimal point.
         scale: u32,
     },
+    /// Variable-length character string.
     Varchar {
+        /// Optional maximum number of characters.
         max_length: Option<u32>,
     },
+    /// Unbounded text string.
     Text,
+    /// Fixed-size binary data.
     Binary,
+    /// Variable-size binary large object.
     Blob,
+    /// Calendar date (year, month, day).
     Date,
+    /// Time of day (hours, minutes, seconds).
     Time,
+    /// Timestamp without time zone.
     Timestamp,
+    /// Timestamp with time zone.
     TimestampTz,
+    /// Universally unique identifier (UUID).
     Uuid,
+    /// JSON document.
     Json,
-    /// Vector type: VECTOR(dimension)
+    /// Dense vector type: VECTOR(dimension)
     Vector {
+        /// Number of dimensions in the vector.
         dimension: u32,
     },
     /// Sparse vector: SPARSE_VECTOR(dimension)
     SparseVector {
+        /// Number of dimensions in the sparse vector.
         dimension: u32,
     },
     /// Binary vector: BINARY_VECTOR(dimension)
     BinaryVector {
+        /// Number of dimensions in the binary vector.
         dimension: u32,
     },
 }
@@ -135,36 +193,59 @@ pub enum AlterTableChange {
     /// DROP COLUMN column_name
     DropColumn(String),
     /// RENAME COLUMN old_name TO new_name
-    RenameColumn { old_name: String, new_name: String },
+    RenameColumn {
+        /// Current name of the column.
+        old_name: String,
+        /// New name for the column.
+        new_name: String,
+    },
     /// ALTER COLUMN column_name SET DATA TYPE type
     ChangeType {
+        /// Name of the column whose type is being changed.
         column_name: String,
+        /// New SQL data type for the column.
         new_type: SqlDataType,
     },
     /// ALTER COLUMN column_name SET NOT NULL / DROP NOT NULL
-    SetNullable { column_name: String, nullable: bool },
+    SetNullable {
+        /// Name of the column to modify.
+        column_name: String,
+        /// New nullability setting (`true` = allow NULL, `false` = NOT NULL).
+        nullable: bool,
+    },
     /// ALTER COLUMN column_name SET DEFAULT value / DROP DEFAULT
     SetDefault {
+        /// Name of the column to modify.
         column_name: String,
+        /// New default value expression, or `None` to drop the default.
         default_value: Option<String>,
     },
     /// COMMENT ON COLUMN column_name IS 'comment'
     SetComment {
+        /// Name of the column to annotate.
         column_name: String,
+        /// Human-readable description to attach to the column.
         comment: String,
     },
     /// Move column position: FIRST or AFTER another_column
     MoveColumn {
+        /// Name of the column to reposition.
         column_name: String,
+        /// Target position within the column list.
         position: ColumnPosition,
     },
     /// ADD CONSTRAINT
     AddConstraint {
+        /// Optional name for the new constraint.
         constraint_name: Option<String>,
+        /// Constraint definition to add.
         constraint: TableConstraint,
     },
     /// DROP CONSTRAINT
-    DropConstraint { constraint_name: String },
+    DropConstraint {
+        /// Name of the constraint to remove.
+        constraint_name: String,
+    },
 }
 
 /// Column position for ALTER TABLE ... MODIFY
@@ -180,13 +261,22 @@ pub enum ColumnPosition {
 #[derive(Debug, Clone)]
 pub enum TableConstraint {
     /// UNIQUE constraint
-    Unique { columns: Vec<String> },
+    Unique {
+        /// Columns that must be unique together.
+        columns: Vec<String>,
+    },
     /// CHECK constraint
-    Check { expression: String },
+    Check {
+        /// SQL boolean expression that each row must satisfy.
+        expression: String,
+    },
     /// FOREIGN KEY constraint
     ForeignKey {
+        /// Columns in this table that form the foreign key.
         columns: Vec<String>,
+        /// Referenced table name.
         references_table: String,
+        /// Columns in the referenced table.
         references_columns: Vec<String>,
     },
 }
@@ -202,13 +292,23 @@ pub enum IndexType {
     FullText,
     /// HNSW vector index (default for vector columns)
     Hnsw {
+        /// Maximum number of bi-directional links per node (`M` parameter).
         m: Option<u32>,
+        /// Size of the dynamic candidate list during construction.
         ef_construction: Option<u32>,
     },
     /// IVF vector index
-    Ivf { nlist: Option<u32> },
+    Ivf {
+        /// Number of Voronoi cells (inverted lists).
+        nlist: Option<u32>,
+    },
     /// Product quantization
-    Pq { m: Option<u32>, nbits: Option<u32> },
+    Pq {
+        /// Number of sub-quantizers.
+        m: Option<u32>,
+        /// Bits per sub-quantizer code.
+        nbits: Option<u32>,
+    },
 }
 
 /// Result of a DDL operation

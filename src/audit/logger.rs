@@ -110,7 +110,9 @@ pub struct EncryptionKey {
 /// Supported encryption algorithms
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EncryptionAlgorithm {
+    /// AES-256 in Galois/Counter Mode (authenticated encryption)
     AES256GCM,
+    /// ChaCha20 stream cipher combined with Poly1305 MAC (authenticated encryption)
     ChaCha20Poly1305,
 }
 

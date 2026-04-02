@@ -198,15 +198,19 @@ impl IndexFormatStrategy {
 /// Serialization errors
 #[derive(Debug, thiserror::Error)]
 pub enum SerializationError {
+    /// Bincode encode/decode failure
     #[error("Bincode error: {0}")]
     Bincode(#[from] bincode::Error),
 
+    /// Apache Avro encode/decode failure
     #[error("Avro error: {0}")]
     Avro(String),
 
+    /// Compression or decompression failure
     #[error("Compression error: {0}")]
     Compression(String),
 
+    /// Underlying I/O error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

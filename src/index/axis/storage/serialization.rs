@@ -46,24 +46,31 @@ fn unix_now_millis() -> u128 {
 /// Serialization error types
 #[derive(Debug, thiserror::Error)]
 pub enum SerializationError {
+    /// Underlying I/O error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Bincode encode/decode failure
     #[error("Bincode error: {0}")]
     Bincode(#[from] bincode::Error),
 
+    /// The file does not start with the expected `AXIS` magic bytes
     #[error("Invalid magic bytes")]
     InvalidMagic,
 
+    /// The format version is newer than this build can handle
     #[error("Unsupported version: {0}")]
     UnsupportedVersion(u16),
 
+    /// Stored CRC32 does not match the computed checksum
     #[error("Checksum mismatch")]
     ChecksumMismatch,
 
+    /// Unrecognised index type discriminant
     #[error("Unknown index type: {0}")]
     UnknownIndex(String),
 
+    /// Serialization is not implemented for the given index type
     #[error("Serialization not supported for index type: {0}")]
     NotSupported(String),
 }
@@ -168,16 +175,28 @@ pub struct IndexDelta {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DeltaOperation {
     /// Add new vectors
-    AddVectors { vectors: Vec<(String, Vec<f32>)> },
+    AddVectors {
+        /// List of `(external_id, vector_data)` pairs to insert
+        vectors: Vec<(String, Vec<f32>)>,
+    },
 
     /// Remove vectors by ID
-    RemoveVectors { vector_ids: Vec<String> },
+    RemoveVectors {
+        /// External IDs of vectors to delete
+        vector_ids: Vec<String>,
+    },
 
     /// Update existing vectors
-    UpdateVectors { updates: Vec<(String, Vec<f32>)> },
+    UpdateVectors {
+        /// List of `(external_id, new_vector_data)` pairs
+        updates: Vec<(String, Vec<f32>)>,
+    },
 
     /// Rebuild specific parts
-    RebuildPartial { affected_nodes: Vec<usize> },
+    RebuildPartial {
+        /// Internal node IDs that need to be rebuilt
+        affected_nodes: Vec<usize>,
+    },
 }
 
 /// Main serialization handler for AXIS indexes

@@ -179,41 +179,65 @@ impl SchemaVersion {
 pub enum SchemaChange {
     /// Column was added
     ColumnAdded {
+        /// Name of the newly added column.
         column_name: String,
+        /// Encoded data type of the new column (proto `DataType` int value).
         data_type: i32,
+        /// Whether the new column accepts NULL values.
         nullable: bool,
     },
 
     /// Column was removed
-    ColumnRemoved { column_name: String, data_type: i32 },
+    ColumnRemoved {
+        /// Name of the removed column.
+        column_name: String,
+        /// Encoded data type of the removed column (proto `DataType` int value).
+        data_type: i32,
+    },
 
     /// Column was renamed
-    ColumnRenamed { old_name: String, new_name: String },
+    ColumnRenamed {
+        /// Previous column name.
+        old_name: String,
+        /// New column name.
+        new_name: String,
+    },
 
     /// Column type was changed
     TypeChanged {
+        /// Name of the column whose type changed.
         column_name: String,
+        /// Previous encoded data type (proto `DataType` int value).
         old_type: i32,
+        /// New encoded data type (proto `DataType` int value).
         new_type: i32,
     },
 
     /// Nullable constraint changed
     NullabilityChanged {
+        /// Name of the column whose nullability changed.
         column_name: String,
+        /// Previous nullability setting.
         old_nullable: bool,
+        /// New nullability setting.
         new_nullable: bool,
     },
 
     /// Default value changed
     DefaultValueChanged {
+        /// Name of the column whose default changed.
         column_name: String,
+        /// Previous default value expression, if any.
         old_default: Option<String>,
+        /// New default value expression, if any.
         new_default: Option<String>,
     },
 
     /// Column constraints changed (min/max, pattern, etc.)
     ConstraintsChanged {
+        /// Name of the column whose constraints changed.
         column_name: String,
+        /// Human-readable description of what changed.
         change_description: String,
     },
 }

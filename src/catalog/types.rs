@@ -121,21 +121,37 @@ impl CatalogColumn {
 /// Data types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogDataType {
+    /// Boolean true/false value
     Boolean,
+    /// 8-bit signed integer
     Int8,
+    /// 16-bit signed integer
     Int16,
+    /// 32-bit signed integer
     Int32,
+    /// 64-bit signed integer
     Int64,
+    /// 32-bit IEEE 754 floating-point number
     Float32,
+    /// 64-bit IEEE 754 floating-point number
     Float64,
+    /// UTF-8 encoded string
     String,
+    /// Arbitrary binary data
     Binary,
+    /// Calendar date (no time component)
     Date,
+    /// Time of day (no date component)
     Time,
+    /// Timestamp without timezone
     Timestamp,
+    /// Timestamp with timezone
     TimestampTz,
+    /// Exact decimal numeric value
     Decimal,
+    /// Universally unique identifier (UUID v4)
     Uuid,
+    /// JSON document stored as text
     Json,
     /// Fixed-size array of floats for vector embeddings
     Vector,
@@ -533,14 +549,18 @@ pub type SortField = CatalogSortField;
 /// Sort direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SortDirection {
+    /// Sort values from smallest to largest (ASC)
     Ascending,
+    /// Sort values from largest to smallest (DESC)
     Descending,
 }
 
 /// Null ordering
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NullOrder {
+    /// NULL values sort before non-NULL values
     NullsFirst,
+    /// NULL values sort after non-NULL values
     NullsLast,
 }
 
@@ -556,35 +576,70 @@ pub struct CatalogSchemaEvolution {
 pub enum SchemaChange {
     /// Add a new column
     AddColumn {
+        /// Name of the new column
         name: String,
+        /// Data type of the new column
         data_type: CatalogDataType,
+        /// Whether the column accepts NULL values
         nullable: bool,
+        /// Optional SQL expression used as the column default
         default_value: Option<String>,
+        /// Optional human-readable description of the column
         comment: Option<String>,
         /// Position: None = end, Some(col) = after column
         after: Option<String>,
     },
     /// Drop a column
-    DropColumn { name: String },
+    DropColumn {
+        /// Name of the column to drop
+        name: String,
+    },
     /// Rename a column
-    RenameColumn { old_name: String, new_name: String },
+    RenameColumn {
+        /// Current column name
+        old_name: String,
+        /// Desired new column name
+        new_name: String,
+    },
     /// Change column type (must be compatible)
     ChangeType {
+        /// Name of the column whose type should change
         name: String,
+        /// New data type (must be compatible with the existing type)
         new_type: CatalogDataType,
     },
     /// Update column comment
-    UpdateComment { name: String, comment: String },
+    UpdateComment {
+        /// Name of the column to update
+        name: String,
+        /// New comment text
+        comment: String,
+    },
     /// Make column nullable (DROP NOT NULL)
-    MakeNullable { name: String },
+    MakeNullable {
+        /// Name of the column to make nullable
+        name: String,
+    },
     /// Make column NOT NULL (SET NOT NULL)
-    MakeNotNullable { name: String },
+    MakeNotNullable {
+        /// Name of the column to make non-nullable
+        name: String,
+    },
     /// Add default value
-    SetDefault { name: String, default_value: String },
+    SetDefault {
+        /// Name of the column to update
+        name: String,
+        /// SQL expression to use as the default value
+        default_value: String,
+    },
     /// Remove default value
-    DropDefault { name: String },
+    DropDefault {
+        /// Name of the column whose default should be removed
+        name: String,
+    },
     /// Move column position (FIRST or AFTER another column)
     MoveColumn {
+        /// Name of the column to move
         name: String,
         /// Position: None = FIRST, Some(col) = AFTER column
         after: Option<String>,
@@ -597,22 +652,36 @@ pub enum SchemaChange {
         constraint: ColumnConstraint,
     },
     /// Drop a constraint
-    DropConstraint { constraint_name: String },
+    DropConstraint {
+        /// Name of the constraint to drop
+        constraint_name: String,
+    },
 }
 
 /// Column constraint types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ColumnConstraint {
     /// UNIQUE constraint on one or more columns
-    Unique { columns: Vec<String> },
+    Unique {
+        /// Column names included in the uniqueness constraint
+        columns: Vec<String>,
+    },
     /// CHECK constraint with SQL expression
-    Check { expression: String },
+    Check {
+        /// SQL boolean expression that rows must satisfy
+        expression: String,
+    },
     /// FOREIGN KEY constraint
     ForeignKey {
+        /// Local column names that form the foreign key
         columns: Vec<String>,
+        /// Name of the referenced table
         references_table: String,
+        /// Column names in the referenced table
         references_columns: Vec<String>,
+        /// Action to take when the referenced row is deleted
         on_delete: Option<ReferentialAction>,
+        /// Action to take when the referenced row is updated
         on_update: Option<ReferentialAction>,
     },
 }

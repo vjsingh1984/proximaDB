@@ -24,21 +24,34 @@ use std::collections::HashMap;
 use crate::core::types::{TextField, TextStorageStrategy, TypedValue as CoreTypedValue};
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value::Value as SqlValueVariant};
 
-/// ProximaRecord representation using core types (not proto v2)
-/// This is the internal representation used for conversion
+/// ProximaRecord representation using core types (not proto v2).
+///
+/// This is the internal representation used for conversion between v1 and v2 record formats.
 #[derive(Debug, Clone)]
 pub struct ProximaRecord {
+    /// Unique record identifier.
     pub id: String,
+    /// Dense vector embedding values.
     pub vector: Vec<f32>,
+    /// Declared dimensionality of the vector, if known.
     pub vector_dimension: Option<u32>,
+    /// Strongly-typed metadata fields using the core type system.
     pub typed_fields: HashMap<String, CoreTypedValue>,
+    /// Flexible metadata fields expressed as SQL values (v1 compatibility layer).
     pub flexible_fields: HashMap<String, SqlValue>,
+    /// Extracted full-text search fields.
     pub text_fields: Vec<TextField>,
+    /// Record creation time as milliseconds since the Unix epoch.
     pub timestamp_ms: i64,
+    /// Last-update time as milliseconds since the Unix epoch, if set.
     pub updated_at_ms: Option<i64>,
+    /// Expiry time as milliseconds since the Unix epoch, if set.
     pub expires_at_ms: Option<i64>,
+    /// Monotonically increasing version counter for optimistic concurrency.
     pub version: Option<u32>,
+    /// Originating data source identifier.
     pub source: Option<String>,
+    /// Schema version identifier used during migrations.
     pub schema_id: Option<String>,
 }
 
