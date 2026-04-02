@@ -342,8 +342,8 @@ impl PQEncoder {
                 }
 
                 let cluster_size = clusters[cluster_id].len() as f32;
-                for d in 0..dim {
-                    new_centroid[d] /= cluster_size;
+                for centroid_val in new_centroid.iter_mut() {
+                    *centroid_val /= cluster_size;
                 }
 
                 // Compute shift
@@ -464,15 +464,15 @@ impl PQEncoder {
 
         let mut table = vec![vec![0.0f32; num_centroids]; num_subvectors];
 
-        for sub_id in 0..num_subvectors {
+        for (sub_id, table_row) in table.iter_mut().enumerate() {
             let start_dim = sub_id * subvector_dim;
             let end_dim = start_dim + subvector_dim;
 
             let query_subvec = &query[start_dim..end_dim];
 
-            for centroid_id in 0..num_centroids {
+            for (centroid_id, table_val) in table_row.iter_mut().enumerate() {
                 if let Some(centroid) = codebooks.get_centroid(sub_id, centroid_id) {
-                    table[sub_id][centroid_id] = self.squared_distance(query_subvec, centroid);
+                    *table_val = self.squared_distance(query_subvec, centroid);
                 }
             }
         }

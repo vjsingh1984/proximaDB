@@ -638,7 +638,7 @@ impl UnifiedProgressiveSearchPipeline {
         let distance: u32 = a
             .iter()
             .zip(b.iter())
-            .map(|(x, y)| (*x as i32 - *y as i32).abs() as u32)
+            .map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs())
             .sum();
 
         // Normalize
