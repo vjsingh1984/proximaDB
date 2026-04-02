@@ -106,7 +106,6 @@ impl NovaCompactionOperations {
         // Read all input files
         let mut all_records = Vec::new();
         let mut bytes_before = 0u64;
-        let original_count;
 
         info!(
             "🔄 NOVA compaction: Reading {} input files",
@@ -127,7 +126,7 @@ impl NovaCompactionOperations {
             all_records.extend(records);
         }
 
-        original_count = all_records.len();
+        let original_count = all_records.len();
         info!(
             "🔄 NOVA compaction: Read total {} records from {} files",
             original_count,

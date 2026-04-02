@@ -83,6 +83,7 @@ pub mod proximacodec;
 /// See: src/storage/engines/core/ops/proximacodec/
 ///
 /// Modules are kept as .obsolete for reference but not compiled:
+///
 /// - proximaencoder.obsolete/
 /// - unified_proxima_simd.obsolete/
 // pub mod proximaencoder;  // OBSOLETE - use proximacodec instead

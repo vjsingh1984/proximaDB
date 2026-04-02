@@ -187,6 +187,12 @@ impl SSTIndexBasedReader {
     }
 }
 
+impl Default for SSTIndexBasedReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn create_filesystem_factory_sync(
     filesystem_config: crate::storage::persistence::filesystem::FilesystemConfig,
 ) -> Result<Arc<crate::storage::persistence::filesystem::FilesystemFactory>> {

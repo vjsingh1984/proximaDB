@@ -165,7 +165,7 @@ async fn load_and_extract_records(
 
     for ((sb_idx, b_idx), id_offsets) in grouped {
         let sem = semaphore.clone();
-        let cache = cache.as_ref().map(|c| c.clone());
+        let cache = cache.clone();
 
         let handle = tokio::spawn(async move {
             // SAFETY: semaphore acquire is safe because the semaphore is never closed

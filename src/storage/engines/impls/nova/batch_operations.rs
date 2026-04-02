@@ -156,7 +156,7 @@ async fn load_and_extract_records(
     let mut handles = Vec::new();
     for (rg_id, id_offsets) in grouped {
         let sem = semaphore.clone();
-        let cache = cache.as_ref().map(|c| c.clone());
+        let cache = cache.clone();
         let projection = projection.clone();
         let schema = nova_file.schema.clone();
         let handle = tokio::spawn(async move {

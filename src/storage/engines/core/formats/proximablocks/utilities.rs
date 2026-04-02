@@ -296,7 +296,7 @@ impl RowBasedUtilities {
     /// Calculate access distance between record IDs (simplified)
     fn calculate_access_distance(id1: &str, id2: &str) -> u64 {
         // This is a simplified version - in practice would consider actual layout
-        (id1.len() as i64 - id2.len() as i64).abs() as u64
+        id1.len().abs_diff(id2.len()) as u64
     }
 
     /// Recommend optimizations based on access patterns

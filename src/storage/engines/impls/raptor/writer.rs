@@ -2371,7 +2371,7 @@ type BloomFilterMetadata = super::common::BloomFilterMetadata;
 impl MetadataEncoding {
     #[allow(dead_code)]
     #[allow(dead_code)]
-    fn to_byte(&self) -> u8 {
+    fn to_byte(self) -> u8 {
         match self {
             Self::Dictionary => 0x10,
             Self::Integer => 0x11,
