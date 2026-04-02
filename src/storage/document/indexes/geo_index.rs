@@ -120,7 +120,7 @@ impl GeoIndex {
         // Use geohash prefix matching for candidate selection, then filter
         let mut results = Vec::new();
 
-        for (_, (hash, point)) in &self.doc_to_geo {
+        for (hash, point) in self.doc_to_geo.values() {
             let _ = hash; // geohash is for indexing; we filter by exact coordinates
             if point.lat >= min_lat
                 && point.lat <= max_lat

@@ -163,6 +163,7 @@ impl AnnoyTree {
     }
 
     /// Build a subtree recursively
+    #[allow(clippy::only_used_in_recursion)]
     fn build_subtree(
         &mut self,
         vectors: &[(String, Vec<f32>)],

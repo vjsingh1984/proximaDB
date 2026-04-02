@@ -607,6 +607,7 @@ impl ZeroCopyIOSystem {
         Ok(())
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn create_execution_plan<'a>(
         &'a self,
         strategy: DownloadStrategy,

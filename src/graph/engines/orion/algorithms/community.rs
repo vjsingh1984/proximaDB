@@ -335,7 +335,8 @@ impl LouvainCommunityDetection {
         let mut new_csr = CsrStorage::new();
 
         let mut edge_id = 0usize;
-        for (&(from_s, to_s), _weight) in &edge_weights {
+        for (key, _weight) in &edge_weights {
+            let &(from_s, to_s) = key;
             if from_s != to_s {
                 let eid = format!("se_{}", edge_id);
                 edge_id += 1;

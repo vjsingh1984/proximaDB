@@ -346,6 +346,7 @@ impl CypherParser {
         }
     }
 
+    #[allow(dead_code)]
     fn at_keyword_ident(&self) -> bool {
         // Some keywords can appear as identifiers in certain contexts (e.g., property keys).
         matches!(
@@ -368,6 +369,7 @@ impl CypherParser {
         )
     }
 
+    #[allow(dead_code)]
     fn consume_ident_or_keyword(&mut self) -> Result<String> {
         let tok = self.peek().clone();
         match tok {

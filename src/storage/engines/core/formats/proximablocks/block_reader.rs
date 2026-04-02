@@ -350,6 +350,7 @@ impl ProximaBlockReader {
     }
 
     /// Check bloom filter for potential matches
+    #[allow(clippy::only_used_in_recursion)]
     fn check_bloom_filter(
         &self,
         bloom: &crate::core::bloom::SstableBloomFilter,
