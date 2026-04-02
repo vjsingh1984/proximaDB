@@ -4275,9 +4275,7 @@ impl UnifiedSstableReader {
                             i,
                             record.id,
                             record.vector.len(),
-                            record
-                                .metadata.keys().map(|key| key.clone())
-                                .collect::<Vec<_>>()
+                            record.metadata.keys().cloned().collect::<Vec<_>>()
                         );
                     }
                     blocks.push(block);

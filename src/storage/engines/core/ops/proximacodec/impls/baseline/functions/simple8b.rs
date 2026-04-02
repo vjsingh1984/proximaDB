@@ -236,9 +236,8 @@ fn decode_u64_internal(data: &[u8], count: usize) -> Result<Vec<u64>> {
 
         if bits == 0 {
             // All zeros
-            for _ in 0..num_values.min((count - result.len()) as u8) {
-                result.push(0);
-            }
+            let new_len = result.len().saturating_add(num_values as usize).min(count);
+            result.resize(new_len, 0);
         } else {
             let mask = if bits < 64 {
                 (1u64 << bits) - 1

@@ -425,11 +425,7 @@ impl ThreeStageFilterPipeline {
 
         for block in qualifying_blocks {
             // Convert SstRecord to VectorRecord for filtering
-            let vector_records: Vec<VectorRecord> = block
-                .records
-                .iter()
-                .map(|sst_record| sst_record.clone())
-                .collect();
+            let vector_records: Vec<VectorRecord> = block.records.iter().cloned().collect();
 
             // Use batch evaluator for AND/OR support
             let block_indices = match filter_expr {
