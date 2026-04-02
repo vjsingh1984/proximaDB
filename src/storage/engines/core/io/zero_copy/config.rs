@@ -468,7 +468,7 @@ impl ZeroCopyIOConfig {
             metadata_cache: MetadataCacheConfig {
                 max_memory_mb: 2048,       // 2GB cache
                 enable_compression: false, // Skip compression for speed
-                eviction_policy: EvictionPolicy::LRU,
+                eviction_policy: EvictionPolicy::Lru,
                 max_entries: 100000,
                 ..Default::default()
             },
@@ -562,7 +562,7 @@ impl Default for MetadataCacheConfig {
             max_memory_mb: 512,
             enable_compression: true,
             sync_to_disk: true,
-            eviction_policy: EvictionPolicy::LRU,
+            eviction_policy: EvictionPolicy::Lru,
             max_entries: 50000,
             enable_pressure_eviction: true,
             validity_duration: Duration::from_secs(3600), // 1 hour

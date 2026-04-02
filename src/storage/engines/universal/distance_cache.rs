@@ -292,7 +292,7 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
-            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::Lru,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
             compression: false,
             enable_cache_warming: false,
             max_memory_mb: 512,
@@ -311,7 +311,7 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
-            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::Lru,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
             compression: false,
             enable_cache_warming: false,
             max_memory_mb: 512,
@@ -341,7 +341,7 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
-            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::Lru,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
             compression: false,
             enable_cache_warming: false,
             max_memory_mb: 512,
@@ -374,7 +374,7 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
-            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::Lru,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
             compression: false,
             enable_cache_warming: false,
             max_memory_mb: 512,
@@ -415,7 +415,7 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
-            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::Lru,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
             compression: false,
             enable_cache_warming: false,
             max_memory_mb: 512,

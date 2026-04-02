@@ -235,7 +235,7 @@ impl Default for CacheConfig {
         Self {
             max_entries: 1000,
             ttl_seconds: 3600, // 1 hour
-            eviction_policy: CacheEvictionPolicy::Lru,
+            eviction_policy: CacheEvictionPolicy::LRU,
             compression: false,
             enable_cache_warming: true,
             max_memory_mb: 256,

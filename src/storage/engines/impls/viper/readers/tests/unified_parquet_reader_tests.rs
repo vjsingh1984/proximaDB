@@ -451,7 +451,7 @@ mod tests {
         // Write to parquet file
         let file = std::fs::File::create(file_path)?;
         let props = WriterProperties::builder()
-            .set_compression(parquet::basic::Compression::Uncompressed)
+            .set_compression(parquet::basic::Compression::UNCOMPRESSED)
             .build();
 
         let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;

@@ -346,19 +346,19 @@ impl Flush {
         use crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig;
         // Convert string compression to Parquet compression enum
         let parquet_compression = match viper_config.compression.as_str() {
-            "none" => parquet::basic::Compression::Uncompressed,
-            "zstd" => parquet::basic::Compression::Zstd(Default::default()),
-            "snappy" => parquet::basic::Compression::Snappy,
-            "gzip" => parquet::basic::Compression::Gzip(Default::default()),
-            "lz4" => parquet::basic::Compression::Lz4,
-            "brotli" => parquet::basic::Compression::Brotli(Default::default()),
-            "lzo" => parquet::basic::Compression::Lzo,
+            "none" => parquet::basic::Compression::UNCOMPRESSED,
+            "zstd" => parquet::basic::Compression::ZSTD(Default::default()),
+            "snappy" => parquet::basic::Compression::SNAPPY,
+            "gzip" => parquet::basic::Compression::GZIP(Default::default()),
+            "lz4" => parquet::basic::Compression::LZ4,
+            "brotli" => parquet::basic::Compression::BROTLI(Default::default()),
+            "lzo" => parquet::basic::Compression::LZO,
             _ => {
                 debug!(
                     "Unknown compression '{}', defaulting to ZSTD",
                     viper_config.compression
                 );
-                parquet::basic::Compression::Zstd(Default::default())
+                parquet::basic::Compression::ZSTD(Default::default())
             }
         };
 

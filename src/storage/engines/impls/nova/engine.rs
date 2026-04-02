@@ -805,7 +805,7 @@ impl NovaEngine {
         bloom_columns.extend(filterable_columns.iter().map(|c| c.name.clone()));
 
         let writer_config = ParquetWriterConfig {
-            compression: parquet::basic::Compression::Zstd(Default::default()),
+            compression: parquet::basic::Compression::ZSTD(Default::default()),
             row_group_size: 50_000, // 50K vectors per row group
             write_batch_size: 10_000,
             enable_bloom_filters: true,
