@@ -374,26 +374,17 @@ impl<T> PooledItem<T> {
 
     /// Get mutable reference to the buffer
     pub fn as_buffer_mut(&mut self) -> &mut T {
-        match self.buffer.as_mut() {
-            Some(buffer) => buffer,
-            None => panic!("Buffer should be present"),
-        }
+        self.buffer.as_mut().expect("Buffer should be present")
     }
 
     /// Get immutable reference to the buffer
     pub fn get(&self) -> &T {
-        match self.buffer.as_ref() {
-            Some(buffer) => buffer,
-            None => panic!("Buffer should be present"),
-        }
+        self.buffer.as_ref().expect("Buffer should be present")
     }
 
     /// Take ownership of the buffer (breaks pooling)
     pub fn take(mut self) -> T {
-        match self.buffer.take() {
-            Some(buffer) => buffer,
-            None => panic!("Buffer should be present"),
-        }
+        self.buffer.take().expect("Buffer should be present")
     }
 }
 
@@ -445,10 +436,7 @@ impl<T> std::ops::Deref for PooledItem<T> {
 
 impl<T> std::ops::DerefMut for PooledItem<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        match self.buffer.as_mut() {
-            Some(buffer) => buffer,
-            None => panic!("Buffer should be present"),
-        }
+        self.buffer.as_mut().expect("Buffer should be present")
     }
 }
 

@@ -76,6 +76,7 @@ impl TextValidator {
     fn default_forbidden_patterns() -> Vec<Regex> {
         // Note: These are basic patterns. Production should use parameterized queries.
         let compile = |pattern: &str| -> Regex {
+            #[allow(clippy::panic)]  // Intentional: compile-time invariant check
             match Regex::new(pattern) {
                 Ok(regex) => regex,
                 Err(err) => panic!("Invalid built-in regex pattern '{pattern}': {err}"),

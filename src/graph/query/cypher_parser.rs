@@ -510,6 +510,7 @@ impl CypherParser {
         let mut elements = Vec::new();
         elements.push(PatternElement::Node(self.parse_node_pattern()?));
 
+        #[expect(clippy::never_loop)] // Pattern with or-patterns makes while let awkward
         loop {
             // Check for relationship: -, <-
             match self.peek() {

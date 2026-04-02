@@ -194,6 +194,13 @@ impl MmapVectorStorage {
     }
 
     /// Get a zero-copy slice of vectors
+    ///
+    /// # Safety
+    ///
+    /// Callers must ensure:
+    /// - `start_idx + count` does not exceed the number of vectors in the mmap
+    /// - The mmap contains valid vector data for the requested range
+    /// - `dimension` matches the actual dimension of vectors in the mmap
     pub unsafe fn get_vector_slice<'a>(
         mmap: &'a Mmap,
         start_idx: usize,

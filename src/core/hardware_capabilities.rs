@@ -1409,6 +1409,7 @@ pub fn initialize_hardware_capabilities_default() -> Result<()> {
 ///
 /// # Panics
 /// Panics if called before initialize_hardware_capabilities()
+#[allow(clippy::panic)]  // Intentional panic for API misuse detection
 pub fn hardware_capabilities() -> Arc<HardwareCapabilities> {
     match HARDWARE_CAPABILITIES.get() {
         Some(caps) => caps.clone(),
