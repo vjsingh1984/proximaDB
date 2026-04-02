@@ -409,7 +409,7 @@ impl EventLogQuery for EventLogClient {
             }
             ClientMode::Grpc { _endpoint } => {
                 // gRPC client implementation would go here
-                unimplemented!("gRPC client not yet implemented")
+                Err(anyhow::anyhow!("gRPC client not yet implemented"))
             }
         }
     }
@@ -417,14 +417,14 @@ impl EventLogQuery for EventLogClient {
     async fn get_event(&self, event_id: &str) -> Result<Option<IndexEvent>> {
         match &self.mode {
             ClientMode::Embedded(service) => service.get_event(event_id).await,
-            _ => unimplemented!("Remote get_event not yet implemented"),
+            _ => Err(anyhow::anyhow!("Remote get_event not yet implemented")),
         }
     }
 
     async fn get_file_status(&self, file_path: &str) -> Result<Option<FileIndexingStatus>> {
         match &self.mode {
             ClientMode::Embedded(service) => service.get_file_status(file_path).await,
-            _ => unimplemented!("Remote get_file_status not yet implemented"),
+            _ => Err(anyhow::anyhow!("Remote get_file_status not yet implemented")),
         }
     }
 
@@ -438,7 +438,7 @@ impl EventLogQuery for EventLogClient {
                 let events = response.json().await?;
                 Ok(events)
             }
-            _ => unimplemented!("gRPC query_events not yet implemented"),
+            _ => Err(anyhow::anyhow!("gRPC query_events not yet implemented")),
         }
     }
 

@@ -415,7 +415,7 @@ impl VectorSerializationConfig {
 
     /// Get compression ratio for a vector (compressed_size / original_size)
     pub fn compression_ratio(&self, vector: &[f32]) -> Result<f32> {
-        let original_size = vector.len() * size_of::<f32>();
+        let original_size = std::mem::size_of_val(vector);
         let compressed = self.serialize_vector(vector)?;
         Ok(compressed.len() as f32 / original_size as f32)
     }

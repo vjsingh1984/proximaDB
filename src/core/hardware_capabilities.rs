@@ -1126,22 +1126,18 @@ impl HardwareCapabilities {
         for word in line.split_whitespace() {
             let word_clean = word.trim_matches(|c: char| !c.is_alphanumeric());
 
-            if word_clean.ends_with("kb") {
-                if let Some(size) = word_clean[..word_clean.len() - 2]
-                    .parse::<usize>()
-                    .ok()
-                    .map(|s| s * 1024)
-                {
-                    return Some(size);
-                }
-            } else if word_clean.ends_with("mb") {
-                if let Some(size) = word_clean[..word_clean.len() - 2]
-                    .parse::<usize>()
-                    .ok()
-                    .map(|s| s * 1024 * 1024)
-                {
-                    return Some(size);
-                }
+            if let Some(size) = word_clean
+                .strip_suffix("kb")
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(|s| s * 1024)
+            {
+                return Some(size);
+            } else if let Some(size) = word_clean
+                .strip_suffix("mb")
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(|s| s * 1024 * 1024)
+            {
+                return Some(size);
             } else if let Some(size) = word_clean
                 .strip_suffix("k")
                 .and_then(|s| s.parse::<usize>().ok())

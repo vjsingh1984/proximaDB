@@ -810,7 +810,7 @@ pub async fn parallel_breadth_first_search(
 
 /// Estimate memory usage for traversal results
 fn estimate_memory_usage(nodes: &[Arc<Node>], paths: &[Vec<NodeId>]) -> usize {
-    let nodes_size = nodes.len() * std::mem::size_of::<Arc<Node>>();
+    let nodes_size = std::mem::size_of_val(nodes);
     let paths_size = paths
         .iter()
         .map(|path| {
