@@ -1,3 +1,28 @@
+//! Common operations for all storage engines
+//!
+//! This module provides shared infrastructure and utilities used across all
+//! storage engine implementations (SST, SWIFT, VIPER, NOVA, RAPTOR, HELIX).
+//!
+//! ## Module Organization
+//!
+//! - **`compression_adapter`**: Unified compression interface with 13 algorithms
+//! - **`compression_common`**: Shared compression utilities and configuration
+//! - **`performance_optimization`**: Universal optimization for all engines
+//! - **`proximacodec`**: Modern unified encoding/decoding architecture
+//! - **`simd_decode`**: SIMD-accelerated decode pipeline
+//! - **`simd_config`**: SIMD configuration system
+//! - **`zero_copy_reader_integration`**: Zero-copy I/O utilities
+//!
+//! ## Data Types
+//!
+//! - **`FilterableColumn`**: Column configuration for metadata filtering
+//! - **`ColumnData`**: Type-safe column data types
+//!
+//! ## Migration Notes
+//!
+//! The old `ProximaEncoder`/`ProximaDecoder` modules have been replaced by
+//! the new `ProximaCodec` API. See `proximacodec` module for details.
+
 // Common Storage Engine Infrastructure
 // Shared capabilities and abstractions for all storage engines (SST, SWIFT, VIPER, NOVA)
 
@@ -62,7 +87,6 @@ pub mod proximacodec;
 /// - unified_proxima_simd.obsolete/
 // pub mod proximaencoder;  // OBSOLETE - use proximacodec instead
 // pub mod unified_proxima_simd;  // OBSOLETE - use proximacodec instead
-
 /// SIMD configuration system for fine-tuning optimization behavior
 pub mod simd_config;
 
