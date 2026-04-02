@@ -1204,7 +1204,7 @@ impl HardwareCapabilities {
             match crate::compute::gpu::distance::detect_gpu_capabilities() {
                 Ok((backend, devices)) => {
                     let total_memory = devices.iter().map(|d| d.total_memory).sum();
-                    let primary_device = if devices.is_empty() { None } else { Some(0) };
+                    let primary_device = devices.first().map(|_| 0);
 
                     if backend != GpuBackend::None {
                         info!(

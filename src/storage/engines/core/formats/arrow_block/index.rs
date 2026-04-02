@@ -157,7 +157,7 @@ impl ArrowBlockIndex {
             Vec::new()
         };
 
-        let depth = if internal_nodes.is_empty() { 1 } else { 2 };
+        let depth = internal_nodes.is_empty().then(|| 1).unwrap_or(2);
 
         self.bplus_tree = Some(BPlusTree {
             internal_nodes,

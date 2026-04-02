@@ -2256,7 +2256,7 @@ impl ProximaDataBlock {
             trace!(
                 "[ENCODE] Source dict[{}]: '{}'",
                 i,
-                if source.is_empty() { "NULL" } else { source }
+                source.is_empty().then(|| "NULL").unwrap_or(source)
             );
         }
 

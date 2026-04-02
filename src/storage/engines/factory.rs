@@ -393,7 +393,7 @@ impl StorageEngineFactory {
     pub async fn create_viper_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating VIPER storage engine");
         let engine = ViperEngine::new().await?;
-        let engine = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
@@ -413,7 +413,7 @@ impl StorageEngineFactory {
         info!("Creating SST storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { SstEngine::new().await })?;
-        let engine = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
@@ -422,7 +422,7 @@ impl StorageEngineFactory {
     pub async fn create_sst_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SST storage engine");
         let engine = SstEngine::new().await?;
-        let engine = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
@@ -515,7 +515,7 @@ impl StorageEngineFactory {
     pub async fn create_nova_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating NOVA storage engine");
         let engine = NovaEngine::new().await?;
-        let engine = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
