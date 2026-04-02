@@ -195,10 +195,10 @@ impl Default for StdDevAccumulator {
 pub fn compute_stddev(docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
     let mut acc = StdDevAccumulator::new();
     for doc in docs {
-        if let Some(val) = doc.fields.get(path) {
-            if let Ok(n) = to_f64(val) {
-                acc.push(n);
-            }
+        if let Some(val) = doc.fields.get(path)
+            && let Ok(n) = to_f64(val)
+        {
+            acc.push(n);
         }
     }
     Ok(float_val(acc.population_stddev()))
@@ -208,10 +208,10 @@ pub fn compute_stddev(docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
 pub fn compute_stddev_sample(docs: &[&SqlObject], path: &str) -> Result<SqlValue> {
     let mut acc = StdDevAccumulator::new();
     for doc in docs {
-        if let Some(val) = doc.fields.get(path) {
-            if let Ok(n) = to_f64(val) {
-                acc.push(n);
-            }
+        if let Some(val) = doc.fields.get(path)
+            && let Ok(n) = to_f64(val)
+        {
+            acc.push(n);
         }
     }
     Ok(float_val(acc.sample_stddev()))

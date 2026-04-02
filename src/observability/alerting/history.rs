@@ -81,25 +81,25 @@ impl HistoryFilter {
 
     /// Check if a history entry matches this filter.
     pub fn matches(&self, entry: &AlertHistoryEntry) -> bool {
-        if let Some(start) = self.start_time_ns {
-            if entry.fired_at_ns < start {
-                return false;
-            }
+        if let Some(start) = self.start_time_ns
+            && entry.fired_at_ns < start
+        {
+            return false;
         }
-        if let Some(end) = self.end_time_ns {
-            if entry.fired_at_ns > end {
-                return false;
-            }
+        if let Some(end) = self.end_time_ns
+            && entry.fired_at_ns > end
+        {
+            return false;
         }
-        if let Some(ref sev) = self.severity {
-            if entry.severity != *sev {
-                return false;
-            }
+        if let Some(ref sev) = self.severity
+            && entry.severity != *sev
+        {
+            return false;
         }
-        if let Some(rid) = self.rule_id {
-            if entry.rule_id != rid {
-                return false;
-            }
+        if let Some(rid) = self.rule_id
+            && entry.rule_id != rid
+        {
+            return false;
         }
         true
     }

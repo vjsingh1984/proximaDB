@@ -651,7 +651,7 @@ impl CollectionService {
         // Check if collection already exists
         // Check if collection already exists
         // Check if collection already exists
-        if let Some(_) = self.metadata_backend.get_collection(&config.name).await? {
+        if self.metadata_backend.get_collection(&config.name).await?.is_some() {
             return Ok(CollectionServiceResponse {
                 success: false,
                 collection: None,
@@ -1277,7 +1277,7 @@ impl CollectionService {
             // Merge the new config with existing one to preserve unchanged fields
             if let Some(existing_config) = record.config.as_mut() {
                 // Only update fields that are provided in new_config
-                if new_config.name != "" {
+                if !new_config.name.is_empty() {
                     existing_config.name = new_config.name;
                 }
                 if new_config.dimension > 0 {

@@ -710,7 +710,6 @@ where
     // Step 4: Extract sorted blocks, entries, and codes
     let (codes, blocks, index_entries): (Vec<SpatialCode>, Vec<B>, Vec<I>) = clustered
         .into_iter()
-        .map(|(code, block, entry)| (code, block, entry))
         .fold(
             (Vec::new(), Vec::new(), Vec::new()),
             |(mut codes, mut blocks, mut entries), (code, block, entry)| {
@@ -1040,7 +1039,6 @@ where
     // Step 6: Extract sorted blocks, entries, and codes
     let (codes, blocks, index_entries): (Vec<u64>, Vec<B>, Vec<I>) = clustered
         .into_iter()
-        .map(|(code, block, entry)| (code, block, entry))
         .fold(
             (Vec::new(), Vec::new(), Vec::new()),
             |(mut codes, mut blocks, mut entries), (code, block, entry)| {

@@ -597,10 +597,11 @@ impl StorageEngine {
     /// Check if a vector exists in the storage engine
     pub async fn exists(&self, collection_id: &str, id: &VectorId) -> crate::storage::Result<bool> {
         // Check WAL for unflushed vectors first
-        if let Some(_) = self
+        if self
             .write_ahead_log_manager
             .search_vector_by_id(collection_id, id)
             .await?
+            .is_some()
         {
             return Ok(true);
         }

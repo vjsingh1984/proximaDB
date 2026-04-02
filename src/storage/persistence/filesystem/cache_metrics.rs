@@ -300,7 +300,7 @@ impl MetricsReport {
     pub fn format(&self) -> String {
         let mut output = String::new();
 
-        output.push_str(&format!("=== Cache Metrics Report ===\n"));
+        output.push_str("=== Cache Metrics Report ===\n");
         output.push_str(&format!("Uptime: {:?}\n", self.uptime));
         output.push_str(&format!(
             "Overall Hit Rate: {:.2}%\n",

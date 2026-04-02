@@ -1196,12 +1196,8 @@ impl UQLParser {
 
         // Parse edge types (comma-separated strings or array)
         let mut edge_types = vec![];
-        loop {
-            if let Token::StringLit(s) = self.advance() {
-                edge_types.push(s);
-            } else {
-                break;
-            }
+        while let Token::StringLit(s) = self.advance() {
+            edge_types.push(s);
             if self.current() != Token::Comma {
                 break;
             }

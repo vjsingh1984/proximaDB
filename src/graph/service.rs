@@ -1507,17 +1507,17 @@ impl GraphOperationsService {
         // For now, implement simple edge querying based on from/to node IDs
         // TODO: Add edge type and property filtering
         let mut results = Vec::new();
-        if let Some(from_node_id) = &query.from_node_id {
-            if let Ok(edges) = engine.get_outgoing_edges(from_node_id, None) {
-                results.extend(edges);
-            } // Continue if node doesn't exist
-        }
+        if let Some(from_node_id) = &query.from_node_id
+            && let Ok(edges) = engine.get_outgoing_edges(from_node_id, None)
+        {
+            results.extend(edges);
+        } // Continue if node doesn't exist
 
-        if let Some(to_node_id) = &query.to_node_id {
-            if let Ok(edges) = engine.get_incoming_edges(to_node_id, None) {
-                results.extend(edges);
-            } // Continue if node doesn't exist
-        }
+        if let Some(to_node_id) = &query.to_node_id
+            && let Ok(edges) = engine.get_incoming_edges(to_node_id, None)
+        {
+            results.extend(edges);
+        } // Continue if node doesn't exist
         // If neither from nor to specified and filters exist, prefilter by edge property indexes
         if query.from_node_id.is_none() && query.to_node_id.is_none() && (!query.filters.is_empty())
         {

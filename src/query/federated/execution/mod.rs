@@ -569,7 +569,7 @@ impl FederatedExecutor {
             let label = cypher
                 .split(':')
                 .nth(1)
-                .and_then(|s| s.split(|c| c == ')' || c == ' ' || c == '{').next())
+                .and_then(|s| s.split(|c| matches!(c, ')' | ' ' | '{')).next())
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty());
 
@@ -745,10 +745,10 @@ impl FederatedExecutor {
                         }
                     } else {
                         // Field missing or wrong type — fill with zeros
-                        all_values.extend(std::iter::repeat(0.0f32).take(*dim));
+                        all_values.extend(std::iter::repeat_n(0.0f32, *dim));
                     }
                 } else {
-                    all_values.extend(std::iter::repeat(0.0f32).take(*dim));
+                    all_values.extend(std::iter::repeat_n(0.0f32, *dim));
                 }
             }
 

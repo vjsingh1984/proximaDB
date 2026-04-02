@@ -1515,12 +1515,12 @@ impl PlanCacheKey {
             if !in_string && (c == '"' || c == '\'') {
                 in_string = true;
                 string_char = c;
-                result.push_str("?");
+                result.push('?');
             } else if in_string && c == string_char {
                 in_string = false;
             } else if !in_string && !in_number && c.is_ascii_digit() {
                 in_number = true;
-                result.push_str("?");
+                result.push('?');
             } else if in_number && !c.is_ascii_digit() && c != '.' {
                 in_number = false;
                 result.push(c);
@@ -2914,7 +2914,6 @@ impl CrossModelOptimizer {
         let limit = Self::find_top_level_keyword(sql, "LIMIT").and_then(|limit_pos| {
             let end = Self::find_clause_end(sql, limit_pos + 5, &["OFFSET", ";"]);
             sql[limit_pos + 5..end]
-                .trim()
                 .split_whitespace()
                 .next()
                 .and_then(|value| value.parse::<usize>().ok())
@@ -2924,7 +2923,6 @@ impl CrossModelOptimizer {
             .and_then(|offset_pos| {
                 let end = Self::find_clause_end(sql, offset_pos + 6, &["LIMIT", ";"]);
                 sql[offset_pos + 6..end]
-                    .trim()
                     .split_whitespace()
                     .next()
                     .and_then(|value| value.parse::<usize>().ok())

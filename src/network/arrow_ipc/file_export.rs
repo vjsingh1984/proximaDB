@@ -951,10 +951,8 @@ impl ArrowFileExportHandler {
         let mut total_records = 0u64;
 
         // Count records (we need to iterate batches)
-        for batch_result in reader {
-            if let Ok(batch) = batch_result {
-                total_records += batch.num_rows() as u64;
-            }
+        for batch in reader.filter_map(Result::ok) {
+            total_records += batch.num_rows() as u64;
         }
 
         // Get dimension from collection config

@@ -235,13 +235,11 @@ impl FilestoreCheckpoint {
                 if let Ok(data) = fs.read(&path.to_string_lossy()).await {
                     let reader = apache_avro::Reader::new(&data[..])?;
 
-                    for value in reader {
-                        if let Ok(avro_value) = value {
-                            // Parse the Avro record manually
-                            if let apache_avro::types::Value::Record(fields) = avro_value {
-                                let operation = self.parse_incremental_operation(fields)?;
-                                operations.push(operation);
-                            }
+                    for avro_value in reader.filter_map(Result::ok) {
+                        // Parse the Avro record manually
+                        if let apache_avro::types::Value::Record(fields) = avro_value {
+                            let operation = self.parse_incremental_operation(fields)?;
+                            operations.push(operation);
                         }
                     }
                 }

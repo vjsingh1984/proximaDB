@@ -1091,14 +1091,10 @@ impl VectorOperationsService {
         let mut vector_records = Vec::new();
         for search_result in search_results {
             for result in search_result.results {
-                // Convert proto metadata to proto SqlValue format
-                let proto_metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> =
-                    result.metadata.into_iter().map(|(k, v)| (k, v)).collect();
-
                 vector_records.push(VectorRecord {
                     id: result.id,
                     vector: result.vector,
-                    metadata: proto_metadata,
+                    metadata: result.metadata,
                     timestamp: Some(chrono::Utc::now().timestamp_millis()),
                     updated_at: None,
                     expires_at: None,

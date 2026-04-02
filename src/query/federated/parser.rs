@@ -359,7 +359,7 @@ impl FederatedParser {
             // Split by comma for multiple tables (respecting parentheses depth)
             let table_refs = self.split_respecting_parens(from_clause);
             for table_ref in table_refs {
-                let parts: Vec<&str> = table_ref.trim().split_whitespace().collect();
+                let parts: Vec<&str> = table_ref.split_whitespace().collect();
                 if !parts.is_empty() {
                     let name = parts[0].to_string();
                     let alias = if parts.len() > 1 && parts[1].to_uppercase() != "AS" {

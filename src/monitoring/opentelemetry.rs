@@ -191,7 +191,7 @@ impl OpenTelemetryManager {
         };
 
         // Convert ProximaDB metrics to OpenTelemetry format
-        let mut otel_metrics = Vec::new();
+        let mut otel_metrics = Vec::with_capacity(5);
 
         // System metrics
         otel_metrics.push(MetricData {

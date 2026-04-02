@@ -168,10 +168,8 @@ impl FullTextIndex {
             // Persistent: remove old index files and create with new schema.
             // Callers must reindex documents after adding a field.
             if dir.exists() {
-                for entry in std::fs::read_dir(dir).into_iter().flatten() {
-                    if let Ok(entry) = entry {
-                        let _ = std::fs::remove_file(entry.path());
-                    }
+                for entry in std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok) {
+                    let _ = std::fs::remove_file(entry.path());
                 }
             }
             Index::create_in_dir(dir, new_schema.clone())
