@@ -9,7 +9,7 @@ repository = "https://github.com/vjsingh1984/proximadb"
 homepage = "https://github.com/vjsingh1984/proximadb"
 keywords = ["vector", "database", "ai", "ml", "proximity", "similarity-search"]
 categories = ["database-implementations", "science"]
-rust-version = "1.88" # Minimum supported Rust version (runs on 1.94+ stable)
+rust-version = "1.88"
 
 [workspace]
 members = [
@@ -26,21 +26,16 @@ name = "proximadb-bench"
 path = "src/bin/proximadb-bench-consolidated.rs"
 
 [[bin]]
-name = "ann-benchmarks"
-path = "src/bin/ann-benchmarks.rs"
-
-[[bin]]
-name = "vectordb_comparison"
-path = "src/bin/vectordb_comparison.rs"
-
-[[bin]]
 name = "proximadb-migrate"
 path = "src/bin/proximadb-migrate.rs"
 
 # Python embedded library (cdylib for PyO3)
 [lib]
 name = "proximadb"
-crate-type = ["rlib", "cdylib"]
+# Default: rlib only (for testing and normal Rust usage)
+# cdylib is produced via the pylib feature flag (for PyO3/FFI builds only)
+# See ADR-006 for rationale: cdylib caused test modules to be silently excluded
+crate-type = ["rlib"]
 
 
 
@@ -87,7 +82,6 @@ reqwest = { version = "0.11", features = ["json"] }
 
 # Storage & Memory Management
 memmap2 = "0.9"
-lru = "0.12"  # LRU cache for disk-based graph storage
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
@@ -132,13 +126,6 @@ azure_storage = { version = "0.19", optional = true }
 azure_storage_blobs = { version = "0.19", optional = true }
 google-cloud-storage = { version = "0.15", optional = true }
 
-# Database CDC connectors (optional)
-mysql_async = { version = "0.34", features = ["derive"], optional = true }  # MySQL binlog streaming for CDC
-tokio-postgres = "0.7"  # PostgreSQL logical replication client for CDC
-mongodb = { version = "3.5", default-features = false, features = ["rustls-tls", "bson-2", "compat-3-3-0"], optional = true }  # MongoDB change stream for CDC
-futures-util = { version = "0.3", optional = true }  # Stream utilities for MongoDB change stream
-rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }  # Kafka producer for CDC sink
-
 # Vector operations & SIMD
 nalgebra = { version = "0.32", features = ["serde-serialize"] }  # For PCA eigendecomposition, with serde for model persistence
 half = "2.4"  # FP16 (float16) support for centroid quantization (50% storage reduction)
@@ -154,10 +141,6 @@ rand_distr = "0.4"  # For generating realistic probability distributions
 
 # Cryptographic hashing
 sha2 = "0.10"
-
-# Encryption at rest (AES-256-GCM)
-aes-gcm = "0.10"  # AES-256-GCM authenticated encryption
-hkdf = "0.12"      # HMAC-based key derivation
 
 # TLS/mTLS certificate management
 rcgen = "0.12"                   # Certificate generation
@@ -217,8 +200,6 @@ axum = { version = "0.6", features = ["json", "ws"] }
 urlencoding = "2.1.3"
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["future"] }
-lettre = "0.11"  # Email sending for SMTP alerting
-rmp-serde = "1.1"  # MessagePack serialization for Fluent adapter
 
 # Language bindings (optional, for embedded mode)
 # Python bindings via PyO3
@@ -252,6 +233,7 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.0"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
+tokio-postgres = "0.7"  # PostgreSQL client for integration testing
 
 [features]
 default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]
@@ -260,8 +242,6 @@ ai_endpoints = []
 sales_endpoints = []
 tenant_access = []
 executive_intel = []
-network-rest = []  # Legacy REST-specific wiring gates used by TLS middleware
-compile_protobuf = []  # Legacy protobuf codegen gate referenced by build helpers
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
 experimental-engines = []
@@ -376,13 +356,8 @@ debug-filters = []  # Enable debug filtering for search operations
 # EXPERIMENTAL: Native database CDC connectors (PostgreSQL, MySQL, MongoDB)
 # WARNING: These connectors have partial implementations without network I/O.
 # For production MySQL/MongoDB CDC, use Debezium with Kafka sink.
-# PostgreSQL connector has pgoutput decoding, but live transport remains partial.
-# MySQL/MongoDB connectors have decoders but no connection layer.
-experimental-cdc-connectors = ["dep:mysql_async", "dep:mongodb", "dep:futures-util"]
-
-# Real Kafka transport for CDC sink (requires librdkafka)
-cdc-kafka = ["dep:rdkafka"]
-
+# PostgreSQL connector has pgoutput decoder but no connection layer.
+experimental-cdc-connectors = []
 
 # ============================================================================
 # EMBEDDED DATABASE MODE FEATURES
@@ -449,11 +424,6 @@ incremental = false
 name = "engine_performance_reporter"
 harness = false
 path = "benches/engine_performance_reporter.rs"
-
-[[bench]]
-name = "competitive_comparison"
-harness = false
-path = "benches/competitive_comparison.rs"
 
 # Release build profile optimized for production
 [profile.release-server]

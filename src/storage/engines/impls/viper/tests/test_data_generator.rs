@@ -227,7 +227,7 @@ impl TestDataGenerator {
 
     /// Create a complete Parquet file with all vector types
     pub fn create_parquet_file(&mut self, path: &str) -> Result<()> {
-        self.create_parquet_file_with_compression(path, parquet::basic::Compression::UNCOMPRESSED)
+        self.create_parquet_file_with_compression(path, parquet::basic::Compression::Uncompressed)
     }
 
     /// Create a complete Parquet file with specified compression
@@ -1032,11 +1032,11 @@ mod tests {
         // Test different compression codecs that are actually supported
         // Note: Most compression codecs require specific features to be enabled in Cargo.toml
         let compression_tests = vec![
-            ("uncompressed", parquet::basic::Compression::UNCOMPRESSED),
+            ("uncompressed", parquet::basic::Compression::Uncompressed),
             // TODO: Enable compression features in Cargo.toml for parquet crate
-            // ("gzip", parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default())),
-            // ("lz4", parquet::basic::Compression::LZ4),
-            // ("snappy", parquet::basic::Compression::SNAPPY),
+            // ("gzip", parquet::basic::Compression::Gzip(parquet::basic::GzipLevel::default())),
+            // ("lz4", parquet::basic::Compression::Lz4),
+            // ("snappy", parquet::basic::Compression::Snappy),
         ];
 
         for (name, compression) in compression_tests {
@@ -1097,7 +1097,7 @@ mod tests {
         generator
             .create_parquet_file_with_compression(
                 uncompressed_path.to_str().unwrap(),
-                parquet::basic::Compression::UNCOMPRESSED,
+                parquet::basic::Compression::Uncompressed,
             )
             .unwrap();
 
@@ -1108,7 +1108,7 @@ mod tests {
         generator.rng = ChaCha8Rng::seed_from_u64(generator.config.seed);
         if let Ok(_) = generator.create_parquet_file_with_compression(
             gzip_path.to_str().unwrap(),
-            parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default())
+            parquet::basic::Compression::Gzip(parquet::basic::GzipLevel::default())
         ) {
             // Compare file sizes
             let uncompressed_size = uncompressed_path.metadata().unwrap().len();
@@ -1206,10 +1206,10 @@ mod tests {
         let parquet_compressions = vec![
             (
                 "parquet_uncompressed",
-                parquet::basic::Compression::UNCOMPRESSED,
+                parquet::basic::Compression::Uncompressed,
             ),
             // TODO: Enable compression features
-            // ("parquet_gzip", parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default())),
+            // ("parquet_gzip", parquet::basic::Compression::Gzip(parquet::basic::GzipLevel::default())),
         ];
 
         let mut sizes = HashMap::new();

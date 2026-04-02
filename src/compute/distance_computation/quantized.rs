@@ -390,7 +390,7 @@ impl Default for DistanceCacheConfig {
         Self {
             enable_pq_cache: true,
             max_cache_size_mb: 256,
-            eviction_policy: CacheEvictionPolicy::LRU,
+            eviction_policy: CacheEvictionPolicy::Lru,
             precompute_on_load: true,
         }
     }
@@ -1111,7 +1111,7 @@ impl QuantizedDistanceCalculator {
     fn evict_pq_cache_entries(&self, cache: &mut PQDistanceCache) {
         // Implement cache eviction based on configured policy
         match self.config.cache_config.eviction_policy {
-            CacheEvictionPolicy::LRU => {
+            CacheEvictionPolicy::Lru => {
                 // Remove oldest entries first
                 // This is simplified - would need proper LRU tracking
                 if cache.tables.len() > 100 {

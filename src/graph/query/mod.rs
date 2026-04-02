@@ -51,6 +51,8 @@
 //! ```
 
 pub mod ast;
+pub mod cypher_ast;
+pub mod cypher_parser;
 pub mod execution_traits;
 pub mod executor;
 pub mod operators;
@@ -94,7 +96,6 @@ pub struct QueryStats {
 }
 
 impl QueryStats {
-    /// Create a new zeroed-out query statistics instance.
     pub fn new() -> Self {
         Self {
             planning_time_us: 0,
@@ -105,12 +106,6 @@ impl QueryStats {
             index_hits: 0,
             cache_hits: 0,
         }
-    }
-}
-
-impl Default for QueryStats {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -130,7 +125,6 @@ pub struct QueryContext {
 }
 
 impl QueryContext {
-    /// Create a new query context with default graph ID and no limits.
     pub fn new() -> Self {
         Self {
             graph_id: "default".to_string(),
@@ -141,34 +135,24 @@ impl QueryContext {
         }
     }
 
-    /// Set the graph ID for this query context.
     pub fn with_graph_id(mut self, graph_id: String) -> Self {
         self.graph_id = graph_id;
         self
     }
 
-    /// Set the execution timeout in milliseconds.
     pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = Some(timeout_ms);
         self
     }
 
-    /// Set the maximum memory limit in bytes for query execution.
     pub fn with_memory_limit(mut self, limit: usize) -> Self {
         self.memory_limit = Some(limit);
         self
     }
 
-    /// Enable detailed statistics collection for this query.
     pub fn with_stats(mut self) -> Self {
         self.collect_stats = true;
         self
-    }
-}
-
-impl Default for QueryContext {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

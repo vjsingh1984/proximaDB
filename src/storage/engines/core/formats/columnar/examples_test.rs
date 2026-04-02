@@ -114,7 +114,7 @@ pub async fn viper_optimization_example() -> Result<()> {
                 enable_bloom_filters: recommendations.use_bloom_filters,
                 id_less_storage: recommendations.use_id_less_storage,
                 quantization,
-                compression: parquet::basic::Compression::SNAPPY,
+                compression: parquet::basic::Compression::Snappy,
                 row_group_size: recommendations.row_group_size,
                 ..Default::default()
             },
@@ -388,7 +388,7 @@ pub async fn nova_optimization_example() -> Result<()> {
                 enable_bloom_filters: recommendations.use_bloom_filters,
                 id_less_storage: recommendations.use_id_less_storage,
                 quantization,
-                compression: parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()), // Better compression
+                compression: parquet::basic::Compression::Zstd(parquet::basic::ZstdLevel::default()), // Better compression
                 row_group_size: recommendations.row_group_size, // Larger row groups
                 ..Default::default()
             },

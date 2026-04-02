@@ -12,12 +12,12 @@ use tonic::{Request, Response, Status};
 
 use crate::observability::ObservabilityService as ObsStorageService;
 use crate::proto::proximadb_v1::{
-    self, Severity, SpanKind, SpanStatus, SpanStatusCode, SqlValue,
+    self, LogEntry, MetricSample, Severity, SpanKind, SpanStatus, SpanStatusCode, SqlValue,
     TraceData, sql_value,
 };
 
 use super::otlp::{
-    OtlpAnyValue, OtlpKeyValue, OtlpResourceSpans, OtlpSpan,
+    OtlpAnyValue, OtlpExportTracesServiceRequest, OtlpKeyValue, OtlpResourceSpans, OtlpSpan,
 };
 
 /// OTLP gRPC service that wraps the ObservabilityService proto implementation

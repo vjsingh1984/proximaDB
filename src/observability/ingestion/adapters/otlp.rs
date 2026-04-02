@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn test_otlp_adapter_creation() {
         let (tx, _rx) = mpsc::channel(100);
-        let _config = AdapterConfig::new("127.0.0.1:4318".parse().unwrap(), tx);
+        let config = AdapterConfig::new("127.0.0.1:4318".parse().unwrap(), tx);
 
         // Create a mock ObservabilityService - in real tests this would be a test double
         // For now, just test the adapter structure

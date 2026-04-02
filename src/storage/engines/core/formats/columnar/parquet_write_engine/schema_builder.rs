@@ -173,20 +173,20 @@ pub fn create_writer_properties(config: &ParquetWriterConfig) -> Result<WriterPr
 
     // Set compression
     let compression = match config.compression {
-        Compression::UNCOMPRESSED => parquet::basic::Compression::UNCOMPRESSED,
-        Compression::SNAPPY => parquet::basic::Compression::SNAPPY,
+        Compression::UNCOMPRESSED => parquet::basic::Compression::Uncompressed,
+        Compression::SNAPPY => parquet::basic::Compression::Snappy,
         Compression::GZIP(_) => {
-            parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default())
+            parquet::basic::Compression::Gzip(parquet::basic::GzipLevel::default())
         }
-        Compression::LZ4 => parquet::basic::Compression::LZ4,
+        Compression::LZ4 => parquet::basic::Compression::Lz4,
         Compression::LZ4_RAW => parquet::basic::Compression::LZ4_RAW,
         Compression::BROTLI(_) => {
-            parquet::basic::Compression::BROTLI(parquet::basic::BrotliLevel::default())
+            parquet::basic::Compression::Brotli(parquet::basic::BrotliLevel::default())
         }
         Compression::ZSTD(_) => {
-            parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default())
+            parquet::basic::Compression::Zstd(parquet::basic::ZstdLevel::default())
         }
-        Compression::LZO => parquet::basic::Compression::LZO,
+        Compression::LZO => parquet::basic::Compression::Lzo,
     };
     builder = builder.set_compression(compression);
 

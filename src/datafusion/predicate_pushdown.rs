@@ -306,7 +306,7 @@ pub fn analyze_predicates(predicates: &[Expr], schema: &ProximaSchema) -> Filter
     let pushed_filter = if pushed_filters.is_empty() {
         None
     } else if pushed_filters.len() == 1 {
-        pushed_filters.into_iter().next()
+        Some(pushed_filters.into_iter().next().unwrap())
     } else {
         Some(FilterExpression::And(pushed_filters))
     };

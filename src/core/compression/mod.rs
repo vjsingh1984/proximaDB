@@ -204,13 +204,13 @@ mod parquet {
     pub mod basic {
         #[derive(Debug, Clone)]
         pub enum Compression {
-            UNCOMPRESSED,
-            SNAPPY,
-            GZIP(GzipLevel),
-            LZ4,
-            ZSTD(ZstdLevel),
-            BROTLI(BrotliLevel),
-            LZO,
+            Uncompressed,
+            Snappy,
+            Gzip(GzipLevel),
+            Lz4,
+            Zstd(ZstdLevel),
+            Brotli(BrotliLevel),
+            Lzo,
         }
 
         #[derive(Debug, Clone)]
@@ -352,19 +352,19 @@ pub fn map_to_parquet_compression(
     algorithm: &CompressionAlgorithm,
 ) -> Option<parquet::basic::Compression> {
     match algorithm {
-        CompressionAlgorithm::None => Some(parquet::basic::Compression::UNCOMPRESSED),
-        CompressionAlgorithm::Snappy => Some(parquet::basic::Compression::SNAPPY),
-        CompressionAlgorithm::Gzip => Some(parquet::basic::Compression::GZIP(Default::default())),
-        CompressionAlgorithm::Lz4 => Some(parquet::basic::Compression::LZ4),
-        CompressionAlgorithm::Zstd => Some(parquet::basic::Compression::ZSTD(Default::default())),
+        CompressionAlgorithm::None => Some(parquet::basic::Compression::Uncompressed),
+        CompressionAlgorithm::Snappy => Some(parquet::basic::Compression::Snappy),
+        CompressionAlgorithm::Gzip => Some(parquet::basic::Compression::Gzip(Default::default())),
+        CompressionAlgorithm::Lz4 => Some(parquet::basic::Compression::Lz4),
+        CompressionAlgorithm::Zstd => Some(parquet::basic::Compression::Zstd(Default::default())),
         CompressionAlgorithm::Brotli => {
-            Some(parquet::basic::Compression::BROTLI(Default::default()))
+            Some(parquet::basic::Compression::Brotli(Default::default()))
         }
-        CompressionAlgorithm::Lzo => Some(parquet::basic::Compression::LZO),
+        CompressionAlgorithm::Lzo => Some(parquet::basic::Compression::Lzo),
         CompressionAlgorithm::Mixed => {
             // Mixed compression defaults to ZSTD level 3 for Parquet
             // Per-column optimization is handled at the engine level
-            Some(parquet::basic::Compression::ZSTD(Default::default()))
+            Some(parquet::basic::Compression::Zstd(Default::default()))
         }
         // These are not supported by Arrow Parquet - fallback to Snappy
         CompressionAlgorithm::Bzip2
@@ -377,7 +377,7 @@ pub fn map_to_parquet_compression(
                 "Algorithm {:?} not supported by Parquet, using Snappy fallback",
                 algorithm
             );
-            Some(parquet::basic::Compression::SNAPPY)
+            Some(parquet::basic::Compression::Snappy)
         }
     }
 }
@@ -678,20 +678,20 @@ pub fn create_parquet_writer_properties(
 
     // Apply compression with level if supported
     let builder = match (&compression, level) {
-        (parquet::basic::Compression::GZIP(_), Some(level)) => {
+        (parquet::basic::Compression::Gzip(_), Some(level)) => {
             let gzip_level = parquet::basic::GzipLevel::try_new(level as u32)
                 .map_err(|e| anyhow!("Invalid GZIP level {}: {}", level, e))?;
-            builder.set_compression(parquet::basic::Compression::GZIP(gzip_level))
+            builder.set_compression(parquet::basic::Compression::Gzip(gzip_level))
         }
-        (parquet::basic::Compression::ZSTD(_), Some(level)) => {
+        (parquet::basic::Compression::Zstd(_), Some(level)) => {
             let zstd_level = parquet::basic::ZstdLevel::try_new(level)
                 .map_err(|e| anyhow!("Invalid ZSTD level {}: {}", level, e))?;
-            builder.set_compression(parquet::basic::Compression::ZSTD(zstd_level))
+            builder.set_compression(parquet::basic::Compression::Zstd(zstd_level))
         }
-        (parquet::basic::Compression::BROTLI(_), Some(level)) => {
+        (parquet::basic::Compression::Brotli(_), Some(level)) => {
             let brotli_level = parquet::basic::BrotliLevel::try_new(level as u32)
                 .map_err(|e| anyhow!("Invalid Brotli level {}: {}", level, e))?;
-            builder.set_compression(parquet::basic::Compression::BROTLI(brotli_level))
+            builder.set_compression(parquet::basic::Compression::Brotli(brotli_level))
         }
         _ => builder.set_compression(compression),
     };
@@ -781,7 +781,7 @@ pub fn detect_column_type(column_name: &str, context: &CompressionContext) -> Co
 pub fn create_mixed_parquet_writer_properties() -> Result<WriterProperties> {
     // Mixed compression uses ZSTD level 3 as the default for Parquet
     // Individual columns can override this through per-column settings
-    let compression = parquet::basic::Compression::ZSTD(Default::default());
+    let compression = parquet::basic::Compression::Zstd(Default::default());
 
     let properties = WriterProperties::builder()
         .set_compression(compression)
@@ -960,7 +960,7 @@ mod tests {
             // Should fallback to Snappy for these
             let parquet_compression = map_to_parquet_compression(&algorithm);
             match parquet_compression {
-                Some(parquet::basic::Compression::SNAPPY) => {} // Expected fallback
+                Some(parquet::basic::Compression::Snappy) => {} // Expected fallback
                 other => panic!(
                     "Expected Snappy fallback for {:?}, got {:?}",
                     algorithm, other

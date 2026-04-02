@@ -154,7 +154,7 @@ impl ProximaScanExec {
             .splits(splits)
             .reader(reader)
             .build()
-            .unwrap_or_else(|e| panic!("Failed to build ProximaScanExec: {}", e))
+            .expect("Failed to build ProximaScanExec")
     }
 
     /// Get the number of partitions.

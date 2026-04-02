@@ -77,13 +77,13 @@ pub struct MetadataCacheConfig {
 #[derive(Debug, Clone)]
 pub enum EvictionPolicy {
     /// Least Recently Used
-    LRU,
+    Lru,
     /// Least Frequently Used
-    LFU,
+    Lfu,
     /// Adaptive Replacement Cache
-    ARC,
+    Arc,
     /// Time-based expiration
-    TTL,
+    Ttl,
     /// Size-based with priority
     SizeBased,
 }

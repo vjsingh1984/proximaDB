@@ -268,7 +268,7 @@ impl NovaCompactionOperations {
             row_group_size: 50000,
             page_size: 1024 * 1024,
             write_batch_size: 10000,
-            compression: parquet::basic::Compression::ZSTD(Default::default()),
+            compression: parquet::basic::Compression::Zstd(Default::default()),
             compression_level: None,
             enable_dictionary: true,
             enable_bloom_filters: true,

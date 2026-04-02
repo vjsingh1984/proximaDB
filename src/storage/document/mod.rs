@@ -12,6 +12,7 @@
 // - Cold tier: VIPER/Parquet columnar storage
 
 pub mod aggregation;
+pub mod aggregation_extensions;
 pub mod indexes;
 pub mod query;
 pub mod service;
