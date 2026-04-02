@@ -1,3 +1,9 @@
+//! Base cache implementation for multi-tier caching
+//!
+//! This module provides `BaseCacheImpl`, a foundational cache implementation that
+//! supports hierarchical storage tiers (L1/L2/L3) with automatic promotion/demotion
+//! and integration with the global cache orchestrator.
+
 use crate::storage::cache::backend::{
     CacheTier, MemoryBackend, NetworkBackend, NvmeBackend, StorageBackend,
 };
@@ -9,23 +15,46 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 /// Base implementation that specialized caches can build upon
+///
+/// Provides a three-tier cache hierarchy:
+/// - **L1**: In-memory cache (fastest, smallest capacity)
+/// - **L2**: NVMe/SSD cache (fast, medium capacity)
+/// - **L3**: Network cache (slower, largest capacity)
+///
+/// # Type Parameters
+///
+/// - `K`: Cache key type (must implement `CacheKey` + `Hash`)
+/// - `V`: Cache value type (must implement `CacheValue`)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use proximadb::storage::cache::base::BaseCacheImpl;
+///
+/// let cache = BaseCacheImpl::<String, Vec<f32>>::new(1024) // 1GB L1
+///     .with_l2("/var/cache/proximadb", 10)  // 10GB L2
+///     .with_l3("redis://localhost:6379".to_string());  // L3
+/// ```
 pub struct BaseCacheImpl<K, V>
 where
     K: CacheKey,
     V: CacheValue,
 {
-    // Storage backends for each tier
+    /// In-memory cache backend (L1 tier)
     l1_backend: Arc<MemoryBackend<K, CacheEntry<V>>>,
+    /// Optional NVMe/SSD backend (L2 tier)
     l2_backend: Option<Arc<NvmeBackend<K, CacheEntry<V>>>>,
+    /// Optional network backend (L3 tier)
     l3_backend: Option<Arc<NetworkBackend<K, CacheEntry<V>>>>,
 
     // Note: Eviction now handled by global CrossCacheOrchestrator
 
-    // Metrics
+    /// Metrics collector for cache operations
     metrics: Arc<UnifiedMetricsCollector>,
 
-    // Configuration
+    /// Number of accesses before promoting to higher tier
     promotion_threshold: u32,
+    /// Maximum entry size (bytes) allowed in L1 cache
     max_entry_size_for_l1: usize,
 }
 
@@ -57,6 +86,15 @@ where
     K: CacheKey + Hash,
     V: CacheValue,
 {
+    /// Create a new base cache with specified L1 memory limit
+    ///
+    /// # Arguments
+    ///
+    /// * `max_memory_mb`: Maximum memory for L1 cache in megabytes
+    ///
+    /// # Returns
+    ///
+    /// A new `BaseCacheImpl` with only L1 (memory) backend configured
     pub fn new(max_memory_mb: usize) -> Self {
         Self {
             l1_backend: Arc::new(MemoryBackend::new(max_memory_mb)),
@@ -69,11 +107,22 @@ where
         }
     }
 
+    /// Add an L2 (NVMe/SSD) cache backend
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: File system path for L2 cache storage
+    /// * `max_size_gb`: Maximum size in gigabytes
     pub fn with_l2(mut self, path: &str, max_size_gb: usize) -> Self {
         self.l2_backend = Some(Arc::new(NvmeBackend::new(path, max_size_gb)));
         self
     }
 
+    /// Add an L3 (network) cache backend
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint`: Network endpoint (e.g., "redis://localhost:6379")
     pub fn with_l3(mut self, endpoint: String) -> Self {
         self.l3_backend = Some(Arc::new(NetworkBackend::new(endpoint)));
         self
@@ -81,12 +130,14 @@ where
 
     // Note: Eviction strategy now handled by global CrossCacheOrchestrator
 
-    /// Get the number of entries in the cache
+    /// Get the number of entries in the L1 cache
     pub async fn size(&self) -> usize {
         self.l1_backend.size().await
     }
 
-    /// Remove a specific entry from the cache
+    /// Remove a specific entry from the L1 cache
+    ///
+    /// Returns the value if found and removed, or `None` if the key doesn't exist.
     pub async fn remove(&self, key: &K) -> Option<V> {
         if let Some(entry) = self.l1_backend.remove_and_get(key).await {
             // Record eviction in unified metrics
@@ -107,12 +158,12 @@ where
         }
     }
 
-    /// Get memory usage in bytes
+    /// Get current L1 memory usage in bytes
     pub async fn memory_usage(&self) -> usize {
         self.l1_backend.memory_usage().await
     }
 
-    /// Get cache metrics
+    /// Get reference to the metrics collector
     pub fn metrics(&self) -> &UnifiedMetricsCollector {
         &self.metrics
     }
