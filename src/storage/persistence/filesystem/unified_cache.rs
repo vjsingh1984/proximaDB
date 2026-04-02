@@ -455,18 +455,3 @@ mod tests {
         assert!(cache.get("/other/file3").await.is_some());
     }
 }
-
-impl Default for FileMetadata {
-    fn default() -> Self {
-        Self {
-            path: String::new(),
-            size: 0,
-            modified: None,
-            created: None,
-            is_directory: false,
-            permissions: None,
-            etag: None,
-            storage_class: None,
-        }
-    }
-}

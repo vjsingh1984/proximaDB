@@ -250,7 +250,7 @@ pub enum FilesystemError {
 }
 
 /// File metadata information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FileMetadata {
     pub path: String,
     pub size: u64,

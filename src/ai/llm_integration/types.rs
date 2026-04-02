@@ -189,7 +189,7 @@ pub struct LLMResponse {
 }
 
 /// Token usage information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     /// Number of tokens in the input prompt
     pub prompt_tokens: u32,

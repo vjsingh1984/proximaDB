@@ -388,17 +388,6 @@ impl RateLimiter {
     }
 }
 
-// Default implementations
-impl Default for TokenUsage {
-    fn default() -> Self {
-        Self {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        }
-    }
-}
-
 impl std::fmt::Display for LLMProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
