@@ -449,7 +449,7 @@ impl EventLogQuery for EventLogClient {
     ) -> Result<ExtractionMode> {
         match &self.mode {
             ClientMode::Embedded(service) => service.get_extraction_hints(event, index_type).await,
-            _ => unimplemented!("Remote get_extraction_hints not yet implemented"),
+            _ => Err(anyhow::anyhow!("Remote get_extraction_hints not yet implemented")),
         }
     }
 
@@ -462,7 +462,7 @@ impl EventLogQuery for EventLogClient {
                 let health = response.json().await?;
                 Ok(health)
             }
-            _ => unimplemented!("gRPC get_health not yet implemented"),
+            _ => Err(anyhow::anyhow!("gRPC get_health not yet implemented")),
         }
     }
 
@@ -475,7 +475,7 @@ impl EventLogQuery for EventLogClient {
                 let events = response.json().await?;
                 Ok(events)
             }
-            _ => unimplemented!("gRPC get_next_batch not yet implemented"),
+            _ => Err(anyhow::anyhow!("gRPC get_next_batch not yet implemented")),
         }
     }
 }
