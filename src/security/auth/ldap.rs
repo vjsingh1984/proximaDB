@@ -96,7 +96,7 @@ impl LdapProvider {
                 self.group_role_mapping
                     .get(&cn)
                     .cloned()
-                    .or_else(|| Some(cn.to_lowercase()))
+                    .or(Some(cn.to_lowercase()))
             })
             .collect();
 

@@ -2025,7 +2025,7 @@ mod tests {
                 .decode(&baseline_encoded)
                 .unwrap_or_else(|e| panic!("Failed to decode baseline for test case {}: {}", i, e));
             println!("   Decoded {} values", baseline_decoded.len());
-            if baseline_decoded.len() > 0 {
+            if !baseline_decoded.is_empty() {
                 println!(
                     "   First decoded value: {} (bits: 0x{:08X})",
                     baseline_decoded[0],

@@ -1135,7 +1135,7 @@ impl UniversalMetadataBackend {
                     tx.register_rollback(
                         "secondary_index",
                         RollbackAction::RemoveFromSecondaryIndex {
-                            name: record.config.as_ref().map(|c| c.name.clone()).clone(),
+                            name: record.config.as_ref().map(|c| c.name.clone()),
                             uuid: record.id.clone(),
                         },
                     )

@@ -6026,6 +6026,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::panic)]  // Test panic for failure assertion
     fn test_serialize_with_bloom_sync() {
         use crate::proto::proximadb_v1::VectorRecord;
 

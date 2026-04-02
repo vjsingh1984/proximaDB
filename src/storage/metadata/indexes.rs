@@ -163,7 +163,7 @@ impl MetadataMemoryIndexes {
     pub async fn upsert_collection(&self, record: Collection) {
         let start_time = std::time::Instant::now();
         let uuid = record.id.clone();
-        let name = record.config.as_ref().map(|c| c.name.clone()).clone();
+        let name = record.config.as_ref().map(|c| c.name.clone());
         let record_arc = Arc::new(record.clone());
 
         // Remove old record if exists (for updates)

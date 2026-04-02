@@ -16,6 +16,7 @@ use super::parser::{
     FederatedQuery, QueryTarget, QueryType, SqlExtension, TargetModelType, VectorQuery,
 };
 use crate::core::error::VectorDBError;
+use crate::query::capability::{Capability, CapabilitySet};
 use crate::storage::multimodel::ModelType;
 
 /// Physical plan node types
@@ -306,6 +307,299 @@ pub struct PlanNode {
     pub estimated_rows: u64,
     /// Output columns
     pub output_columns: Vec<String>,
+    /// Required capabilities for this plan node
+    pub required_capabilities: CapabilitySet,
+}
+
+impl PlanNode {
+    /// Create a new PlanNode with capabilities inferred from node type
+    ///
+    /// This is the preferred way to create PlanNodes as it automatically
+    /// determines the required capabilities based on the node type.
+    pub fn with_inferred_capabilities(
+        id: usize,
+        node_type: PlanNodeType,
+        estimated_cost: f64,
+        estimated_rows: u64,
+        output_columns: Vec<String>,
+    ) -> Self {
+        let mut node = Self {
+            id,
+            node_type,
+            estimated_cost,
+            estimated_rows,
+            output_columns,
+            required_capabilities: CapabilitySet::new(),
+        };
+        node.required_capabilities = node.infer_capabilities_from_node_type();
+        node
+    }
+
+    /// Infer capabilities required for this plan node based on its type
+    ///
+    /// This method analyzes the PlanNodeType and determines what capabilities
+    /// are required to execute this node. Used for query validation and planning.
+    pub fn infer_capabilities(&self) -> CapabilitySet {
+        // Start with the already-inferred capabilities
+        if !self.required_capabilities.is_empty() {
+            return self.required_capabilities.clone();
+        }
+
+        // Infer based on node type
+        self.infer_capabilities_from_node_type()
+    }
+
+    /// Infer capabilities from the node type
+    fn infer_capabilities_from_node_type(&self) -> CapabilitySet {
+        let mut capabilities = CapabilitySet::new();
+
+        match &self.node_type {
+            PlanNodeType::Scan { target, model_type, predicates } => {
+                // All scans require basic scan capability
+                capabilities.add(Capability::Scan);
+
+                // If there are predicates, add filter capability
+                if !predicates.is_empty() {
+                    capabilities.add(Capability::Filter);
+                    capabilities.add(Capability::PredicatePushdown);
+                }
+
+                // Model-specific capabilities
+                match model_type {
+                    ModelType::Vector => {
+                        capabilities.add(Capability::VectorSearch);
+                        // Add all distance metrics as options
+                        capabilities.add(Capability::CosineDistance);
+                        capabilities.add(Capability::EuclideanDistance);
+                        capabilities.add(Capability::DotProduct);
+                    }
+                    ModelType::Graph => {
+                        capabilities.add(Capability::GraphQuery);
+                        capabilities.add(Capability::GraphTraversal);
+                    }
+                    ModelType::Document => {
+                        capabilities.add(Capability::DocumentQuery);
+                        capabilities.add(Capability::FullTextSearch);
+                        capabilities.add(Capability::JSONPathQueries);
+                    }
+                    ModelType::Observability => {
+                        // Add observability capabilities based on target
+                        if target.contains("log") {
+                            capabilities.add(Capability::LogQuery);
+                            capabilities.add(Capability::LogAggregation);
+                        } else if target.contains("metric") {
+                            capabilities.add(Capability::MetricsQuery);
+                            capabilities.add(Capability::MetricAggregation);
+                        } else {
+                            capabilities.add(Capability::LogQuery);
+                            capabilities.add(Capability::MetricsQuery);
+                        }
+                    }
+                    ModelType::TimeSeries => {
+                        capabilities.add(Capability::TimeSeriesQuery);
+                        capabilities.add(Capability::Aggregate);
+                    }
+                    ModelType::Event => {
+                        capabilities.add(Capability::EventSourcingQuery);
+                    }
+                }
+            }
+
+            PlanNodeType::VectorSearch { collection, top_k, query_vector_source } => {
+                capabilities.add(Capability::VectorSearch);
+                capabilities.add(Capability::Scan);
+
+                // Add all distance metrics as options
+                capabilities.add(Capability::CosineDistance);
+                capabilities.add(Capability::EuclideanDistance);
+                capabilities.add(Capability::DotProduct);
+
+                // If query vector comes from a column reference, we need column access
+                if matches!(query_vector_source, VectorSource::ColumnRef { .. }) {
+                    capabilities.add(Capability::Project);
+                }
+            }
+
+            PlanNodeType::GraphTraversal { cypher, start_nodes } => {
+                capabilities.add(Capability::GraphQuery);
+                capabilities.add(Capability::GraphTraversal);
+                capabilities.add(Capability::PatternMatching);
+                capabilities.add(Capability::Scan);
+
+                // If Cypher query contains function calls, add function capability
+                if cypher.contains('(') && cypher.contains(')') {
+                    capabilities.add(Capability::CypherFunctions);
+                }
+            }
+
+            PlanNodeType::DocumentQuery { collection, filter } => {
+                capabilities.add(Capability::DocumentQuery);
+                capabilities.add(Capability::Scan);
+                capabilities.add(Capability::FullTextSearch);
+                capabilities.add(Capability::JSONPathQueries);
+
+                // If there's a filter, add filter capability
+                if filter.is_some() {
+                    capabilities.add(Capability::Filter);
+                    capabilities.add(Capability::PredicatePushdown);
+                }
+            }
+
+            PlanNodeType::ObservabilityQuery { namespace, query_type, time_range } => {
+                capabilities.add(Capability::Scan);
+
+                match query_type {
+                    ObservabilityQueryType::Logs => {
+                        capabilities.add(Capability::LogQuery);
+                        capabilities.add(Capability::LogAggregation);
+                    }
+                    ObservabilityQueryType::Metrics => {
+                        capabilities.add(Capability::MetricsQuery);
+                        capabilities.add(Capability::MetricAggregation);
+                    }
+                    ObservabilityQueryType::Traces => {
+                        capabilities.add(Capability::LogQuery);
+                    }
+                }
+
+                // If there's a time range filter, add filter capability
+                if time_range.is_some() {
+                    capabilities.add(Capability::Filter);
+                }
+            }
+
+            PlanNodeType::HashJoin { left, right, join_keys, join_type } => {
+                capabilities.add(Capability::Join);
+                capabilities.add(Capability::Scan);
+
+                // Add capabilities from child nodes
+                capabilities = capabilities.union(&left.required_capabilities);
+                capabilities = capabilities.union(&right.required_capabilities);
+
+                // For cross-model joins, add cross-model capability
+                if left.has_model(ModelType::Vector) && right.has_model(ModelType::Document) {
+                    capabilities.add(Capability::CrossModelJoin);
+                }
+            }
+
+            PlanNodeType::NestedLoopJoin { outer, inner, correlation } => {
+                capabilities.add(Capability::Join);
+                capabilities.add(Capability::Scan);
+
+                // Nested loop joins are often used for cross-model queries
+                capabilities.add(Capability::CrossModelJoin);
+
+                // Add capabilities from child nodes
+                capabilities = capabilities.union(&outer.required_capabilities);
+                capabilities = capabilities.union(&inner.required_capabilities);
+            }
+
+            PlanNodeType::IndexJoin { left, right, index_lookup } => {
+                capabilities.add(Capability::Join);
+                capabilities.add(Capability::Scan);
+                capabilities.add(Capability::Filter);
+
+                // Add capabilities from child nodes
+                capabilities = capabilities.union(&left.required_capabilities);
+                capabilities = capabilities.union(&right.required_capabilities);
+            }
+
+            PlanNodeType::Filter { input, predicate } => {
+                capabilities.add(Capability::Filter);
+                capabilities.add(Capability::PredicatePushdown);
+
+                // Add capabilities from child node
+                capabilities = capabilities.union(&input.required_capabilities);
+            }
+
+            PlanNodeType::Project { input, columns } => {
+                capabilities.add(Capability::Project);
+                capabilities.add(Capability::Scan);
+
+                // Add capabilities from child node
+                capabilities = capabilities.union(&input.required_capabilities);
+            }
+
+            PlanNodeType::Distinct { input } => {
+                capabilities.add(Capability::Aggregate);
+                capabilities.add(Capability::Scan);
+
+                // Add capabilities from child node
+                capabilities = capabilities.union(&input.required_capabilities);
+            }
+
+            PlanNodeType::Sort { input, order_by } => {
+                capabilities.add(Capability::Sort);
+                capabilities.add(Capability::Scan);
+
+                // Add capabilities from child node
+                capabilities = capabilities.union(&input.required_capabilities);
+            }
+
+            PlanNodeType::Limit { input, limit, offset } => {
+                capabilities.add(Capability::Limit);
+                capabilities.add(Capability::Scan);
+
+                // Add capabilities from child node
+                capabilities = capabilities.union(&input.required_capabilities);
+            }
+
+            PlanNodeType::Aggregate { input, group_by, aggregates } => {
+                capabilities.add(Capability::Aggregate);
+                capabilities.add(Capability::Scan);
+
+                // Add capabilities from child node
+                capabilities = capabilities.union(&input.required_capabilities);
+            }
+
+            PlanNodeType::Union { inputs, all } => {
+                capabilities.add(Capability::Scan);
+
+                // Add capabilities from all child nodes
+                for input in inputs {
+                    capabilities = capabilities.union(&input.required_capabilities);
+                }
+            }
+        }
+
+        capabilities
+    }
+
+    /// Check if this plan node involves a specific model type
+    fn has_model(&self, model_type: ModelType) -> bool {
+        self.node_type.has_model(model_type)
+    }
+}
+
+impl PlanNodeType {
+    /// Check if this node type involves a specific model
+    fn has_model(&self, model_type: ModelType) -> bool {
+        match self {
+            PlanNodeType::Scan { model_type: mt, .. } => mt == model_type,
+            PlanNodeType::VectorSearch { .. } => model_type == ModelType::Vector,
+            PlanNodeType::GraphTraversal { .. } => model_type == ModelType::Graph,
+            PlanNodeType::DocumentQuery { .. } => model_type == ModelType::Document,
+            PlanNodeType::ObservabilityQuery { .. } => model_type == ModelType::Observability,
+            PlanNodeType::HashJoin { left, right, .. } => {
+                left.has_model(model_type) || right.has_model(model_type)
+            }
+            PlanNodeType::NestedLoopJoin { outer, inner, .. } => {
+                outer.has_model(model_type) || inner.has_model(model_type)
+            }
+            PlanNodeType::IndexJoin { left, right, .. } => {
+                left.has_model(model_type) || right.has_model(model_type)
+            }
+            PlanNodeType::Filter { input, .. } => input.has_model(model_type),
+            PlanNodeType::Project { input, .. } => input.has_model(model_type),
+            PlanNodeType::Distinct { input } => input.has_model(model_type),
+            PlanNodeType::Sort { input, .. } => input.has_model(model_type),
+            PlanNodeType::Limit { input, .. } => input.has_model(model_type),
+            PlanNodeType::Aggregate { input, .. } => input.has_model(model_type),
+            PlanNodeType::Union { inputs, .. } => {
+                inputs.iter().any(|input| input.has_model(model_type))
+            }
+        }
+    }
 }
 
 /// Complete query plan
@@ -1358,6 +1652,7 @@ impl JoinOrderOptimizer {
                             estimated_cost: join_cost,
                             estimated_rows: join_cardinality,
                             output_columns: vec!["*".to_string()],
+                            required_capabilities: CapabilitySet::new(), // Will be inferred on first access
                         };
 
                         best_entry = Some(DPEntry {
@@ -5800,5 +6095,340 @@ mod tests {
             "compaction should have removed entries, got {}",
             snap.cardinality_entries
         );
+    }
+
+    // ============================================================================
+    // CAPABILITY INFERENCE TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_scan_node_capability_inference() {
+        // Test basic scan with vector model
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::Scan {
+                target: "vectors".to_string(),
+                model_type: ModelType::Vector,
+                predicates: vec![],
+            },
+            estimated_cost: 100.0,
+            estimated_rows: 1000,
+            output_columns: vec!["id".to_string(), "embedding".to_string()],
+            required_capabilities: CapabilitySet::new(), // Empty initially
+        };
+
+        let caps = node.infer_capabilities();
+        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+            Capability::Scan,
+            Capability::VectorSearch,
+            Capability::CosineDistance,
+        ])));
+    }
+
+    #[test]
+    fn test_scan_with_predicates_capability_inference() {
+        // Test scan with predicates (should add filter capabilities)
+        let predicate = Predicate {
+            column: "category".to_string(),
+            op: PredicateOp::Eq,
+            value: PredicateValue::String("electronics".to_string()),
+        };
+
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::Scan {
+                target: "products".to_string(),
+                model_type: ModelType::Vector,
+                predicates: vec![predicate],
+            },
+            estimated_cost: 100.0,
+            estimated_rows: 1000,
+            output_columns: vec!["id".to_string()],
+            required_capabilities: CapabilitySet::new(),
+        };
+
+        let caps = node.infer_capabilities();
+        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+            Capability::Scan,
+            Capability::Filter,
+            Capability::PredicatePushdown,
+        ])));
+    }
+
+    #[test]
+    fn test_vector_search_capability_inference() {
+        // Test vector search node
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::VectorSearch {
+                collection: "embeddings".to_string(),
+                top_k: 10,
+                query_vector_source: VectorSource::Literal(vec![0.1, 0.2, 0.3]),
+            },
+            estimated_cost: 50.0,
+            estimated_rows: 10,
+            output_columns: vec!["id".to_string(), "score".to_string()],
+            required_capabilities: CapabilitySet::new(),
+        };
+
+        let caps = node.infer_capabilities();
+        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+            Capability::VectorSearch,
+            Capability::Scan,
+            Capability::CosineDistance,
+            Capability::EuclideanDistance,
+            Capability::DotProduct,
+        ])));
+    }
+
+    #[test]
+    fn test_graph_traversal_capability_inference() {
+        // Test graph traversal node
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::GraphTraversal {
+                cypher: "MATCH (a)-[:KNOWS]->(b) RETURN b".to_string(),
+                start_nodes: None,
+            },
+            estimated_cost: 75.0,
+            estimated_rows: 100,
+            output_columns: vec!["name".to_string()],
+            required_capabilities: CapabilitySet::new(),
+        };
+
+        let caps = node.infer_capabilities();
+        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+            Capability::GraphQuery,
+            Capability::GraphTraversal,
+            Capability::PatternMatching,
+            Capability::Scan,
+        ])));
+    }
+
+    #[test]
+    fn test_document_query_capability_inference() {
+        // Test document query node
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::DocumentQuery {
+                collection: "docs".to_string(),
+                filter: Some("status = 'active'".to_string()),
+            },
+            estimated_cost: 60.0,
+            estimated_rows: 500,
+            output_columns: vec!["id".to_string(), "content".to_string()],
+            required_capabilities: CapabilitySet::new(),
+        };
+
+        let caps = node.infer_capabilities();
+        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+            Capability::DocumentQuery,
+            Capability::Scan,
+            Capability::FullTextSearch,
+            Capability::JSONPathQueries,
+            Capability::Filter,
+            Capability::PredicatePushdown,
+        ])));
+    }
+
+    #[test]
+    fn test_observability_query_capability_inference() {
+        // Test logs query
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::ObservabilityQuery {
+                namespace: "production".to_string(),
+                query_type: ObservabilityQueryType::Logs,
+                time_range: None,
+            },
+            estimated_cost: 40.0,
+            estimated_rows: 1000,
+            output_columns: vec!["timestamp".to_string(), "message".to_string()],
+            required_capabilities: CapabilitySet::new(),
+        };
+
+        let caps = node.infer_capabilities();
+        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+            Capability::LogQuery,
+            Capability::LogAggregation,
+            Capability::Scan,
+        ])));
+    }
+
+    #[test]
+    fn test_join_capability_inference() {
+        // Test hash join with two child nodes
+        let left_child = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::Scan {
+                target: "users".to_string(),
+                model_type: ModelType::Document,
+                predicates: vec![],
+            },
+            estimated_cost: 50.0,
+            estimated_rows: 100,
+            output_columns: vec!["id".to_string(), "name".to_string()],
+            required_capabilities: CapabilitySet::from_capabilities(&[
+                Capability::Scan,
+                Capability::DocumentQuery,
+            ]),
+        };
+
+        let right_child = PlanNode {
+            id: 2,
+            node_type: PlanNodeType::VectorSearch {
+                collection: "embeddings".to_string(),
+                top_k: 5,
+                query_vector_source: VectorSource::Literal(vec![0.1; 128]),
+            },
+            estimated_cost: 30.0,
+            estimated_rows: 5,
+            output_columns: vec!["id".to_string(), "score".to_string()],
+            required_capabilities: CapabilitySet::from_capabilities(&[
+                Capability::VectorSearch,
+                Capability::Scan,
+            ]),
+        };
+
+        let node = PlanNode {
+            id: 3,
+            node_type: PlanNodeType::HashJoin {
+                left: Box::new(left_child.clone()),
+                right: Box::new(right_child.clone()),
+                join_keys: vec![("user_id".to_string(), "id".to_string())],
+                join_type: JoinType::Inner,
+            },
+            estimated_cost: 150.0,
+            estimated_rows: 500,
+            output_columns: vec!["name".to_string(), "score".to_string()],
+            required_capabilities: CapabilitySet::new(),
+        };
+
+        let caps = node.infer_capabilities();
+        // Should include Join, Scan, and capabilities from both children
+        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+            Capability::Join,
+            Capability::Scan,
+            Capability::DocumentQuery,
+            Capability::VectorSearch,
+        ])));
+    }
+
+    #[test]
+    fn test_filter_capability_inference() {
+        // Test filter node
+        let child = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::Scan {
+                target: "products".to_string(),
+                model_type: ModelType::Vector,
+                predicates: vec![],
+            },
+            estimated_cost: 100.0,
+            estimated_rows: 1000,
+            output_columns: vec!["id".to_string()],
+            required_capabilities: CapabilitySet::from_capabilities(&[
+                Capability::Scan,
+                Capability::VectorSearch,
+            ]),
+        };
+
+        let predicate = Predicate {
+            column: "price".to_string(),
+            op: PredicateOp::Lt,
+            value: PredicateValue::Float(100.0),
+        };
+
+        let node = PlanNode {
+            id: 2,
+            node_type: PlanNodeType::Filter {
+                input: Box::new(child.clone()),
+                predicate,
+            },
+            estimated_cost: 80.0,
+            estimated_rows: 500,
+            output_columns: vec!["id".to_string()],
+            required_capabilities: CapabilitySet::new(),
+        };
+
+        let caps = node.infer_capabilities();
+        // Should include Filter and child capabilities
+        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+            Capability::Filter,
+            Capability::PredicatePushdown,
+            Capability::Scan,
+            Capability::VectorSearch,
+        ])));
+    }
+
+    #[test]
+    fn test_aggregate_capability_inference() {
+        // Test aggregate node
+        let child = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::Scan {
+                target: "sales".to_string(),
+                model_type: ModelType::Document,
+                predicates: vec![],
+            },
+            estimated_cost: 100.0,
+            estimated_rows: 1000,
+            output_columns: vec!["category".to_string(), "amount".to_string()],
+            required_capabilities: CapabilitySet::from_capabilities(&[
+                Capability::Scan,
+                Capability::DocumentQuery,
+            ]),
+        };
+
+        let node = PlanNode {
+            id: 2,
+            node_type: PlanNodeType::Aggregate {
+                input: Box::new(child.clone()),
+                group_by: vec!["category".to_string()],
+                aggregates: vec![AggregateExpr {
+                    function: AggregateFunction::Sum,
+                    column: Some("amount".to_string()),
+                    alias: "total".to_string(),
+                }],
+            },
+            estimated_cost: 120.0,
+            estimated_rows: 10,
+            output_columns: vec!["category".to_string(), "total".to_string()],
+            required_capabilities: CapabilitySet::new(),
+        };
+
+        let caps = node.infer_capabilities();
+        // Should include Aggregate and child capabilities
+        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+            Capability::Aggregate,
+            Capability::Scan,
+            Capability::DocumentQuery,
+        ])));
+    }
+
+    #[test]
+    fn test_pre_inferred_capabilities_used() {
+        // Test that pre-inferred capabilities are used without re-inferring
+        let pre_inferred = CapabilitySet::from_capabilities(&[
+            Capability::VectorSearch,
+            Capability::Filter,
+        ]);
+
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::VectorSearch {
+                collection: "embeddings".to_string(),
+                top_k: 10,
+                query_vector_source: VectorSource::Literal(vec![0.1, 0.2, 0.3]),
+            },
+            estimated_cost: 50.0,
+            estimated_rows: 10,
+            output_columns: vec!["id".to_string()],
+            required_capabilities: pre_inferred.clone(),
+        };
+
+        let caps = node.infer_capabilities();
+        // Should return the pre-inferred capabilities, not re-infer
+        assert_eq!(caps, pre_inferred);
     }
 }

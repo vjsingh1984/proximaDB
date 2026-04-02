@@ -257,7 +257,7 @@ mod tests {
 
         // Search for the vector
         let found_vector = strategy
-            .search_vector_by_id(&collection_id.to_string(), &search_id.clone().clone())
+            .search_vector_by_id(&collection_id.to_string(), &search_id.clone())
             .await
             .expect("Failed to search vector");
 
@@ -288,7 +288,7 @@ mod tests {
 
         // Search for the vector
         let found_vector = strategy
-            .search_vector_by_id(&collection_id.to_string(), &search_id.clone().clone())
+            .search_vector_by_id(&collection_id.to_string(), &search_id.clone())
             .await
             .expect("Failed to search vector");
 

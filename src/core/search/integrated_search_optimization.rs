@@ -1204,6 +1204,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::panic)]  // Test panic for assertion failure
     fn test_zero_copy_view() {
         let data = vec![1.0, 2.0, 3.0, 4.0];
         let view = ZeroCopyVectorView {

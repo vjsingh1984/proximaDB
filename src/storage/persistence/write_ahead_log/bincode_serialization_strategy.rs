@@ -296,7 +296,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
             let distance_result =
                 distance_compute.calculate_distance(query_vector, &vector.vector, &metric);
             // Use empty string for vectors without IDs
-            let id = vector.id.clone().clone();
+            let id = vector.id.clone();
             // Use rank_value for sorting (lower = more similar)
             results.push((id, distance_result.rank_value, vector));
         }
