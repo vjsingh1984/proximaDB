@@ -247,7 +247,7 @@ impl StreamingService for StreamingServiceImpl {
 
                                 // Build response
                                 let response = StreamInsertResponse {
-                                    acked_sequences: pending_sequences.drain(..).collect(),
+                                    acked_sequences: std::mem::take(&mut pending_sequences),
                                     backpressure: Some(BackpressureSignal {
                                         level: backpressure_to_proto(result.backpressure),
                                         suggested_delay_ms: result.backpressure.delay_ms(),

@@ -777,7 +777,7 @@ impl LocalDiskCache {
             // Delete cache files
             let pattern = self.cache_dir.join(format!(
                 "{}*",
-                file_path.replace('/', "_").replace(':', "_")
+                file_path.replace(['/', ':'], "_")
             ));
 
             // Remove all matching files using internal glob implementation
@@ -805,10 +805,7 @@ impl LocalDiskCache {
     }
 
     fn cache_path_for_row_group(&self, file_path: &str, rg_idx: usize) -> PathBuf {
-        let safe_name = file_path
-            .replace('/', "_")
-            .replace(':', "_")
-            .replace("\\", "_");
+        let safe_name = file_path.replace(['/', ':', '\\'], "_");
 
         self.cache_dir.join(format!("{safe_name}_rg_{rg_idx}"))
     }

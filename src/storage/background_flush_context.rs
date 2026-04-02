@@ -320,7 +320,7 @@ impl BackgroundFlushContext {
         Self {
             collection_id: collection_id.to_string(),
             storage_engine,
-            base_location: format!("file:///tmp/test_data"),
+            base_location: "file:///tmp/test_data".to_string(),
             dimension: 384,
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),

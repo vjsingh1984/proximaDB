@@ -217,9 +217,7 @@ pub async fn tls_client_cert_middleware<B>(
     match cert_info {
         Some(info) => {
             // Validate certificate
-            if let Err(e) = validate_certificate(&info, config) {
-                return Err(e);
-            }
+            validate_certificate(&info, config)?;
 
             // Extract CN
             let common_name = info.common_name.clone().ok_or_else(|| {

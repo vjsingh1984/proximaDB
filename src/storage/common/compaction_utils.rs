@@ -228,7 +228,7 @@ impl CompactionFileDiscovery {
                     level_files.len(),
                     threshold
                 );
-            } else if filtered_files.pending_files.get(&0).is_some() {
+            } else if filtered_files.pending_files.contains_key(&0) {
                 debug!(
                     "⏸️ COMPACTION: Level {} has only {} compactable files (< threshold {}), some files pending",
                     level,

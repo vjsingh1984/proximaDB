@@ -895,7 +895,7 @@ impl ZeroCopyIOSystem {
             trace!(cache_key, "Cache HIT for metadata");
             // Create a synthetic EngineMetadata from FilesystemMetadata
             // This would need actual deserialization using the appropriate serializer
-            if self.serializers.get(engine_type).is_some() {
+            if self.serializers.contains_key(engine_type) {
                 // For now, return None as we need to implement proper deserialization
                 // In production, would deserialize mmap_metadata using the serializer
                 Ok(None)

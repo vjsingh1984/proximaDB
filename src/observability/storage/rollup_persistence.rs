@@ -132,12 +132,7 @@ impl FileRollupPersistence {
 
     /// Sanitize series key for use in filenames
     fn sanitize_series_key(series_key: &str) -> String {
-        series_key
-            .replace(':', "_")
-            .replace('{', "_")
-            .replace('}', "_")
-            .replace(',', "_")
-            .replace('=', "_")
+        series_key.replace([':', '{', '}', ',', '='], "_")
     }
 
     /// Ensure directory exists
