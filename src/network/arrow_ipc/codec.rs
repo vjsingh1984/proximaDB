@@ -402,7 +402,7 @@ impl ArrowProtoCodec {
         let key_array = StringArray::from(keys);
         let value_array = StringArray::from(values);
 
-        StructArray::try_from(vec![
+        Ok(StructArray::from(vec![
             (
                 Arc::new(Field::new("key", DataType::Utf8, false)),
                 Arc::new(key_array) as ArrayRef,
@@ -411,8 +411,7 @@ impl ArrowProtoCodec {
                 Arc::new(Field::new("value", DataType::Utf8, true)),
                 Arc::new(value_array) as ArrayRef,
             ),
-        ])
-        .context("Failed to create StructArray")
+        ]))
     }
 
     /// Convert SqlValue to string
