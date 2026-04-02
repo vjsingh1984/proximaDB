@@ -384,7 +384,7 @@ impl StorageEngineFactory {
         info!("Creating VIPER storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { ViperEngine::new().await })?;
-        let engine = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
@@ -506,7 +506,7 @@ impl StorageEngineFactory {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(NovaEngine::new())?;
-        let engine = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }

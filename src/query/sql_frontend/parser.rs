@@ -217,10 +217,7 @@ impl SqlFrontendParser {
             .collect::<Result<Vec<_>>>()?;
 
         // Convert WHERE clause
-        let selection = match &select.selection {
-            Some(expr) => Some(self.convert_expr(expr)?),
-            None => None,
-        };
+        let selection = select.selection.as_ref().map(|expr| self.convert_expr(expr)).transpose()?;
 
         // Convert GROUP BY
         let group_by = match &select.group_by {
@@ -232,10 +229,7 @@ impl SqlFrontendParser {
         };
 
         // Convert HAVING
-        let having = match &select.having {
-            Some(expr) => Some(self.convert_expr(expr)?),
-            None => None,
-        };
+        let having = select.having.as_ref().map(|expr| self.convert_expr(expr)).transpose()?;
 
         // Convert ORDER BY
         let order_by = if let Some(order_by_clause) = &query.order_by {
