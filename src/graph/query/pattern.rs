@@ -53,6 +53,8 @@ use super::ast::{
     PathPattern, PropertyConstraint, PropertyProjection, ReturnSpec, VariableBinding, WhereClause,
 };
 use super::{QueryContext, QueryResult};
+use super::cypher_ast::{CypherStatement, CypherClause, MatchClause, ReturnClause};
+use super::cypher_parser::CypherParser;
 use crate::core::error::ProximaDBError;
 use crate::graph::{Edge, GraphMemoryPool, Node, NodeId};
 use regex::Regex;

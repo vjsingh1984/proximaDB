@@ -265,10 +265,11 @@ impl CapabilityError {
 
     /// Create a multiple unsupported capabilities error
     pub fn multiple_unsupported(capabilities: Vec<String>, alternatives: Vec<String>) -> Self {
+        let is_empty = alternatives.is_empty();
         Self {
             capability: capabilities.join(", "),
             available_alternatives: alternatives,
-            message: if alternatives.is_empty() {
+            message: if is_empty {
                 format!(
                     "Multiple capabilities are not supported: {}. Please check the storage engine capabilities.",
                     capabilities.join(", ")

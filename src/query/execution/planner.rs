@@ -15,6 +15,7 @@ use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::ops::Not;
 use std::sync::Arc;
 
 /// Cached execution plan with metadata

@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::Not;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{Node, PropertyValue, Edge};
 
