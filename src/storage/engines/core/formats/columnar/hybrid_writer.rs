@@ -732,6 +732,7 @@ impl HybridParquetWriter {
 
     /// Clone for background tasks
     #[allow(dead_code)]
+    #[allow(clippy::unimplemented)]  // TODO: Implement Arc wrapping for background task cloning
     fn clone_for_task(&self) -> Arc<Self> {
         // This would need proper Arc wrapping in production
         // For now, return a placeholder

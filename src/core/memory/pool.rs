@@ -427,10 +427,7 @@ impl<T> std::ops::Deref for PooledItem<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        match self.buffer.as_ref() {
-            Some(buffer) => buffer,
-            None => panic!("Buffer should be present"),
-        }
+        self.buffer.as_ref().expect("Buffer should be present")
     }
 }
 

@@ -560,7 +560,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Get filesystem for this storage URL
             if let Ok(fs) = filesystem.get_filesystem(base_location) {
                 // Ensure Write Buffer directory exists
-                if let Err(_) = fs.create_dir_all(&wal_dir).await {
+                if fs.create_dir_all(&wal_dir).await.is_err() {
                     tracing::warn!("Failed to create Write Buffer directory: {}", wal_dir);
                 }
 

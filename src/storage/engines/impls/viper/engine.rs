@@ -1804,6 +1804,7 @@ impl ViperEngine {
 }
 
 // Close the impl ViperEngine block
+#[allow(clippy::panic)]  // Intentional panics for Default impl failures - indicates initialization problems
 impl Default for ViperEngine {
     fn default() -> Self {
         let runtime = match tokio::runtime::Runtime::new() {

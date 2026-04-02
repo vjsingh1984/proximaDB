@@ -835,6 +835,7 @@ impl ColumnarFactory {
     }
 
     /// Create columnar optimizer with hardware-specific settings
+    #[allow(clippy::todo)]  // TODO: Refactor to async and provide proper arguments (5 args required)
     pub fn create_optimizer(
         _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         _config: ColumnarConfig,

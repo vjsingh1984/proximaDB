@@ -190,7 +190,8 @@ impl ScoreOperator {
                 (0..num_rows)
                     .map(|i| {
                         let arr = list.value(i);
-                        let fa = arr.as_any().downcast_ref::<Float32Array>().unwrap();
+                        let fa = arr.as_any().downcast_ref::<Float32Array>()
+                            .expect("List should contain Float32Array elements");
                         (0..fa.len()).map(|j| fa.value(j)).collect()
                     })
                     .collect()

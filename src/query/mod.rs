@@ -113,6 +113,7 @@
 //!
 
 pub mod ast;
+pub mod capability; // Capability registry for query validation and API parity
 pub mod cache; // C2: Query result caching for agentic AI workloads with repetitive queries
 pub mod columnar; // M2: Dual Columnar Execution - ColumnarReadProvider abstraction
 pub mod compute_bridge; // Bridge to Hadoop-style storage-compute separation
@@ -143,6 +144,9 @@ pub use unified_query_optimizer::{
     UnifiedOptimizerConfig, UnifiedQueryOptimizer as QueryOptimizer,
 };
 pub use vector_search::{SearchParameters, VectorSearchQuery, VectorSearchResult};
+
+// Re-export capability registry types
+pub use capability::{Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet};
 
 // Re-export federated query types
 pub use federated::{

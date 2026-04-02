@@ -114,6 +114,7 @@ impl AvroSerializationStrategy {
 }
 
 impl Default for AvroSerializationStrategy {
+    #[allow(clippy::panic)]  // Intentional panic for API misuse - Default not supported, must use new()
     fn default() -> Self {
         panic!("AvroSerializationStrategy requires configuration - use new() instead")
     }

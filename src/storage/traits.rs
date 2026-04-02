@@ -817,6 +817,164 @@ pub trait UnifiedStorageEngine: Send + Sync {
         true // All engines support background operations by default
     }
 
+    /// Get comprehensive capability set for this engine
+    ///
+    /// Returns a CapabilitySet from the query capability registry that describes
+    /// all features this engine supports. This is used for query validation,
+    /// planning, and API parity checks.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let engine = StorageEngineFactory::create_sst()?;
+    /// let caps = engine.capabilities();
+    /// assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+    ///     Capability::VectorSearch,
+    ///     Capability::Filter,
+    /// ])));
+    /// ```
+    ///
+    /// Default implementation provides capability sets based on engine strategy.
+    /// Engines can override this method to customize their declared capabilities.
+    fn capabilities(&self) -> crate::query::capability::CapabilitySet {
+        use crate::query::capability::{Capability, CapabilitySet};
+        use crate::storage::traits::StorageEngineStrategy;
+
+        match self.strategy() {
+            StorageEngineStrategy::Sst => CapabilitySet::from_capabilities(&[
+                // Core operations
+                Capability::Scan,
+                Capability::Filter,
+                Capability::PredicatePushdown,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::DotProduct,
+                Capability::Quantization,
+                // Features
+                Capability::WALRecovery,
+                Capability::BloomFilter,
+                // Index types
+                Capability::HNSWIndex,
+                Capability::IVFIndex,
+                Capability::AnnoyIndex,
+                Capability::LSHIndex,
+            ]),
+            StorageEngineStrategy::Viper => CapabilitySet::from_capabilities(&[
+                // Core operations
+                Capability::Scan,
+                Capability::Filter,
+                Capability::Project,
+                Capability::PredicatePushdown,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::DotProduct,
+                Capability::Quantization,
+                // Features
+                Capability::ColumnarAnalytics,
+                Capability::RowGroupPruning,
+                Capability::BloomFilter,
+                // Index types
+                Capability::HNSWIndex,
+                Capability::IVFIndex,
+            ]),
+            StorageEngineStrategy::Helix => CapabilitySet::from_capabilities(&[
+                // Core operations
+                Capability::Scan,
+                Capability::Filter,
+                Capability::PredicatePushdown,
+                // Vector operations (high-dimensional optimized)
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::Quantization,
+                // Features (spatial)
+                Capability::ColumnarAnalytics,
+                Capability::BloomFilter,
+            ]),
+            StorageEngineStrategy::Nova => CapabilitySet::from_capabilities(&[
+                // Core operations
+                Capability::Scan,
+                Capability::Filter,
+                Capability::Project,
+                Capability::PredicatePushdown,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::DotProduct,
+                Capability::HybridSearch,
+                Capability::Quantization,
+                // Features
+                Capability::ColumnarAnalytics,
+                Capability::RowGroupPruning,
+                Capability::BloomFilter,
+                // Index types
+                Capability::HNSWIndex,
+                Capability::IVFIndex,
+            ]),
+            StorageEngineStrategy::Swift => CapabilitySet::from_capabilities(&[
+                // Core operations (low-latency optimized)
+                Capability::Scan,
+                Capability::Filter,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                // Features
+                Capability::BloomFilter,
+            ]),
+            StorageEngineStrategy::Raptor => CapabilitySet::from_capabilities(&[
+                // Core operations (adaptive)
+                Capability::Scan,
+                Capability::Filter,
+                Capability::PredicatePushdown,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::Quantization,
+                // Features
+                Capability::ColumnarAnalytics,
+                Capability::BloomFilter,
+            ]),
+            StorageEngineStrategy::TimeSeries => CapabilitySet::from_capabilities(&[
+                // Time-series operations
+                Capability::TimeSeriesQuery,
+                Capability::Scan,
+                Capability::Filter,
+                // Features
+                Capability::Aggregate,
+            ]),
+            StorageEngineStrategy::Hybrid => CapabilitySet::from_capabilities(&[
+                // Hybrid operations (combines VIPER + SST)
+                Capability::Scan,
+                Capability::Filter,
+                Capability::Project,
+                Capability::PredicatePushdown,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::DotProduct,
+                Capability::HybridSearch,
+                Capability::Quantization,
+                // Features
+                Capability::ColumnarAnalytics,
+                Capability::RowGroupPruning,
+                Capability::WALRecovery,
+                Capability::BloomFilter,
+                // Index types
+                Capability::HNSWIndex,
+                Capability::IVFIndex,
+                Capability::AnnoyIndex,
+                Capability::LSHIndex,
+            ]),
+        }
+    }
+
     // =============================================================================
     // STORAGE ASSIGNMENT - Common logic for all engines using singleton pattern
     // =============================================================================

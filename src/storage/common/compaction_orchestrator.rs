@@ -646,6 +646,7 @@ impl FilenameCodec {
 
     /// Parse level from filename with caching
     pub fn parse_level(&self, filename: &str) -> u32 {
+        #[allow(clippy::panic)]  // Compile-time invariant: regex pattern must be valid
         let compile_level_regex = || match Regex::new(r"^L(\d+)_") {
             Ok(regex) => regex,
             Err(err) => panic!("Invalid level filename regex: {err}"),
@@ -661,6 +662,7 @@ impl FilenameCodec {
 
     /// Parse timestamp from filename with caching
     pub fn parse_timestamp(&self, filename: &str) -> u64 {
+        #[allow(clippy::panic)]  // Compile-time invariant: regex pattern must be valid
         let compile_timestamp_regex = || match Regex::new(r"L\d+_(\d{8}T\d{6})_") {
             Ok(regex) => regex,
             Err(err) => panic!("Invalid timestamp filename regex: {err}"),
@@ -680,6 +682,7 @@ impl FilenameCodec {
 
     /// Check if filename follows convention
     pub fn is_tiered_filename(&self, filename: &str, extension: &str) -> bool {
+        #[allow(clippy::panic)]  // Compile-time invariant: regex pattern must be valid
         let compile_full_regex = || match Regex::new(r"^L\d+_\d{8}T\d{6}_[a-f0-9]{8}\.\w+$") {
             Ok(regex) => regex,
             Err(err) => panic!("Invalid full filename regex: {err}"),

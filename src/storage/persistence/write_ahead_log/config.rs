@@ -396,7 +396,6 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
                 data_directories: vec!["file://./data".to_string()],
                 distribution_strategy,
                 collection_affinity: core_config.collection_affinity,
-                ..Default::default()
             },
             performance: PerformanceConfig {
                 memory_flush_size_bytes: core_config.memory_flush_size_bytes,

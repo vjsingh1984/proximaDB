@@ -105,11 +105,36 @@ use tracing::{info, warn};
 
 use crate::metrics::collectors::EngineMetricsCollector;
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
+use crate::query::capability::CapabilityRegistry;
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
 use super::impls::{nova::NovaEngine, sst::SstEngine, viper::ViperEngine};
 #[cfg(feature = "experimental-engines")]
 use super::impls::{raptor::RaptorEngine, swift::SwiftEngine};
+
+/// Global capability registry for storage engine capabilities
+///
+/// This singleton registry is initialized when the factory is first used
+/// and stores capability information for all storage engines.
+static GLOBAL_CAPABILITY_REGISTRY: once_cell::sync::Lazy<CapabilityRegistry> =
+    once_cell::sync::Lazy::new(CapabilityRegistry::new);
+
+/// Get the global capability registry
+pub fn global_capability_registry() -> &'static CapabilityRegistry {
+    &GLOBAL_CAPABILITY_REGISTRY
+}
+
+/// Register an engine's capabilities with the global registry
+///
+/// This function is called automatically when engines are created by the factory.
+/// It ensures that the capability registry has up-to-date information about
+/// what each engine supports.
+fn register_engine_capabilities(engine: &Arc<dyn UnifiedStorageEngine>) {
+    let caps = engine.capabilities();
+    let engine_name = engine.engine_name();
+    global_capability_registry().register_capabilities(engine_name, caps);
+    info!("✅ Registered capabilities for engine: {}", engine_name);
+}
 
 /// Storage engine factory for creating engine instances
 ///
@@ -117,8 +142,9 @@ use super::impls::{raptor::RaptorEngine, swift::SwiftEngine};
 ///
 /// 1. **Engine Creation**: Instantiate appropriate engine based on config
 /// 2. **Dependency Injection**: Provide filesystem, distance compute, caches
-/// 3. **Async Bridging**: Handle async engine initialization in sync context
-/// 4. **Error Reporting**: Return explicit errors for unimplemented/misconfigured engines
+/// 3. **Capability Registration**: Register engine capabilities with global registry
+/// 4. **Async Bridging**: Handle async engine initialization in sync context
+/// 5. **Error Reporting**: Return explicit errors for unimplemented/misconfigured engines
 ///
 /// ## Thread Safety:
 ///
@@ -358,14 +384,18 @@ impl StorageEngineFactory {
         info!("Creating VIPER storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { ViperEngine::new().await })?;
-        Ok(Arc::new(engine))
+        let engine = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Async version for use within async contexts (e.g., tests)
     pub async fn create_viper_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating VIPER storage engine");
         let engine = ViperEngine::new().await?;
-        Ok(Arc::new(engine))
+        let engine = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Create SST engine with default configuration
@@ -383,14 +413,18 @@ impl StorageEngineFactory {
         info!("Creating SST storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { SstEngine::new().await })?;
-        Ok(Arc::new(engine))
+        let engine = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Async version for use within async contexts (e.g., tests)
     pub async fn create_sst_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SST storage engine");
         let engine = SstEngine::new().await?;
-        Ok(Arc::new(engine))
+        let engine = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Create SWIFT engine (Storage With Instant Fast Traversal)
@@ -472,14 +506,18 @@ impl StorageEngineFactory {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(NovaEngine::new())?;
-        Ok(Arc::new(engine))
+        let engine = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Async version for use within async contexts (e.g., tests)
     pub async fn create_nova_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating NOVA storage engine");
         let engine = NovaEngine::new().await?;
-        Ok(Arc::new(engine))
+        let engine = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Create RAPTOR engine (Row-Aligned Predicated Tensor Optimized Repository)

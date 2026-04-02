@@ -237,6 +237,7 @@ impl IdIndex {
         Ok(())
     }
 
+    #[expect(clippy::vec_box)] // Box<BPlusNode> provides stable addresses for B+Tree
     fn split_child(
         &self,
         _keys: &mut Vec<String>,

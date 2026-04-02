@@ -1082,6 +1082,7 @@ impl ProximaDataBlock {
     /// Kept as stub to avoid breaking old code references
     #[deprecated(since = "0.1.5", note = "Use ProximaCodec::global() for all encoding")]
     #[allow(dead_code)]
+    #[allow(clippy::panic)]  // Intentional panic for obsolete API - prevents compilation of deprecated code
     fn get_simd_encoder(_engine_profile: super::engine_profile::EngineProfile) -> ! {
         panic!("get_simd_encoder is obsolete - use ProximaCodec::global() instead")
     }
@@ -1094,6 +1095,7 @@ impl ProximaDataBlock {
         note = "Use serialize_with_config() which now uses ProximaCodec"
     )]
     #[allow(dead_code)]
+    #[allow(clippy::panic)]  // Intentional panic for obsolete API - prevents compilation of deprecated code
     fn apply_simd_encoding(
         &mut self,
         _vectors: &[Vec<f32>],

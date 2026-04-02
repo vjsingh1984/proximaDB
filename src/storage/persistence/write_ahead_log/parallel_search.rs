@@ -100,8 +100,7 @@ impl ParallelWALSearch {
         // Convert to SearchResults and set ranks
         let results = sorted_candidates
             .into_iter()
-            .enumerate()
-            .map(|(_rank, candidate)| candidate.to_search_result())
+            .map(|candidate| candidate.to_search_result())
             .collect();
 
         let elapsed = start.elapsed();

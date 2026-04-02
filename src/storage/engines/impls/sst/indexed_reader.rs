@@ -126,9 +126,7 @@ pub struct SSTIndexBasedReader {
 
 impl SSTIndexBasedReader {
     pub fn new() -> Self {
-        Self::try_new().unwrap_or_else(|error| {
-            panic!("Failed to initialize SSTIndexBasedReader: {error}");
-        })
+        Self::try_new().expect("Failed to initialize SSTIndexBasedReader")
     }
 
     pub fn try_new() -> Result<Self> {

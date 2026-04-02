@@ -118,6 +118,7 @@ impl BincodeSerializationStrategy {
 }
 
 impl Default for BincodeSerializationStrategy {
+    #[allow(clippy::panic)]  // Intentional panic for API misuse - Default not supported, must use new()
     fn default() -> Self {
         panic!("BincodeSerializationStrategy requires configuration - use new() instead")
     }
