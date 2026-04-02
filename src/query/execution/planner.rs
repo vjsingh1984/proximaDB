@@ -913,12 +913,8 @@ impl ExecutionPlanner {
         // the executor already creates fields with "metadata." prefix
         // matching the SELECT clause column names.
         // Keeping this method for future transformation types.
-        for item in &select.projection {
-            match &item.expr {
-                _ => {
-                    // TODO: Handle other projection types (timestamp formatting, etc.)
-                }
-            }
+        for _item in &select.projection {
+            // TODO: Handle other projection types (timestamp formatting, etc.)
         }
 
         transforms

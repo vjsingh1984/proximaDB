@@ -304,6 +304,8 @@ impl MemtableFactory {
     // }
 
     /// Create specific memtable type for testing/benchmarking
+    #[expect(clippy::match_single_binding)] // Only GlobalPartitioned is used in production
+    #[expect(clippy::panic)] // Test function - unused types intentionally panic
     pub fn create_typed<K, V>(
         memtable_type: MemtableType,
         _config: MemtableConfig,
