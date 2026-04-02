@@ -367,6 +367,22 @@ impl CapabilityRegistry {
         let caps = self.capabilities.read().unwrap();
         caps.keys().cloned().collect()
     }
+
+    /// List all registered engine names (alias for registered_engines).
+    pub fn list_registered_engines(&self) -> Vec<String> {
+        self.registered_engines()
+    }
+
+    /// Find engines that support all the given capabilities.
+    ///
+    /// Returns a list of engine names that have all the specified capabilities.
+    pub fn find_engines_with_capabilities(&self, required: &CapabilitySet) -> Vec<String> {
+        let caps = self.capabilities.read().unwrap();
+        caps.iter()
+            .filter(|(_, engine_caps)| engine_caps.contains(required))
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
 }
 
 impl Default for CapabilityRegistry {

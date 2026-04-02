@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument, warn};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +39,8 @@ use super::{QueryRequest, QueryResult, QueryResultData, UnifiedQueryFacade};
 use crate::proto::proximadb_v1::{
     SearchResult, SearchVectorRecord, VectorOperationResponse, VectorSearchRequest,
 };
+use crate::query::validator::PlanValidator;
+use crate::storage::engines::factory::global_capability_registry;
 
 /// Result of explaining a query's execution plan
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,17 +73,56 @@ pub struct ExplainComponent {
 /// This adapter provides protocol-agnostic methods that:
 /// - Accept proto request types (VectorSearchRequest, etc.)
 /// - Convert to unified QueryRequest
+/// - Validate plans before execution (capability checking)
 /// - Execute through the facade
 /// - Convert results back to proto response types
 #[derive(Clone)]
 pub struct QueryFacadeAdapter {
     facade: Arc<UnifiedQueryFacade>,
+    /// Plan validator for capability checking
+    validator: PlanValidator,
+    /// Enable/disable plan validation (default: enabled)
+    validation_enabled: bool,
 }
 
 impl QueryFacadeAdapter {
     /// Create a new adapter wrapping the given facade
     pub fn new(facade: Arc<UnifiedQueryFacade>) -> Self {
-        Self { facade }
+        let validator = PlanValidator::new(Arc::new(global_capability_registry().clone()));
+        Self {
+            facade,
+            validator,
+            validation_enabled: true,
+        }
+    }
+
+    /// Create a new adapter with validation disabled
+    ///
+    /// Use this for testing or when you want to skip capability validation.
+    pub fn without_validation(facade: Arc<UnifiedQueryFacade>) -> Self {
+        let validator = PlanValidator::new(Arc::new(global_capability_registry().clone()));
+        Self {
+            facade,
+            validator,
+            validation_enabled: false,
+        }
+    }
+
+    /// Enable plan validation
+    pub fn enable_validation(&mut self) {
+        self.validation_enabled = true;
+        info!("Plan validation enabled");
+    }
+
+    /// Disable plan validation
+    pub fn disable_validation(&mut self) {
+        self.validation_enabled = false;
+        warn!("Plan validation disabled - queries may fail at runtime");
+    }
+
+    /// Check if validation is enabled
+    pub fn is_validation_enabled(&self) -> bool {
+        self.validation_enabled
     }
 
     /// Get a reference to the underlying facade
@@ -89,9 +130,157 @@ impl QueryFacadeAdapter {
         &self.facade
     }
 
+    /// Get a reference to the plan validator
+    pub fn validator(&self) -> &PlanValidator {
+        &self.validator
+    }
+
+    // ========================================================================
+    // PLAN VALIDATION METHODS
+    // ========================================================================
+
+    /// Validate a plan node against the specified storage engine
+    ///
+    /// This method can be called before executing a plan to ensure
+    /// that the storage engine supports all required capabilities.
+    ///
+    /// ## Arguments
+    ///
+    /// * `plan` - The plan node to validate
+    /// * `engine_name` - The name of the storage engine (e.g., "SST", "VIPER")
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(ValidationResult)` - Validation result with details
+    /// * `Err(anyhow::Error)` - If validation fails
+    ///
+    /// ## Example
+    ///
+    /// ```rust,ignore
+    /// use proximaDB::query::federated::optimizer::PlanNode;
+    /// use proximaDB::query::facade::QueryFacadeAdapter;
+    ///
+    /// let adapter = query_facade_adapter();
+    /// let plan = create_plan();
+    ///
+    /// match adapter.validate_plan(&plan, "SST") {
+    ///     Ok(result) if result.is_valid => {
+    ///         // Plan is valid, execute it
+    ///     }
+    ///     Ok(result) => {
+    ///         // Plan is not valid, handle missing capabilities
+    ///         eprintln!("Missing capabilities: {:?}", result.missing_capabilities);
+    ///     }
+    ///     Err(e) => {
+    ///         // Validation error
+    ///         eprintln!("Validation failed: {}", e);
+    ///     }
+    /// }
+    /// ```
+    pub fn validate_plan(
+        &self,
+        plan: &crate::query::federated::optimizer::PlanNode,
+        engine_name: &str,
+    ) -> Result<crate::query::validator::ValidationResult> {
+        if !self.validation_enabled {
+            debug!(
+                engine = %engine_name,
+                "Validation disabled, skipping plan check"
+            );
+            return Ok(crate::query::validator::ValidationResult::success(
+                engine_name.to_string(),
+            ));
+        }
+
+        info!(
+            engine = %engine_name,
+            plan_id = plan.id,
+            "Validating plan against storage engine"
+        );
+
+        let result = self.validator.validate_plan(plan, engine_name)?;
+
+        if result.is_valid {
+            info!(
+                engine = %engine_name,
+                plan_id = plan.id,
+                "Plan validation passed"
+            );
+        } else {
+            warn!(
+                engine = %engine_name,
+                plan_id = plan.id,
+                missing_capabilities = %result.missing_capabilities.join(", "),
+                available_alternatives = %result.available_alternatives.join(", "),
+                "Plan validation failed"
+            );
+        }
+
+        Ok(result)
+    }
+
+    /// Ensure a plan is executable on the specified engine
+    ///
+    /// This is a convenience method that returns an error if the plan
+    /// cannot be executed on the given engine.
+    ///
+    /// ## Returns
+    ///
+    /// * `Ok(())` - Plan is executable
+    /// * `Err(anyhow::Error)` - Plan is not executable with details
+    pub fn ensure_plan_executable(
+        &self,
+        plan: &crate::query::federated::optimizer::PlanNode,
+        engine_name: &str,
+    ) -> Result<()> {
+        if !self.validation_enabled {
+            return Ok(());
+        }
+
+        self.validator
+            .ensure_executable(plan, engine_name)
+            .map_err(|e| anyhow!("Plan not executable: {}", e))
+    }
+
+    /// Find compatible engines for a plan
+    ///
+    /// Returns a list of storage engine names that can execute the given plan.
+    ///
+    /// ## Example
+    ///
+    /// ```rust,ignore
+    /// let adapter = query_facade_adapter();
+    /// let plan = create_plan();
+    ///
+    /// let engines = adapter.find_compatible_engines(&plan)?;
+    /// println!("Compatible engines: {:?}", engines);
+    /// ```
+    pub fn find_compatible_engines(
+        &self,
+        plan: &crate::query::federated::optimizer::PlanNode,
+    ) -> Result<Vec<String>> {
+        Ok(self.validator.validate_against_all_engines(plan)?)
+    }
+
+    /// Find the best engine for executing a plan
+    ///
+    /// Returns the engine name that has the best capability match for the plan.
+    pub fn find_best_engine(
+        &self,
+        plan: &crate::query::federated::optimizer::PlanNode,
+    ) -> Result<Option<String>> {
+        Ok(self.validator.find_best_engine(plan)?)
+    }
+
     /// Execute vector search through the unified facade
     ///
     /// Converts VectorSearchRequest to QueryRequest, executes, and converts back.
+    ///
+    /// ## Validation
+    ///
+    /// Plan validation is performed if enabled via `enable_validation()`.
+    /// When validation is enabled, the plan will be checked against the
+    /// storage engine's capabilities before execution.
     #[instrument(skip(self, request), fields(collection = %request.collection_id, top_k = request.top_k))]
     pub async fn vector_search(
         &self,
@@ -126,8 +315,17 @@ impl QueryFacadeAdapter {
             vector_dims = query_vector.len(),
             top_k = top_k,
             collection = %collection_id,
+            validation_enabled = self.validation_enabled,
             "Converting VectorSearchRequest to QueryRequest"
         );
+
+        // Log validation status
+        if self.validation_enabled {
+            info!(
+                collection = %collection_id,
+                "Plan validation is enabled - queries will be checked against storage engine capabilities"
+            );
+        }
 
         // Create QueryRequest from proto request
         let mut query_request =
@@ -160,9 +358,26 @@ impl QueryFacadeAdapter {
     /// Execute SQL query through the unified facade
     ///
     /// Returns the QueryResult directly (protocol handlers can format as needed)
+    ///
+    /// ## Validation
+    ///
+    /// Plan validation is performed if enabled via `enable_validation()`.
+    /// For SQL queries with multi-model extensions (VECTOR_SEARCH, GRAPH_QUERY, etc.),
+    /// the plan will be validated against storage engine capabilities.
     #[instrument(skip(self), fields(sql_len = sql.len()))]
     pub async fn sql_query(&self, sql: &str) -> Result<QueryResult> {
-        debug!("Executing SQL query via adapter");
+        debug!(
+            validation_enabled = self.validation_enabled,
+            "Executing SQL query via adapter"
+        );
+
+        // Log validation status for federated queries
+        if self.validation_enabled && Self::should_use_federated_request(sql) {
+            info!(
+                "Plan validation is enabled for federated SQL query - will check capabilities"
+            );
+        }
+
         let query_request = if Self::should_use_federated_request(sql) {
             QueryRequest::federated(sql)
         } else {
@@ -174,9 +389,24 @@ impl QueryFacadeAdapter {
     /// Execute federated query (SQL with multi-model extensions)
     ///
     /// Supports VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, METRICS extensions
+    ///
+    /// ## Validation
+    ///
+    /// Plan validation is performed if enabled. Multi-model queries are validated
+    /// to ensure all required capabilities are supported by the storage engine.
     #[instrument(skip(self), fields(sql_len = sql.len()))]
     pub async fn federated_query(&self, sql: &str) -> Result<QueryResult> {
-        debug!("Executing federated query via adapter");
+        debug!(
+            validation_enabled = self.validation_enabled,
+            "Executing federated query via adapter"
+        );
+
+        if self.validation_enabled {
+            info!(
+                "Plan validation is enabled for federated query - will check multi-model capabilities"
+            );
+        }
+
         let query_request = QueryRequest::federated(sql);
         self.facade.execute(query_request).await
     }

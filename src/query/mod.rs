@@ -133,6 +133,7 @@ pub mod sql_frontend;
 pub mod unified; // Multi-model query engine (vector, document, graph, observability)
 pub mod unified_query_optimizer;
 pub mod utils;
+pub mod validator; // Plan validation for capability checking
 pub mod vector_search;
 
 #[cfg(test)]
@@ -147,6 +148,7 @@ pub use vector_search::{SearchParameters, VectorSearchQuery, VectorSearchResult}
 
 // Re-export capability registry types
 pub use capability::{Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet};
+pub use validator::{PlanValidator, ValidationResult};
 
 // Re-export federated query types
 pub use federated::{
