@@ -200,6 +200,8 @@ use std::io::{Read, Write};
 // use parquet::file::properties::WriterProperties;
 
 // Stub types for parquet since it's disabled
+// These must match the external parquet crate's API (ALL CAPS)
+#[expect(clippy::upper_case_acronyms)]
 mod parquet {
     pub mod basic {
         #[derive(Debug, Clone)]

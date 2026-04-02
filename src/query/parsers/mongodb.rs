@@ -178,7 +178,7 @@ pub enum MongoOperator {
 
 impl MongoOperator {
     /// Parse a MongoDB operator from its string representation
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_operator(s: &str) -> Option<Self> {
         match s {
             // Comparison
             "$eq" => Some(Self::Eq),
@@ -614,7 +614,7 @@ impl MongoDBLexer {
         )(input)?;
 
         // Check if this is an operator
-        if let Some(op) = MongoOperator::from_str(s) {
+        if let Some(op) = MongoOperator::parse_operator(s) {
             Ok((remaining, Token::Operator(op)))
         } else {
             Ok((remaining, Token::String(s.to_string())))
@@ -878,7 +878,7 @@ impl MongoDBParser {
             }
 
             let operator =
-                MongoOperator::from_str(key).ok_or_else(|| anyhow!("Unknown operator: {}", key))?;
+                MongoOperator::parse_operator(key).ok_or_else(|| anyhow!("Unknown operator: {}", key))?;
 
             match operator {
                 MongoOperator::ElemMatch => {

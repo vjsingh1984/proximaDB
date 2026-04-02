@@ -43,7 +43,7 @@ impl SerializationFormat {
     }
 
     /// Parse from string
-    pub fn from_str(s: &str) -> Result<Self> {
+    pub fn parse_format(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "proto" | "protobuf" | "protocol-buffers" => Ok(Self::ProtocolBuffers),
             "bincode" => Ok(Self::Bincode),
@@ -76,7 +76,7 @@ impl SerializerFactory {
 
     /// Create a serializer from a format string
     pub fn from_string(format: &str) -> Result<Box<dyn VectorBatchSerializer>> {
-        let format = SerializationFormat::from_str(format)?;
+        let format = SerializationFormat::parse_format(format)?;
         Ok(Self::create(format))
     }
 }
@@ -88,15 +88,15 @@ mod tests {
     #[test]
     fn test_serialization_format_conversion() {
         assert_eq!(
-            SerializationFormat::from_str("proto").unwrap(),
+            SerializationFormat::parse_format("proto").unwrap(),
             SerializationFormat::ProtocolBuffers
         );
         assert_eq!(
-            SerializationFormat::from_str("bincode").unwrap(),
+            SerializationFormat::parse_format("bincode").unwrap(),
             SerializationFormat::Bincode
         );
         assert_eq!(
-            SerializationFormat::from_str("avro").unwrap(),
+            SerializationFormat::parse_format("avro").unwrap(),
             SerializationFormat::Avro
         );
         assert!(SerializationFormat::from_str("unknown").is_err());

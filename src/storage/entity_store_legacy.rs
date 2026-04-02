@@ -921,13 +921,18 @@ impl ProximaEntityStore {
         results.reserve(std::cmp::min(max_count, 1000));
 
         // Use simplified approach since entity_headers field doesn't exist
-        let headers = self.headers.read().map_err(|e| {
-            crate::core::error::VectorDBError::Internal(format!(
-                "RwLock for headers is poisoned: {}",
-                e
-            ))
-        })?;
-        for key in headers.keys() {
+        // Clone the keys to drop the lock before await
+        let keys: Vec<String> = {
+            let headers = self.headers.read().map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for headers is poisoned: {}",
+                    e
+                ))
+            })?;
+            headers.keys().cloned().collect()
+            // Guard dropped here when block ends
+        };
+        for key in keys {
             if count >= max_count {
                 break;
             }
@@ -1052,13 +1057,24 @@ impl ProximaEntityStore {
 
                 #[cfg(not(test))]
                 {
-                    let headers = match self.headers.read() {
-                        Ok(guard) => guard,
-                        Err(e) => {
-                            return Err(anyhow::anyhow!("RwLock for headers is poisoned: {}", e));
-                        }
+                    let entity_ids: Vec<String> = {
+                        let headers = match self.headers.read() {
+                            Ok(guard) => guard,
+                            Err(e) => {
+                                return Err(anyhow::anyhow!("RwLock for headers is poisoned: {}", e));
+                            }
+                        };
+                        // Clone the data we need before dropping the lock
+                        let entity_ids: Vec<String> = headers
+                            .keys()
+                            .skip(start_idx)
+                            .cloned()
+                            .collect();
+                        drop(headers); // Explicitly drop the lock before awaits
+                        entity_ids
                     };
-                    for (entity_id, _header_bytes) in headers.iter().skip(start_idx) {
+
+                    for entity_id in entity_ids {
                         if count >= batch_size {
                             break;
                         }
@@ -1071,7 +1087,7 @@ impl ProximaEntityStore {
                             // For now, defer to entity-level filtering
                             for filter in filters {
                                 if let Ok(Some(_entity)) = self
-                                    .get_entity(collection_id, entity_id, false, false)
+                                    .get_entity(collection_id, &entity_id, false, false)
                                     .await
                                 {
                                     if !self.entity_matches_metadata_filter(&_entity, filter) {
@@ -1086,7 +1102,7 @@ impl ProximaEntityStore {
 
                             if all_match
                                 && let Ok(Some(entity)) = self
-                                    .get_entity(collection_id, entity_id, false, false)
+                                    .get_entity(collection_id, &entity_id, false, false)
                                     .await
                                 {
                                     results.push(entity);

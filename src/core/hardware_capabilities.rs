@@ -534,7 +534,7 @@ impl SimdCapabilities {
     }
 
     /// Get a string representation of the available SIMD capabilities
-    pub fn to_string(&self) -> String {
+    pub fn describe_features(&self) -> String {
         let mut features = Vec::new();
         if self.has_avx512 {
             features.push("AVX-512");
@@ -1301,7 +1301,7 @@ impl HardwareCapabilities {
             self.cpu.vendor, self.cpu.model_name, self.cpu.physical_cores, self.cpu.logical_cores
         );
 
-        info!("🎯 SIMD: {}", self.cpu.simd.to_string());
+        info!("🎯 SIMD: {}", self.cpu.simd.describe_features());
 
         match self.gpu.backend {
             GpuBackend::None => {

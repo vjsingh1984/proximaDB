@@ -37,7 +37,7 @@ impl FilesystemScheme {
     }
 
     /// Parse a scheme string into a FilesystemScheme
-    pub fn from_str(s: &str) -> Result<Self, FilesystemError> {
+    pub fn parse_scheme(s: &str) -> Result<Self, FilesystemError> {
         match s {
             "file" => Ok(Self::File),
             "s3" => Ok(Self::S3),
@@ -70,7 +70,7 @@ pub fn extract_scheme(url: &str) -> Result<FilesystemScheme, FilesystemError> {
     let parsed_url = Url::parse(&normalized)
         .map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL {}: {}", url, e)))?;
 
-    FilesystemScheme::from_str(parsed_url.scheme())
+    FilesystemScheme::parse_scheme(parsed_url.scheme())
 }
 
 /// Validate a URL for scheme-specific requirements
@@ -79,7 +79,7 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
     let parsed_url = Url::parse(&normalized)
         .map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL {}: {}", url, e)))?;
 
-    let scheme = FilesystemScheme::from_str(parsed_url.scheme())?;
+    let scheme = FilesystemScheme::parse_scheme(parsed_url.scheme())?;
 
     match scheme {
         FilesystemScheme::File => {
@@ -152,7 +152,7 @@ pub fn validate_url(url: &str) -> Result<(), FilesystemError> {
 
 /// Check if a scheme is supported
 pub fn is_supported_scheme(scheme: &str) -> bool {
-    FilesystemScheme::from_str(scheme).is_ok()
+    FilesystemScheme::parse_scheme(scheme).is_ok()
 }
 
 #[cfg(test)]
@@ -162,18 +162,18 @@ mod tests {
     #[test]
     fn test_scheme_parsing() {
         assert_eq!(
-            FilesystemScheme::from_str("file").unwrap(),
+            FilesystemScheme::parse_scheme("file").unwrap(),
             FilesystemScheme::File
         );
         assert_eq!(
-            FilesystemScheme::from_str("s3").unwrap(),
+            FilesystemScheme::parse_scheme("s3").unwrap(),
             FilesystemScheme::S3
         );
         assert_eq!(
-            FilesystemScheme::from_str("gs").unwrap(),
+            FilesystemScheme::parse_scheme("gs").unwrap(),
             FilesystemScheme::GoogleCloudStorage
         );
-        assert!(FilesystemScheme::from_str("invalid").is_err());
+        assert!(FilesystemScheme::parse_scheme("invalid").is_err());
     }
 
     #[test]

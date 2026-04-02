@@ -956,7 +956,7 @@ impl Catalog for IcebergCatalog {
                             let field_id = f.get("field-id")?.as_i64()? as i32;
                             let name = f.get("name")?.as_str()?.to_string();
                             let transform_str = f.get("transform")?.as_str()?;
-                            let transform = PartitionTransform::from_str(transform_str);
+                            let transform = PartitionTransform::parse_from_iceberg_format(transform_str);
 
                             Some(CatalogPartitionField {
                                 source_id,
@@ -1070,7 +1070,7 @@ impl Catalog for IcebergCatalog {
                         .filter_map(|f| {
                             let source_id = f.get("source-id")?.as_i64()? as i32;
                             let transform_str = f.get("transform")?.as_str().unwrap_or("identity");
-                            let transform = PartitionTransform::from_str(transform_str);
+                            let transform = PartitionTransform::parse_from_iceberg_format(transform_str);
                             let direction_str = f.get("direction")?.as_str().unwrap_or("asc");
                             let direction = if direction_str == "desc" {
                                 SortDirection::Descending

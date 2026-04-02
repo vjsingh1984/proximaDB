@@ -23,7 +23,7 @@ pub enum ProgressiveEngineType {
 
 impl ProgressiveEngineType {
     /// Convert from string (case insensitive)
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str_uppercase(s: &str) -> Option<Self> {
         match s.to_uppercase().as_str() {
             "SST" => Some(Self::SST),
             "HELIX" => Some(Self::HELIX),
@@ -357,15 +357,15 @@ mod tests {
     }
 
     #[test]
-    fn test_engine_type_from_str() {
+    fn test_engine_type_from_str_uppercase() {
         assert_eq!(
-            ProgressiveEngineType::from_str("sst"),
+            ProgressiveEngineType::from_str_uppercase("sst"),
             Some(ProgressiveEngineType::SST)
         );
         assert_eq!(
-            ProgressiveEngineType::from_str("HELIX"),
+            ProgressiveEngineType::from_str_uppercase("HELIX"),
             Some(ProgressiveEngineType::HELIX)
         );
-        assert_eq!(ProgressiveEngineType::from_str("unknown"), None);
+        assert_eq!(ProgressiveEngineType::from_str_uppercase("unknown"), None);
     }
 }

@@ -102,7 +102,7 @@ pub enum BlockFormat {
 
 impl BlockFormat {
     /// Parse block format from string
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_block_format(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "arrowblock" | "arrow" | "arrow_block" => BlockFormat::ArrowBlock,
             _ => BlockFormat::ProximaBlocks,
@@ -249,12 +249,12 @@ mod tests {
     #[test]
     fn test_format_parsing() {
         assert_eq!(
-            BlockFormat::from_str("ProximaBlocks"),
+            BlockFormat::parse_block_format("ProximaBlocks"),
             BlockFormat::ProximaBlocks
         );
-        assert_eq!(BlockFormat::from_str("ArrowBlock"), BlockFormat::ArrowBlock);
-        assert_eq!(BlockFormat::from_str("arrow"), BlockFormat::ArrowBlock);
-        assert_eq!(BlockFormat::from_str("unknown"), BlockFormat::ProximaBlocks);
+        assert_eq!(BlockFormat::parse_block_format("ArrowBlock"), BlockFormat::ArrowBlock);
+        assert_eq!(BlockFormat::parse_block_format("arrow"), BlockFormat::ArrowBlock);
+        assert_eq!(BlockFormat::parse_block_format("unknown"), BlockFormat::ProximaBlocks);
     }
 
     #[test]

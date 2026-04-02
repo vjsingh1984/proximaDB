@@ -380,7 +380,7 @@ pub enum EmbeddingMode {
 
 impl EmbeddingMode {
     /// Parse embedding mode from config string
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_from_config(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "cold" => EmbeddingMode::Cold,
             "memory" => EmbeddingMode::Memory,

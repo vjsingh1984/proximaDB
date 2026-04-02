@@ -431,7 +431,7 @@ impl Expr {
     }
 
     /// Create a NOT expression.
-    pub fn not(expr: Expr) -> Self {
+    pub fn not_expr(expr: Expr) -> Self {
         Self::Not(Box::new(expr))
     }
 

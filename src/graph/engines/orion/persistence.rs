@@ -247,10 +247,6 @@ impl OrionPersistence {
             .map(|entry| (*entry.value()).clone())
             .collect::<Vec<_>>();
 
-        // Get CSR data
-        let csr_outgoing = Self::read_lock(&engine.csr_outgoing, "CSR outgoing")?;
-        let csr_incoming = Self::read_lock(&engine.csr_incoming, "CSR incoming")?;
-
         // Build node_to_index mapping
         let node_to_index = engine
             .node_to_index
@@ -258,15 +254,32 @@ impl OrionPersistence {
             .map(|entry| (entry.key().clone(), *entry.value()))
             .collect::<HashMap<_, _>>();
 
+        // Clone data needed for snapshot - guards are dropped when block ends
+        let (csr_outgoing_offsets, csr_outgoing_targets, csr_incoming_offsets, csr_incoming_sources) = {
+            let csr_outgoing = Self::read_lock(&engine.csr_outgoing, "CSR outgoing")?;
+            let csr_incoming = Self::read_lock(&engine.csr_incoming, "CSR incoming")?;
+            let csr_outgoing_offsets = csr_outgoing.offsets.clone();
+            let csr_outgoing_targets = csr_outgoing.targets.clone();
+            let csr_incoming_offsets = csr_incoming.offsets.clone();
+            let csr_incoming_sources = csr_incoming.targets.clone();
+            // Guards dropped here when block ends
+            Ok::<(Vec<_>, Vec<_>, Vec<_>, Vec<_>), ProximaDBError>((
+                csr_outgoing_offsets,
+                csr_outgoing_targets,
+                csr_incoming_offsets,
+                csr_incoming_sources,
+            ))
+        }?;
+
         // Create snapshot
         let snapshot = OrionSnapshot {
             version: 1,
             nodes: nodes.into_iter().map(|n| (*n).clone()).collect(),
             edges: edges.into_iter().map(|e| (*e).clone()).collect(),
-            csr_outgoing_offsets: csr_outgoing.offsets.clone(),
-            csr_outgoing_targets: csr_outgoing.targets.clone(),
-            csr_incoming_offsets: csr_incoming.offsets.clone(),
-            csr_incoming_sources: csr_incoming.targets.clone(), // Note: 'targets' stores sources for incoming
+            csr_outgoing_offsets,
+            csr_outgoing_targets,
+            csr_incoming_offsets,
+            csr_incoming_sources, // Note: 'targets' stores sources for incoming
             node_to_index,
             timestamp: chrono::Utc::now().timestamp(),
         };

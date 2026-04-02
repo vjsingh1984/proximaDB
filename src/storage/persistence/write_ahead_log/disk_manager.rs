@@ -256,7 +256,7 @@ impl WriteAheadLogDiskManager {
                 file_name,                  // file_name
                 data_to_write.len() as u64, // size_bytes (encrypted size)
                 checksum,                   // checksum_crc32
-                SerializationFormat::from_str(format_str).unwrap_or(SerializationFormat::Bincode), // format enum
+                SerializationFormat::parse_format(format_str).unwrap_or(SerializationFormat::Bincode), // format enum
                 0,                         // vector_count (unknown at this point)
                 self.wal_base_url.clone(), // storage_url
             );

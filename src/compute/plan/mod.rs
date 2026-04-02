@@ -930,7 +930,7 @@ impl Expr {
     }
 
     /// Logical NOT
-    pub fn not(self) -> Self {
+    pub fn logical_not(self) -> Self {
         Self::Unary {
             op: UnaryOp::Not,
             expr: Box::new(self),
@@ -942,7 +942,7 @@ impl Not for Expr {
     type Output = Self;
 
     fn not(self) -> Self::Output {
-        self.not()
+        self.logical_not()
     }
 }
 

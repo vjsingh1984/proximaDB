@@ -245,7 +245,7 @@ impl ProximaRecordReader {
     /// Read next key-value pair
     ///
     /// Returns false when no more records.
-    pub fn next(&mut self) -> bool {
+    pub fn next_record(&mut self) -> bool {
         if self.exhausted {
             return false;
         }

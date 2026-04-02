@@ -211,7 +211,7 @@ impl DecimalValidator {
     }
 
     /// Create a decimal validator with default precision (38) and scale (18)
-    pub fn default() -> Self {
+    pub fn with_defaults() -> Self {
         Self {
             precision: Self::DEFAULT_PRECISION,
             scale: Self::DEFAULT_SCALE,
@@ -664,7 +664,7 @@ impl ValidatorRegistry {
         registry.register("JSON", JsonValidator::new());
         registry.register("TIMESTAMP", TimestampValidator::new());
         registry.register("GEO_POINT", GeoPointValidator);
-        registry.register("DECIMAL", DecimalValidator::default());
+        registry.register("DECIMAL", DecimalValidator::with_defaults());
         registry
     }
 }

@@ -487,7 +487,7 @@ impl std::fmt::Display for PartitionTransform {
 
 impl PartitionTransform {
     /// Parse from string (Iceberg format)
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_from_iceberg_format(s: &str) -> Self {
         let lower = s.to_lowercase();
         if lower == "identity" {
             PartitionTransform::Identity

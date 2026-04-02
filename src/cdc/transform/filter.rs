@@ -311,7 +311,7 @@ impl FilterRule {
     }
 
     /// Negate this rule
-    pub fn not(mut self) -> Self {
+    pub fn negate(mut self) -> Self {
         self.negate = !self.negate;
         self
     }

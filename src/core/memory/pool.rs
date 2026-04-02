@@ -373,7 +373,7 @@ impl<T> PooledItem<T> {
     }
 
     /// Get mutable reference to the buffer
-    pub fn as_mut(&mut self) -> &mut T {
+    pub fn as_buffer_mut(&mut self) -> &mut T {
         match self.buffer.as_mut() {
             Some(buffer) => buffer,
             None => panic!("Buffer should be present"),

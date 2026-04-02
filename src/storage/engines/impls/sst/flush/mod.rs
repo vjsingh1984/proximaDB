@@ -117,7 +117,7 @@ impl SstEngine {
 
         // Generate SSTable filename with appropriate extension based on block format
         let codec = FilenameCodec::new();
-        let block_format = BlockFormat::from_str(&self.config().block_format);
+        let block_format = BlockFormat::parse_block_format(&self.config().block_format);
         let file_extension = match block_format {
             BlockFormat::ArrowBlock => "arrow",
             BlockFormat::ProximaBlocks => "sst",

@@ -354,7 +354,7 @@ impl MetadataQueryBuilder {
     }
 
     /// Create a NOT condition
-    pub fn not(query: MetadataQuery) -> MetadataQuery {
+    pub fn not_condition(query: MetadataQuery) -> MetadataQuery {
         MetadataQuery::Not(Box::new(query))
     }
 

@@ -529,7 +529,8 @@ impl FederatedCatalog {
         }
 
         // List external catalog tables
-        let externals = self.external.read();
+        // Clone the externals map to drop the lock before awaits
+        let externals = self.external.read().clone();
         for (name, catalog) in externals.iter() {
             if let Ok(namespaces) = catalog.list_namespaces().await {
                 for ns in namespaces {

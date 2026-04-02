@@ -1029,7 +1029,7 @@ impl Compaction {
             debug!("Writing to staging path: {}", staging_file_path.display());
 
             // Check block format and use appropriate writer
-            let block_format = BlockFormat::from_str(&self.config.block_format);
+            let block_format = BlockFormat::parse_block_format(&self.config.block_format);
             debug!("🔍 COMPACTION: Using block format: {:?}", block_format);
 
             match block_format {
@@ -1133,7 +1133,7 @@ impl Compaction {
             debug!("Writing directly to: {}", task.output_file.display());
 
             // Check block format and use appropriate writer
-            let block_format = BlockFormat::from_str(&self.config.block_format);
+            let block_format = BlockFormat::parse_block_format(&self.config.block_format);
             debug!(
                 "🔍 COMPACTION (non-atomic): Using block format: {:?}",
                 block_format
@@ -1639,7 +1639,7 @@ impl Compaction {
 
         let codec = FilenameCodec::new();
         // Check block_format from config and use appropriate extension
-        let block_format = BlockFormat::from_str(&self.config.block_format);
+        let block_format = BlockFormat::parse_block_format(&self.config.block_format);
         let extension = match block_format {
             BlockFormat::ArrowBlock => "arrow",
             BlockFormat::ProximaBlocks => "sst",

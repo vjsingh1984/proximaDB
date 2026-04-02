@@ -223,6 +223,7 @@ impl FormatRegistry {
     // ========================================================================
 
     /// Auto-detect format from path
+    #[expect(clippy::await_holding_lock)] // FIXME: Requires API redesign to iterate without holding lock
     pub async fn detect_format(&self, path: &str) -> Result<Option<FormatType>> {
         let detectors = self.detectors.read();
 

@@ -222,7 +222,7 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
     }
 
     /// Create with default configuration
-    pub fn default() -> Self {
+    pub fn with_default_config() -> Self {
         Self::new(FixedLengthConfig::default())
     }
 

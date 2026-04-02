@@ -880,6 +880,7 @@ impl FilesystemFactory {
         since = "0.1.5",
         note = "Use `create_default()` instead - this creates a broken factory"
     )]
+    #[expect(clippy::default_trait_access)] // Kept for backward compatibility despite creating broken factory
     pub fn default() -> Self {
         Self {
             config: FilesystemConfig::default(),

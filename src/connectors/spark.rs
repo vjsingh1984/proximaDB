@@ -315,7 +315,7 @@ impl SparkPartitionReader {
     }
 
     /// Read the next batch of records
-    pub fn next(&mut self) -> Option<RecordBatch> {
+    pub fn next_batch(&mut self) -> Option<RecordBatch> {
         if self.exhausted {
             return None;
         }

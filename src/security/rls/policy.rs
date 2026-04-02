@@ -272,7 +272,7 @@ impl SecurityPredicate {
     }
 
     /// Negate this predicate
-    pub fn not(self) -> Self {
+    pub fn negate(self) -> Self {
         SecurityPredicate::Not(Box::new(self))
     }
 }

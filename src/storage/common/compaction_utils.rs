@@ -59,7 +59,7 @@ impl StorageEngineType {
     }
 
     /// Convert from string representation
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str_uppercase(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "SST" => StorageEngineType::SST,
             "VIPER" => StorageEngineType::VIPER,

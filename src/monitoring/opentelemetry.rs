@@ -345,6 +345,7 @@ pub fn is_opentelemetry_initialized() -> bool {
 }
 
 /// Convenience function to export metrics via global manager
+#[expect(clippy::await_holding_lock)] // FIXME: Requires API redesign to fix properly
 pub async fn export_global_metrics(metrics: &crate::metrics::SystemMetrics) -> Result<()> {
     if let Ok(guard) = GLOBAL_OTEL_MANAGER.lock() {
         if let Some(ref manager) = *guard {
