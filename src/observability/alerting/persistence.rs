@@ -172,6 +172,10 @@ pub struct FileAlertPersistence {
 }
 
 impl FileAlertPersistence {
+    /// Create a new file-based alert persistence layer.
+    ///
+    /// # Arguments
+    /// * `base_path` - Directory where alert data will be persisted
     pub fn new(base_path: impl AsRef<Path>) -> Self {
         Self {
             base_path: base_path.as_ref().to_path_buf(),

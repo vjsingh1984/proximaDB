@@ -1,20 +1,33 @@
-// Input adapters for observability ingestion
-//
-// Supports multiple input formats and protocols:
-// - OTLP (OpenTelemetry Protocol) - gRPC and HTTP
-// - Syslog (RFC 3164/5424) - TCP and UDP
-// - Fluent (Fluent Bit/Fluentd forward protocol)
-// - CEF (Common Event Format) - ArcSight
-// - LEEF (Log Event Extended Format) - IBM QRadar
-// - OCSF (Open Cybersecurity Schema Framework)
-// - HTTP (JSON over HTTP)
+//! Input adapters for observability ingestion
+//!
+//! Supports multiple input formats and protocols:
+//! - OTLP (OpenTelemetry Protocol) - gRPC and HTTP
+//! - Syslog (RFC 3164/5424) - TCP and UDP
+//! - Fluent (Fluent Bit/Fluentd forward protocol)
+//! - CEF (Common Event Format) - ArcSight
+//! - LEEF (Log Event Extended Format) - IBM QRadar
+//! - OCSF (Open Cybersecurity Schema Framework)
+//! - HTTP (JSON over HTTP)
 
+/// CEF and LEEF format adapter for ArcSight and IBM QRadar
 pub mod cef_leef;
+
+/// Fluent Bit/Fluentd forward protocol adapter
 pub mod fluent;
+
+/// HTTP JSON ingestion adapter
 pub mod http;
+
+/// OCSF (Open Cybersecurity Schema Framework) adapter
 pub mod ocsf;
+
+/// OpenTelemetry Protocol HTTP adapter
 pub mod otlp;
+
+/// OpenTelemetry Protocol gRPC adapter
 pub mod otlp_grpc;
+
+/// Syslog (RFC 3164/5424) TCP/UDP adapter
 pub mod syslog;
 
 use std::net::SocketAddr;

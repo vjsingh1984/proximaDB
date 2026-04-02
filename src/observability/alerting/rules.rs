@@ -148,7 +148,9 @@ pub enum RuleCondition {
     RateOfChange(f64),
     /// Composite condition combining multiple sub-conditions
     Composite {
+        /// Logical operator to combine sub-conditions
         operator: LogicalOp,
+        /// Sub-conditions to evaluate
         conditions: Vec<RuleCondition>,
     },
 }

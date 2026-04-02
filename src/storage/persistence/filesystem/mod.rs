@@ -881,6 +881,7 @@ impl FilesystemFactory {
         note = "Use `create_default()` instead - this creates a broken factory"
     )]
     #[expect(clippy::default_trait_access)] // Kept for backward compatibility despite creating broken factory
+    #[expect(clippy::should_implement_trait)] // Method is deprecated, trait implementation not appropriate
     pub fn default() -> Self {
         Self {
             config: FilesystemConfig::default(),

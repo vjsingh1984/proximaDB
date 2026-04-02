@@ -4679,6 +4679,7 @@ impl UnifiedSstableReader {
         let mut blocks = Vec::new();
         let mut block_id = 0u32;
 
+        #[expect(clippy::manual_counter_loop)] // Explicit counter is clearer than enumerate here
         for chunk in records.chunks(block_size) {
             use crate::storage::engines::core::formats::proximablocks::block_structures::{
                 BlockCompressionConfig, BlockStatistics,

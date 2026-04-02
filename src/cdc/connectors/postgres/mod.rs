@@ -60,7 +60,11 @@
 mod config;
 mod connector;
 mod decoder;
+
+/// PostgreSQL logical replication stream management
 pub mod replication;
+
+/// PostgreSQL initial snapshot handler
 pub mod snapshot;
 
 pub use config::{ColumnMapping, PostgresConfig, SnapshotMode, TableConfig};
