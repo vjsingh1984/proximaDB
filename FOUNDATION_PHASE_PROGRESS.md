@@ -2,7 +2,7 @@
 
 **Date**: April 2, 2026  
 **Phase**: Foundation Phase (Weeks 1-8)  
-**Progress**: 3/11 issues completed (27%)
+**Progress**: 5/11 issues completed (45%)
 
 ---
 
@@ -36,22 +36,42 @@
 - Child capability propagation
 - 12 comprehensive unit tests
 
+### Issue #34: Define Protocol-Level Capability Error Mapping ✅
+**Status**: COMPLETE  
+**Timeline**: Week 4  
+**Deliverables**:
+- Created CapabilityError module (~300 lines)
+- Protocol-specific error formatting (REST/gRPC/SQL)
+- Conversion traits for CapabilityCheckError → ApiError
+- Enhanced JSON responses with alternatives
+- 9 comprehensive unit tests
+
+### Issue #35: Add Canonical Plan Validation to Public Entrypoints ✅
+**Status**: COMPLETE  
+**Timeline**: Week 5  
+**Deliverables**:
+- Created PlanValidator module (~550 lines)
+- Validation methods: validate_plan, ensure_executable, find_compatible_engines
+- Integrated into QueryFacadeAdapter with enable/disable
+- Helper methods in CapabilityRegistry
+- 13 comprehensive unit tests
+
 ---
 
 ## 📊 Progress Statistics
 
-### Foundation Phase: 27% Complete (3/11 issues)
+### Foundation Phase: 45% Complete (5/11 issues)
 | Week | Issue | Status | Deliverable |
 |------|-------|--------|-------------|
 | 1-2 | #31 | ✅ Complete | Capability registry |
 | 1-2 | #32 | ✅ Complete | Engine integration |
 | 3 | #33 | ✅ Complete | Plan node capabilities |
-| 4 | #34 | ⏳ Next | Protocol error mapping |
-| 5 | #35 | ⏳ Pending | Plan validation |
-| 6 | #36 | ⏳ Pending | Contract tests |
+| 4 | #34 | ✅ Complete | Protocol error mapping |
+| 5 | #35 | ✅ Complete | Plan validation |
+| 6 | #36 | ⏳ Next | Contract tests |
 | 7-8 | #37 | ⏳ Pending | Supported surface |
 
-### Overall Project: 7.3% Complete (3/41 issues)
+### Overall Project: 12.2% Complete (5/41 issues)
 | Phase | Progress | Issues | Status |
 |-------|----------|--------|--------|
 | Foundation | 27% (3/11) | 11 | 🔄 In Progress |
@@ -64,25 +84,25 @@
 
 ## 🎯 Next Steps
 
-### Immediate: Issue #34 (Week 4)
-**Define Protocol-Level Capability Error Mapping**
+### Immediate: Issue #36 (Week 6)
+**Add Capability Contract Tests and Snapshot Generation**
 
-**What**: Create error types and map to protocols  
-**Where**: `src/errors/capability_error.rs`  
-**Why**: Enable user-friendly error messages  
-**How**: Map CapabilityCheckError to REST/gRPC/SQL
+**What**: Create test suite for capability assertions  
+**Where**: `tests/query/capability_contract_test.rs`  
+**Why**: Ensure engines declare correct capabilities  
+**How**: Test each engine against its claimed capabilities
 
 **Estimated**: 3-5 days  
-**Dependencies**: ✅ #33 (COMPLETE)
+**Dependencies**: ✅ #35 (COMPLETE)
 
 ---
 
 ## 📈 Timeline Update
 
 **Original Estimate**: 6-8 weeks for Foundation Phase  
-**Current Progress**: 3/11 issues (27%)  
+**Current Progress**: 5/11 issues (45%)  
 **Rate**: 1 issue per week  
-**Projected Completion**: Week 8 (on track)
+**Projected Completion**: Week 6-7 (ahead of schedule)
 
 ---
 
@@ -98,7 +118,7 @@
 
 ### Target Metrics (Foundation Phase)
 - ⏳ Foundation Phase: 3/11 issues (27%)
-- ✅ Unit Test Coverage: 100% (17/17 tests)
+- ✅ Unit Test Coverage: 100% (39/39 tests)
 - ⏳ Integration Tests: 0/1 (Issue #36)
 - ⏳ Documentation: 0/1 (Issue #37)
 
@@ -111,7 +131,9 @@
 - **6 Engine Integrations**: All storage engines registered
 - **9 Plan Node Types**: All mapped with capabilities
 - **Child Propagation**: Transitive requirements captured
-- **17 Unit Tests**: 100% passing
+- **Protocol-Aware Errors**: REST/gRPC/SQL error mapping
+- **Plan Validation**: Runtime capability checking
+- **39 Unit Tests**: 100% passing
 
 ### Code Quality
 - **Type-Safe**: Compile-time guarantees
@@ -123,26 +145,33 @@
 
 ## 📁 Files Modified/Created
 
-### Created (6 files)
+### Created (8 files)
 - `src/query/capability/mod.rs`
 - `src/query/capability/registry.rs`
+- `src/errors/capability_error.rs`
+- `src/query/validator.rs`
 - `IMPLEMENTATION_SUMMARY.md`
 - `FOUNDATION_PHASE_COMPLETION_REPORT.md`
 - `ISSUE_33_IMPLEMENTATION_SUMMARY.md`
+- `ISSUE_34_IMPLEMENTATION_SUMMARY.md`
+- `ISSUE_35_IMPLEMENTATION_SUMMARY.md`
 - `FOUNDATION_PHASE_PROGRESS.md` (this file)
 
-### Modified (3 files)
+### Modified (5 files)
 - `src/query/mod.rs`
 - `src/storage/traits.rs`
 - `src/storage/engines/factory.rs`
 - `src/query/federated/optimizer/mod.rs` (extended)
+- `src/errors/mod.rs` (added capability errors)
+- `src/query/capability/registry.rs` (added helper methods)
+- `src/query/facade/adapter.rs` (added validation integration)
 
 ---
 
 ## 🚀 Ready for Next Phase
 
-**Foundation Phase**: 27% complete and on track  
-**Next Issue**: #34 (Protocol error mapping)  
+**Foundation Phase**: 45% complete and ahead of schedule  
+**Next Issue**: #36 (Contract tests)  
 **Estimated**: 3-5 days  
 **Status**: Ready to start
 
