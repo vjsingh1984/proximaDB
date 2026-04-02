@@ -112,6 +112,7 @@ impl QueryExecutor {
     }
 
     /// Derive vector-side rows from graph seeds using the SKS embedding catalog (no engine I/O)
+    #[expect(clippy::ptr_arg)] // Accepting &Vec for API compatibility
     pub(crate) fn derive_vector_rows_from_graph_seeds(graph_rows: &Vec<QueryRow>) -> Vec<QueryRow> {
         if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
             let seeds: Vec<String> = graph_rows
@@ -1117,6 +1118,7 @@ impl QueryExecutor {
         })
     }
 
+    #[expect(clippy::ptr_arg)] // Accepting &Vec for API compatibility
     fn composite_key(
         fields: &std::collections::HashMap<String, serde_json::Value>,
         keys: &Vec<String>,
@@ -1131,6 +1133,7 @@ impl QueryExecutor {
         parts.join("\u{1F}")
     }
 
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     pub fn apply_limit_offset(
         rows: &mut Vec<QueryRow>,
         offset: Option<usize>,
@@ -1163,6 +1166,7 @@ impl QueryExecutor {
         }
     }
 
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec and &Vec for API compatibility
     fn apply_aggregate(
         &self,
         rows: &mut Vec<QueryRow>,
@@ -1496,6 +1500,7 @@ impl QueryExecutor {
     }
 
     /// Apply projection transformations to result rows
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     fn apply_projections(
         &self,
         rows: &mut Vec<QueryRow>,

@@ -111,6 +111,7 @@ impl SecureVectorOperations {
     /// This includes:
     /// - Adding ownership metadata for RLS
     /// - Encrypting configured fields
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     pub async fn apply_insert_security(
         &self,
         collection: &str,

@@ -578,6 +578,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
     }
 
     /// Get disk path for a data item
+    #[expect(clippy::ptr_arg)] // Accepting &PathBuf for API compatibility
     fn get_disk_path(&self, base: &PathBuf, id: &str) -> PathBuf {
         let ext = match self.storage_engine {
             StorageEngine::SST => "sst",

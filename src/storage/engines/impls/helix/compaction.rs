@@ -681,6 +681,7 @@ impl LeveledCompactor {
     }
 
     /// Read an SSTable and filter out expired records (tombstone support)
+    #[expect(clippy::ptr_arg)] // Accepting &PathBuf for API compatibility
     async fn read_sstable(&self, path: &PathBuf) -> Result<Vec<VectorRecord>> {
         // Read file data
         let file_data = self.filesystem.read(path.to_str().unwrap_or("")).await?;

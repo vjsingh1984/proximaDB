@@ -747,6 +747,7 @@ impl SstEngine {
     }
 
     /// Filter search results based on include flags
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     fn filter_search_results(
         &self,
         results: &mut Vec<OptimizedSearchRecord>,

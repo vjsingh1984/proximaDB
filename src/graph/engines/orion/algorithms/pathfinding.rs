@@ -144,6 +144,7 @@ impl FloydWarshallAPSP {
     ///
     /// For each intermediate vertex k, update distances:
     /// dist[i][j] = min(dist[i][j], dist[i][k] + dist[k][j])
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for performance
     fn floyd_warshall_scalar(&self, dist: &mut Vec<Vec<f64>>) -> Result<(), ProximaDBError> {
         let n = dist.len();
 
@@ -255,6 +256,7 @@ impl FloydWarshallAPSP {
     /// Processes 2 f64 distances per instruction using 128-bit NEON vectors
     #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for performance
     unsafe fn floyd_warshall_neon(&self, dist: &mut Vec<Vec<f64>>) -> Result<(), ProximaDBError> {
         unsafe {
             use std::arch::aarch64::*;
