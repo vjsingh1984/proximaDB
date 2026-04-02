@@ -595,7 +595,6 @@ impl SwiftFile {
         let records_per_block = self.header.records_per_block as usize;
         let mut block_id = 0;
 
-        #[expect(clippy::manual_counter_loop)] // Explicit counter is clearer than enumerate here
         for chunk in records.chunks(records_per_block) {
             // ✅ Proxima automatically provides:
             // - 🔍 Automatic Bloom Filter Generation
@@ -844,7 +843,6 @@ impl SwiftFile {
         let mut superblock_codes: std::collections::HashMap<usize, Vec<u64>> =
             std::collections::HashMap::new();
 
-        #[expect(clippy::manual_counter_loop)] // Explicit counter is clearer than enumerate here
         for (mut block, _, adacurve_code) in blocks_with_score.into_iter() {
             // Assign deterministic block_id (preserves ID ordering inside blocks)
             block.block_id = block_id;
