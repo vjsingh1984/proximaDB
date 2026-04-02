@@ -25,6 +25,10 @@ pub enum ModelType {
     Relational,
     /// Observability data: logs, metrics, traces (Viper + Tantivy)
     Observability,
+    /// Time-series data with temporal indexing
+    TimeSeries,
+    /// Event sourcing and log streaming
+    Event,
 }
 
 impl From<DataModel> for ModelType {

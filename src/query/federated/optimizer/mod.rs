@@ -1749,6 +1749,7 @@ impl JoinOrderOptimizer {
                 estimated_cost: best_cost,
                 estimated_rows: join_cardinality,
                 output_columns: vec!["*".to_string()],
+                required_capabilities: CapabilitySet::new(),
             };
         }
 
@@ -2423,6 +2424,7 @@ impl CrossModelOptimizer {
             estimated_cost: cost,
             estimated_rows: rows,
             output_columns: vec!["id".to_string(), "score".to_string()],
+            required_capabilities: CapabilitySet::new(),
         })
     }
 
@@ -2487,6 +2489,7 @@ impl CrossModelOptimizer {
                 "label".to_string(),
                 "properties".to_string(),
             ],
+            required_capabilities: CapabilitySet::new(),
         })
     }
 
@@ -2538,6 +2541,7 @@ impl CrossModelOptimizer {
             estimated_cost: cost,
             estimated_rows: rows,
             output_columns: vec!["id".to_string(), "document".to_string()],
+            required_capabilities: CapabilitySet::new(),
         })
     }
 
@@ -2584,6 +2588,7 @@ impl CrossModelOptimizer {
                         estimated_cost: cost,
                         estimated_rows: rows,
                         output_columns: vec!["id".to_string(), "score".to_string()],
+                        required_capabilities: CapabilitySet::new(),
                     }
                 }
                 QuerySourceRef::Extension(SqlExtension::GraphQuery { cypher }) => {
@@ -2607,6 +2612,7 @@ impl CrossModelOptimizer {
                             "label".to_string(),
                             "properties".to_string(),
                         ],
+                        required_capabilities: CapabilitySet::new(),
                     }
                 }
                 QuerySourceRef::Extension(SqlExtension::DocumentQuery { collection, filter }) => {
@@ -2635,6 +2641,7 @@ impl CrossModelOptimizer {
                         estimated_cost: cost,
                         estimated_rows: rows,
                         output_columns: vec!["id".to_string(), "document".to_string()],
+                        required_capabilities: CapabilitySet::new(),
                     }
                 }
                 QuerySourceRef::Extension(SqlExtension::Logs { namespace }) => PlanNode {
