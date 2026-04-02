@@ -139,11 +139,7 @@ where
         let old_total_size = *size;
         *size = size.saturating_sub(old_size).saturating_add(entry_size);
         let new_total_size = *size;
-        let size_delta = if entry_size > old_size {
-            entry_size - old_size
-        } else {
-            0
-        };
+        let size_delta = entry_size.saturating_sub(old_size);
         drop(size);
 
         tracing::info!(

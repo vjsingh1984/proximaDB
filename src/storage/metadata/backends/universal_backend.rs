@@ -1670,10 +1670,7 @@ impl SnapshotManager {
         let archive_dir = self.base_path.join("archive");
 
         // Get all snapshots from current directory (except snapshot.meta)
-        let current_entries = match fs.list(&current_dir.to_string_lossy()).await {
-            Ok(entries) => entries,
-            Err(_) => vec![],
-        };
+        let current_entries = fs.list(&current_dir.to_string_lossy()).await.unwrap_or_default();
 
         // Archive timestamped snapshots
         for entry in current_entries {

@@ -1168,7 +1168,7 @@ pub fn extract_helix_metadata(
             // Create base Proxima metadata
             let base_metadata = ProximaBlockMetadata {
                 record_count: chunk.len() as u32,
-                size_bytes: (chunk.len() * std::mem::size_of::<VectorRecord>()) as u64,
+                size_bytes: std::mem::size_of_val(chunk) as u64,
                 compressed_size: 0, // Will be set during compression
                 timestamp: chunk
                     .iter()

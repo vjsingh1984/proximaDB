@@ -88,11 +88,7 @@ impl PredictivePrefetcher {
             for pattern in history.iter() {
                 if let Some(pattern_key) = pattern.hilbert_key {
                     // Calculate distance safely for u64 values
-                    let distance = if query_key > pattern_key {
-                        query_key - pattern_key
-                    } else {
-                        pattern_key - query_key
-                    };
+                    let distance = query_key.abs_diff(pattern_key);
 
                     // Consider queries within Hilbert distance threshold
                     if distance < 1000 {

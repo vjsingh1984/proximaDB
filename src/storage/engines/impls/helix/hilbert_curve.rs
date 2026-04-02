@@ -650,11 +650,7 @@ impl HilbertUtils {
 
     /// Calculate Hilbert distance between two keys
     pub fn hilbert_distance(key1: u64, key2: u64) -> u64 {
-        if key1 > key2 {
-            key1 - key2
-        } else {
-            key2 - key1
-        }
+        key1.abs_diff(key2)
     }
 
     /// Check if a key is within range (with tolerance)

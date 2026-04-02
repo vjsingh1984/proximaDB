@@ -221,10 +221,7 @@ impl EventIndex {
     pub async fn purge_entity(&self, entity_id: &EntityId) -> Result<Vec<EventSequence>> {
         let mut entity_index = self.entity_index.write().await;
 
-        let sequences = match entity_index.remove(entity_id) {
-            Some(seqs) => seqs,
-            None => Vec::new(),
-        };
+        let sequences = entity_index.remove(entity_id).unwrap_or_default();
 
         // Remove from other indices
         for &seq in &sequences {

@@ -1833,13 +1833,7 @@ impl UnifiedStorageEngine for HelixEngine {
                 (query_hilbert, sstable.hilbert_range)
             {
                 // Simple range check (could be more sophisticated)
-                let distance_to_range = if query_key < min_key {
-                    min_key - query_key
-                } else if query_key > max_key {
-                    query_key - max_key
-                } else {
-                    0 // Query is within range
-                };
+                let distance_to_range = min_key.saturating_sub(query_key).max(query_key.saturating_sub(max_key));
 
                 tracing::debug!(
                     "[HELIX] SSTable hilbert_range=({}, {}), query_key={}, distance={}",

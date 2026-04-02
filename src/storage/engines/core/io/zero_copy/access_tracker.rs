@@ -493,11 +493,7 @@ impl AccessPatternTracker {
         let variance = intervals
             .iter()
             .map(|&interval| {
-                let diff = if interval > avg_interval {
-                    interval - avg_interval
-                } else {
-                    avg_interval - interval
-                };
+                let diff = interval.abs_diff(avg_interval);
                 diff.as_secs_f64().powi(2)
             })
             .sum::<f64>()
