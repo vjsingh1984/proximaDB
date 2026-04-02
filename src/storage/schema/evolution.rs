@@ -63,12 +63,19 @@ pub enum SchemaEvolutionOp {
 /// Result of schema evolution validation.
 #[derive(Debug)]
 pub struct EvolutionValidation {
+    /// Whether the evolution is valid
     pub is_valid: bool,
+    /// Whether backward compatible
     pub is_backward_compatible: bool,
+    /// Whether forward compatible
     pub is_forward_compatible: bool,
+    /// Validation warnings
     pub warnings: Vec<String>,
+    /// Validation errors
     pub errors: Vec<String>,
+    /// Whether data migration is required
     pub data_migration_required: bool,
+    /// Estimated migration cost
     pub estimated_migration_cost: MigrationCost,
 }
 
@@ -132,34 +139,53 @@ pub struct MigrationPlan {
 pub enum MigrationStep {
     /// Add column with default value (no data migration needed)
     AddColumnWithDefault {
+        /// Column ID
         column_id: i32,
+        /// Default value
         default: DefaultValue,
     },
     /// Rewrite data files with new schema
     RewriteDataFiles {
+        /// Affected files
         affected_files: Vec<String>,
+        /// Transformations to apply
         transformations: Vec<ColumnTransformation>,
     },
     /// Update metadata only (rename, comment, etc.)
-    UpdateMetadataOnly { changes: Vec<MetadataChange> },
+    UpdateMetadataOnly {
+        /// Metadata changes
+        changes: Vec<MetadataChange>,
+    },
     /// Create new index for added column
-    CreateIndex { column_id: i32, index_type: String },
+    CreateIndex {
+        /// Column ID
+        column_id: i32,
+        /// Index type
+        index_type: String,
+    },
 }
 
 /// Column transformation during migration.
 #[derive(Debug)]
 pub struct ColumnTransformation {
+    /// Source column ID
     pub source_column_id: i32,
+    /// Target column ID
     pub target_column_id: i32,
-    pub transformation: String, // SQL expression
+    /// SQL transformation expression
+    pub transformation: String,
 }
 
 /// Metadata change during migration.
 #[derive(Debug)]
 pub struct MetadataChange {
+    /// Column ID
     pub column_id: i32,
+    /// Type of change
     pub change_type: String,
+    /// Old value
     pub old_value: String,
+    /// New value
     pub new_value: String,
 }
 

@@ -1,0 +1,58 @@
+= Architecture Decision Records
+:toc: left
+:icons: font
+:last-updated: 2026-04-02
+
+[.lead]
+This directory contains Architecture Decision Records (ADRs) governing ProximaDB's implementation across all open issues (#25-#61). Each ADR defines canonical contracts, interfaces, and file plans that implementation must follow.
+
+== ADR Index
+
+[cols="1,4,2,2"]
+|===
+| ADR | Title | Status | Governs
+
+| link:ADR-001-capability-registry.adoc[ADR-001]
+| Capability Registry Architecture
+| Accepted
+| SB-01→07, #25, #26, #30
+
+| link:ADR-002-normalized-filter-candidate-contract.adoc[ADR-002]
+| Normalized Filter and Candidate Contract
+| Accepted
+| SB-08→13, #57
+
+| link:ADR-003-multimodel-plan-contract.adoc[ADR-003]
+| MultiModelPlan v1 Contract
+| Accepted
+| SB-14→20, #29
+
+| link:ADR-004-unified-explain-contract.adoc[ADR-004]
+| Unified Explain Contract
+| Accepted
+| SB-17, SB-20
+
+| link:ADR-005-document-graph-query-extensions.adoc[ADR-005]
+| Document and Graph Query Extension Architecture
+| Accepted
+| #51→53, #58, #59
+
+| link:ADR-006-infrastructure-platform-decisions.adoc[ADR-006]
+| Infrastructure and Platform Decisions
+| Accepted
+| #55, #54, #60, #61, #28, #27, #56
+|===
+
+== Relationship to Design Resolution Doc
+
+These ADRs formalize and extend the decisions in `docs/_internal/roadmap/implementation/active/E1_E3_OPEN_TICKET_DESIGN_RESOLUTION_2026_04_01.adoc`. The design resolution doc remains the authoritative source for E1-E3 sequencing and sprint board semantics. ADRs govern the implementation contracts.
+
+== Issue Coverage
+
+Every open issue (#25-#61) is governed by at least one ADR:
+
+* **E1 (Capability Registry)**: ADR-001
+* **E2 (Filtered ANN)**: ADR-002
+* **E3 (Multi-Model Plan)**: ADR-003, ADR-004
+* **Gap Closure**: ADR-005 (document/graph), ADR-006 (infrastructure)
+* **Production Hardening**: ADR-001 (#25, #26, #30), ADR-006 (#27, #28, #55, #60, #61)

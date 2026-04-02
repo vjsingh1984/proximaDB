@@ -642,7 +642,7 @@ mod rbac_integration_tests {
         let result1 = rbac_manager
             .check_permission_cached("cache_test_user", &permission)
             .await;
-        let duration1 = start1.elapsed();
+        let _duration1 = start1.elapsed();
 
         assert!(result1.is_ok());
         let allowed1 = result1.unwrap();
@@ -652,7 +652,7 @@ mod rbac_integration_tests {
         let result2 = rbac_manager
             .check_permission_cached("cache_test_user", &permission)
             .await;
-        let duration2 = start2.elapsed();
+        let _duration2 = start2.elapsed();
 
         assert!(result2.is_ok());
         let allowed2 = result2.unwrap();

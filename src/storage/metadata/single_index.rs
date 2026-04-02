@@ -63,13 +63,21 @@ impl CollectionIndexEntry {
 /// Performance metrics for the single index
 #[derive(Debug, Clone)]
 pub struct SingleIndexMetrics {
+    /// Total number of collections indexed
     pub total_collections: usize,
+    /// Memory usage in bytes
     pub memory_usage_bytes: usize,
+    /// Total lookups by UUID
     pub lookups_by_uuid: u64,
+    /// Total lookups by name
     pub lookups_by_name: u64,
+    /// Cache hit count
     pub cache_hits: u64,
+    /// Cache miss count
     pub cache_misses: u64,
+    /// Average lookup time in nanoseconds
     pub avg_lookup_time_ns: u64,
+    /// Last index rebuild timestamp
     pub last_rebuild_timestamp: Option<i64>,
 }
 
@@ -366,6 +374,7 @@ impl Default for SingleCollectionIndex {
 
 /// Thread-safe wrapper with additional safety guarantees
 pub struct ThreadSafeSingleIndex {
+    /// Underlying single collection index
     index: SingleCollectionIndex,
 }
 

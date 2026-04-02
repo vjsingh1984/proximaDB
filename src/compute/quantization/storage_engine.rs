@@ -862,10 +862,8 @@ impl StorageQuantizationEngine {
 
         let mut codebook = Vec::with_capacity(subvectors);
         for _ in 0..subvectors {
-            let mut centroid_data = Vec::with_capacity(centroids_per_subvector * subvector_dim);
-            for _ in 0..(centroids_per_subvector * subvector_dim) {
-                centroid_data.push(0.1); // Placeholder values
-            }
+            let size = centroids_per_subvector * subvector_dim;
+            let centroid_data = vec![0.1; size]; // Placeholder values
             codebook.push(centroid_data);
         }
 

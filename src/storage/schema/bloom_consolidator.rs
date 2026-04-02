@@ -396,6 +396,7 @@ impl BloomChecker for ConsolidatedBloom {
 
 /// Thread-safe wrapper for ConsolidatedBloom.
 pub struct SharedConsolidatedBloom {
+    /// Inner consolidated bloom filter
     inner: Arc<RwLock<ConsolidatedBloom>>,
 }
 
@@ -452,8 +453,11 @@ impl BloomChecker for SharedConsolidatedBloom {
 
 /// Incremental bloom filter builder for streaming construction.
 pub struct IncrementalBloomBuilder {
+    /// Underlying bloom filter
     filter: Box<dyn BloomFilterStrategy>,
+    /// Bloom filter configuration
     config: BloomFilterConfig,
+    /// Item count
     count: usize,
 }
 

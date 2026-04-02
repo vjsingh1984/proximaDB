@@ -12,6 +12,9 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 /// Unified VIPER reader that implements strategy-aware reading
+///
+/// Provides flexible Parquet reading strategies (direct streaming, cached search, etc.)
+/// optimized for different access patterns like compaction vs. search queries.
 pub struct UnifiedVIPERReader {
     filesystem_factory: Arc<FilesystemFactory>,
     cached_filesystem: Option<Arc<UnifiedCachingFilesystem>>,

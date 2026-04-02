@@ -8,7 +8,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use proximadb::query::facade::{
-    FacadeConfig, QueryContext, QueryRequest, QueryResult, QueryResultData, QueryStrategy,
+    QueryContext, QueryRequest, QueryResult, QueryResultData, QueryStrategy,
     QueryType, UnifiedQueryFacade,
 };
 use std::sync::Arc;

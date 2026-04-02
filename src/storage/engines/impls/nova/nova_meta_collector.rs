@@ -58,12 +58,21 @@ impl Default for NovaCollectorConfig {
 }
 
 /// Builder for accumulating row group statistics
+///
+/// Incrementally computes statistics (min, max, mean, variance) for vectors
+/// within a row group during the write process, avoiding a second pass over the data.
 struct RowGroupBuilder {
+    /// Row group identifier
     _row_group_id: usize,
+    /// Number of vectors processed
     vector_count: usize,
+    /// Minimum values per dimension
     min_values: Vec<f32>,
+    /// Maximum values per dimension
     max_values: Vec<f32>,
+    /// Sum of values per dimension (for mean calculation)
     sum_values: Vec<f64>,
+    /// Sum of squared values per dimension (for variance calculation)
     sum_squares: Vec<f64>,
 }
 
@@ -365,11 +374,19 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
 }
 
 /// Serializable NOVA metadata structure
+///
+/// Complete metadata structure stored in .nova_meta sidecar files,
+/// containing hierarchical statistics for query optimization.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct NovaMetadata {
+    /// Metadata format version
     pub version: u32,
+    /// Vector dimension
     pub dimension: usize,
+    /// Per-row group enhanced statistics
     pub row_group_stats: Vec<EnhancedRowGroupStats>,
+    /// SuperBlock aggregates for multi-level pruning
     pub superblocks: Vec<SuperBlock>,
+    /// Number of row groups per SuperBlock
     pub row_groups_per_superblock: usize,
 }

@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use dashmap::DashMap;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -51,14 +52,6 @@ impl QuantizationCacheKey {
         }
     }
 
-    /// Convert to string for storage and access tracking
-    pub fn to_string(&self) -> String {
-        format!(
-            "{}#{}#{}",
-            self.collection_id, self.quantization_type, self.level_params
-        )
-    }
-
     /// Parse from string
     pub fn from_string(s: &str) -> Option<Self> {
         let parts: Vec<&str> = s.split('#').collect();
@@ -71,6 +64,16 @@ impl QuantizationCacheKey {
         } else {
             None
         }
+    }
+}
+
+impl fmt::Display for QuantizationCacheKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}#{}#{}",
+            self.collection_id, self.quantization_type, self.level_params
+        )
     }
 }
 

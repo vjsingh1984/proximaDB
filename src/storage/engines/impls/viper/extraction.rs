@@ -19,7 +19,7 @@ use crate::storage::trait_components::extractor::{
 
 /// VIPER Vector Extractor
 ///
-/// Extracts vectors from VIPER Parquet files.
+/// Extracts vectors from VIPER Parquet files for AXIS indexing.
 /// VIPER is optimized for analytics with columnar storage.
 pub struct ViperExtractor {
     /// Unified caching filesystem for file access

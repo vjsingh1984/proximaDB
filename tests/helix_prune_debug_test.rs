@@ -439,7 +439,7 @@ mod helix_prune_debug {
         let collection_id = "centroid_test";
 
         let vectors = vector_generator::random_seeded_with_prefix("vec", 1000, DIMENSION, 456);
-        let query = vectors[0].vector.clone();
+        let _query = vectors[0].vector.clone();
 
         let collection = create_collection(collection_id, &temp_dir);
         let engine = HelixEngine::new().await.unwrap();

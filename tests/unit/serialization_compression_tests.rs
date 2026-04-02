@@ -25,7 +25,7 @@ fn generate_test_vector(size: usize, sparsity: f32, pattern: &str) -> Vec<f32> {
         "sparse" => {
             // Sparse vector with few non-zero elements
             let non_zero_count = ((1.0 - sparsity) * size as f32) as usize;
-            for i in 0..non_zero_count {
+            for _i in 0..non_zero_count {
                 let idx = rng.gen_range(0..size);
                 vector[idx] = rng.gen_range(-1.0..1.0);
             }
@@ -492,7 +492,7 @@ mod streaming_compression_tests {
             // Process multiple batches to trigger adaptation
             for _ in 0..3 {
                 let vectors = (0..50)
-                    .map(|i| generate_test_vector(128, 0.5, "random"))
+                    .map(|_i| generate_test_vector(128, 0.5, "random"))
                     .collect();
 
                 let vector_config = VectorSerializationConfig::default();

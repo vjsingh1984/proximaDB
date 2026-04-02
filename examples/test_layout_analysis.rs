@@ -1,5 +1,5 @@
 use proximadb::core::compression::CompressionAlgorithm;
-use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::engines::core::formats::proximablocks::{
     BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
 };

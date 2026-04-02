@@ -179,7 +179,7 @@ async fn test_p2_matrix_proximaencoder() -> Result<()> {
 
     // Quantize to u8
     let quantization_engine = StorageQuantizationEngine::new_default();
-    let (quantized, min_dist, max_dist) = quantization_engine.quantize_to_u8(&distances);
+    let (quantized, _min_dist, _max_dist) = quantization_engine.quantize_to_u8(&distances);
 
     // Apply ProximaCodec encoding
     let codec = ProximaCodec::global();

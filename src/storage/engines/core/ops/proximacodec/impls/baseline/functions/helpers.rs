@@ -244,7 +244,7 @@ mod tests {
         let data = vec![1, 2, 3];
 
         // Mock decoder that returns wire format values
-        let result = decode_generic::<f32>(&data, 2, |_d, count| {
+        let result = decode_generic::<f32>(&data, 2, |_d, _count| {
             Ok(vec![1.0f32.to_bits() as i32, 2.0f32.to_bits() as i32])
         });
 

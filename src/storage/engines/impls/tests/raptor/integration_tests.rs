@@ -5,6 +5,9 @@
  * you may not use this file except in compliance with the License.
  */
 
+// RAPTOR is experimental - integration tests validate expected behavior
+#![allow(deprecated)]
+
 //! RAPTOR Integration Tests - Consolidated
 //!
 //! Sources:

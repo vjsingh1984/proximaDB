@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 //! Realistic embedding generators for benchmarking
 //!
 //! This module provides generators that create vectors with distributions

@@ -8,6 +8,10 @@
 //! - **Cross-model join operators**: Hash join, nested loop, index join
 //! - **Streaming results**: Memory-efficient result streaming
 //! - **Parallel execution**: Execute independent branches concurrently
+//!
+//! See also [`source_executors`] for per-model trait-based abstractions.
+
+pub mod source_executors;
 
 use anyhow::{Result, anyhow};
 use arrow::array::{

@@ -520,11 +520,9 @@ pub fn create_test_collection_context() -> CollectionContext {
 //
 //     (manifest, temp_dir)
 // }
-
 // ============================================================================
 // Collection and Storage Utilities
 // ============================================================================
-
 /// Create a unique collection ID for tests
 ///
 /// # Arguments

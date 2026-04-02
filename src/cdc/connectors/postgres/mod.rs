@@ -60,7 +60,11 @@
 mod config;
 mod connector;
 mod decoder;
+pub mod replication;
+pub mod snapshot;
 
 pub use config::{ColumnMapping, PostgresConfig, SnapshotMode, TableConfig};
 pub use connector::PostgresConnector;
 pub use decoder::{ColumnValue, PgOutputDecoder, PgOutputEvent, PgRelation, TupleData};
+pub use replication::ReplicationStream;
+pub use snapshot::SnapshotHandler;

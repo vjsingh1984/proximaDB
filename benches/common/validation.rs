@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 use proximadb::core::search::results::OptimizedSearchRecord;
 use proximadb::proto::proximadb_v1::SqlValue;
 /// Validation utilities for benchmarks to ensure correctness

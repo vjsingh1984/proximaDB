@@ -1014,13 +1014,21 @@ impl LocalRocksDbBackend {
 /// Backend statistics
 #[derive(Debug, Clone, Default)]
 pub struct BackendStatistics {
+    /// Total read operations
     pub total_reads: u64,
+    /// Total write operations
     pub total_writes: u64,
+    /// Total delete operations
     pub total_deletes: u64,
+    /// Cache hit count
     pub cache_hits: u64,
+    /// Cache miss count
     pub cache_misses: u64,
+    /// Total bytes written
     pub bytes_written: u64,
+    /// Total bytes read
     pub bytes_read: u64,
+    /// Number of compactions
     pub compactions: u64,
 }
 

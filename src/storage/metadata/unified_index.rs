@@ -27,13 +27,21 @@ use crate::proto::proximadb_v1::Collection;
 /// Performance metrics for monitoring and optimization
 #[derive(Debug, Clone)]
 pub struct IndexPerformanceMetrics {
+    /// Total number of collections indexed
     pub total_collections: usize,
+    /// Memory usage in bytes
     pub memory_usage_bytes: usize,
+    /// Total UUID lookups
     pub uuid_lookups: u64,
+    /// Total name lookups
     pub name_lookups: u64,
+    /// Cache hit count
     pub cache_hits: u64,
+    /// Cache miss count
     pub cache_misses: u64,
+    /// Average lookup time in nanoseconds
     pub avg_lookup_time_ns: u64,
+    /// Last index rebuild timestamp
     pub last_rebuild_timestamp: Option<i64>,
 }
 
@@ -295,6 +303,7 @@ impl Default for UnifiedCollectionIndex {
 
 /// Thread-safe wrapper for the unified index with additional safety guarantees
 pub struct ThreadSafeUnifiedIndex {
+    /// Underlying unified collection index
     index: UnifiedCollectionIndex,
 }
 

@@ -27,6 +27,9 @@ pub struct ViperMetadataCollector {
 }
 
 /// Configuration for VIPER metadata collection
+///
+/// Controls what statistics are computed during Parquet writes for
+/// efficient row group pruning during search.
 #[derive(Debug, Clone)]
 pub struct ViperCollectorConfig {
     /// Whether to compute centroids

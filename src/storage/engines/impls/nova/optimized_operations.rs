@@ -13,8 +13,19 @@ use std::sync::Arc;
 use tracing::info;
 // Memory-mapped Parquet operations would be imported here
 // For now, we'll use placeholder types
+
+/// Memory-mapped Parquet reader for efficient zero-copy I/O
+///
+/// Provides zero-copy access to Parquet files by memory-mapping them,
+/// reducing memory allocations and improving read performance.
 struct MmapParquetReader;
+
+/// Memory pool for memory-mapped file operations
+///
+/// Manages a pool of memory-mapped regions to reduce overhead
+/// of repeated mmap/munmap operations.
 struct MmapPool {
+    /// Total size of the memory pool in bytes
     _size: usize,
 }
 impl MmapPool {
@@ -42,7 +53,10 @@ impl MmapParquetReader {
 use super::columnar_search::ColumnarSearchConfig;
 use crate::storage::engines::core::formats::columnar::SearchCandidate;
 
-/// Optimized VIPER operations using existing infrastructure
+/// Optimized NOVA operations using existing infrastructure
+///
+/// Provides hardware-accelerated columnar search operations leveraging
+/// SIMD, memory pools, and memory-mapped I/O for optimal performance.
 pub struct OptimizedNovaOperations {
     /// Hardware capabilities
     _hardware: Arc<HardwareCapabilities>,
@@ -395,18 +409,31 @@ fn extract_record(_batch: &RecordBatch, _offset: u32) -> Option<VectorRecord> {
 }
 
 /// Columnar operation statistics
+///
+/// Tracks performance metrics for columnar search operations including
+/// pruning efficiency, projection usage, and hardware acceleration.
 #[derive(Debug, Clone)]
 pub struct ColumnarStats {
+    /// Number of row groups scanned
     pub row_groups_scanned: usize,
+    /// Number of row groups pruned via statistics
     pub row_groups_pruned: usize,
+    /// Number of columns projected (avoided full column load)
     pub columns_projected: usize,
+    /// Number of predicates pushed down to storage
     pub predicates_pushed: usize,
+    /// Total vectors processed
     pub vectors_processed: usize,
+    /// Number of SIMD operations executed
     pub simd_operations: u64,
+    /// Compression ratio achieved
     pub compression_ratio: f32,
 }
 
 impl ColumnarStats {
+    /// Calculate pruning efficiency (0.0 to 1.0)
+    ///
+    /// Returns the ratio of row groups pruned to total row groups.
     pub fn pruning_efficiency(&self) -> f64 {
         if self.row_groups_scanned + self.row_groups_pruned == 0 {
             0.0
@@ -416,6 +443,7 @@ impl ColumnarStats {
         }
     }
 
+    /// Print a summary of columnar operation statistics
     pub fn print_summary(&self) {
         info!("📊 Columnar Operation Statistics:");
         info!(

@@ -187,7 +187,7 @@ async fn test_optimization_pipeline_grid_search() {
     pipeline.start().await.unwrap();
 
     // Simple objective function for testing
-    let objective = |config: HashMap<String, f64>| -> f64 {
+    let _objective = |config: HashMap<String, f64>| -> f64 {
         // Prefer lower values of param1
         config.get("param1").unwrap_or(&100.0) * -1.0
     };
@@ -394,7 +394,7 @@ async fn test_workload_prediction() {
     }
 
     // Current pattern
-    let current = analyzer.analyze_workload("test_collection").await.unwrap();
+    let _current = analyzer.analyze_workload("test_collection").await.unwrap();
 
     // Predict future (1 hour)
     let future = analyzer

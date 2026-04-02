@@ -1,4 +1,5 @@
 // Common test utilities
+#![allow(dead_code, unused_imports, unused_variables)]
 use std::sync::Once;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::debug;

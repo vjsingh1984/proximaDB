@@ -81,6 +81,8 @@ pub struct EntityRelationship {
 }
 
 /// Bridge types for collection-domain linking
+///
+/// Defines how vectors in a collection are mapped to entities in a domain.
 #[derive(Debug, Clone)]
 pub enum BridgeType {
     /// Direct mapping - each vector maps to one entity
@@ -92,19 +94,31 @@ pub enum BridgeType {
 }
 
 /// Synchronization policy between collections and domains
+///
+/// Defines how changes in collections are synchronized to domains.
 #[derive(Debug, Clone)]
 pub enum SyncPolicy {
+    /// Real-time synchronization on every change
     Realtime,
+    /// Batch synchronization with specified interval in minutes
     Batch { interval_minutes: u32 },
+    /// Manual synchronization only
     Manual,
+    /// Event-driven synchronization based on triggers
     EventDriven,
 }
 
 /// Business mapping configuration
+///
+/// Defines rules and logic for mapping vectors to entities and extracting
+/// business intelligence from data.
 #[derive(Debug, Clone)]
 pub struct BusinessMapping {
+    /// Rules for mapping vectors to entities
     pub vector_to_entity_rules: Vec<MappingRule>,
+    /// Rules for extracting metadata from vectors
     pub metadata_extraction_rules: Vec<MetadataExtractionRule>,
+    /// Rules for inferring relationships between entities
     pub relationship_inference_rules: Vec<RelationshipInferenceRule>,
 }
 

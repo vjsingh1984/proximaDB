@@ -231,7 +231,7 @@ fn bench_memory_footprint(c: &mut Criterion) {
             .map(|i| (0..dimension).map(|j| (i + j) as f32).collect())
             .collect();
 
-        let centroids_fp16: Vec<Vec<u16>> =
+        let _centroids_fp16: Vec<Vec<u16>> =
             centroids_fp32.iter().map(|c| fp32_to_fp16(c)).collect();
 
         // Calculate memory usage

@@ -94,7 +94,7 @@ mod helix_integration_tests {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let temp_dir = TempDir::new().unwrap();
-        let config = HelixConfig::default();
+        let _config = HelixConfig::default();
 
         let engine = HelixEngine::new().await.unwrap();
 
@@ -200,8 +200,8 @@ mod helix_integration_tests {
         // Using std::fs directly since this is a simple directory check in tests
         let _ = std::fs::create_dir_all("/tmp");
 
-        let mut config = HelixConfig::default();
-        config.level0_file_num_compaction_trigger = 2;
+        let mut _config = HelixConfig::default();
+        _config.level0_file_num_compaction_trigger = 2;
 
         let engine = HelixEngine::new().await.unwrap();
 
@@ -308,7 +308,7 @@ mod helix_integration_tests {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let temp_dir = TempDir::new().unwrap();
-        let config = HelixConfig::default();
+        let _config = HelixConfig::default();
 
         let engine = HelixEngine::new().await.unwrap();
 
@@ -467,7 +467,7 @@ mod helix_integration_tests {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let temp_dir = TempDir::new().unwrap();
-        let config = HelixConfig::default();
+        let _config = HelixConfig::default();
 
         let engine = HelixEngine::new().await.unwrap();
 

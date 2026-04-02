@@ -12,6 +12,9 @@ use crate::storage::engines::core::formats::columnar::{
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER compaction service - delegates to unified columnar compaction
+///
+/// Thin wrapper around the unified columnar compaction module that
+/// provides VIPER-specific defaults and behavior.
 pub struct ViperCompactionService {
     columnar_compaction: UnifiedColumnarCompaction,
 }

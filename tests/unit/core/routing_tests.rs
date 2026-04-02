@@ -169,7 +169,7 @@ where
         self.routes.insert(path.to_string(), handler);
     }
 
-    pub fn route_builder(&mut self, _path: &str) -> RouteBuilder<Req, Resp> {
+    pub fn route_builder(&mut self, _path: &str) -> RouteBuilder<'_, Req, Resp> {
         RouteBuilder {
             router: self,
             route_count: 0,

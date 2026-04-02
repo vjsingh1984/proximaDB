@@ -1601,7 +1601,7 @@ mod tests {
         let matcher = PatternMatcher::new().unwrap();
 
         // Create test results with different scores
-        let mut results = vec![
+        let results = vec![
             MatchResult {
                 bindings: std::collections::HashMap::new(),
                 score: 0.5,
@@ -1751,7 +1751,7 @@ mod tests {
 
     #[test]
     fn test_skip_clause() {
-        let matcher = PatternMatcher::new().unwrap();
+        let _matcher = PatternMatcher::new().unwrap();
 
         // Create 10 test results
         let results: Vec<MatchResult> = (0..10)
@@ -1775,7 +1775,7 @@ mod tests {
 
     #[test]
     fn test_limit_clause() {
-        let matcher = PatternMatcher::new().unwrap();
+        let _matcher = PatternMatcher::new().unwrap();
 
         // Create 10 test results
         let mut results: Vec<MatchResult> = (0..10)
@@ -1796,7 +1796,7 @@ mod tests {
 
     #[test]
     fn test_skip_and_limit_combined() {
-        let matcher = PatternMatcher::new().unwrap();
+        let _matcher = PatternMatcher::new().unwrap();
 
         // Create 10 test results
         let mut results: Vec<MatchResult> = (0..10)

@@ -703,6 +703,7 @@ impl VectorPruner for CentroidTree {
 
 /// Thread-safe wrapper for CentroidTree.
 pub struct SharedCentroidTree {
+    /// Inner centroid tree
     inner: Arc<CentroidTree>,
 }
 

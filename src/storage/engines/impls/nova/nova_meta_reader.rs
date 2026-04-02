@@ -26,6 +26,9 @@ use super::nova_meta_collector::NovaMetadata;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// NOVA metadata reader for sidecar files
+///
+/// Reads and caches .nova_meta sidecar files containing hierarchical statistics
+/// for query optimization. Provides row group pruning and query cost estimation.
 pub struct NovaMetaReader {
     /// Filesystem factory for reading sidecar files
     filesystem: Arc<FilesystemFactory>,
@@ -234,21 +237,24 @@ impl NovaMetaReader {
 }
 
 /// Query optimization hints based on NOVA metadata
+///
+/// Provides recommendations for query execution based on hierarchical
+/// statistics, including which row groups to read and which search strategy to use.
 #[derive(Debug, Clone)]
 pub struct QueryOptimizationHints {
     /// Recommended row groups to read
     pub row_groups: Vec<usize>,
 
-    /// Estimated query cost
+    /// Estimated query cost (lower is better)
     pub estimated_cost: f32,
 
-    /// Pruning effectiveness (0.0 to 1.0)
+    /// Pruning effectiveness (0.0 = no pruning, 1.0 = perfect pruning)
     pub pruning_ratio: f32,
 
     /// Suggested quantization level for progressive search
     pub suggested_quantization: Option<String>,
 
-    /// Whether to use streaming search
+    /// Whether to use streaming search for memory efficiency
     pub use_streaming: bool,
 }
 

@@ -22,13 +22,13 @@ mod distance_computation_coverage {
     fn test_distance_computation_construction() {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         // Test default construction
-        let default_compute = UnifiedDistanceCompute::default();
+        let _default_compute = UnifiedDistanceCompute::default();
         // Test that the engine was constructed successfully
         // (platform capability is private and automatically detected)
         assert!(true); // Constructor succeeded
 
         // Test construction with specific metric
-        let euclidean_compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+        let _euclidean_compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         let _cosine_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         let _manhattan_compute = UnifiedDistanceCompute::new(DistanceMetric::Manhattan);
 

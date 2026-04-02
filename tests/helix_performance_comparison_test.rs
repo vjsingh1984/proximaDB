@@ -358,23 +358,11 @@ mod performance_comparison_tests {
         let base_path = temp_dir.path();
 
         let helix_engine = {
-            let config = HelixConfig::default();
+            let _config = HelixConfig::default();
             Arc::new(HelixEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>
         };
 
-        use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-        use proximadb::core::config::SstConfig;
-        use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-
-        let sst_config = SstConfig::default();
-        let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
-
         let sst_engine = Arc::new(SstEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
-
-        use proximadb::core::config::ViperConfig;
-        let viper_config = ViperConfig::default();
 
         let viper_engine =
             Arc::new(ViperEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
@@ -449,21 +437,11 @@ mod performance_comparison_tests {
 
         // Create engines
         let temp_dir = TempDir::new().unwrap();
-        let base_path = temp_dir.path();
 
         let helix_engine = {
-            let config = HelixConfig::default();
+            let _config = HelixConfig::default();
             Arc::new(HelixEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>
         };
-
-        use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-        use proximadb::core::config::SstConfig;
-        use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-
-        let sst_config = SstConfig::default();
-        let fs_config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(SstEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
 
@@ -528,7 +506,7 @@ mod performance_comparison_tests {
             // Test HELIX
             {
                 let temp_dir = TempDir::new().unwrap();
-                let config = HelixConfig::default();
+                let _config = HelixConfig::default();
                 let engine =
                     Arc::new(HelixEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
 
@@ -546,18 +524,7 @@ mod performance_comparison_tests {
 
             // Test SST
             {
-                use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-                use proximadb::core::config::SstConfig;
-                use proximadb::storage::persistence::filesystem::{
-                    FilesystemConfig, FilesystemFactory,
-                };
-
                 let temp_dir = TempDir::new().unwrap();
-                let sst_config = SstConfig::default();
-                let fs_config = FilesystemConfig::default();
-                let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-                let distance_compute =
-                    Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
                 let engine =
                     Arc::new(SstEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
@@ -813,7 +780,7 @@ mod performance_comparison_tests {
             (
                 "HELIX",
                 {
-                    let config = HelixConfig::default();
+                    let _config = HelixConfig::default();
                     Arc::new(HelixEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>
                 },
                 temp_dir_helix.path().to_str().unwrap(),
@@ -821,18 +788,6 @@ mod performance_comparison_tests {
             (
                 "SST",
                 {
-                    use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-                    use proximadb::core::config::SstConfig;
-                    use proximadb::storage::persistence::filesystem::{
-                        FilesystemConfig, FilesystemFactory,
-                    };
-
-                    let sst_config = SstConfig::default();
-                    let fs_config = FilesystemConfig::default();
-                    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-                    let distance_compute =
-                        Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
-
                     Arc::new(SstEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>
                 },
                 temp_dir_sst.path().to_str().unwrap(),
@@ -840,18 +795,6 @@ mod performance_comparison_tests {
             (
                 "VIPER",
                 {
-                    use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-                    use proximadb::core::config::ViperConfig;
-                    use proximadb::storage::persistence::filesystem::{
-                        FilesystemConfig, FilesystemFactory,
-                    };
-
-                    let viper_config = ViperConfig::default();
-                    let fs_config = FilesystemConfig::default();
-                    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-                    let distance_compute =
-                        Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
-
                     Arc::new(ViperEngine::new().await.unwrap()) as Arc<dyn UnifiedStorageEngine>
                 },
                 temp_dir_viper.path().to_str().unwrap(),
@@ -927,7 +870,7 @@ mod performance_comparison_tests {
 
         // Create HELIX engine
         let temp_dir = TempDir::new().unwrap();
-        let config = HelixConfig::default();
+        let _config = HelixConfig::default();
         let engine = Arc::new(HelixEngine::new().await.unwrap());
 
         // Create collection config with storage assignment

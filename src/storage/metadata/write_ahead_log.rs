@@ -96,22 +96,35 @@ impl Default for MetadataWALConfig {
 /// Collection metadata with versioning
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VersionedCollectionMetadata {
+    /// Collection ID
     pub id: String,
+    /// Collection name
     pub name: String,
-    pub dimension: usize, // Aligned with proto
+    /// Vector dimension
+    pub dimension: usize,
+    /// Distance metric type
     pub distance_metric: String,
+    /// Indexing algorithm
     pub indexing_algorithm: String,
-    pub timestamp: u32, // Seconds since epoch (when last modified)
+    /// Last modification timestamp (seconds since epoch)
+    pub timestamp: u32,
+    /// Schema version
     pub version: Option<u32>,
+    /// Number of vectors
     pub vector_count: u64,
+    /// Total size in bytes
     pub total_size_bytes: u64,
+    /// Collection configuration
     pub config: HashMap<String, serde_json::Value>,
-
-    // Additional metadata fields
+    /// Collection description
     pub description: Option<String>,
+    /// Collection tags
     pub tags: Vec<String>,
+    /// Collection owner
     pub owner: Option<String>,
+    /// Access pattern for optimization
     pub access_pattern: AccessPattern,
+    /// Retention policy
     pub retention_policy: Option<RetentionPolicy>,
 }
 
@@ -131,8 +144,11 @@ pub enum AccessPattern {
 /// Retention policy for collections
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetentionPolicy {
+    /// Number of days to retain data
     pub retain_days: u32,
+    /// Enable automatic archiving
     pub auto_archive: bool,
+    /// Enable automatic deletion
     pub auto_delete: bool,
 }
 
@@ -167,10 +183,15 @@ impl std::fmt::Debug for MetadataWriteAheadLog {
 
 #[derive(Debug, Default, Clone)]
 pub struct MetadataStats {
+    /// Total number of collections
     pub total_collections: u64,
+    /// Cache hit count
     pub cache_hits: u64,
+    /// Cache miss count
     pub cache_misses: u64,
+    /// Total write buffer writes
     pub write_buffer_writes: u64,
+    /// Total write buffer reads
     pub write_buffer_reads: u64,
 }
 
@@ -648,14 +669,23 @@ impl MetadataWriteAheadLog {
 /// System metadata with write buffer backing
 #[derive(Debug, Clone)]
 pub struct SystemMetadata {
+    /// System version
     pub version: String,
+    /// Node ID
     pub node_id: String,
+    /// Cluster name
     pub cluster_name: String,
-    pub timestamp: u32,          // Seconds since epoch
-    pub updated_at: Option<u32>, // Seconds since epoch
+    /// Creation timestamp (seconds since epoch)
+    pub timestamp: u32,
+    /// Last update timestamp (seconds since epoch)
+    pub updated_at: Option<u32>,
+    /// Total number of collections
     pub total_collections: u64,
+    /// Total number of vectors
     pub total_vectors: u64,
+    /// Total size in bytes
     pub total_size_bytes: u64,
+    /// System configuration
     pub config: HashMap<String, serde_json::Value>,
 }
 

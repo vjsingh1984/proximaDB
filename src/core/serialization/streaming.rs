@@ -709,7 +709,7 @@ mod tests {
         // Start multiple concurrent compression tasks
         let mut handles = Vec::new();
 
-        for i in 0..10 {
+        for _i in 0..10 {
             let compressor = compressor.clone();
             let handle = tokio::spawn(async move {
                 let vectors = create_test_vectors(20, 256);

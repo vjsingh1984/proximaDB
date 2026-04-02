@@ -466,7 +466,9 @@ impl CompositePruner {
 
 /// No-op vector pruner that includes all rowgroups.
 pub struct NullVectorPruner {
+    /// Total rowgroups
     total: usize,
+    /// Vector dimension
     dimension: usize,
 }
 
@@ -492,6 +494,7 @@ impl VectorPruner for NullVectorPruner {
 
 /// No-op scalar pruner that includes all rowgroups.
 pub struct NullScalarPruner {
+    /// Total rowgroups
     total: usize,
 }
 

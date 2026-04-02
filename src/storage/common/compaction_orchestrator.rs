@@ -44,18 +44,25 @@ pub type OperationId = String;
 pub type CollectionId = String;
 
 /// Queue status for compaction coordination
+///
+/// Indicates the current state of the EventLog queue and whether
+/// it's safe to proceed with compaction operations.
 #[derive(Debug, Clone)]
 pub enum QueueStatus {
     /// Queue is empty, safe to proceed with compaction
     Empty,
     /// Queue is draining, wait before compaction
     Draining {
+        /// Number of pending acknowledgments
         pending_acks: usize,
+        /// Estimated time until queue is fully drained
         estimated_drain_time: Duration,
     },
     /// Queue is active with pending items
     Active {
+        /// Current depth of the queue (number of pending items)
         queue_depth: usize,
+        /// Timestamp of the oldest unacknowledged item
         oldest_unacked: Instant,
     },
 }

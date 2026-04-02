@@ -107,6 +107,7 @@ fn compute_exact_neighbors(
 
 /// Benchmark result for a single engine
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BenchmarkResult {
     engine: String,
     vector_count: usize,

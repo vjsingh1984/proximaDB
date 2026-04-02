@@ -128,7 +128,6 @@ async fn test_otlp_adapter_span_conversion() {
     use proximadb::observability::ingestion::adapters::otlp::{
         OtlpAdapter, OtlpExportTracesServiceRequest, OtlpTransport,
     };
-    use std::net::SocketAddr;
 
     let json_str = create_test_otlp_request().to_string();
     let req: OtlpExportTracesServiceRequest =
@@ -197,7 +196,6 @@ async fn test_observability_trace_ingestion() {
     use proximadb::observability::ingestion::adapters::otlp::{
         OtlpAdapter, OtlpExportTracesServiceRequest, OtlpTransport,
     };
-    use std::net::SocketAddr;
 
     let json_str = create_test_otlp_request().to_string();
     let otlp_req: OtlpExportTracesServiceRequest =
@@ -292,7 +290,6 @@ async fn test_otlp_error_status_handling() {
     use proximadb::observability::ingestion::adapters::otlp::{
         OtlpAdapter, OtlpExportTracesServiceRequest, OtlpTransport,
     };
-    use std::net::SocketAddr;
 
     let json_str = create_otlp_error_request().to_string();
     let req: OtlpExportTracesServiceRequest =

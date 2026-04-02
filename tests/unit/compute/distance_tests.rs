@@ -24,7 +24,7 @@ use tracing::debug;
 fn test_platform_detection() {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    let capability = proximadb::core::hardware_capabilities::get_hardware_capabilities();
+    let _capability = proximadb::core::hardware_capabilities::get_hardware_capabilities();
     debug!("Detected platform capability: {:?}", capability);
 
     // Test that we can create calculators for all metrics
@@ -205,7 +205,7 @@ fn test_edge_cases() {
     let b = vec![3.0];
 
     let euclidean_calc = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
-    let cosine_calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+    let _cosine_calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
     let manhattan_calc = UnifiedDistanceCompute::new(DistanceMetric::Manhattan);
 
     // Single element euclidean distance

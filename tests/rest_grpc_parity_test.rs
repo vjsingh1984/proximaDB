@@ -769,7 +769,7 @@ fn generate_test_vectors(
         .map(|i| {
             let id = format!("vec_{}", i);
             let vector: Vec<f32> = (0..dimension)
-                .map(|j| ((i * dimension + j) as f32 / (count * dimension) as f32))
+                .map(|j| (i * dimension + j) as f32 / (count * dimension) as f32)
                 .collect();
             let mut metadata = HashMap::new();
             metadata.insert("category".to_string(), format!("cat_{}", i % 3));

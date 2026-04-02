@@ -650,7 +650,7 @@ mod tests {
         let encoded =
             encode_quantized_tensor(&vectors, num_vectors, dimension, QuantizationType::Binary)
                 .unwrap();
-        let (decoded, n, d, qt) = decode_quantized_tensor(&encoded).unwrap();
+        let (_decoded, n, d, qt) = decode_quantized_tensor(&encoded).unwrap();
 
         assert_eq!(n, num_vectors);
         assert_eq!(d, dimension);

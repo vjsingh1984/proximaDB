@@ -217,7 +217,7 @@ async fn test_delete_collection_empty() {
 
 #[tokio::test]
 async fn test_get_all_vectors_empty_collection() {
-    let (storage_engine, _temp_dir) = create_basic_storage_engine().await;
+    let (_storage_engine, _temp_dir) = create_basic_storage_engine().await;
 
     // TODO: get_vectors method has been moved or removed from StorageEngine
     // This test needs to be updated to use the appropriate collection service methods

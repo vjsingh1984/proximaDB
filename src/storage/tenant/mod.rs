@@ -26,47 +26,68 @@ pub use resources::TenantResourceTracker;
 use serde::{Deserialize, Serialize};
 
 /// Industry classification for tenant business context
+///
+/// Used to apply industry-specific optimizations, compliance requirements,
+/// and business logic for tenant operations.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Industry {
+    /// Financial services industry (banking, insurance, investment)
     Financial,
+    /// Healthcare and medical services industry
     Healthcare,
+    /// Technology and software industry
     Technology,
+    /// Manufacturing and industrial sector
     Manufacturing,
+    /// Retail and e-commerce industry
     Retail,
+    /// Government and public sector
     Government,
+    /// Education and academic institutions
     Education,
+    /// Custom or other industry type
     Other(String),
 }
 
 /// Compliance frameworks required by tenant
+///
+/// Indicates which regulatory compliance frameworks the tenant must adhere to,
+/// influencing security policies, data handling, and audit requirements.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ComplianceFramework {
+    /// SOC 2 (Service Organization Control 2) compliance
     SOC2,
+    /// HIPAA (Health Insurance Portability and Accountability Act)
     HIPAA,
+    /// GDPR (General Data Protection Regulation)
     GDPR,
+    /// Basel III (banking regulatory framework)
     BaselIII,
+    /// SOX (Sarbanes-Oxley Act)
     SOX,
+    /// ISO 27001 (information security management)
     ISO27001,
+    /// FedRAMP (Federal Risk and Authorization Management Program)
     FedRAMP,
+    /// Custom or other compliance framework
     Custom(String),
 }
 
 /// Security policies for tenant
+///
+/// Defines authentication, authorization, encryption, and audit requirements
+/// for tenant data and operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityPolicies {
-    /// Require MFA for all operations
+    /// Require multi-factor authentication for all operations
     pub require_mfa: bool,
-
-    /// Encryption at rest required
+    /// Enable encryption for data at rest
     pub encryption_at_rest: bool,
-
-    /// Audit all operations
+    /// Enable comprehensive audit logging for all operations
     pub audit_all_operations: bool,
-
-    /// IP restrictions
+    /// Allowed IP ranges for access (empty means no restrictions)
     pub allowed_ip_ranges: Vec<String>,
-
-    /// Session timeout in minutes
+    /// Session timeout duration in minutes
     pub session_timeout_minutes: u32,
 }
 

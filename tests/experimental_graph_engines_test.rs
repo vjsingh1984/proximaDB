@@ -454,9 +454,9 @@ fn test_quasar_feature_flag() {
     #[cfg(not(feature = "tiered-graph"))]
     {
         // QUASAR should return an error when feature is disabled
-        use proximadb::graph::engines::quasar::{QuasarConfig, QuasarGraphEngine};
+        use proximadb::graph::engines::quasar::QuasarConfig;
         let temp_dir = TempDir::new().unwrap();
-        let config = QuasarConfig {
+        let _config = QuasarConfig {
             cold_tier_path: temp_dir.path().to_path_buf(),
             ..Default::default()
         };

@@ -21,7 +21,9 @@ use crate::storage::traits::{
 
 /// Decorator that adds metrics collection to any MetadataProvider
 pub struct MetricsDecorator<T: MetadataProvider> {
+    /// Inner metadata provider
     inner: T,
+    /// Metrics collector
     metrics: Arc<UnifiedMetricsCollector>,
 }
 

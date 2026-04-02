@@ -29,15 +29,25 @@ use crate::proto::proximadb_v1::Collection;
 /// Fast lookup result for metadata queries
 #[derive(Debug, Clone)]
 pub struct CollectionLookupResult {
+    /// Collection UUID
     pub uuid: String,
+    /// Collection name
     pub name: String,
+    /// Vector dimension
     pub dimension: i32,
+    /// Distance metric type
     pub distance_metric: String,
+    /// Indexing algorithm used
     pub indexing_algorithm: String,
+    /// Storage engine name
     pub storage_engine: String,
+    /// Number of vectors in collection
     pub vector_count: i64,
+    /// Total size in bytes
     pub total_size_bytes: i64,
+    /// Creation timestamp
     pub timestamp: i64,
+    /// Last update timestamp
     pub updated_at: i64,
 }
 
@@ -73,14 +83,23 @@ impl From<&Collection> for CollectionLookupResult {
 /// Statistics for memory index performance monitoring
 #[derive(Debug, Clone)]
 pub struct IndexStatistics {
+    /// Total number of collections indexed
     pub total_collections: usize,
+    /// Memory usage in bytes
     pub memory_usage_bytes: usize,
+    /// UUID index cache hits
     pub uuid_index_hits: u64,
+    /// Name index cache hits
     pub name_index_hits: u64,
+    /// Prefix search index hits
     pub prefix_index_hits: u64,
+    /// Tag filter index hits
     pub tag_index_hits: u64,
+    /// Total cache misses
     pub cache_misses: u64,
+    /// Last index rebuild timestamp
     pub last_rebuild_time: Option<i64>,
+    /// Average lookup time in nanoseconds
     pub avg_lookup_time_ns: u64,
 }
 

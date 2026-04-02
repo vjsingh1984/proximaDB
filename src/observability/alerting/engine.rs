@@ -126,6 +126,10 @@ impl AlertEngine {
                 // Need historical data for rate of change
                 self.check_rate_of_change(rule_id, *value, *rate).await
             }
+            RuleCondition::Composite { .. } => {
+                // Composite conditions require recursive evaluation - not yet implemented
+                false
+            }
         };
 
         // Update state
@@ -162,6 +166,7 @@ impl AlertEngine {
                 RuleCondition::Between(low, _) => Some(*low),
                 RuleCondition::Outside(_, high) => Some(*high),
                 RuleCondition::RateOfChange(rate) => Some(*rate),
+                RuleCondition::Composite { .. } => None, // No single threshold for composite conditions
             };
 
             Some(Alert {

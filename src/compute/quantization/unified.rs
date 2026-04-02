@@ -1157,7 +1157,7 @@ impl UnifiedQuantizationEngine {
             } else {
                 i8::MIN
             };
-            result.push(((sign + 1) << 7) as u8 | (log_val.abs() as u8));
+            result.push(((sign + 1) << 7) as u8 | log_val.unsigned_abs());
         }
 
         Ok(result)

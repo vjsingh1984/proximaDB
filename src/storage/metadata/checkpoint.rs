@@ -56,22 +56,35 @@ impl Default for MetadataCheckpointConfig {
 /// Checkpoint statistics
 #[derive(Debug, Default, Clone)]
 pub struct CheckpointStats {
+    /// Last checkpoint timestamp
     pub last_checkpoint_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Total number of checkpoints created
     pub total_checkpoints: u64,
+    /// Total operations compacted
     pub operations_compacted: u64,
+    /// Total snapshots created
     pub snapshots_created: u64,
+    /// Total archives created
     pub archives_created: u64,
+    /// Total bytes compacted
     pub bytes_compacted: u64,
+    /// Current incremental operation count
     pub current_incremental_count: usize,
+    /// Current incremental log size in bytes
     pub current_incremental_size: usize,
 }
 
 /// Checkpoint manager for filestore backend
 pub struct FilestoreCheckpoint {
+    /// Checkpoint configuration
     config: MetadataCheckpointConfig,
+    /// Filesystem factory for I/O operations
     filesystem: Arc<FilesystemFactory>,
+    /// Filestore storage URL
     filestore_url: String,
+    /// Metadata storage path
     metadata_path: PathBuf,
+    /// Checkpoint statistics
     stats: CheckpointStats,
 }
 
@@ -486,11 +499,17 @@ impl FilestoreCheckpoint {
 /// Result of a checkpoint operation
 #[derive(Debug)]
 pub struct CheckpointResult {
+    /// Duration of the checkpoint operation
     pub duration: std::time::Duration,
+    /// Initial number of collections
     pub initial_collections: usize,
+    /// Final number of collections
     pub final_collections: usize,
+    /// Number of operations compacted
     pub operations_compacted: usize,
+    /// Number of bytes compacted
     pub bytes_compacted: usize,
+    /// Path to the archive
     pub archive_path: Option<String>,
 }
 

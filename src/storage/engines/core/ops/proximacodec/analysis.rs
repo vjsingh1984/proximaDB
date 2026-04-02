@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn test_normalized_smooth_not_raw() {
         // Normalized but highly structured data - could use delta schemes OR Raw
-        let smooth_normalized: Vec<f32> = (0..100).map(|i| (i as f32 * 0.01)).collect();
+        let smooth_normalized: Vec<f32> = (0..100).map(|i| i as f32 * 0.01).collect();
 
         let scheme = analyze_and_choose_scheme_f32(&smooth_normalized);
 

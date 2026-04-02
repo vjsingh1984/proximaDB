@@ -517,7 +517,7 @@ mod tests {
         let text_query = "machine learning algorithms";
         let query_vector = vec![0.1, 0.2, 0.3, 0.4, 0.5];
         let top_k = 10;
-        let fusion_strategy = FusionStrategy::ReciprocalRank { k: 60 };
+        let _fusion_strategy = FusionStrategy::ReciprocalRank { k: 60 };
 
         // Note: This would require a full UnifiedSearchHandler instance
         // For now, we're testing that the API compiles and the types work together

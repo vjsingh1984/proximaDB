@@ -20,7 +20,7 @@ use proximadb::server::builder::ServerBuilder;
 
 #[tokio::test]
 async fn test_server_builder_creation() {
-    let builder = ServerBuilder::new();
+    let _builder = ServerBuilder::new();
 
     // Test that builder can be created without panicking
     assert!(true);

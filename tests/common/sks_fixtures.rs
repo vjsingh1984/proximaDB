@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 

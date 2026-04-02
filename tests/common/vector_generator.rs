@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 //! Test Vector Generation Utilities
 //!
 //! Provides various patterns for generating test vectors:

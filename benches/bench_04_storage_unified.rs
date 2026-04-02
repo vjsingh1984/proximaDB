@@ -16,7 +16,6 @@ use proximadb::storage::traits::{FlushParameters, StorageQueryContext, StorageQu
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info, trace, warn};
 
 /// Configurable base URL for storage benchmarks
 /// Can be changed to test different storage backends:
@@ -294,6 +293,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
         // Test each engine with this compression (INNER LOOP)
         // Create fresh engines for each compression to avoid state contamination
+        #[allow(unused_mut)]
         let mut engine_names = vec!["sst", "viper", "nova", "helix"];
         #[cfg(feature = "experimental-engines")]
         {
@@ -948,6 +948,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
         let query = generate_random_vector(dimension);
 
         // Test all storage engines - stateless engines get collection info from parameters
+        #[allow(unused_mut)]
         let mut engines: Vec<(
             &str,
             std::sync::Arc<dyn proximadb::storage::traits::UnifiedStorageEngine>,
@@ -1143,6 +1144,7 @@ fn bench_insertion_performance(c: &mut Criterion) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     // Test each engine - stateless engines get collection info from parameters
+    #[allow(unused_mut)]
     let mut engines: Vec<(
         &str,
         std::sync::Arc<dyn proximadb::storage::traits::UnifiedStorageEngine>,

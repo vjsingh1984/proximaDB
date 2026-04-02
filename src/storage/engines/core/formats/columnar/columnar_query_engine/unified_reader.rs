@@ -1023,7 +1023,7 @@ impl UnifiedParquetReader {
         let projection_mask = ProjectionMask::roots(reader_builder.parquet_schema(), projection);
 
         // Create reader with projection and selected row groups
-        let mut reader = reader_builder
+        let reader = reader_builder
             .with_projection(projection_mask)
             .with_row_groups(selected_row_groups)
             .with_batch_size(1024) // Process in reasonable batches
@@ -1159,7 +1159,7 @@ impl UnifiedParquetReader {
 
         let projection_mask = ProjectionMask::roots(reader_builder.parquet_schema(), projection);
 
-        let mut reader = reader_builder
+        let reader = reader_builder
             .with_projection(projection_mask)
             .with_row_groups(selected_row_groups)
             .with_batch_size(1024)

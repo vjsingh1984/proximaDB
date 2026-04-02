@@ -489,7 +489,7 @@ mod tests {
             } else {
                 (1u64 << bits) - 1
             };
-            let values: Vec<u64> = (0..16).map(|i| (i * max_val / 16)).collect();
+            let values: Vec<u64> = (0..16).map(|i| i * max_val / 16).collect();
             let packed = create_bitpacked_data(&values, bits);
 
             let mut output = vec![0i64; values.len()];

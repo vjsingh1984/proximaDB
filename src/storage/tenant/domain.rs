@@ -79,24 +79,28 @@ pub enum DomainStatus {
 }
 
 /// Mapping types between collections and domains
+///
+/// Defines how collection data is mapped to domains for business context.
 #[derive(Debug, Clone)]
 pub enum MappingType {
-    /// Direct 1:1 mapping
+    /// Direct 1:1 mapping between collection and domain
     Direct,
-    /// Shared collection across domains
+    /// Shared collection accessible by multiple domains
     Shared,
-    /// Collection subset mapped to domain
-    Subset(Vec<String>), // Entity IDs
+    /// Collection subset mapped to domain (vector of entity IDs)
+    Subset(Vec<String>),
 }
 
 /// Synchronization policy
+///
+/// Defines how changes are synchronized between collections and domains.
 #[derive(Debug, Clone)]
 pub enum SyncPolicy {
-    /// Real-time sync
+    /// Real-time synchronization
     Realtime,
-    /// Batch sync with interval
+    /// Batch synchronization with specified interval in seconds
     Batch { interval_seconds: u32 },
-    /// Manual sync only
+    /// Manual synchronization only
     Manual,
 }
 

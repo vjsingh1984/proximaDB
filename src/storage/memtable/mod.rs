@@ -493,25 +493,44 @@ where
 }
 
 /// Benchmark result for a specific operation and implementation
+///
+/// Captures performance metrics for a single benchmark run including
+/// throughput, latency, memory usage, and success/failure rates.
 #[derive(Debug, Clone)]
 pub struct BenchmarkResult {
+    /// The memtable implementation type that was benchmarked
     pub memtable_type: MemtableType,
+    /// Name of the operation performed (e.g., "insert", "lookup")
     pub operation: String,
+    /// Total duration of the benchmark run
     pub duration: std::time::Duration,
+    /// Operations completed per second
     pub ops_per_second: f64,
+    /// Total memory usage in bytes after the operation
     pub memory_usage: usize,
+    /// Number of entries in the memtable after the operation
     pub entry_count: usize,
+    /// Number of successfully completed operations
     pub success_count: usize,
+    /// Number of failed operations
     pub error_count: usize,
 }
 
 /// Comprehensive benchmark report
+///
+/// Aggregates benchmark results across all operations for comparison
+/// and analysis of different memtable implementations.
 #[derive(Debug, Clone)]
 pub struct BenchmarkReport {
+    /// Configuration used for the benchmark
     pub config: MemtableConfig,
+    /// Results from insert benchmarks across all implementations
     pub insert_results: Vec<BenchmarkResult>,
+    /// Results from point lookup benchmarks across all implementations
     pub lookup_results: Vec<BenchmarkResult>,
+    /// Results from range scan benchmarks across all implementations
     pub scan_results: Vec<BenchmarkResult>,
+    /// Timestamp when the benchmark was completed
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
@@ -628,10 +647,16 @@ impl BenchmarkReport {
 }
 
 /// Performance winners for each operation type
+///
+/// Indicates which memtable implementation achieved the best performance
+/// for each category of operation.
 #[derive(Debug, Clone)]
 pub struct PerformanceWinners {
+    /// Memtable type with highest insert throughput
     pub best_insert: Option<MemtableType>,
+    /// Memtable type with highest lookup throughput
     pub best_lookup: Option<MemtableType>,
+    /// Memtable type with highest range scan throughput
     pub best_scan: Option<MemtableType>,
 }
 

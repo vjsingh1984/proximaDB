@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 //! Common benchmark utilities and initialization
 
 pub mod benchmark_utils;

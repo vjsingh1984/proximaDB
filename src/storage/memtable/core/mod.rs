@@ -76,24 +76,42 @@ where
 }
 
 /// Memory and performance metrics for memtables
+///
+/// Tracks operational statistics and resource usage for monitoring
+/// and performance optimization of memtable operations.
 #[derive(Debug, Clone, Default)]
 pub struct MemtableMetrics {
+    /// Current memory usage in bytes
     pub size_bytes: usize,
+    /// Total number of entries stored
     pub entry_count: usize,
+    /// Total number of insert operations performed
     pub insert_count: u64,
+    /// Total number of get operations performed
     pub get_count: u64,
+    /// Total number of range scan operations performed
     pub scan_count: u64,
+    /// Total number of flush operations completed
     pub flush_count: u64,
+    /// Total number of MVCC versions across all entries
     pub mvcc_versions_total: usize,
 }
 
 /// Memtable configuration options
+///
+/// Configures memory limits, flush behavior, and MVCC settings
+/// for memtable instances.
 #[derive(Debug, Clone)]
 pub struct MemtableConfig {
+    /// Maximum memory size in bytes before flush is required
     pub max_size_bytes: usize,
+    /// Memory threshold in bytes that triggers flush operation
     pub flush_threshold_bytes: usize,
+    /// Enable Multi-Version Concurrency Control for transactional support
     pub enable_mvcc: bool,
+    /// Interval in seconds between MVCC version cleanup operations
     pub mvcc_cleanup_interval_secs: u64,
+    /// Maximum number of versions to keep per key when MVCC is enabled
     pub max_versions_per_key: usize,
 }
 

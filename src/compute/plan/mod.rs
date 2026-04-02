@@ -77,6 +77,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::ops::Not;
 
 use serde::{Deserialize, Serialize};
 
@@ -934,6 +935,14 @@ impl Expr {
             op: UnaryOp::Not,
             expr: Box::new(self),
         }
+    }
+}
+
+impl Not for Expr {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        self.not()
     }
 }
 

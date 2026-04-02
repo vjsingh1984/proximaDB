@@ -9,16 +9,13 @@ use proximadb::storage::schema::{
     BloomConsolidator,
     // Header cache integration
     CachedHeader,
-    CentroidNode,
     // Core types
     CentroidTree,
     CentroidTreeConfig,
     // Composite pruner
     CompositePruner,
     ConsolidatedBloom,
-    EnhancedCachedHeader,
     IncrementalBloomBuilder,
-    NullScalarPruner,
     PruningResult,
     RowGroupMeta,
     ScalarPruner,
@@ -120,7 +117,7 @@ fn test_centroid_tree_pruning() {
     // Verify the near cluster is included
     for idx in &result.included_indices {
         let centroid = &centroids[*idx];
-        let dist = ((centroid[0] - 0.05).powi(2)
+        let _dist = ((centroid[0] - 0.05).powi(2)
             + (centroid[1] - 0.05).powi(2)
             + (centroid[2] - 0.05).powi(2))
         .sqrt();

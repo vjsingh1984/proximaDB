@@ -5709,7 +5709,7 @@ mod tests {
             parameters: HashMap::new(),
             is_cross_model_join: false,
         };
-        let plan = optimizer.optimize(&query).unwrap();
+        let _plan = optimizer.optimize(&query).unwrap();
         let cache_key = PlanCacheKey::from_query(&query);
         assert!(optimizer.plan_cache.get(&cache_key).is_some());
 

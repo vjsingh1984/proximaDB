@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn test_compressor_creation() {
         let config = CompressionConfig::default();
-        let compressor = TimeSeriesCompressor::new(config);
+        let _compressor = TimeSeriesCompressor::new(config);
         assert!(config.enabled);
         assert!(config.use_gorilla);
     }

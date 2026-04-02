@@ -24,9 +24,8 @@
 //! - Avro-style schema serialization
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use arrow_array::{Float32Array, Int64Array, RecordBatch, StringArray};
+use arrow_array::StringArray;
 use arrow_schema::{DataType, Field, Schema as ArrowSchema};
 
 use proximadb::proto::proximadb_v1::sql_value::Value as ProtoSqlValueInner;

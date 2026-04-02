@@ -33,7 +33,9 @@ use crate::storage::persistence::filesystem::FileSystem;
 /// Header loader for Parquet-based engines (VIPER, NOVA, RAPTOR).
 /// Reuses SharedParquetFormatReader infrastructure for footer caching.
 pub struct ParquetHeaderLoader {
+    /// Filesystem for I/O operations
     filesystem: Arc<dyn FileSystem>,
+    /// Engine type identifier
     engine_type: String,
 }
 
@@ -245,7 +247,9 @@ impl HeaderLoader for ParquetHeaderLoader {
 /// Header loader for ProximaBlocks-based engines (SST, HELIX, SWIFT).
 /// Reuses RowBasedHeader parsing infrastructure.
 pub struct ProximaBlocksHeaderLoader {
+    /// Filesystem for I/O operations
     filesystem: Arc<dyn FileSystem>,
+    /// Engine type identifier
     engine_type: String,
 }
 
@@ -569,6 +573,7 @@ impl HeaderLoader for ProximaBlocksHeaderLoader {
 
 /// Registry of all header loaders for different engine types.
 pub struct HeaderLoaderRegistry {
+    /// Registered header loaders
     loaders: Vec<Arc<dyn HeaderLoader>>,
 }
 

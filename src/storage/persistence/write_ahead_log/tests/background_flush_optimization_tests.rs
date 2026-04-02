@@ -20,8 +20,7 @@ mod tests {
         FlushDataSource, WALFlushCoordinator,
     };
     use crate::storage::traits::{
-        CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-        StorageQueryMetadata, UnifiedStorageEngine,
+        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
     };
 
     /// Mock storage engine for testing

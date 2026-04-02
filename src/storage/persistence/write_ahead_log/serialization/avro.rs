@@ -470,7 +470,7 @@ mod tests {
         let keys: std::collections::HashSet<String> = deserialized[0]
             .metadata
             .iter()
-            .map(|(key, value)| key.clone())
+            .map(|(key, _value)| key.clone())
             .collect();
         assert!(keys.contains("key1"));
         assert!(keys.contains("key2"));

@@ -6,7 +6,6 @@
 //! 3. Temp edge accumulation: Small writes accumulate without rebuild
 //! 4. Query correctness: Queries see temp edges correctly
 
-use proximadb::graph::EdgeId;
 use proximadb::graph::engines::orion::storage::CsrStorage;
 
 #[test]

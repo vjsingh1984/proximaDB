@@ -83,11 +83,18 @@ pub enum SearchMode {
 }
 
 /// Search candidate for columnar processing
+///
+/// Represents a potential match found during columnar search, containing
+/// location information and similarity score for ranking.
 #[derive(Debug, Clone)]
 struct SearchCandidate {
+    /// Row group identifier in the Parquet file
     row_group_id: usize,
+    /// Row offset within the row group
     row_offset: u32,
+    /// Similarity score (higher is better)
     similarity: f32,
+    /// Optional vector record identifier
     vector_id: Option<String>,
 }
 

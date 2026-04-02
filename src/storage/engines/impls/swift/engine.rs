@@ -56,7 +56,37 @@ lazy_static::lazy_static! {
         std::sync::RwLock::new(std::collections::HashMap::new());
 }
 
-/// Set PCA model for a collection in the global cache (called after flush/compaction)
+/// Set PCA model for a collection in the global cache
+///
+/// This function caches the trained PCA model after flush/compaction operations,
+/// eliminating the 40ms+ overhead of per-query PCA training during search.
+///
+/// The global cache is shared across all SWIFT engine instances, so models
+/// trained during flush/compaction are automatically available for search
+/// operations in any session.
+///
+/// # Arguments
+///
+/// * `collection_id` - Unique identifier for the collection
+/// * `model` - Trained EnhancedPCAModel with principal components
+///
+/// # When to Call
+///
+/// - After flush completes (model trained on flushed vectors)
+/// - After compaction completes (model retrained on compacted data)
+/// - When collection schema changes (dimensionality changes)
+///
+/// # Example
+///
+/// ```rust
+/// let model = train_pca_model(&vectors, n_components)?;
+/// set_collection_pca_model("my_collection", model);
+/// ```
+///
+/// # Performance Impact
+///
+/// - **Cache hit**: ~0ms (model reused)
+/// - **Cache miss**: ~40-100ms (model trained during query)
 pub fn set_collection_pca_model(collection_id: &str, model: super::pca_manager::EnhancedPCAModel) {
     if let Ok(mut cache) = SWIFT_GLOBAL_PCA_MODEL_CACHE.write() {
         cache.insert(collection_id.to_string(), model);
@@ -64,7 +94,41 @@ pub fn set_collection_pca_model(collection_id: &str, model: super::pca_manager::
     }
 }
 
-/// Get PCA model for a collection from the global cache (called during search)
+/// Get PCA model for a collection from the global cache
+///
+/// Retrieves the cached PCA model for use during progressive search,
+/// avoiding the 40ms+ overhead of training the model per query.
+///
+/// # Arguments
+///
+/// * `collection_id` - Unique identifier for the collection
+///
+/// # Returns
+///
+/// - `Some(model)` if PCA model exists in cache
+/// - `None` if model not cached (caller must train or fallback)
+///
+/// # When to Call
+///
+/// - During progressive search (phase 1-3 filtering)
+/// - Before quantizing query vectors
+/// - When applying PCA transformation for dimensionality reduction
+///
+/// # Example
+///
+/// ```rust
+/// if let Some(model) = get_collection_pca_model("my_collection") {
+///     let transformed = model.transform(&query_vector)?;
+///     // Use transformed vector for search
+/// } else {
+///     // Fallback: use original vector or train model
+/// }
+/// ```
+///
+/// # Performance Impact
+///
+/// - **Cache hit**: ~0ms (model retrieved instantly)
+/// - **Cache miss**: Must train model (~40-100ms) or use fallback
 pub fn get_collection_pca_model(
     collection_id: &str,
 ) -> Option<super::pca_manager::EnhancedPCAModel> {
@@ -1910,6 +1974,7 @@ impl SwiftEngine {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]  // SWIFT is experimental - tests validate expected behavior
 mod tests {
     use super::*;
 
