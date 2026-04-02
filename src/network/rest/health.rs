@@ -506,11 +506,12 @@ async fn check_network_health(state: &HealthState, timeout: Duration) -> Compone
         server_health.push("rest_server_active");
 
         // Check gRPC server connectivity through internal health
-        if let Ok(_) = state
+        if state
             .unified_handlers
             .collection_service
             .list_collections()
             .await
+            .is_ok()
         {
             server_health.push("grpc_server_active");
         }

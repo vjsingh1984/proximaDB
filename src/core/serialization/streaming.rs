@@ -415,7 +415,7 @@ impl StreamingCompressor {
                     }
 
                     // Send result
-                    if let Err(_) = work.response_tx.send(result) {
+                    if work.response_tx.send(result).is_err() {
                         warn!(
                             "🚫 Worker {}: Failed to send result for batch {}",
                             worker_id, work.batch_id
