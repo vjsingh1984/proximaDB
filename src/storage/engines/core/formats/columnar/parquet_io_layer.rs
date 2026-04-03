@@ -49,12 +49,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+use std::any::Any;
 
 // Arrow types handled through parquet crate
 use arrow_array::RecordBatch;
 use dashmap::DashMap;
 // Memory mapping handled by filesystem API
 use parquet::file::metadata::ParquetMetaData;
+// Typed statistics API for TD-033: Row group numeric statistics pruning
+use parquet::file::statistics::{Statistics, ValueStatistics};
 // RwLock handled internally
 use tracing::{debug, info, warn};
 
@@ -391,7 +394,13 @@ impl SharedParquetFormatReader {
         self.get_local_footer_with_mmap(file_path).await
     }
 
-    /// Filter row groups using statistics BEFORE downloading
+    /// Filter row groups using statistics BEFORE downloading (TD-033)
+    ///
+    /// This method implements row group pruning by:
+    /// 1. Extracting column names referenced in the filter expression
+    /// 2. Checking min/max statistics for only those columns
+    /// 3. Using typed Statistics API (Int64, Double, etc.) for accurate comparisons
+    /// 4. Returning only row groups that might contain matching data
     fn filter_row_groups_by_statistics(
         &self,
         footer: &ParquetFooterCache,
@@ -399,17 +408,25 @@ impl SharedParquetFormatReader {
     ) -> Result<Vec<usize>, ProximaDBError> {
         let mut candidates = Vec::new();
 
+        // Extract column names referenced in the filter
+        let filter_columns = self.extract_columns_from_filter(filter);
+
         for (idx, rg) in footer.metadata.row_groups().iter().enumerate() {
-            // Check column statistics to see if this row group can contain matching data
             let mut might_match = true;
 
-            for column_chunk in rg.columns() {
-                if let Some(stats) = column_chunk.statistics() {
-                    // Use min/max statistics to prune
-                    if !self.statistics_match_filter(stats, filter) {
-                        might_match = false;
-                        break;
+            // Only check statistics for columns referenced in the filter
+            for column_name in &filter_columns {
+                // Find the column chunk for this column
+                if let Some(column_chunk) = self.find_column_chunk_by_name(rg, column_name) {
+                    if let Some(stats) = column_chunk.statistics() {
+                        // Check if this column's statistics allow pruning
+                        if !self.statistics_match_filter_for_column(stats, filter, column_name) {
+                            // Statistics guarantee this row group can't match
+                            might_match = false;
+                            break;
+                        }
                     }
+                    // If no statistics available, be conservative and keep the row group
                 }
             }
 
@@ -419,6 +436,102 @@ impl SharedParquetFormatReader {
         }
 
         Ok(candidates)
+    }
+
+    /// Extract column names referenced in a filter expression
+    fn extract_columns_from_filter(&self, filter: &FilterExpression) -> Vec<String> {
+        let mut columns = Vec::new();
+
+        match filter {
+            FilterExpression::Comparison { field, .. } => {
+                columns.push(field.clone());
+            }
+            FilterExpression::And(filters) | FilterExpression::Or(filters) => {
+                for f in filters {
+                    columns.extend(self.extract_columns_from_filter(f));
+                }
+            }
+            FilterExpression::Not(f) => {
+                columns.extend(self.extract_columns_from_filter(f));
+            }
+        }
+
+        columns
+    }
+
+    /// Find column chunk by name in row group metadata
+    fn find_column_chunk_by_name(
+        &self,
+        rg: &parquet::file::metadata::RowGroupMetaData,
+        column_name: &str,
+    ) -> Option<&parquet::file::metadata::ColumnChunkMetaData> {
+        rg.columns()
+            .iter()
+            .find(|cc| cc.column_descr().name() == column_name)
+    }
+
+    /// Check if statistics match filter for a specific column (TD-033)
+    fn statistics_match_filter_for_column(
+        &self,
+        stats: &parquet::file::statistics::Statistics,
+        filter: &FilterExpression,
+        column_name: &str,
+    ) -> bool {
+        // Only evaluate filters that reference this column
+        let relevant_filter = self.filter_for_column(filter, column_name);
+
+        match relevant_filter {
+            Some(f) => self.statistics_match_filter(stats, &f),
+            None => true, // Filter doesn't reference this column, don't prune based on it
+        }
+    }
+
+    /// Extract filter expression for a specific column
+    fn filter_for_column(
+        &self,
+        filter: &FilterExpression,
+        column_name: &str,
+    ) -> Option<FilterExpression> {
+        match filter {
+            FilterExpression::Comparison { field, .. } if field == column_name => {
+                Some(filter.clone())
+            }
+            FilterExpression::And(filters) => {
+                // Extract sub-filters for this column and combine with AND
+                let column_filters: Vec<_> = filters
+                    .iter()
+                    .filter_map(|f| self.filter_for_column(f, column_name))
+                    .collect();
+
+                if column_filters.is_empty() {
+                    None
+                } else if column_filters.len() == 1 {
+                    column_filters.into_iter().next()
+                } else {
+                    Some(FilterExpression::And(column_filters))
+                }
+            }
+            FilterExpression::Or(filters) => {
+                // Extract sub-filters for this column and combine with OR
+                let column_filters: Vec<_> = filters
+                    .iter()
+                    .filter_map(|f| self.filter_for_column(f, column_name))
+                    .collect();
+
+                if column_filters.is_empty() {
+                    None
+                } else if column_filters.len() == 1 {
+                    column_filters.into_iter().next()
+                } else {
+                    Some(FilterExpression::Or(column_filters))
+                }
+            }
+            FilterExpression::Not(f) => {
+                self.filter_for_column(f, column_name)
+                    .map(|inner| FilterExpression::Not(Box::new(inner)))
+            }
+            _ => None,
+        }
     }
 
     /// Read a single row group with smart column selection
@@ -599,14 +712,166 @@ impl SharedParquetFormatReader {
         ))
     }
 
-    /// Check if statistics match filter
+    /// Check if statistics match filter using typed statistics API (TD-033)
+    ///
+    /// This method implements row group pruning by comparing filter predicates
+    /// against min/max statistics from Parquet's Statistics API.
+    ///
+    /// Returns false if the statistics guarantee the row group contains no matching data
+    /// Returns true if the row group might contain matching data (conservative)
     fn statistics_match_filter(
         &self,
-        _stats: &parquet::file::statistics::Statistics,
-        _filter: &FilterExpression,
+        stats: &parquet::file::statistics::Statistics,
+        filter: &FilterExpression,
     ) -> bool {
-        // Check min/max against filter predicates
-        true // Placeholder
+        use crate::core::search::ComparisonOperator;
+        use std::any::Any;
+
+        match filter {
+            FilterExpression::Comparison { operator, value, .. } => {
+                match operator {
+                    ComparisonOperator::GreaterThan => {
+                        // Prune if max <= filter value
+                        if let Some(max_val) = stats.max() {
+                            self.compare_with_value(max_val, value, |s, v| s > v)
+                        } else {
+                            true // No statistics available, be conservative
+                        }
+                    }
+                    ComparisonOperator::GreaterThanOrEqual => {
+                        // Prune if max < filter value
+                        if let Some(max_val) = stats.max() {
+                            self.compare_with_value(max_val, value, |s, v| s >= v)
+                        } else {
+                            true
+                        }
+                    }
+                    ComparisonOperator::LessThan => {
+                        // Prune if min >= filter value
+                        if let Some(min_val) = stats.min() {
+                            self.compare_with_value(min_val, value, |s, v| s < v)
+                        } else {
+                            true
+                        }
+                    }
+                    ComparisonOperator::LessThanOrEqual => {
+                        // Prune if min > filter value
+                        if let Some(min_val) = stats.min() {
+                            self.compare_with_value(min_val, value, |s, v| s <= v)
+                        } else {
+                            true
+                        }
+                    }
+                    ComparisonOperator::Equals => {
+                        // Prune if value is outside [min, max] range
+                        if let (Some(min_val), Some(max_val)) = (stats.min(), stats.max()) {
+                            let min_ok = self.compare_with_value(min_val, value.clone(), |s, v| s <= v);
+                            let max_ok = self.compare_with_value(max_val, value, |s, v| s >= v);
+                            min_ok && max_ok
+                        } else {
+                            true
+                        }
+                    }
+                    ComparisonOperator::Between => {
+                        // Between expects an array of [min, max]
+                        if let Some(arr) = value.as_array() {
+                            if arr.len() >= 2 {
+                                let range_min = &arr[0];
+                                let range_max = &arr[1];
+                                if let (Some(min_val), Some(max_val)) = (stats.min(), stats.max()) {
+                                    let min_ok = self.compare_with_value(max_val, range_min.clone(), |s, v| s >= v);
+                                    let max_ok = self.compare_with_value(min_val, range_max.clone(), |s, v| s <= v);
+                                    min_ok && max_ok
+                                } else {
+                                    true
+                                }
+                            } else {
+                                true
+                            }
+                        } else {
+                            true
+                        }
+                    }
+                    _ => true, // Conservative: don't prune for unsupported operators
+                }
+            }
+            FilterExpression::And(filters) => {
+                // All predicates must match (AND logic)
+                // If any predicate can be pruned, the whole expression can be pruned
+                for f in filters {
+                    if !self.statistics_match_filter(stats, f) {
+                        return false;
+                    }
+                }
+                true
+            }
+            FilterExpression::Or(filters) => {
+                // At least one predicate must match (OR logic)
+                // Can only prune if ALL predicates can be pruned
+                for f in filters {
+                    if self.statistics_match_filter(stats, f) {
+                        return true; // At least one predicate might match
+                    }
+                }
+                false // All predicates can be pruned
+            }
+            FilterExpression::Not(filter) => {
+                // NOT: invert the logic
+                !self.statistics_match_filter(stats, filter)
+            }
+        }
+    }
+
+    /// Helper function to compare statistics value with filter value
+    fn compare_with_value<F>(
+        &self,
+        stat_val: &dyn Any,
+        filter_val: serde_json::Value,
+        compare_fn: F,
+    ) -> bool
+    where
+        F: Fn(i64, i64) -> bool + Copy,
+    {
+        use std::any::Any;
+
+        // Try i64 first
+        if let Some(s) = stat_val.downcast_ref::<i64>() {
+            if let Some(f) = filter_val.as_i64() {
+                return compare_fn(*s, f);
+            }
+        }
+
+        // Try i32
+        if let Some(s) = stat_val.downcast_ref::<i32>() {
+            if let Some(f) = filter_val.as_i64() {
+                return compare_fn(*s as i64, f);
+            }
+        }
+
+        // Try f64
+        if let Some(s) = stat_val.downcast_ref::<f64>() {
+            if let Some(f) = filter_val.as_f64() {
+                // For floating point, use direct comparison
+                return match compare_fn {
+                    _ if *s > f => true,
+                    _ if *s < f => false,
+                    _ => *s == f,
+                };
+            }
+        }
+
+        // Try f32
+        if let Some(s) = stat_val.downcast_ref::<f32>() {
+            if let Some(f) = filter_val.as_f64() {
+                return match compare_fn {
+                    _ if *s > (f as f32) => true,
+                    _ if *s < (f as f32) => false,
+                    _ => *s == (f as f32),
+                };
+            }
+        }
+
+        true // Conservative if types don't match
     }
 
     /// Find column chunk in row group metadata
