@@ -394,23 +394,57 @@ impl SstEngine {
                     sstable_path,
                     query_vector,
                     filter_expression.cloned(),
-                    k * 2,
+                    k, // Use exact k
                     distance_metric,
                 )
                 .await
             } else {
                 // Use SSTable reader for ProximaBlocks format
-                self.sstable_reader()
-                    .search_with_filter_and_pruning(
-                        sstable_path,
-                        query_vector,
-                        filter_expression.cloned(),
-                        k * 2, // Get more candidates for better accuracy
-                        distance_metric,
-                        Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
-                        block_prune, // Pass block pruning config for Z-order/centroid pruning
-                    )
-                    .await
+                // Choose execution strategy based on flags (TD-041, TD-039)
+                let use_parallel_morsels = ctx.search_params.enable_parallel_morsels.unwrap_or(false);
+                let use_vectorized = ctx.search_params.enable_vectorized_execution.unwrap_or(false);
+
+                if use_parallel_morsels {
+                    trace!("SST: Using parallel morsel execution path (TD-039)");
+                    self.sstable_reader()
+                        .search_with_filter_parallel_morsels(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k
+                            distance_metric,
+                            Some(&*ctx.collection),
+                            block_prune,
+                            None, // Use default worker count (CPU cores)
+                        )
+                        .await
+                } else if use_vectorized {
+                    trace!("SST: Using vectorized execution path (TD-041)");
+                    self.sstable_reader()
+                        .search_with_filter_vectorized(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k
+                            distance_metric,
+                            Some(&*ctx.collection),
+                            block_prune,
+                        )
+                        .await
+                } else {
+                    trace!("SST: Using scalar execution path");
+                    self.sstable_reader()
+                        .search_with_filter_and_pruning(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k
+                            distance_metric,
+                            Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
+                            block_prune, // Pass block pruning config for Z-order/centroid pruning
+                        )
+                        .await
+                }
             };
 
             match search_result {

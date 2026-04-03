@@ -66,6 +66,10 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::{
     DataChunk, evaluate_predicate_vectorized,
 };
+
+// Morsel-driven parallelism imports (TD-039)
+use crate::storage::engines::impls::sst::readers::morsel_scheduler::{MorselScheduler, MORSEL_SIZE};
+
 use arrow::array::{Float32Array, RecordBatch};
 use arrow::datatypes::{Schema, Field, DataType};
 
@@ -1535,6 +1539,169 @@ impl UnifiedSstableReader {
 
         debug!(
             "✅ SST: Vectorized search complete, found {} results",
+            final_results.len()
+        );
+        Ok(final_results)
+    }
+
+    /// Parallel search using morsel-driven execution (TD-039)
+    ///
+    /// This method provides parallel processing of large result sets by:
+    /// - Dividing records into 4096-row morsels
+    /// - Processing morsels in parallel with worker threads
+    /// - Using work-stealing for load balancing
+    ///
+    /// Best for: Large result sets (>10K records) with complex filters
+    pub async fn search_with_filter_parallel_morsels(
+        &self,
+        file_path: &str,
+        query_vector: &[f32],
+        filter: Option<FilterExpression>,
+        k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+        block_prune: &crate::core::search::BlockPruneConfig,
+        max_workers: Option<usize>,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        use crate::storage::engines::impls::sst::readers::morsel_scheduler::{MorselScheduler, MORSEL_SIZE};
+
+        trace!(
+            "SST Reader: parallel morsel search called with file_path: {}",
+            file_path
+        );
+
+        // Create search context
+        let context = CollectionContext {
+            file_path: file_path.to_string(),
+            sstable_files: vec![file_path.to_string()],
+            total_vectors: 0,
+            metadata_columns: Vec::new(),
+            level: 0,
+            creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
+            collection: collection.map(|c| Arc::new(c.clone())),
+        };
+
+        let params = SearchParams {
+            vector: Some(query_vector.to_vec()),
+            filter_expression: filter.clone(),
+            top_k: Some(k),
+            distance_metric: Some(distance_metric),
+            block_prune: block_prune.clone(),
+            ..Default::default()
+        };
+
+        // Get blocks using existing modular search
+        let blocks = self
+            .search_optimized_strategy_modular(&context, &params)
+            .await?;
+
+        trace!(
+            "SST Reader: parallel morsel processing {} blocks",
+            blocks.len()
+        );
+
+        // Flatten all records from all blocks
+        let all_records: Vec<VectorRecord> = blocks
+            .into_iter()
+            .flat_map(|block| block.records)
+            .collect();
+
+        let total_records = all_records.len();
+
+        // Only use parallel processing if we have enough records
+        if total_records < MORSEL_SIZE * 2 {
+            debug!(
+                "Record count ({}) below parallel threshold ({}), using vectorized path",
+                total_records,
+                MORSEL_SIZE * 2
+            );
+            return self
+                .search_with_filter_vectorized(
+                    file_path,
+                    query_vector,
+                    filter,
+                    k,
+                    distance_metric,
+                    collection,
+                    block_prune,
+                )
+                .await;
+        }
+
+        info!(
+            "Using parallel morsel processing for {} records with {} workers",
+            total_records,
+            max_workers.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4))
+        );
+
+        // Create morsel scheduler
+        let scheduler = MorselScheduler::new(max_workers);
+
+        // Distance compute engine (needs to be cloned per morsel)
+        let metric = distance_metric;
+
+        // Process morsels in parallel
+        let morsel_results = scheduler
+            .process_morsels(all_records, move |morsel_records| {
+                // Create distance compute for this morsel
+                let distance_compute =
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                        metric,
+                    );
+
+                // Process each record in the morsel
+                let mut results = Vec::new();
+                for record in morsel_records {
+                    // Apply filter if present
+                    if let Some(filter_expr) = &filter {
+                        if !crate::core::search::sql_value_filter::evaluate_filter(
+                            filter_expr,
+                            &record.metadata,
+                        ) {
+                            continue; // Skip filtered records
+                        }
+                    }
+
+                    // Compute distance
+                    let distance = distance_compute.calculate_distance(
+                        query_vector,
+                        &record.vector,
+                        &metric,
+                    );
+
+                    // Create result
+                    let result = crate::core::search::results::OptimizedSearchRecord::new(
+                        record.id.clone(),
+                        distance.normalized_score,
+                    )
+                    .with_similarity(distance.normalized_score)
+                    .add_vector(record.vector.clone())
+                    .with_metadata(record.metadata.clone());
+
+                    results.push(result);
+                }
+
+                Ok(results)
+            })
+            .await?;
+
+        // Combine results from all morsels
+        let mut combined_results = Vec::new();
+        for morsel_result in morsel_results {
+            combined_results.extend(morsel_result);
+        }
+
+        // Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(k);
+        for result in combined_results {
+            priority_queue.try_insert(result);
+        }
+
+        let final_results = priority_queue.into_sorted_vec();
+
+        debug!(
+            "✅ SST: Parallel morsel search complete, found {} results",
             final_results.len()
         );
         Ok(final_results)
