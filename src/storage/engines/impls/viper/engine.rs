@@ -2533,7 +2533,6 @@ impl UnifiedStorageEngine for ViperEngine {
             include_expired: Some(false),
             timeout_ms: None,
             enable_two_stage: None,
-            enable_vectorized_execution: None, // VIPER uses Parquet's native vectorization
             quantization_hint: None,
             enable_clustering_hint: None,
             runtime_hints: None,
