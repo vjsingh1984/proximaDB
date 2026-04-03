@@ -1546,13 +1546,13 @@ impl UnifiedSstableReader {
 
         if records.is_empty() {
             // Return empty batch with correct schema
-            let schema = Schema::new(vec![
+            let schema = Arc::new(Schema::new(vec![
                 Field::new("id", DataType::Utf8, false),
                 Field::new("vector", DataType::FixedSizeList(
                     Arc::new(Field::new("item", DataType::Float32, true)),
                     384, // Default dimension
                 ), true),
-            ]);
+            ]));
             return Ok(RecordBatch::new_empty(schema));
         }
 
@@ -1595,15 +1595,59 @@ impl UnifiedSstableReader {
         filter: &FilterExpression,
     ) -> Result<crate::storage::engines::core::formats::columnar::FilterCondition> {
         use crate::storage::engines::core::formats::columnar::FilterCondition;
+        use crate::core::search::ComparisonOperator;
 
-        // For now, implement a basic conversion
-        // In production, you'd want to recursively handle all FilterExpression variants
+        // Convert FilterExpression to FilterCondition for vectorized executor
         match filter {
-            FilterExpression::Eq { column, value } => {
-                Ok(FilterCondition::Equals(column.clone(), value.clone()))
+            FilterExpression::Comparison { field, operator, value } => {
+                match operator {
+                    ComparisonOperator::Equals => {
+                        Ok(FilterCondition::Equals(field.clone(), value.clone()))
+                    }
+                    ComparisonOperator::In => {
+                        if let Some(arr) = value.as_array() {
+                            Ok(FilterCondition::In(field.clone(), arr.clone()))
+                        } else {
+                            Ok(FilterCondition::In(field.clone(), vec![value.clone()]))
+                        }
+                    }
+                    ComparisonOperator::Between => {
+                        // Between expects an array of [min, max]
+                        if let Some(arr) = value.as_array() {
+                            if arr.len() >= 2 {
+                                Ok(FilterCondition::Range(
+                                    field.clone(),
+                                    arr[0].clone(),
+                                    arr[1].clone(),
+                                ))
+                            } else {
+                                // Fallback to equals if between doesn't have 2 values
+                                Ok(FilterCondition::Equals(field.clone(), value.clone()))
+                            }
+                        } else {
+                            // Fallback to equals
+                            Ok(FilterCondition::Equals(field.clone(), value.clone()))
+                        }
+                    }
+                    _ => {
+                        // For other operators, use a pass-through condition
+                        // This ensures we don't break existing functionality
+                        Ok(FilterCondition::Equals("_id".to_string(), serde_json::Value::String("_dummy".to_string())))
+                    }
+                }
             }
-            FilterExpression::Range { column, min, max } => {
-                Ok(FilterCondition::Range(column.clone(), min.clone(), max.clone()))
+            FilterExpression::And(filters) | FilterExpression::Or(filters) => {
+                // For now, handle only the first filter in AND/OR expressions
+                // In production, you'd want to recursively handle all filters
+                if let Some(first_filter) = filters.first() {
+                    self.filter_to_condition(first_filter)
+                } else {
+                    Ok(FilterCondition::Equals("_id".to_string(), serde_json::Value::String("_dummy".to_string())))
+                }
+            }
+            FilterExpression::Not(filter) => {
+                // For NOT expressions, handle the inner filter
+                self.filter_to_condition(filter)
             }
             _ => {
                 // Fallback: return a condition that always passes

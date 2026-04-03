@@ -400,17 +400,36 @@ impl SstEngine {
                 .await
             } else {
                 // Use SSTable reader for ProximaBlocks format
-                self.sstable_reader()
-                    .search_with_filter_and_pruning(
-                        sstable_path,
-                        query_vector,
-                        filter_expression.cloned(),
-                        k * 2, // Get more candidates for better accuracy
-                        distance_metric,
-                        Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
-                        block_prune, // Pass block pruning config for Z-order/centroid pruning
-                    )
-                    .await
+                // Choose vectorized path if enabled (TD-041)
+                let use_vectorized = ctx.search_params.enable_vectorized_execution.unwrap_or(false);
+
+                if use_vectorized {
+                    trace!("SST: Using vectorized execution path (TD-041)");
+                    self.sstable_reader()
+                        .search_with_filter_vectorized(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k, no overshooting needed
+                            distance_metric,
+                            Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
+                            block_prune, // Pass block pruning config for Z-order/centroid pruning
+                        )
+                        .await
+                } else {
+                    trace!("SST: Using scalar execution path");
+                    self.sstable_reader()
+                        .search_with_filter_and_pruning(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k, no overshooting needed
+                            distance_metric,
+                            Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
+                            block_prune, // Pass block pruning config for Z-order/centroid pruning
+                        )
+                        .await
+                }
             };
 
             match search_result {

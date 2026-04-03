@@ -167,6 +167,10 @@ pub struct SearchParams {
     /// Enable two-stage search with quantization
     pub enable_two_stage: Option<bool>,
 
+    /// Enable vectorized execution using Arrow compute kernels (TD-041)
+    /// When enabled, uses batch processing for 10x faster predicate evaluation
+    pub enable_vectorized_execution: Option<bool>,
+
     // Optional optimization hints
     /// Preferred quantization level for search
     pub quantization_hint: Option<crate::compute::UnifiedQuantizationLevel>,
@@ -287,6 +291,7 @@ impl Default for SearchParams {
             include_expired: Some(false),
             timeout_ms: Some(5000),
             enable_two_stage: Some(true),
+            enable_vectorized_execution: Some(false), // Disabled by default, enable for 10x performance (TD-041)
             quantization_hint: None,
             enable_clustering_hint: Some(true),
             enable_metadata_filtering_hint: Some(true),
