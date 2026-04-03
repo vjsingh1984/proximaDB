@@ -88,7 +88,8 @@ pub struct QueryFacadeAdapter {
 impl QueryFacadeAdapter {
     /// Create a new adapter wrapping the given facade
     pub fn new(facade: Arc<UnifiedQueryFacade>) -> Self {
-        let validator = PlanValidator::new(Arc::new(global_capability_registry().clone()));
+        let registry = (*global_capability_registry()).clone();
+        let validator = PlanValidator::new(Arc::new(registry));
         Self {
             facade,
             validator,
@@ -100,7 +101,8 @@ impl QueryFacadeAdapter {
     ///
     /// Use this for testing or when you want to skip capability validation.
     pub fn without_validation(facade: Arc<UnifiedQueryFacade>) -> Self {
-        let validator = PlanValidator::new(Arc::new(global_capability_registry().clone()));
+        let registry = (*global_capability_registry()).clone();
+        let validator = PlanValidator::new(Arc::new(registry));
         Self {
             facade,
             validator,

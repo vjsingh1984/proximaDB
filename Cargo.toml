@@ -86,6 +86,7 @@ lettre = "0.11"  # Email sending for alert notifications
 memmap2 = "0.9"
 lru = "0.12"  # LRU cache for disk-backed graph storage
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
+tokio-postgres = { version = "0.7", optional = true }  # PostgreSQL client for CDC (experimental-cdc-connectors)
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
@@ -238,7 +239,6 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.0"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
-tokio-postgres = "0.7"  # PostgreSQL client for integration testing
 
 [features]
 default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]
@@ -375,8 +375,8 @@ debug-filters = []  # Enable debug filtering for search operations
 # EXPERIMENTAL: Native database CDC connectors (PostgreSQL, MySQL, MongoDB)
 # WARNING: These connectors have partial implementations without network I/O.
 # For production MySQL/MongoDB CDC, use Debezium with Kafka sink.
-# PostgreSQL connector has pgoutput decoder but no connection layer.
-experimental-cdc-connectors = []
+# PostgreSQL connector now has tokio-postgres connection layer (Issue #54).
+experimental-cdc-connectors = ["dep:tokio-postgres"]
 
 # ============================================================================
 # EMBEDDED DATABASE MODE FEATURES

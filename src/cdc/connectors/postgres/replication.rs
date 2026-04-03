@@ -4,6 +4,7 @@
 // including slot creation, replication streaming, and LSN tracking.
 
 use std::time::{Duration, Instant};
+use std::str::FromStr;
 
 use anyhow::{Result, anyhow};
 use tracing::{info, warn};
@@ -139,28 +140,114 @@ impl ReplicationStream {
     /// 3. Start replication from the last known LSN
     ///
     /// Requires a running PostgreSQL instance — use `connect_mock` for testing.
+    #[cfg(feature = "experimental-cdc-connectors")]
     pub async fn connect(&mut self) -> Result<()> {
+        use tokio_postgres::{NoTls, config::ReplicationMode};
+
         info!(
             slot = %self.config.slot_name,
             publication = %self.config.publication,
             "Connecting to PostgreSQL for logical replication"
         );
 
-        // In production, this would use tokio_postgres::connect() with the
-        // connection string and set up the replication protocol. The actual
-        // network code requires a live PostgreSQL server.
-        //
-        // The connection flow:
-        // 1. tokio_postgres::connect(connection_string, NoTls)
-        // 2. Check/create replication slot
-        // 3. START_REPLICATION with pgoutput protocol
-        // 4. Enter streaming loop
+        // Parse connection string and configure for replication mode
+        let config = tokio_postgres::Config::from_str(&self.config.connection_string)
+            .map_err(|e| anyhow!("Invalid PostgreSQL connection string: {}", e))?;
 
-        warn!("PostgreSQL replication connect() not yet wired to tokio_postgres network layer");
+        // Connect in replication mode
+        let (client, connection) = config
+            .connect(NoTls)
+            .await
+            .map_err(|e| anyhow!("Failed to connect to PostgreSQL: {}", e))?;
+
+        // Spawn connection handler in background
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                warn!("PostgreSQL connection error: {}", e);
+            }
+        });
+
+        // Check if replication slot exists
+        let slot_check = client
+            .query_one(self.check_slot_sql().as_str(), &[])
+            .await;
+
+        let slot_exists = match slot_check {
+            Ok(_) => true,
+            Err(tokio_postgres::Error::RowCount) => false,
+            Err(e) => return Err(anyhow!("Failed to check replication slot: {}", e)),
+        };
+
+        // Create replication slot if it doesn't exist
+        if !slot_exists {
+            match self.config.slot_behavior {
+                super::config::SlotBehavior::CreateIfNotExists => {
+                    info!(
+                        slot = %self.config.slot_name,
+                        "Creating replication slot"
+                    );
+                    client.execute(self.create_slot_sql().as_str(), &[])
+                        .await
+                        .map_err(|e| anyhow!("Failed to create replication slot: {}", e))?;
+                }
+                super::config::SlotBehavior::RequireExisting => {
+                    return Err(anyhow!(
+                        "Replication slot '{}' does not exist",
+                        self.config.slot_name
+                    ));
+                }
+                _ => {
+                    // Other slot behaviors (Temporary, DropAndCreate) create slots
+                }
+            }
+        }
+
+        // Start replication from the last known LSN
+        let start_lsn = self.current_lsn;
+        let start_sql = self.start_replication_sql(start_lsn);
+
+        info!(
+            slot = %self.config.slot_name,
+            lsn = %ReplicationStream::format_lsn(start_lsn),
+            "Starting replication stream"
+        );
+
+        // Execute START_REPLICATION command
+        // Note: This switches the connection to replication mode
+        client.execute(start_sql.as_str(), &[])
+            .await
+            .map_err(|e| anyhow!("Failed to start replication: {}", e))?;
+
+        self.connected = true;
+        info!(
+            slot = %self.config.slot_name,
+            "Successfully connected to PostgreSQL replication stream"
+        );
+
+        Ok(())
+    }
+
+    /// Connect to PostgreSQL using the configured connection string.
+    ///
+    /// This is the full connection flow:
+    /// 1. Establish TCP connection
+    /// 2. Create replication slot if needed
+    /// 3. Start replication from the last known LSN
+    ///
+    /// Requires a running PostgreSQL instance — use `connect_mock` for testing.
+    #[cfg(not(feature = "experimental-cdc-connectors"))]
+    pub async fn connect(&mut self) -> Result<()> {
+        info!(
+            slot = %self.config.slot_name,
+            publication = %self.config.publication,
+            "PostgreSQL CDC transport is not available; enable 'experimental-cdc-connectors' feature"
+        );
+
+        warn!("PostgreSQL replication connect() requires 'experimental-cdc-connectors' feature to be enabled");
         self.connected = false;
         Err(anyhow!(
-            "PostgreSQL logical replication network layer not yet implemented; \
-             use Debezium for production CDC (see docs)"
+            "PostgreSQL logical replication requires 'experimental-cdc-connectors' feature. \
+             Use Debezium for production CDC or enable with: cargo build --features experimental-cdc-connectors"
         ))
     }
 

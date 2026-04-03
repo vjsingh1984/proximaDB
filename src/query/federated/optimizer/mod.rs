@@ -395,6 +395,12 @@ impl PlanNode {
                             capabilities.add(Capability::MetricsQuery);
                         }
                     }
+                    ModelType::Relational => {
+                        // Relational tables support standard SQL operations
+                        capabilities.add(Capability::Aggregate);
+                        capabilities.add(Capability::Join);
+                        capabilities.add(Capability::Sort);
+                    }
                     ModelType::TimeSeries => {
                         capabilities.add(Capability::TimeSeriesQuery);
                         capabilities.add(Capability::Aggregate);
@@ -575,7 +581,7 @@ impl PlanNodeType {
     /// Check if this node type involves a specific model
     fn has_model(&self, model_type: ModelType) -> bool {
         match self {
-            PlanNodeType::Scan { model_type: mt, .. } => mt == model_type,
+            PlanNodeType::Scan { model_type: mt, .. } => *mt == model_type,
             PlanNodeType::VectorSearch { .. } => model_type == ModelType::Vector,
             PlanNodeType::GraphTraversal { .. } => model_type == ModelType::Graph,
             PlanNodeType::DocumentQuery { .. } => model_type == ModelType::Document,
@@ -2658,6 +2664,7 @@ impl CrossModelOptimizer {
                         "level".to_string(),
                         "message".to_string(),
                     ],
+                    required_capabilities: CapabilitySet::new(),
                 },
                 QuerySourceRef::Extension(SqlExtension::Metrics { namespace }) => PlanNode {
                     id: self.next_id(),
@@ -2673,6 +2680,7 @@ impl CrossModelOptimizer {
                         "metric_name".to_string(),
                         "value".to_string(),
                     ],
+                    required_capabilities: CapabilitySet::new(),
                 },
                 QuerySourceRef::Extension(SqlExtension::VectorDistance {
                     left_column,
@@ -2692,6 +2700,7 @@ impl CrossModelOptimizer {
                         estimated_cost: 10.0,
                         estimated_rows: 10,
                         output_columns: vec!["id".to_string(), left_column.clone()],
+                        required_capabilities: CapabilitySet::new(),
                     }
                 }
                 QuerySourceRef::Target(target) => {
@@ -2709,6 +2718,7 @@ impl CrossModelOptimizer {
                         estimated_cost: rows as f64 * 0.1,
                         estimated_rows: rows,
                         output_columns: vec!["*".to_string()],
+                        required_capabilities: CapabilitySet::new(),
                     }
                 }
             };
@@ -2741,6 +2751,7 @@ impl CrossModelOptimizer {
                     estimated_cost,
                     estimated_rows,
                     output_columns: vec!["*".to_string()],
+                    required_capabilities: CapabilitySet::new(),
                 };
             }
             return Ok(result);
@@ -2806,6 +2817,7 @@ impl CrossModelOptimizer {
                 estimated_cost,
                 estimated_rows,
                 output_columns,
+                required_capabilities: CapabilitySet::new(),
             };
         }
 
@@ -2858,6 +2870,7 @@ impl CrossModelOptimizer {
                 estimated_cost,
                 estimated_rows,
                 output_columns: aggregate_columns,
+                required_capabilities: CapabilitySet::new(),
             };
         }
 
@@ -2893,6 +2906,7 @@ impl CrossModelOptimizer {
                 estimated_cost,
                 estimated_rows,
                 output_columns: projection_output_columns.clone(),
+                required_capabilities: CapabilitySet::new(),
             };
         }
 
@@ -2916,6 +2930,7 @@ impl CrossModelOptimizer {
                 estimated_cost,
                 estimated_rows,
                 output_columns: projection_output_columns,
+                required_capabilities: CapabilitySet::new(),
             };
         }
 
@@ -2931,6 +2946,7 @@ impl CrossModelOptimizer {
                 estimated_cost,
                 estimated_rows,
                 output_columns,
+                required_capabilities: CapabilitySet::new(),
             };
         }
 
@@ -2948,6 +2964,7 @@ impl CrossModelOptimizer {
                 estimated_cost,
                 estimated_rows,
                 output_columns,
+                required_capabilities: CapabilitySet::new(),
             };
         }
 
@@ -2966,6 +2983,7 @@ impl CrossModelOptimizer {
                 estimated_cost,
                 estimated_rows,
                 output_columns,
+                required_capabilities: CapabilitySet::new(),
             };
         }
 
@@ -3430,6 +3448,7 @@ impl CrossModelOptimizer {
             estimated_cost: 100.0,
             estimated_rows: 1000,
             output_columns: vec!["*".to_string()],
+            required_capabilities: CapabilitySet::new(),
         })
     }
 
@@ -3472,6 +3491,7 @@ impl CrossModelOptimizer {
             estimated_cost: 10.0,
             estimated_rows: top_k as u64,
             output_columns: vec!["id".to_string(), "score".to_string()],
+            required_capabilities: CapabilitySet::new(),
         })
     }
 
@@ -3499,6 +3519,7 @@ impl CrossModelOptimizer {
                 "label".to_string(),
                 "properties".to_string(),
             ],
+            required_capabilities: CapabilitySet::new(),
         })
     }
 
@@ -3521,6 +3542,7 @@ impl CrossModelOptimizer {
             estimated_cost: 30.0,
             estimated_rows: 500,
             output_columns: vec!["id".to_string(), "document".to_string()],
+            required_capabilities: CapabilitySet::new(),
         })
     }
 
@@ -3568,6 +3590,7 @@ impl CrossModelOptimizer {
             estimated_cost: 20.0,
             estimated_rows: 1000,
             output_columns,
+            required_capabilities: CapabilitySet::new(),
         })
     }
 
@@ -3592,6 +3615,7 @@ impl CrossModelOptimizer {
                     estimated_cost: 10.0,
                     estimated_rows: *top_k as u64,
                     output_columns: vec!["id".to_string(), "score".to_string()],
+                    required_capabilities: CapabilitySet::new(),
                 },
                 QuerySourceRef::Extension(SqlExtension::GraphQuery { cypher }) => PlanNode {
                     id: self.next_id(),
@@ -3606,6 +3630,7 @@ impl CrossModelOptimizer {
                         "label".to_string(),
                         "properties".to_string(),
                     ],
+                    required_capabilities: CapabilitySet::new(),
                 },
                 QuerySourceRef::Extension(SqlExtension::DocumentQuery { collection, filter }) => {
                     PlanNode {
@@ -3617,6 +3642,7 @@ impl CrossModelOptimizer {
                         estimated_cost: 30.0,
                         estimated_rows: 500,
                         output_columns: vec!["id".to_string(), "document".to_string()],
+                        required_capabilities: CapabilitySet::new(),
                     }
                 }
                 QuerySourceRef::Extension(SqlExtension::Logs { namespace }) => PlanNode {
@@ -3633,6 +3659,7 @@ impl CrossModelOptimizer {
                         "level".to_string(),
                         "message".to_string(),
                     ],
+                    required_capabilities: CapabilitySet::new(),
                 },
                 QuerySourceRef::Extension(SqlExtension::Metrics { namespace }) => PlanNode {
                     id: self.next_id(),
@@ -3648,6 +3675,7 @@ impl CrossModelOptimizer {
                         "metric_name".to_string(),
                         "value".to_string(),
                     ],
+                    required_capabilities: CapabilitySet::new(),
                 },
                 QuerySourceRef::Extension(SqlExtension::VectorDistance {
                     left_column,
@@ -3667,6 +3695,7 @@ impl CrossModelOptimizer {
                         estimated_cost: 10.0,
                         estimated_rows: 10,
                         output_columns: vec!["id".to_string(), left_column.clone()],
+                        required_capabilities: CapabilitySet::new(),
                     }
                 }
                 QuerySourceRef::Target(target) => PlanNode {
@@ -3679,6 +3708,7 @@ impl CrossModelOptimizer {
                     estimated_cost: 100.0,
                     estimated_rows: 1000,
                     output_columns: vec!["*".to_string()],
+                    required_capabilities: CapabilitySet::new(),
                 },
             };
             sub_plans.push(sub_plan);
@@ -3708,6 +3738,7 @@ impl CrossModelOptimizer {
                     estimated_cost: 200.0,
                     estimated_rows: 100,
                     output_columns: vec!["*".to_string()],
+                    required_capabilities: CapabilitySet::new(),
                 };
             }
             Ok(result)
@@ -3803,6 +3834,7 @@ impl CrossModelOptimizer {
                         estimated_cost: plan.estimated_cost,
                         estimated_rows: plan.estimated_rows,
                         output_columns: plan.output_columns,
+                        required_capabilities: CapabilitySet::new(),
                     })
                 }
             }
@@ -3826,6 +3858,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::NestedLoopJoin {
@@ -3845,6 +3878,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::IndexJoin {
@@ -3864,6 +3898,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Project { input, columns } => {
@@ -3877,6 +3912,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Distinct { input } => {
@@ -3889,6 +3925,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Sort { input, order_by } => {
@@ -3902,6 +3939,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Limit {
@@ -3920,6 +3958,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Aggregate {
@@ -3938,6 +3977,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Union { inputs, all } => {
@@ -3954,6 +3994,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             // Leaf nodes - no further pushdown possible
@@ -3997,6 +4038,7 @@ impl CrossModelOptimizer {
                             estimated_cost: node.estimated_cost * selectivity,
                             estimated_rows: new_rows.max(1),
                             output_columns: node.output_columns.clone(),
+                            required_capabilities: CapabilitySet::new(),
                         },
                         predicate_pushed: true,
                     })
@@ -4036,6 +4078,7 @@ impl CrossModelOptimizer {
                             estimated_cost: node.estimated_cost * selectivity,
                             estimated_rows: ((node.estimated_rows as f64) * selectivity) as u64,
                             output_columns: node.output_columns.clone(),
+                            required_capabilities: CapabilitySet::new(),
                         },
                         predicate_pushed: true,
                     })
@@ -4074,6 +4117,7 @@ impl CrossModelOptimizer {
                                 estimated_cost: node.estimated_cost * 0.8,
                                 estimated_rows: node.estimated_rows,
                                 output_columns: node.output_columns.clone(),
+                                required_capabilities: CapabilitySet::new(),
                             },
                             predicate_pushed: true,
                         });
@@ -4095,6 +4139,7 @@ impl CrossModelOptimizer {
                                 estimated_cost: node.estimated_cost * 0.8,
                                 estimated_rows: node.estimated_rows,
                                 output_columns: node.output_columns.clone(),
+                                required_capabilities: CapabilitySet::new(),
                             },
                             predicate_pushed: true,
                         });
@@ -4229,6 +4274,7 @@ impl CrossModelOptimizer {
                         estimated_cost: plan.estimated_cost,
                         estimated_rows: plan.estimated_rows,
                         output_columns: plan.output_columns,
+                        required_capabilities: CapabilitySet::new(),
                     })
                 } else {
                     Ok(PlanNode {
@@ -4242,6 +4288,7 @@ impl CrossModelOptimizer {
                         estimated_cost: plan.estimated_cost,
                         estimated_rows: plan.estimated_rows,
                         output_columns: plan.output_columns,
+                        required_capabilities: CapabilitySet::new(),
                     })
                 }
             }
@@ -4262,6 +4309,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Filter { input, predicate } => {
@@ -4275,6 +4323,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Project { input, columns } => {
@@ -4288,6 +4337,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Distinct { input } => {
@@ -4300,6 +4350,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Sort { input, order_by } => {
@@ -4313,6 +4364,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Limit {
@@ -4331,6 +4383,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Aggregate {
@@ -4349,6 +4402,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Union { inputs, all } => {
@@ -4365,6 +4419,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             _ => Ok(plan),
@@ -4428,6 +4483,7 @@ impl CrossModelOptimizer {
                 estimated_cost: join_cost,
                 estimated_rows: 100, // Simplified estimate
                 output_columns,
+                required_capabilities: CapabilitySet::new(),
             };
         }
 
@@ -4512,6 +4568,7 @@ impl CrossModelOptimizer {
                         estimated_cost: plan.estimated_cost * 0.9, // Slight cost reduction
                         estimated_rows: plan.estimated_rows,
                         output_columns: filtered_output_columns,
+                        required_capabilities: CapabilitySet::new(),
                     })
                 }
             }
@@ -4540,6 +4597,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost * column_ratio.max(0.5),
                     estimated_rows: plan.estimated_rows,
                     output_columns: pruned_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::HashJoin {
@@ -4589,6 +4647,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: Self::filter_output_columns(&plan.output_columns, required),
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::NestedLoopJoin {
@@ -4608,6 +4667,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: Self::filter_output_columns(&plan.output_columns, required),
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Filter { input, predicate } => {
@@ -4627,6 +4687,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: Self::filter_output_columns(&plan.output_columns, required),
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Distinct { input } => {
@@ -4639,6 +4700,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: Self::filter_output_columns(&plan.output_columns, required),
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Sort { input, order_by } => {
@@ -4660,6 +4722,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: Self::filter_output_columns(&plan.output_columns, required),
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Limit {
@@ -4678,6 +4741,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: Self::filter_output_columns(&plan.output_columns, required),
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Aggregate {
@@ -4705,6 +4769,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: Self::filter_output_columns(&plan.output_columns, required),
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Union { inputs, all } => {
@@ -4721,11 +4786,13 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: Self::filter_output_columns(&plan.output_columns, required),
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             // For other node types, pass through required columns
             _ => Ok(PlanNode {
                 output_columns: Self::filter_output_columns(&plan.output_columns, required),
+                required_capabilities: CapabilitySet::new(),
                 ..plan
             }),
         }
@@ -4897,6 +4964,7 @@ impl CrossModelOptimizer {
                     estimated_cost: parallel_cost + plan.estimated_cost * 0.5, // Parallel execution bonus
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Union { inputs, all } => {
@@ -4919,6 +4987,7 @@ impl CrossModelOptimizer {
                     estimated_cost: max_cost + plan.estimated_cost * 0.1, // Union overhead
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::NestedLoopJoin {
@@ -4938,6 +5007,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Filter { input, predicate } => {
@@ -4951,6 +5021,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Project { input, columns } => {
@@ -4964,6 +5035,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Distinct { input } => {
@@ -4976,6 +5048,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Sort { input, order_by } => {
@@ -4989,6 +5062,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Limit {
@@ -5007,6 +5081,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             PlanNodeType::Aggregate {
@@ -5025,6 +5100,7 @@ impl CrossModelOptimizer {
                     estimated_cost: plan.estimated_cost,
                     estimated_rows: plan.estimated_rows,
                     output_columns: plan.output_columns,
+                    required_capabilities: CapabilitySet::new(),
                 })
             }
             _ => Ok(plan),
@@ -5359,6 +5435,7 @@ mod tests {
             estimated_cost: cost,
             estimated_rows: rows,
             output_columns: vec!["id".to_string(), "name".to_string(), "value".to_string()],
+            required_capabilities: CapabilitySet::new(),
         }
     }
 
@@ -5382,6 +5459,7 @@ mod tests {
             estimated_cost: 10.0,
             estimated_rows: 100,
             output_columns: vec!["id".to_string(), "name".to_string(), "value".to_string()],
+            required_capabilities: CapabilitySet::new(),
         }
     }
 
@@ -5402,6 +5480,7 @@ mod tests {
             estimated_cost: 200.0,
             estimated_rows: 1000,
             output_columns: vec!["*".to_string()],
+            required_capabilities: CapabilitySet::new(),
         }
     }
 
@@ -5507,6 +5586,7 @@ mod tests {
             estimated_cost: 5.0,
             estimated_rows: 1000,
             output_columns: vec!["id".to_string(), "name".to_string()],
+            required_capabilities: CapabilitySet::new(),
         };
 
         // Apply projection pushdown
@@ -5567,6 +5647,7 @@ mod tests {
             estimated_cost: 250.0,
             estimated_rows: 2250,
             output_columns: vec!["*".to_string()],
+            required_capabilities: CapabilitySet::new(),
         };
 
         // Apply parallel identification
@@ -5700,6 +5781,7 @@ mod tests {
             estimated_cost: 5.0,
             estimated_rows: 1000,
             output_columns: vec!["id".to_string(), "name".to_string(), "email".to_string()],
+            required_capabilities: CapabilitySet::new(),
         };
         let filter = make_filter(&optimizer, project, "name", "Alice");
 

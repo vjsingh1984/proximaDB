@@ -217,7 +217,7 @@ impl CapabilityError {
         if self.error_type == CapabilityErrorType::UnsupportedCapability {
             1
         } else {
-            self.capability.split(", ").len()
+            self.capability.split(", ").count()
         }
     }
 }
@@ -244,10 +244,12 @@ impl std::error::Error for CapabilityError {}
 impl CapabilityError {
     /// Create an unsupported capability error
     pub fn unsupported(capability: &str, alternatives: Vec<String>) -> Self {
+        let is_empty = alternatives.is_empty();
+        let alternatives_str = alternatives.join(", ");
         Self {
             capability: capability.to_string(),
-            available_alternatives: alternatives,
-            message: if alternatives.is_empty() {
+            available_alternatives: if is_empty { vec![] } else { alternatives.clone() },
+            message: if is_empty {
                 format!(
                     "The requested capability '{}' is not supported by the selected storage engine.",
                     capability
@@ -256,7 +258,7 @@ impl CapabilityError {
                 format!(
                     "The requested capability '{}' is not supported. Available alternatives: {}",
                     capability,
-                    alternatives.join(", ")
+                    alternatives_str
                 )
             },
             error_type: CapabilityErrorType::UnsupportedCapability,
@@ -266,9 +268,10 @@ impl CapabilityError {
     /// Create a multiple unsupported capabilities error
     pub fn multiple_unsupported(capabilities: Vec<String>, alternatives: Vec<String>) -> Self {
         let is_empty = alternatives.is_empty();
+        let alternatives_str = alternatives.join(", ");
         Self {
             capability: capabilities.join(", "),
-            available_alternatives: alternatives,
+            available_alternatives: if is_empty { vec![] } else { alternatives.clone() },
             message: if is_empty {
                 format!(
                     "Multiple capabilities are not supported: {}. Please check the storage engine capabilities.",
@@ -278,7 +281,7 @@ impl CapabilityError {
                 format!(
                     "Multiple capabilities are not supported: {}. Available alternatives: {}",
                     capabilities.join(", "),
-                    alternatives.join(", ")
+                    alternatives_str
                 )
             },
             error_type: CapabilityErrorType::MultipleUnsupportedCapabilities,

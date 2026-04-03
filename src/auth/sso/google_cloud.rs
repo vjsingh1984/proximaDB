@@ -151,7 +151,7 @@ impl GoogleCloudIntegration {
 
         // Return default groups based on email domain
         let domain = user_email.split('@').nth(1).unwrap_or("unknown");
-        if self.config.allowed_domains.contains(domain) {
+        if self.config.allowed_domains.contains(&domain.to_string()) {
             Ok(vec![
                 "workspace_users".to_string(),
                 "default_access".to_string(),
@@ -184,7 +184,7 @@ impl GoogleCloudIntegration {
     #[allow(dead_code)]
     fn is_domain_allowed(&self, email: &str) -> bool {
         let domain = email.split('@').nth(1).unwrap_or("");
-        self.config.allowed_domains.contains(domain)
+        self.config.allowed_domains.contains(&domain.to_string())
     }
 }
 

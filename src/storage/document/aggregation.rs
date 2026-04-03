@@ -6,10 +6,12 @@
 // - Project stage: Field projection
 // - Sort stage: Sorting results
 // - Limit/Skip stages: Pagination
+// - Lookup stage: Left outer join with another collection
 // - Unwind stage: Array expansion
 // - Full-text search scoring
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
@@ -18,8 +20,8 @@ use tracing::debug;
 
 use crate::proto::proximadb_v1::{
     Aggregation, AggregationStage, AggregationType, DocumentFilter, GroupStage, LimitStage,
-    MatchStage, ProjectStage, SkipStage, SortOrder, SortStage, SqlArray, SqlObject, SqlValue,
-    UnwindStage, aggregation_stage::Stage, sql_value::Value as SqlValueVariant,
+    LookupStage, MatchStage, ProjectStage, SkipStage, SortOrder, SortStage, SqlArray, SqlObject,
+    SqlValue, UnwindStage, aggregation_stage::Stage, sql_value::Value as SqlValueVariant,
 };
 
 #[cfg(test)]
@@ -27,6 +29,7 @@ use crate::proto::proximadb_v1::SortField;
 
 use super::DocumentRecord;
 use super::query::filter::FilterEvaluator;
+use super::aggregation_extensions::{LookupConfig, LookupFetcher, execute_lookup};
 
 /// Aggregation pipeline executor
 pub struct AggregationExecutor {
@@ -74,8 +77,8 @@ impl AggregationExecutor {
         Ok(working_set)
     }
 
-    /// Process a single pipeline stage
-    fn process_stage(
+    /// Process a single pipeline stage (public for external use with lookups)
+    pub fn process_stage(
         &self,
         documents: &[SqlObject],
         stage: &AggregationStage,
@@ -88,6 +91,13 @@ impl AggregationExecutor {
             Some(Stage::Sort(sort_stage)) => self.process_sort(documents, sort_stage),
             Some(Stage::Limit(limit_stage)) => self.process_limit(documents, limit_stage),
             Some(Stage::Skip(skip_stage)) => self.process_skip(documents, skip_stage),
+            Some(Stage::Lookup(lookup_stage)) => {
+                // For now, return an error - lookup requires a fetcher callback
+                // In production, this would be passed through the executor context
+                Err(anyhow!(
+                    "Lookup stage requires document fetcher - use DocumentService::aggregate_with_lookup instead"
+                ))
+            }
             Some(Stage::Unwind(unwind_stage)) => self.process_unwind(documents, unwind_stage),
             None => Err(anyhow!("Empty stage at index {}", stage_idx)),
         }
@@ -589,6 +599,42 @@ impl AggregationExecutor {
         }
 
         Ok(results)
+    }
+
+    // =========================================================================
+    // LOOKUP STAGE - Left outer join with another collection
+    // =========================================================================
+
+    /// Process a lookup stage (requires a fetcher callback)
+    pub fn process_lookup(
+        &self,
+        documents: &[SqlObject],
+        lookup_stage: &LookupStage,
+        fetcher: &dyn LookupFetcher,
+    ) -> Result<Vec<SqlObject>> {
+        let config = LookupConfig {
+            from_collection: lookup_stage.from_collection.clone(),
+            local_field: lookup_stage.local_field.clone(),
+            foreign_field: lookup_stage.foreign_field.clone(),
+            output_field: lookup_stage.as_field.clone(),
+        };
+
+        execute_lookup(documents, &config, fetcher)
+    }
+
+    /// Check if a document matches a filter (helper for pipeline processing)
+    pub fn matches_filter(&self, doc: &DocumentRecord, filter: &DocumentFilter) -> bool {
+        // Create a temporary DocumentRecord for filter evaluation
+        let record = DocumentRecord {
+            id: String::new(),
+            document: doc.document.clone(),
+            version: 0,
+            collection_id: String::new(),
+            updated_at_ns: 0,
+            schema_id: None,
+            document_type: None,
+        };
+        self.filter_evaluator.evaluate(filter, &record)
     }
 
     /// Set a value at a path in a document (simplified for top-level paths)

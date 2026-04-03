@@ -430,6 +430,10 @@ pub enum ExplainModelType {
     Relational,
     /// Observability data: logs, metrics, traces
     Observability,
+    /// Time-series data
+    TimeSeries,
+    /// Event sourcing
+    Event,
 }
 
 impl From<ModelType> for ExplainModelType {
@@ -440,6 +444,8 @@ impl From<ModelType> for ExplainModelType {
             ModelType::Graph => ExplainModelType::Graph,
             ModelType::Relational => ExplainModelType::Relational,
             ModelType::Observability => ExplainModelType::Observability,
+            ModelType::TimeSeries => ExplainModelType::TimeSeries,
+            ModelType::Event => ExplainModelType::Event,
         }
     }
 }
@@ -452,6 +458,8 @@ impl From<ExplainModelType> for ModelType {
             ExplainModelType::Graph => ModelType::Graph,
             ExplainModelType::Relational => ModelType::Relational,
             ExplainModelType::Observability => ModelType::Observability,
+            ExplainModelType::TimeSeries => ModelType::TimeSeries,
+            ExplainModelType::Event => ModelType::Event,
         }
     }
 }

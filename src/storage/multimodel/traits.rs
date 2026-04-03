@@ -39,6 +39,8 @@ impl From<DataModel> for ModelType {
             DataModel::Graph => ModelType::Graph,
             DataModel::Observability => ModelType::Observability,
             DataModel::Relational => ModelType::Relational,
+            DataModel::TimeSeries => ModelType::TimeSeries,
+            DataModel::Event => ModelType::Event,
         }
     }
 }
@@ -51,6 +53,8 @@ impl From<ModelType> for DataModel {
             ModelType::Graph => DataModel::Graph,
             ModelType::Relational => DataModel::Relational,
             ModelType::Observability => DataModel::Observability,
+            ModelType::TimeSeries => DataModel::TimeSeries,
+            ModelType::Event => DataModel::Event,
         }
     }
 }

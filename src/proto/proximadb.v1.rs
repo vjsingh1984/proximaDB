@@ -8164,7 +8164,7 @@ pub struct AggregateDocumentsRequest {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AggregationStage {
-    #[prost(oneof = "aggregation_stage::Stage", tags = "1, 2, 3, 4, 5, 6, 7")]
+    #[prost(oneof = "aggregation_stage::Stage", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
     pub stage: ::core::option::Option<aggregation_stage::Stage>,
 }
 /// Nested message and enum types in `AggregationStage`.
@@ -8185,6 +8185,8 @@ pub mod aggregation_stage {
         Skip(super::SkipStage),
         #[prost(message, tag = "7")]
         Unwind(super::UnwindStage),
+        #[prost(message, tag = "8")]
+        Lookup(super::LookupStage),
     }
 }
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, ::prost::Message)]
@@ -8247,6 +8249,22 @@ pub struct UnwindStage {
     /// Preserve null/empty arrays
     #[prost(bool, tag = "2")]
     pub preserve_null: bool,
+}
+/// $lookup stage - perform left outer join with another collection
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LookupStage {
+    /// Foreign collection name to join with
+    #[prost(string, tag = "1")]
+    pub from_collection: ::prost::alloc::string::String,
+    /// Field path in local documents to match
+    #[prost(string, tag = "2")]
+    pub local_field: ::prost::alloc::string::String,
+    /// Field path in foreign documents to match
+    #[prost(string, tag = "3")]
+    pub foreign_field: ::prost::alloc::string::String,
+    /// Output array field name for joined documents
+    #[prost(string, tag = "4")]
+    pub as_field: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AggregateDocumentsResponse {

@@ -19,13 +19,15 @@ use tracing::{debug, info, warn};
 
 use crate::metrics::collectors::DocumentMetricsCollector;
 use crate::proto::proximadb_v1::{
-    DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject, SqlValue, UpdateOperation,
+    DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlArray, SqlObject, SqlValue,
+    UpdateOperation,
 };
 use crate::storage::persistence::write_ahead_log::unified_operations::{
     DocumentOperation, UnifiedWALOperation, UnifiedWALWriter,
 };
 use crate::storage::traits::UnifiedStorageEngine;
 
+use super::aggregation_extensions::{LookupConfig, LookupFetcher};
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
@@ -1470,6 +1472,170 @@ impl DocumentService {
         })
     }
 
+    /// Aggregate documents with $lookup support
+    ///
+    /// Extended aggregation that supports cross-collection joins via the $lookup stage.
+    /// For each lookup stage in the pipeline, this method fetches matching documents
+    /// from the foreign collection and merges them into the local documents.
+    ///
+    /// # Arguments
+    /// * `collection` - Source collection name
+    /// * `filter` - Optional filter to apply before aggregation
+    /// * `pipeline` - Aggregation pipeline stages (may include $lookup)
+    ///
+    /// # Returns
+    /// Aggregated results with lookup fields populated
+    ///
+    /// # Note
+    /// For lookup stages, this method requires Arc<DocumentService>. Use the async variant
+    /// that takes Arc<DocumentService> for full lookup support.
+    pub async fn aggregate_documents_with_lookup(
+        &self,
+        collection: &str,
+        filter: Option<DocumentFilter>,
+        pipeline: Vec<crate::proto::proximadb_v1::AggregationStage>,
+    ) -> Result<crate::storage::document::AggregateResult> {
+        use crate::storage::document::aggregation::AggregationExecutor;
+
+        let start = std::time::Instant::now();
+        debug!(
+            "Aggregating documents in {} with lookup support",
+            collection
+        );
+
+        // Verify source collection exists
+        self.get_collection(collection)
+            .await?
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+
+        // Get all documents from the source collection
+        let documents: Vec<DocumentRecord> = {
+            let docs = self.documents.read().await;
+            match docs.get(collection) {
+                Some(collection_docs) => collection_docs.values().cloned().collect(),
+                None => Vec::new(),
+            }
+        };
+
+        // Check if pipeline contains lookup stages
+        let has_lookup = pipeline.iter().any(|stage| {
+            matches!(&stage.stage, Some(crate::proto::proximadb_v1::aggregation_stage::Stage::Lookup(_)))
+        });
+
+        if has_lookup {
+            // For lookup stages, caller should use aggregate_documents_with_lookup_arc
+            return Err(anyhow!(
+                "Pipeline contains $lookup stages - use aggregate_documents_with_lookup_arc which takes Arc<DocumentService>"
+            ));
+        }
+
+        // Execute the aggregation pipeline (without lookup support)
+        let executor = AggregationExecutor::new();
+        let results = executor.execute(documents, filter.as_ref(), &pipeline)?;
+
+        let query_time_ms = start.elapsed().as_millis() as u64;
+        debug!(
+            "Aggregation complete: {} results in {}ms",
+            results.len(),
+            query_time_ms
+        );
+
+        Ok(crate::storage::document::AggregateResult {
+            results,
+            query_time_ms,
+        })
+    }
+
+    /// Aggregate documents with $lookup support (Arc variant)
+    ///
+    /// This is the preferred method for aggregation pipelines that include $lookup stages.
+    /// It takes Arc<DocumentService> which allows the lookup fetcher to query foreign collections.
+    ///
+    /// # Arguments
+    /// * `collection` - Source collection name
+    /// * `filter` - Optional filter to apply before aggregation
+    /// * `pipeline` - Aggregation pipeline stages (may include $lookup)
+    ///
+    /// # Returns
+    /// Aggregated results with lookup fields populated
+    pub async fn aggregate_documents_with_lookup_arc(
+        this: Arc<DocumentService>,
+        collection: &str,
+        filter: Option<DocumentFilter>,
+        pipeline: Vec<crate::proto::proximadb_v1::AggregationStage>,
+    ) -> Result<crate::storage::document::AggregateResult> {
+        use crate::storage::document::aggregation::AggregationExecutor;
+
+        let start = std::time::Instant::now();
+        debug!(
+            "Aggregating documents in {} with lookup support (Arc variant)",
+            collection
+        );
+
+        // Verify source collection exists
+        this.get_collection(collection)
+            .await?
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+
+        // Get all documents from the source collection
+        let documents: Vec<DocumentRecord> = {
+            let docs = this.documents.read().await;
+            match docs.get(collection) {
+                Some(collection_docs) => collection_docs.values().cloned().collect(),
+                None => Vec::new(),
+            }
+        };
+
+        // Create a lookup fetcher that can query foreign collections
+        let fetcher = DocumentServiceLookupFetcher {
+            service: this.clone(),
+        };
+
+        // Execute aggregation pipeline with lookup support
+        let executor = AggregationExecutor::new();
+        let mut working_set: Vec<SqlObject> = if let Some(f) = &filter {
+            documents
+                .iter()
+                .filter(|doc| executor.matches_filter(doc, f))
+                .map(|doc| doc.document.clone())
+                .collect()
+        } else {
+            documents.into_iter().map(|doc| doc.document).collect()
+        };
+
+        // Process each stage, handling lookups specially
+        for (stage_idx, stage) in pipeline.iter().enumerate() {
+            use crate::proto::proximadb_v1::aggregation_stage::Stage;
+
+            match &stage.stage {
+                Some(Stage::Lookup(lookup_stage)) => {
+                    working_set = executor.process_lookup(&working_set, lookup_stage, &fetcher)?;
+                    debug!("After lookup stage {}: {} documents", stage_idx, working_set.len());
+                }
+                Some(_) => {
+                    // Use the standard process_stage for non-lookup stages
+                    working_set = executor.process_stage(&working_set, stage, stage_idx)?;
+                    debug!("After stage {}: {} documents", stage_idx, working_set.len());
+                }
+                None => {
+                    return Err(anyhow!("Empty stage at index {}", stage_idx));
+                }
+            }
+        }
+
+        let query_time_ms = start.elapsed().as_millis() as u64;
+        debug!(
+            "Aggregation with lookup complete: {} results in {}ms",
+            working_set.len(),
+            query_time_ms
+        );
+
+        Ok(crate::storage::document::AggregateResult {
+            results: working_set,
+            query_time_ms,
+        })
+    }
+
     /// Calculate full-text search scores for documents matching a query
     ///
     /// This provides basic TF-IDF-like scoring for text matching.
@@ -1646,6 +1812,60 @@ impl DocumentStorageOperations for DocumentService {
                 indexes: coll.indexes,
             })
             .collect())
+    }
+}
+
+// =============================================================================
+// LOOKUP FETCHER FOR AGGREGATION PIPELINE
+// =============================================================================
+
+/// Implementation of LookupFetcher that queries the DocumentService
+pub struct DocumentServiceLookupFetcher {
+    pub service: Arc<DocumentService>,
+}
+
+impl LookupFetcher for DocumentServiceLookupFetcher {
+    /// Fetch documents from a collection where a field matches a value
+    fn fetch_matching(
+        &self,
+        collection: &str,
+        field_path: &str,
+        match_value: &SqlValue,
+    ) -> Result<Vec<SqlObject>> {
+        // Use blocking API to query documents from another collection
+        let rt = tokio::runtime::Handle::try_current()
+            .map_err(|e| anyhow!("Failed to get runtime handle: {}", e))?;
+
+        rt.block_on(async {
+            // Create a filter for the field match
+            let filter = DocumentFilter {
+                conditions: vec![create_field_eq_filter(field_path, match_value.clone())],
+                ..Default::default()
+            };
+
+            // Query documents with the filter
+            let params = DocumentQueryParams {
+                filter: Some(filter),
+                limit: 1000, // Reasonable limit for lookup results
+                ..Default::default()
+            };
+
+            let result = self.service.query_documents(collection, params).await?;
+
+            Ok(result.documents.into_iter().map(|doc| doc.document).collect())
+        })
+    }
+}
+
+/// Helper to create an equality filter for a field
+fn create_field_eq_filter(field_path: &str, value: SqlValue) -> crate::proto::proximadb_v1::DocFilterCondition {
+    use crate::proto::proximadb_v1::DocFilterOperator;
+
+    crate::proto::proximadb_v1::DocFilterCondition {
+        path: field_path.to_string(),
+        operator: DocFilterOperator::Eq as i32,
+        value: Some(value),
+        values: Vec::new(), // Empty for equality operator
     }
 }
 

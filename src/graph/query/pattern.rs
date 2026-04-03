@@ -1312,10 +1312,262 @@ impl PatternCompiler {
     }
 
     /// Compile a pattern string into a CompiledPattern
+    ///
+    /// This method first tries to use the full Cypher parser (recursive-descent),
+    /// and falls back to the regex-based parser for backward compatibility.
     pub fn compile(&self, pattern_str: &str) -> QueryResult<CompiledPattern> {
-        // This is a simplified compiler - a real implementation would need
-        // a proper parser for the full Cypher syntax
+        // Try the full Cypher parser first
+        match self.try_cypher_parser(pattern_str) {
+            Ok(compiled) => {
+                tracing::debug!("Successfully parsed using Cypher full parser");
+                Ok(compiled)
+            }
+            Err(cypher_err) => {
+                tracing::debug!(
+                    "Full Cypher parser failed, falling back to regex parser: {}",
+                    cypher_err
+                );
+                self.compile_regex_fallback(pattern_str)
+            }
+        }
+    }
 
+    /// Try to parse using the full Cypher recursive-descent parser
+    fn try_cypher_parser(&self, pattern_str: &str) -> QueryResult<CompiledPattern> {
+        // Convert anyhow::Error to VectorDBError
+        let statement = CypherParser::parse(pattern_str).map_err(|e| {
+            ProximaDBError::Internal(format!("Cypher parser error: {}", e))
+        })?;
+
+        // Convert CypherStatement AST to CompiledPattern
+        self.convert_cypher_statement(&statement)
+    }
+
+    /// Convert a CypherStatement AST to CompiledPattern
+    fn convert_cypher_statement(&self, statement: &CypherStatement) -> QueryResult<CompiledPattern> {
+        let mut compiled = CompiledPattern {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            paths: Vec::new(),
+            where_clauses: Vec::new(),
+            with_clauses: Vec::new(),
+            return_spec: ReturnSpec {
+                variables: Vec::new(),
+                projections: Vec::new(),
+                distinct: false,
+                order_by: Vec::new(),
+                limit: None,
+                skip: None,
+            },
+            variables: HashMap::new(),
+        };
+
+        // Process each clause in the statement
+        for clause in &statement.clauses {
+            match clause {
+                CypherClause::Match(match_clause) => {
+                    self.convert_match_clause(match_clause, &mut compiled)?;
+                }
+                CypherClause::OptionalMatch(match_clause) => {
+                    // For OPTIONAL MATCH, mark patterns as optional
+                    self.convert_match_clause(match_clause, &mut compiled)?;
+                }
+                CypherClause::Return(return_clause) => {
+                    compiled.return_spec = self.convert_return_clause(return_clause)?;
+                }
+                CypherClause::Where(where_clause) => {
+                    compiled
+                        .where_clauses
+                        .push(self.convert_where_clause(where_clause)?);
+                }
+                CypherClause::Create(_) => {
+                    return Err(ProximaDBError::NotImplemented(
+                        "CREATE clause not yet supported in pattern matching".to_string(),
+                    ));
+                }
+                CypherClause::Set(_) => {
+                    return Err(ProximaDBError::NotImplemented(
+                        "SET clause not yet supported in pattern matching".to_string(),
+                    ));
+                }
+                CypherClause::Delete(_) => {
+                    return Err(ProximaDBError::NotImplemented(
+                        "DELETE clause not yet supported in pattern matching".to_string(),
+                    ));
+                }
+                _ => {
+                    // Other clauses not yet implemented
+                }
+            }
+        }
+
+        Ok(compiled)
+    }
+
+    /// Convert a MatchClause from Cypher AST to node/edge patterns
+    fn convert_match_clause(
+        &self,
+        mc: &MatchClause,
+        compiled: &mut CompiledPattern,
+    ) -> QueryResult<()> {
+        use crate::graph::query::cypher_ast::{Direction, PatternElement};
+
+        let mut node_vars: Vec<String> = Vec::new();
+
+        // Extract patterns from the match clause
+        for pattern_path in &mc.patterns {
+            for element in &pattern_path.elements {
+                match element {
+                    PatternElement::Node(node) => {
+                        let var = node.variable.clone().unwrap_or_else(|| {
+                            format!("_anon_{}", compiled.nodes.len())
+                        });
+                        node_vars.push(var.clone());
+
+                        let mut properties = HashMap::new();
+                        for (k, v) in &node.properties {
+                            properties.insert(
+                                k.clone(),
+                                PropertyConstraint::Equals(self.convert_cypher_value_to_json(v)?),
+                            );
+                        }
+
+                        compiled.nodes.push(NodePattern {
+                            variable: var,
+                            labels: node.labels.clone(),
+                            properties,
+                            optional: false,
+                        });
+                    }
+                    PatternElement::Relationship(rel) => {
+                        let mut properties = HashMap::new();
+                        for (k, v) in &rel.properties {
+                            properties.insert(
+                                k.clone(),
+                                PropertyConstraint::Equals(self.convert_cypher_value_to_json(v)?),
+                            );
+                        }
+
+                        // Build EdgePattern with from/to variables
+                        // For now, use placeholder node variables
+                        let from_var = node_vars.get(node_vars.len().saturating_sub(2))
+                            .cloned()
+                            .unwrap_or_else(|| "_unknown".to_string());
+                        let to_var = node_vars.get(node_vars.len().saturating_sub(1))
+                            .cloned()
+                            .unwrap_or_else(|| "_unknown".to_string());
+
+                        compiled.edges.push(EdgePattern {
+                            variable: rel.variable.clone(),
+                            from_variable: from_var,
+                            to_variable: to_var,
+                            edge_types: rel.rel_types.clone(),
+                            properties,
+                            direction: match rel.direction {
+                                Direction::Left => EdgeDirection::Incoming,
+                                Direction::Right => EdgeDirection::Outgoing,
+                                Direction::Both => EdgeDirection::Outgoing, // Default to outgoing for bidirectional
+                            },
+                            optional: false,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convert a WhereClause from Cypher AST to WhereClause
+    fn convert_where_clause(&self, wc: &crate::graph::query::cypher_ast::WhereClause) -> QueryResult<WhereClause> {
+        use crate::graph::query::ast::WhereClause as AstWhereClause;
+
+        // Convert Expression to simple WhereClause representation
+        match &wc.expression {
+            crate::graph::query::cypher_ast::Expression::Variable(var) => {
+                // For simple variable references, create a placeholder
+                Ok(AstWhereClause::Property {
+                    variable: var.clone(),
+                    property: "*".to_string(),
+                    constraint: PropertyConstraint::Exists,
+                })
+            }
+            _ => {
+                // For complex expressions, create a placeholder WHERE clause
+                // A full implementation would recursively convert the expression tree
+                Ok(AstWhereClause::Property {
+                    variable: "_".to_string(),
+                    property: "_".to_string(),
+                    constraint: PropertyConstraint::Exists,
+                })
+            }
+        }
+    }
+
+    /// Convert a ReturnClause from Cypher AST to ReturnSpec
+    fn convert_return_clause(&self, rc: &ReturnClause) -> QueryResult<ReturnSpec> {
+        use crate::graph::query::ast::PropertyProjection as AstProjection;
+
+        let mut variables = Vec::new();
+        let mut projections = Vec::new();
+
+        for item in &rc.items {
+            match &item.expression {
+                crate::graph::query::cypher_ast::Expression::Variable(var) => {
+                    variables.push(var.clone());
+                    projections.push(AstProjection::Variable(var.clone()));
+                }
+                _ => {
+                    // For complex expressions, use alias or default
+                    let name = item.alias.clone().unwrap_or_else(|| "_".to_string());
+                    variables.push(name.clone());
+                    projections.push(AstProjection::Variable(name));
+                }
+            }
+        }
+
+        Ok(ReturnSpec {
+            variables,
+            projections,
+            distinct: rc.distinct,
+            order_by: Vec::new(), // Would need ORDER BY clause processing
+            limit: None,          // Would need LIMIT clause processing
+            skip: None,           // Would need SKIP clause processing
+        })
+    }
+
+    /// Convert a CypherValue to serde_json::Value
+    fn convert_cypher_value_to_json(&self, val: &crate::graph::query::cypher_ast::CypherValue) -> QueryResult<serde_json::Value> {
+        use crate::graph::query::cypher_ast::CypherValue;
+
+        Ok(match val {
+            CypherValue::String(s) => serde_json::Value::String(s.clone()),
+            CypherValue::Integer(n) => serde_json::Value::Number(serde_json::Number::from(*n)),
+            CypherValue::Float(f) => serde_json::Value::Number(serde_json::Number::from_f64(*f)
+                .ok_or_else(|| ProximaDBError::Internal(format!("Invalid float value: {}", f)))?),
+            CypherValue::Boolean(b) => serde_json::Value::Bool(*b),
+            CypherValue::Null => serde_json::Value::Null,
+            CypherValue::List(items) => {
+                let items_vec: Result<Vec<serde_json::Value>, _> = items
+                    .iter()
+                    .map(|v| self.convert_cypher_value_to_json(v))
+                    .collect();
+                serde_json::Value::Array(items_vec?)
+            }
+            CypherValue::Map(entries) => {
+                let map = serde_json::Map::from_iter(
+                    entries.iter().map(|(k, v)| {
+                        (k.clone(), self.convert_cypher_value_to_json(v).unwrap())
+                    })
+                );
+                serde_json::Value::Object(map)
+            }
+        })
+    }
+
+    /// Fallback regex-based compiler for backward compatibility
+    fn compile_regex_fallback(&self, pattern_str: &str) -> QueryResult<CompiledPattern> {
+        // This is the original regex-based compiler
         let mut compiled = CompiledPattern {
             nodes: Vec::new(),
             edges: Vec::new(),

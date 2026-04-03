@@ -52,6 +52,7 @@
 
 pub mod ast;
 pub mod cypher_ast;
+pub mod cypher_functions;
 pub mod cypher_parser;
 pub mod execution_traits;
 pub mod executor;

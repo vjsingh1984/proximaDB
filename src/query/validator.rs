@@ -95,6 +95,7 @@ impl ValidationResult {
 ///
 /// Validates that plan nodes have the required capabilities
 /// before execution, preventing runtime errors.
+#[derive(Clone)]
 pub struct PlanValidator {
     /// Capability registry to check against
     registry: Arc<CapabilityRegistry>,
@@ -180,7 +181,7 @@ impl PlanValidator {
         // Check if engine supports all required capabilities
         let missing: Vec<Capability> = required_caps
             .iter()
-            .filter(|cap| !engine_caps.contains(cap))
+            .filter(|cap| !engine_caps.contains_capability(*cap))
             .cloned()
             .collect();
 
@@ -321,7 +322,7 @@ impl PlanValidator {
                 // Count how many required capabilities the engine has
                 let score = required
                     .iter()
-                    .filter(|cap| engine_caps.contains(cap))
+                    .filter(|cap| engine_caps.contains_capability(*cap))
                     .count();
 
                 if score > best_score && score == required.len() {

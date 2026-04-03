@@ -268,6 +268,7 @@ message AggregationStage {
     LimitStage limit = 5;
     SkipStage skip = 6;
     UnwindStage unwind = 7;
+    LookupStage lookup = 8;
   }
 }
 
@@ -325,6 +326,18 @@ message UnwindStage {
   string path = 1;
   // Preserve null/empty arrays
   bool preserve_null = 2;
+}
+
+// $lookup stage - perform left outer join with another collection
+message LookupStage {
+  // Foreign collection name to join with
+  string from_collection = 1;
+  // Field path in local documents to match
+  string local_field = 2;
+  // Field path in foreign documents to match
+  string foreign_field = 3;
+  // Output array field name for joined documents
+  string as_field = 4;
 }
 
 message AggregateDocumentsResponse {

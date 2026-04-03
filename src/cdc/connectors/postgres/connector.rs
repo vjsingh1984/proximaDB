@@ -26,6 +26,7 @@ use tracing::info;
 
 use super::config::PostgresConfig;
 use super::decoder::{ColumnValue, PgOutputDecoder, PgOutputEvent, TupleData};
+use super::replication::ReplicationStream;
 use crate::cdc::config::SourceConfig;
 use crate::cdc::error::{CdcError, CdcResult};
 use crate::cdc::event::{ChangeEvent, Operation, RecordState, SourceInfo, TransactionInfo};
@@ -46,6 +47,8 @@ pub struct PostgresConnector {
     current_lsn: Arc<RwLock<u64>>,
     /// Current transaction
     current_tx: Arc<RwLock<Option<TransactionInfo>>>,
+    /// Replication stream connection
+    replication_stream: Arc<RwLock<Option<ReplicationStream>>>,
 }
 
 impl PostgresConnector {
@@ -67,6 +70,7 @@ impl PostgresConnector {
             decoder: Arc::new(RwLock::new(PgOutputDecoder::new())),
             current_lsn: Arc::new(RwLock::new(0)),
             current_tx: Arc::new(RwLock::new(None)),
+            replication_stream: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -371,10 +375,25 @@ impl CdcSource for PostgresConnector {
             "Starting PostgreSQL CDC connector for slot: {}",
             self.pg_config.slot_name
         );
-        info!(
-            "PostgreSQL CDC transport is not wired into live replication yet; connector will remain idle"
-        );
-        let _ = (event_tx, offset_store);
+
+        // Load last known offset
+        let start_lsn = if let Ok(Some(offset)) = offset_store.get(&self.pg_config.slot_name).await {
+            *self.current_lsn.write().await = offset.lsn;
+            offset.lsn
+        } else {
+            0
+        };
+
+        // Create replication stream
+        let mut stream = ReplicationStream::new(self.pg_config.clone());
+
+        // Connect to PostgreSQL
+        stream.connect().await.map_err(|e| {
+            CdcError::Coordinator(format!("Failed to connect to PostgreSQL: {}", e))
+        })?;
+
+        // Store the stream
+        *self.replication_stream.write().await = Some(stream);
 
         self.base.set_status(SourceStatus::Streaming);
 

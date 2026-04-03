@@ -189,6 +189,11 @@ impl CapabilitySet {
         other.capabilities.is_subset(&self.capabilities)
     }
 
+    /// Check if the set contains a specific capability.
+    pub fn contains_capability(&self, capability: &Capability) -> bool {
+        self.capabilities.contains(capability)
+    }
+
     /// Check if the set intersects with another set.
     pub fn intersects(&self, other: &CapabilitySet) -> bool {
         !self.capabilities.is_disjoint(&other.capabilities)
@@ -303,6 +308,7 @@ impl fmt::Display for CapabilityCheckError {
 impl std::error::Error for CapabilityCheckError {}
 
 /// Global capability registry for tracking engine capabilities.
+#[derive(Clone)]
 pub struct CapabilityRegistry {
     /// Map from engine/provider name to their capabilities.
     capabilities: Arc<RwLock<HashMap<String, CapabilitySet>>>,

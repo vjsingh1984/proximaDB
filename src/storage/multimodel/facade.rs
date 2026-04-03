@@ -303,6 +303,8 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
             ModelType::Graph => self.graph_store.as_ref().map(|s| s.capabilities()),
             ModelType::Relational => self.rdbms_store.as_ref().map(|s| s.capabilities()),
             ModelType::Observability => self.observability_store.as_ref().map(|s| s.capabilities()),
+            ModelType::TimeSeries => None, // Not yet implemented
+            ModelType::Event => None, // Not yet implemented
         }
     }
 

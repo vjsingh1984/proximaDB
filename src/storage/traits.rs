@@ -2518,6 +2518,8 @@ pub enum DataModel {
     Graph,
     Observability,
     Relational,
+    TimeSeries,
+    Event,
 }
 
 /// Unified statistics across all data models
