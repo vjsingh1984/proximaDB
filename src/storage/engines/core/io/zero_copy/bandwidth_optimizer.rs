@@ -60,6 +60,7 @@ impl OptimizedRange {
 
     pub fn merged(ranges: Vec<DataRange>, access_probability: f32) -> Self {
         if ranges.is_empty() {
+            #[allow(clippy::panic)]  // API misuse - cannot merge empty ranges
             panic!("Cannot create merged range from empty ranges");
         }
 

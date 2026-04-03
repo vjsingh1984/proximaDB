@@ -462,7 +462,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
             wal_behavior
-                .drop_collection(&collection_id.to_string())
+                .drop_collection(collection_id)
                 .await?;
             Ok(())
         } else {

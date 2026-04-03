@@ -875,7 +875,7 @@ impl StorageEngine {
                 for collection_id in potential_collection_names {
                     match self
                         .write_ahead_log_manager
-                        .get_collection_entries(&collection_id.to_string())
+                        .get_collection_entries(collection_id)
                         .await
                     {
                         Ok(entries) if !entries.is_empty() => {

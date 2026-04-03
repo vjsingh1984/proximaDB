@@ -959,10 +959,10 @@ fn cypher_min(args: &[Expression], ctx: &FunctionContext) -> Result<CypherValue>
         }
     }
 
-    if min_int.is_some() {
-        Ok(CypherValue::Integer(min_int.unwrap()))
-    } else if min_float.is_some() {
-        Ok(CypherValue::Float(min_float.unwrap()))
+    if let Some(val) = min_int {
+        Ok(CypherValue::Integer(val))
+    } else if let Some(val) = min_float {
+        Ok(CypherValue::Float(val))
     } else {
         Ok(CypherValue::Integer(0))
     }
@@ -983,10 +983,10 @@ fn cypher_max(args: &[Expression], ctx: &FunctionContext) -> Result<CypherValue>
         }
     }
 
-    if max_int.is_some() {
-        Ok(CypherValue::Integer(max_int.unwrap()))
-    } else if max_float.is_some() {
-        Ok(CypherValue::Float(max_float.unwrap()))
+    if let Some(val) = max_int {
+        Ok(CypherValue::Integer(val))
+    } else if let Some(val) = max_float {
+        Ok(CypherValue::Float(val))
     } else {
         Ok(CypherValue::Integer(0))
     }

@@ -60,15 +60,20 @@ pub mod operators;
 pub mod parser;
 pub mod pattern;
 pub mod planner;
+pub mod unified_parser;
 
 // Re-export public types
 pub use ast::{CompiledPattern, FoundPath, MatchResult};
+pub use cypher_ast::{CypherClause, CypherStatement, MatchClause, ReturnClause};
+pub use cypher_functions::CypherFunctionRegistry;
+pub use cypher_parser::CypherParser;
 pub use execution_traits::{
     ColumnSpec, ExecutionContext, ExecutionStats, PathElement, PhysicalOperator, QueryValue,
     ResultTuple, ValueType,
 };
 pub use pattern::PatternMatcher;
 pub use planner::{CostEstimate, PlanStep, QueryPlan, QueryPlanner};
+pub use unified_parser::{parse_cypher, parse_cypher_with_context};
 
 use crate::core::error::ProximaDBError;
 use serde::Serialize;

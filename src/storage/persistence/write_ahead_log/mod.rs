@@ -1882,7 +1882,7 @@ impl WriteAheadLogManager {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let vectors = wal_behavior
-            .get_collection_vectors(&collection_id.to_string())
+            .get_collection_vectors(collection_id)
             .await?;
 
         // Apply sequence filtering and limit if needed
@@ -1928,7 +1928,7 @@ impl WriteAheadLogManager {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let vectors = wal_behavior
-            .get_collection_vectors(&collection_id.to_string())
+            .get_collection_vectors(collection_id)
             .await?;
 
         // Apply limit if specified
@@ -1994,7 +1994,7 @@ impl WriteAheadLogManager {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior
-            .get_collection_vectors(&collection_id.to_string())
+            .get_collection_vectors(collection_id)
             .await
     }
 
@@ -2067,7 +2067,7 @@ impl WriteAheadLogManager {
             collection_id
         );
         // Use modern batch API
-        self.flush_collection(&collection_id.to_string()).await?;
+        self.flush_collection(collection_id).await?;
         Ok(())
     }
 
@@ -2912,7 +2912,7 @@ impl WriteAheadLogManager {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
             wal_behavior
-                .get_collection_vectors(&collection_id.to_string())
+                .get_collection_vectors(collection_id)
                 .await
         }
     }
@@ -3042,7 +3042,7 @@ impl WriteAheadLogManager {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let collection_vectors = wal_behavior
-            .get_collection_vectors(&collection_id.to_string())
+            .get_collection_vectors(collection_id)
             .await
             .context("Failed to get collection vectors from memtable")?;
 
@@ -3094,7 +3094,7 @@ impl WriteAheadLogManager {
 
         // Get collection vectors and flush them
         let collection_vectors = wal_behavior
-            .get_collection_vectors(&collection_id.to_string())
+            .get_collection_vectors(collection_id)
             .await?;
         if !collection_vectors.is_empty() {
             // Trigger flush by calling flush_all_vectors which will write to disk

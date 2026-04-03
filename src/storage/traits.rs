@@ -663,6 +663,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn engine_version(&self) -> &'static str;
     fn strategy(&self) -> StorageEngineStrategy;
 
+
     /// Get the storage engine type for AXIS indexing and event logging
     ///
     /// This method eliminates the need for string matching on engine_name(),

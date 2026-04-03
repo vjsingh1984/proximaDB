@@ -528,6 +528,7 @@ impl BPlusTree {
     /// Create a new B+ tree with specified node size
     pub fn new(node_size: usize) -> Self {
         if node_size < 4 {
+            #[allow(clippy::panic)]  // API contract violation - B+ tree requires min 4 keys
             panic!("Node size must be at least 4");
         }
 

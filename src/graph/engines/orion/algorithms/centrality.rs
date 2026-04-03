@@ -608,7 +608,8 @@ impl ParallelAlgorithm for BetweennessCentrality {
         let partial: Vec<Vec<f64>> = (0..node_count)
             .into_par_iter()
             .map(|s| {
-                let csr = self.engine.csr_outgoing.read().unwrap();
+                let csr = self.engine.csr_outgoing.read()
+                    .expect("RwLock read lock poisoned - CSR data unavailable");
                 let n = csr.node_count();
                 let mut local_b = vec![0.0f64; n];
                 let mut stack = Vec::new();

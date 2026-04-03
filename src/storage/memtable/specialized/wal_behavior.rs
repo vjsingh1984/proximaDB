@@ -623,7 +623,7 @@ impl WALBehaviorWrapper {
     /// Clear flushed entries for a specific collection
     pub async fn clear_flushed_by_collection_id(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
     ) -> Result<usize> {
         // Delegate to the string-based method
         self.clear_flushed(collection_id).await
@@ -805,12 +805,12 @@ impl WALBehaviorWrapper {
     /// Get all vectors for a specific collection (MODERN)
     pub async fn get_collection_vectors(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
     ) -> Result<Vec<VectorRecord>> {
         // Direct access to collection vectors from GlobalPartitionedMemtable
         let vectors = self
             .inner
-            .get_collection_vectors(&collection_id.to_string())
+            .get_collection_vectors(collection_id)
             .await?;
 
         tracing::debug!(
@@ -982,7 +982,7 @@ impl WALBehaviorWrapper {
     /// Search for specific vector by ID (MODERN)
     pub async fn search_vector(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
         self.inner.vector_by_id(collection_id, vector_id).await
@@ -991,7 +991,7 @@ impl WALBehaviorWrapper {
     /// Get vectors for specific collection with limit (MODERN)
     pub async fn get_collection_vectors_with_limit(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<VectorRecord>> {
         let mut vectors = self.inner.get_collection_vectors(collection_id).await?;
@@ -1007,7 +1007,7 @@ impl WALBehaviorWrapper {
     /// Get collection-specific statistics
     pub async fn get_collection_stats(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
     ) -> Result<crate::storage::persistence::write_ahead_log::WALStats> {
         let all_stats = WALBehaviorWrapper::get_stats(self).await?;
 
@@ -1029,7 +1029,7 @@ impl WALBehaviorWrapper {
     }
 
     /// Drop collection from memtable (MODERN)
-    pub async fn drop_collection(&self, collection_id: &crate::core::String) -> Result<usize> {
+    pub async fn drop_collection(&self, collection_id: &str) -> Result<usize> {
         // Use the collection-specific clear method for efficient removal
         self.inner.clear_flushed_batches(collection_id).await
     }
@@ -1067,7 +1067,7 @@ impl WALBehaviorWrapper {
     /// Get unflushed batches for atomic flush (MODERN)
     pub async fn atomic_mark_for_flush(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
         _up_to_sequence: u64,
     ) -> Result<Vec<WALVectorBatch>> {
         // Return unflushed batches directly for storage engine processing
@@ -1077,7 +1077,7 @@ impl WALBehaviorWrapper {
     /// Complete flush and remove marked entries
     pub async fn complete_flush_removal(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
     ) -> Result<usize> {
         self.clear_flushed(collection_id).await
     }
@@ -1085,7 +1085,7 @@ impl WALBehaviorWrapper {
     /// Abort flush and restore batches
     pub async fn abort_flush_restore(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
         _batches: Vec<WALVectorBatch>,
     ) -> Result<()> {
         // In a real implementation, this would restore the batches

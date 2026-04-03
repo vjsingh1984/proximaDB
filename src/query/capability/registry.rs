@@ -324,13 +324,15 @@ impl CapabilityRegistry {
 
     /// Register capabilities for an engine or provider.
     pub fn register_capabilities(&self, name: &str, capabilities: CapabilitySet) {
-        let mut caps = self.capabilities.write().unwrap();
+        let mut caps = self.capabilities.write()
+            .expect("RwLock write lock poisoned - capability registry unavailable");
         caps.insert(name.to_string(), capabilities);
     }
 
     /// Get capabilities for an engine or provider.
     pub fn get_capabilities(&self, name: &str) -> Option<CapabilitySet> {
-        let caps = self.capabilities.read().unwrap();
+        let caps = self.capabilities.read()
+            .expect("RwLock read lock poisoned - capability registry unavailable");
         caps.get(name).cloned()
     }
 
@@ -370,7 +372,8 @@ impl CapabilityRegistry {
 
     /// Get all registered engine names.
     pub fn registered_engines(&self) -> Vec<String> {
-        let caps = self.capabilities.read().unwrap();
+        let caps = self.capabilities.read()
+            .expect("RwLock read lock poisoned - capability registry unavailable");
         caps.keys().cloned().collect()
     }
 
@@ -383,7 +386,8 @@ impl CapabilityRegistry {
     ///
     /// Returns a list of engine names that have all the specified capabilities.
     pub fn find_engines_with_capabilities(&self, required: &CapabilitySet) -> Vec<String> {
-        let caps = self.capabilities.read().unwrap();
+        let caps = self.capabilities.read()
+            .expect("RwLock read lock poisoned - capability registry unavailable");
         caps.iter()
             .filter(|(_, engine_caps)| engine_caps.contains(required))
             .map(|(name, _)| name.clone())

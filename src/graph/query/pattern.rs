@@ -104,6 +104,71 @@ impl PatternMatcher {
         Ok(compiled)
     }
 
+    /// Execute a Cypher query string using the full Cypher parser (default)
+    ///
+    /// This is the recommended method for executing Cypher queries. It uses:
+    /// 1. `CypherParser` (full recursive-descent parser) for comprehensive Cypher support
+    /// 2. Converts the AST to `CompiledPattern` for efficient execution
+    /// 3. Executes the pattern against the graph
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - The Cypher query string to execute
+    /// * `memory_pool` - The graph memory pool for node/edge access
+    /// * `context` - The query execution context
+    ///
+    /// # Returns
+    ///
+    /// A vector of match results satisfying the query pattern
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use proximadb::graph::query::{PatternMatcher, QueryContext};
+    /// use std::sync::Arc;
+    ///
+    /// let matcher = PatternMatcher::new()?;
+    /// let context = QueryContext::new();
+    /// let results = matcher.execute_query(
+    ///     "MATCH (n:Person)-[:KNOWS]->(f:Person) RETURN n, f",
+    ///     &memory_pool,
+    ///     &context
+    /// )?;
+    /// ```
+    pub fn execute_query(
+        &mut self,
+        query: &str,
+        memory_pool: &Arc<GraphMemoryPool>,
+        context: &QueryContext,
+    ) -> QueryResult<Vec<MatchResult>> {
+        // Parse using the full Cypher parser (default)
+        let statement = super::unified_parser::parse_cypher(query)?;
+
+        // Convert CypherStatement to CompiledPattern
+        let compiled = self.compiler.compile(query)?;
+
+        // Execute the compiled pattern
+        self.execute_pattern(&compiled, memory_pool, context)
+    }
+
+    /// Validate a Cypher query string without executing it
+    ///
+    /// This method parses the query and validates its syntax but does not
+    /// execute it against the graph. Useful for query validation and error checking.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - The Cypher query string to validate
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if the query is valid, Err otherwise
+    pub fn validate_query(&self, query: &str) -> QueryResult<()> {
+        // Attempt to parse the query
+        super::unified_parser::parse_cypher(query)?;
+        Ok(())
+    }
+
     /// Execute a compiled pattern against the graph
     pub fn execute_pattern(
         &self,
@@ -1557,7 +1622,8 @@ impl PatternCompiler {
             CypherValue::Map(entries) => {
                 let map = serde_json::Map::from_iter(
                     entries.iter().map(|(k, v)| {
-                        (k.clone(), self.convert_cypher_value_to_json(v).unwrap())
+                        (k.clone(), self.convert_cypher_value_to_json(v)
+                            .expect("Failed to convert Cypher value to JSON"))
                     })
                 );
                 serde_json::Value::Object(map)

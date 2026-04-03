@@ -123,6 +123,7 @@ impl ProtoSerializationStrategy {
 }
 
 impl Default for ProtoSerializationStrategy {
+    #[allow(clippy::panic)]  // Intentional - Default not supported, must use new()
     fn default() -> Self {
         panic!("ProtoSerializationStrategy requires configuration - use new() instead")
     }
