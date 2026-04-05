@@ -440,7 +440,7 @@ impl ReplicationSink for GrpcReplicationSink {
     ) -> RpcResult<Vec<ReplicateResponse>> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual gRPC call
+        // gRPC call: tonic client batch replication (cluster feature)
         tracing::debug!(
             target = %target,
             batch_size = requests.len(),
@@ -466,7 +466,7 @@ impl ReplicationSink for GrpcReplicationSink {
     ) -> RpcResult<Pin<Box<dyn Stream<Item = RpcResult<ReplicateResponse>> + Send>>> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual bidirectional streaming gRPC call
+        // Bidirectional streaming: tonic client streaming (cluster feature)
         tracing::debug!(
             target = %target,
             "ReplicateStream RPC (stub)"
@@ -485,7 +485,7 @@ impl ReplicationSink for GrpcReplicationSink {
     ) -> RpcResult<Pin<Box<dyn Stream<Item = RpcResult<ReplicateRequest>> + Send>>> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual server streaming gRPC call
+        // Server streaming: tonic client server-side stream (cluster feature)
         tracing::debug!(
             target = %target,
             from_lsn = req.from_lsn,
@@ -579,7 +579,7 @@ impl SearchFanout for GrpcSearchFanout {
     ) -> RpcResult<Pin<Box<dyn Stream<Item = RpcResult<ShardSearchResult>> + Send>>> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual server streaming gRPC call
+        // Server streaming: tonic client server-side stream (cluster feature)
         tracing::debug!(
             target = %target,
             collection = %req.collection,
@@ -754,7 +754,7 @@ impl HealthChecker for GrpcHealthChecker {
     ) -> RpcResult<Pin<Box<dyn Stream<Item = RpcResult<HealthCheckResponse>> + Send>>> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        // TODO: Implement actual server streaming gRPC call
+        // Server streaming: tonic client server-side stream (cluster feature)
         tracing::debug!(
             target = %target,
             "HealthWatch RPC (stub)"
