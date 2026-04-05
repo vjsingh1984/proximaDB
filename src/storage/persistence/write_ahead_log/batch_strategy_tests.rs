@@ -154,10 +154,10 @@ mod write_ahead_log_batch_strategy_tests {
             &self,
             batch: WALVectorBatch,
             collection_id: &str,
+            _base_location: &str,
         ) -> Result<Vec<u64>> {
             if let Some(behavior) = &self.wal_behavior {
                 behavior.add_batch(collection_id, batch.clone()).await;
-                // Return mock sequence numbers
                 Ok((0..batch.vector_records.len()).map(|i| i as u64).collect())
             } else {
                 Err(anyhow::anyhow!("Write buffer behavior not available"))
@@ -168,9 +168,10 @@ mod write_ahead_log_batch_strategy_tests {
             &self,
             batch: WALVectorBatch,
             collection_id: &str,
+            _base_location: &str,
             _immediate_sync: bool,
         ) -> Result<Vec<u64>> {
-            self.write_native_batch(batch, collection_id).await
+            self.write_native_batch(batch, collection_id, "file:///tmp/test").await
         }
 
         async fn read_all_batches(
@@ -364,7 +365,7 @@ mod write_ahead_log_batch_strategy_tests {
         let collection_id = "test_collection";
 
         let result = strategy
-            .write_native_batch(batch.clone(), collection_id)
+            .write_native_batch(batch.clone(), collection_id, "file:///tmp/test")
             .await;
         assert!(result.is_ok());
 
@@ -385,13 +386,13 @@ mod write_ahead_log_batch_strategy_tests {
 
         // Test with sync enabled
         let result = strategy
-            .write_vector_batch_with_sync(batch.clone(), collection_id, true)
+            .write_vector_batch_with_sync(batch.clone(), collection_id, "file:///tmp/test", true)
             .await;
         assert!(result.is_ok());
 
         // Test with sync disabled
         let result = strategy
-            .write_vector_batch_with_sync(batch, collection_id, false)
+            .write_vector_batch_with_sync(batch, collection_id, "file:///tmp/test", false)
             .await;
         assert!(result.is_ok());
     }
@@ -413,7 +414,7 @@ mod write_ahead_log_batch_strategy_tests {
         // Write a batch
         let batch = create_test_batch(collection_id, 2);
         strategy
-            .write_native_batch(batch, collection_id)
+            .write_native_batch(batch, collection_id, "file:///tmp/test")
             .await
             .unwrap();
 
@@ -443,11 +444,11 @@ mod write_ahead_log_batch_strategy_tests {
         let batch1 = create_test_batch(collection_id, 5);
         let batch2 = create_test_batch(collection_id, 3);
         strategy
-            .write_native_batch(batch1, collection_id)
+            .write_native_batch(batch1, collection_id, "file:///tmp/test")
             .await
             .unwrap();
         strategy
-            .write_native_batch(batch2, collection_id)
+            .write_native_batch(batch2, collection_id, "file:///tmp/test")
             .await
             .unwrap();
 
@@ -469,11 +470,11 @@ mod write_ahead_log_batch_strategy_tests {
         let batch1 = create_test_batch("collection1", 4);
         let batch2 = create_test_batch("collection2", 6);
         strategy
-            .write_native_batch(batch1, "collection1")
+            .write_native_batch(batch1, "collection1", "file:///tmp/test")
             .await
             .unwrap();
         strategy
-            .write_native_batch(batch2, "collection2")
+            .write_native_batch(batch2, "collection2", "file:///tmp/test")
             .await
             .unwrap();
 
@@ -650,7 +651,7 @@ mod write_ahead_log_batch_strategy_tests {
         let batch = create_test_batch("test", 1);
 
         // Should still work since mock doesn't require filesystem
-        let result = strategy.write_native_batch(batch, "test").await;
+        let result = strategy.write_native_batch(batch, "test", "file:///tmp/test").await;
         assert!(result.is_ok());
     }
 
@@ -672,7 +673,7 @@ mod write_ahead_log_batch_strategy_tests {
         };
 
         let result = strategy
-            .write_native_batch(empty_batch, "empty_collection")
+            .write_native_batch(empty_batch, "empty_collection", "file:///tmp/test")
             .await;
         assert!(result.is_ok());
 
@@ -691,7 +692,7 @@ mod write_ahead_log_batch_strategy_tests {
         let large_batch = create_test_batch("large_collection", 1000);
 
         let result = strategy
-            .write_native_batch(large_batch, "large_collection")
+            .write_native_batch(large_batch, "large_collection", "file:///tmp/test")
             .await;
         assert!(result.is_ok());
 
@@ -724,7 +725,7 @@ mod write_ahead_log_batch_strategy_tests {
             let handle = tokio::spawn(async move {
                 let batch = create_test_batch(&format!("concurrent_{}", i), 10);
                 strategy_clone
-                    .write_native_batch(batch, &format!("concurrent_{}", i))
+                    .write_native_batch(batch, &format!("concurrent_{}", i), "file:///tmp/test")
                     .await
             });
             handles.push(handle);
@@ -952,7 +953,7 @@ mod write_ahead_log_batch_strategy_tests {
         // Add some data (but not enough to trigger)
         let small_batch = create_test_batch(collection_id, 5);
         strategy
-            .write_native_batch(small_batch, collection_id)
+            .write_native_batch(small_batch, collection_id, "file:///tmp/test")
             .await
             .unwrap();
 

@@ -314,12 +314,13 @@ mod tests {
 
         let results = scheduler
             .process_morsels(records, |morsel_records| async move {
-                Ok(morsel_records.len())
+                Ok(vec![morsel_records.len()])
             })
             .await
             .unwrap();
 
-        assert_eq!(results, vec![0]);
+        let flat = results;
+        assert_eq!(flat, vec![0]);
     }
 
     #[tokio::test]
@@ -329,13 +330,14 @@ mod tests {
 
         let results = scheduler
             .process_morsels(records, |morsel_records| async move {
-                Ok(morsel_records.len())
+                Ok(vec![morsel_records.len()])
             })
             .await
             .unwrap();
 
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0], 100);
+        let flat = results;
+        assert_eq!(flat.len(), 1);
+        assert_eq!(flat[0], 100);
     }
 
     #[tokio::test]
@@ -347,12 +349,13 @@ mod tests {
 
         let results = scheduler
             .process_morsels(records, |morsel_records| async move {
-                Ok(morsel_records.len())
+                Ok(vec![morsel_records.len()])
             })
             .await
             .unwrap();
 
-        assert_eq!(results.len(), 3); // 3 morsels: 4096, 4096, 1808
-        assert_eq!(results.iter().sum::<usize>(), 10000);
+        let flat = results;
+        assert_eq!(flat.len(), 3); // 3 morsels: 4096, 4096, 1808
+        assert_eq!(flat.iter().sum::<usize>(), 10000);
     }
 }
