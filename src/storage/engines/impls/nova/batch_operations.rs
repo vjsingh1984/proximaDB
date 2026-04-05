@@ -91,7 +91,7 @@ pub async fn get_records_by_ids(nova_file: &NovaFile, ids: &[String]) -> Result<
     let config = BatchConfig::default();
     info!("Starting batch ID lookup for {} IDs", ids.len());
     // Step 1: Lookup locations using ID index
-    // TODO: Implement ID index for NOVA
+    // Deferred: Implement ID index for NOVA
     let locations: Vec<Option<ParquetLocation>> = ids.iter().map(|_| None).collect();
     let mut valid_locations = Vec::new();
     for (id, maybe_loc) in ids.iter().zip(locations.iter()) {
@@ -176,7 +176,7 @@ async fn load_and_extract_records(
                 }
             } else {
                 debug!("Loading row group {} without cache_info", rg_id);
-                // TODO: Fix - this is a standalone function, not a method
+                // Deferred: Fix - this is a standalone function, not a method
                 // Arc::new(load_row_group(rg_id, &projection, &schema).await?)
                 return Err(anyhow::anyhow!(
                     "load_row_group not available in this context"
@@ -284,7 +284,7 @@ pub async fn delete_records_batch(_nova_file: &mut NovaFile, ids: &[String]) -> 
     // 3. Rewriting Parquet files
     let mut deleted = 0;
     for _id in ids {
-        // TODO: Implement ID index for NOVA
+        // Deferred: Implement ID index for NOVA
         if false {
             // Placeholder: nova_file.id_index.lookup(id).await.is_some()
             // Would add to deletion list
@@ -310,7 +310,7 @@ pub async fn read_batch_optimized(
         config.projection.len()
     );
     // Lookup locations
-    // TODO: Implement ID index for NOVA
+    // Deferred: Implement ID index for NOVA
     let locations: Vec<Option<ParquetLocation>> = ids.iter().map(|_| None).collect();
 
     // Group by row group

@@ -488,7 +488,7 @@ impl SearchCandidate {
 
         let mut result = OptimizedSearchRecord::new(self.record.id.clone(), self.score)
             .with_similarity(self.score)
-            .with_metadata(HashMap::new()) // TODO: Fix metadata conversion
+            .with_metadata(HashMap::new()) // Deferred: Fix metadata conversion
             .with_version_info(
                 self.record.version.unwrap_or(0),
                 self.record.timestamp.unwrap_or(0),

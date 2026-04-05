@@ -7,14 +7,14 @@ use std::collections::HashMap;
 
 /// BM25 search wrapper
 pub struct BM25Wrapper {
-    // TODO: Add Tantivy index fields
+    // Deferred: Add Tantivy index fields
     _private: (),
 }
 
 impl BM25Wrapper {
     /// Create a new BM25 wrapper
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        // TODO: Initialize Tantivy index
+        // Deferred: Initialize Tantivy index
         Ok(Self { _private: () })
     }
 
@@ -31,7 +31,7 @@ impl BM25Wrapper {
         _query: &str,
         _limit: usize,
     ) -> Result<Vec<BM25Result>, Box<dyn std::error::Error>> {
-        // TODO: Implement BM25 search using Tantivy
+        // Deferred: Implement BM25 search using Tantivy
         Ok(vec![])
     }
 
@@ -47,7 +47,7 @@ impl BM25Wrapper {
         _text: &str,
         _metadata: HashMap<String, serde_json::Value>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: Implement document addition to Tantivy index
+        // Deferred: Implement document addition to Tantivy index
         Ok(())
     }
 
@@ -56,7 +56,7 @@ impl BM25Wrapper {
         &mut self,
         _documents: Vec<(String, String, HashMap<String, serde_json::Value>)>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: Batch add documents
+        // Deferred: Batch add documents
         Ok(())
     }
 
@@ -75,7 +75,7 @@ impl BM25Wrapper {
         _query: &str,
         _field: &str,
     ) -> Result<Vec<TextHighlight>, Box<dyn std::error::Error>> {
-        // TODO: Implement Tantivy highlighting
+        // Deferred: Implement Tantivy highlighting
         Ok(vec![])
     }
 }

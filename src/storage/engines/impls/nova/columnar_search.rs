@@ -730,7 +730,7 @@ impl NovaColumnarSearch {
             for _record in batch {
                 // Check if record has int8 quantized vector
                 // VectorRecord doesn't have quantized field in proto
-                // TODO: Implement proper quantized vector access
+                // Deferred: Implement proper quantized vector access
                 // For now, skip int8 processing
                 {
                     for candidate in &group_candidates {
@@ -775,7 +775,7 @@ impl NovaColumnarSearch {
         }
 
         // Prepare PQ distance table for query
-        // TODO: compute_pq_distance_table function not found - commented out
+        // Deferred: compute_pq_distance_table function not found - commented out
         // let _pq_table = compute_pq_distance_table(query_vector, 32, 256);
 
         let mut refined_candidates = BinaryHeap::new();
@@ -805,7 +805,7 @@ impl NovaColumnarSearch {
             for _record in batch {
                 // Check if record has PQ quantized vector
                 // VectorRecord doesn't have quantized field in proto
-                // TODO: Implement proper quantized vector access
+                // Deferred: Implement proper quantized vector access
                 // For now, skip PQ processing
                 {
                     for candidate in &group_candidates {

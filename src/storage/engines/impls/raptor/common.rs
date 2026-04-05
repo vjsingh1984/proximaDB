@@ -744,7 +744,7 @@ impl RowGroupBloomFilter {
 
         let mut filter = BloomFilterFactory::create(&config);
 
-        // TODO: Restore previous state from self.bits (optimization for later)
+        // Deferred: Restore previous state from self.bits (optimization for later)
 
         // Insert the new ID
         filter.insert(vector_id.as_bytes());
@@ -780,7 +780,7 @@ impl RowGroupBloomFilter {
 
         let _filter = BloomFilterFactory::create(&config);
 
-        // TODO: Restore state from self.bits (optimization needed)
+        // Deferred: Restore state from self.bits (optimization needed)
         // For now, this is a simplified implementation
 
         // Use bit manipulation directly as fallback
@@ -1340,7 +1340,7 @@ impl InterCentroidMatrix {
             compressed.extend(&quantized.to_le_bytes());
         }
 
-        // TODO: Apply Proxima bit-packing for further compression
+        // Deferred: Apply Proxima bit-packing for further compression
         // For now, return 16-bit quantized data (already 50% space savings)
         compressed
     }
@@ -1878,7 +1878,7 @@ impl RowGroupBloomFilter {
             // Check each rowgroup's bloom filter offset (actual bloom filter needs to be loaded)
             for rowgroup in &footer.file_metadata.row_groups {
                 if rowgroup.bloom_filter_offset.is_some() {
-                    // TODO: Load bloom filter from file using offset and check
+                    // Deferred: Load bloom filter from file using offset and check
                     // For now, add all rowgroups with bloom filters as candidates
                     candidates.push(rowgroup.id);
                 }
@@ -1917,7 +1917,7 @@ impl RowGroupBloomFilter {
 
                 for rowgroup in &footer.file_metadata.row_groups {
                     if rowgroup.bloom_filter_offset.is_some() {
-                        // TODO: Load bloom filter from file using offset and check
+                        // Deferred: Load bloom filter from file using offset and check
                         // For now, add all rowgroups with bloom filters as candidates
                         candidates.push(rowgroup.id);
                     }

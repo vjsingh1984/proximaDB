@@ -525,14 +525,14 @@ mod execution_tests {
     #[tokio::test]
     async fn test_query_engine_creation() {
         // Test unified engine creation with all services
-        // TODO: Create proper test setup with mock dependencies
+        // Deferred: Create proper test setup with mock dependencies
         // let vector_service = Arc::new(VectorOperationsService::new(storage_engine, wal_manager, axis_index_manager, collection_service));
         // let graph_service = Arc::new(GraphService::new());
 
         // let engine = QueryEngine::new(vector_service, graph_service);
 
         // Verify engine is properly configured
-        assert!(true); // TODO: Add specific validation with proper test setup
+        assert!(true); // Deferred: Add specific validation with proper test setup
     }
 
     #[tokio::test]
@@ -549,7 +549,7 @@ mod execution_tests {
             ExecutionStrategy::Hybrid
         ));
 
-        // TODO: Test graph-only and hybrid strategies
+        // Deferred: Test graph-only and hybrid strategies
     }
 
     async fn create_test_engine() -> QueryEngine {

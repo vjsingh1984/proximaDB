@@ -206,7 +206,7 @@ impl UnifiedStorageEngine for SstEngine {
         }
 
         // Get performance metrics from the universal optimizer
-        // TODO: Add performance metrics collection when available
+        // Deferred: Add performance metrics collection when available
         metrics.insert(
             "optimizer_status".to_string(),
             serde_json::Value::String("active".to_string()),

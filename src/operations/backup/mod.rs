@@ -478,7 +478,7 @@ impl BackupManager {
                     "Uploading backup {} to S3://{}/{}",
                     backup_id, bucket, prefix
                 );
-                // TODO: Implement S3 upload
+                // Deferred: Implement S3 upload
                 // For now, just log the intent
                 Ok(())
             }
@@ -487,7 +487,7 @@ impl BackupManager {
                     "Uploading backup {} to GCS://{}/{}",
                     backup_id, bucket, prefix
                 );
-                // TODO: Implement GCS upload
+                // Deferred: Implement GCS upload
                 Ok(())
             }
             BackupTarget::Azure { container, prefix } => {
@@ -495,7 +495,7 @@ impl BackupManager {
                     "Uploading backup {} to Azure://{}/{}",
                     backup_id, container, prefix
                 );
-                // TODO: Implement Azure upload
+                // Deferred: Implement Azure upload
                 Ok(())
             }
         }

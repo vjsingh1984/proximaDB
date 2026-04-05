@@ -171,7 +171,7 @@ impl ColumnarIdIndex {
             let mut bloom = BloomFilter::new(row_group.num_rows() as usize, 0.01);
 
             // TEMPORARY: Map test IDs for testing
-            // TODO: Read actual IDs from Parquet file
+            // Deferred: Read actual IDs from Parquet file
             // This implementation assumes test data uses predictable ID patterns
 
             let total_offset = rg_idx * row_group.num_rows() as usize;

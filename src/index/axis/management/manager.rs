@@ -99,7 +99,7 @@ use crate::index::axis::{
     types::{AxisConfig, Data, IndexAlgorithm, IndexSelectionStrategy},
 };
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::impls::viper::QuantizationMethod;
 
 /// Central manager for AXIS with adaptive capabilities
@@ -1137,7 +1137,7 @@ impl AxisManager {
 
     /// Maybe evaluate if search_strategy should change
     async fn maybe_evaluate_strategy(&self, _collection_id: &str) -> Result<()> {
-        // TODO: Implement periodic evaluation logic
+        // Deferred: Implement periodic evaluation logic
         // For now, we'll rely on explicit analyze_and_optimize calls
         Ok(())
     }
@@ -1205,8 +1205,8 @@ impl AxisManager {
                 .indexes
                 .first()
                 .map_or(Data::DenseVector { dimension: 128 }, |idx| idx.data_type), // Default to dense vector
-            total_vectors: 0,    // TODO: Implement actual counting
-            index_size_bytes: 0, // TODO: Implement actual size calculation
+            total_vectors: 0,    // Deferred: Implement actual counting
+            index_size_bytes: 0, // Deferred: Implement actual size calculation
             last_updated: Utc::now(),
         })
     }

@@ -140,8 +140,8 @@ impl VectorCache {
         CacheStatistics {
             total_items: 0,        // Size not directly available through BaseCache
             memory_usage_bytes: 0, // Memory usage not directly available
-            hit_count: 0,          // TODO: Track hits
-            miss_count: 0,         // TODO: Track misses
+            hit_count: 0,          // Deferred: Track hits
+            miss_count: 0,         // Deferred: Track misses
         }
     }
 

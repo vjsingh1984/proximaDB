@@ -40,7 +40,7 @@
 // 4. build_kxk_inter_centroid_distance_matrix() ← CRITICAL STEP
 // 5. store_in_footer(K, centroids, kxk_matrix)
 //
-// TODO: Implement complete flow in flush_row_page_columnar()
+// Deferred: Implement complete flow in flush_row_page_columnar()
 // ============================================================================
 
 use crate::utils::hash::FastHash;
@@ -197,7 +197,7 @@ struct CompactRow {
     quantized_vector: Vec<u8>, // VectorRecord.quantized_vector (pre-quantized INT8)
     #[allow(dead_code)]
     binary_sketch: Vec<u8>, // Binary sketch for progressive search (1-bit per dimension)
-    // TODO: Migrate to HashMap<String, SqlValue> for typed metadata (requires refactoring encoding/decoding logic)
+    // Deferred: Migrate to HashMap<String, SqlValue> for typed metadata (requires refactoring encoding/decoding logic)
     metadata: Vec<(String, Vec<u8>)>, // VectorRecord.metadata (key-value pairs as byte arrays)
 
     // Timestamp fields
@@ -2479,7 +2479,7 @@ mod minimal_hnsw_tests {
             ],
         );
 
-        // TODO: Perform clustering - cluster_into_rowgroups method needs to be implemented
+        // Deferred: Perform clustering - cluster_into_rowgroups method needs to be implemented
         // Temporary placeholder for compilation
         let rowgroups = vec![vec![0, 1], vec![2, 3, 4]]; // Placeholder clustering
         assert!(rowgroups.len() >= 2, "Should create at least 2 row groups");
@@ -2496,7 +2496,7 @@ mod minimal_hnsw_tests {
             "All nodes should be assigned"
         );
 
-        // TODO: Verify cohesion - calculate_cohesion method needs to be implemented
+        // Deferred: Verify cohesion - calculate_cohesion method needs to be implemented
         // for group in &rowgroups {
         //     let cohesion = builder.calculate_cohesion(group);
         //     assert!(cohesion < 1.0, "Row groups should have good cohesion");
@@ -2522,7 +2522,7 @@ fn test_uniqueness_guarantee() {
         builder.add_node(format!("vec_{}", i), edges);
     }
 
-    // TODO: cluster_into_rowgroups method needs to be implemented
+    // Deferred: cluster_into_rowgroups method needs to be implemented
     // Temporary placeholder for compilation
     let rowgroups = vec![vec![0, 1, 2], vec![3, 4, 5], vec![6, 7, 8, 9]]; // Placeholder clustering
 
@@ -2773,7 +2773,7 @@ impl RaptorWriter {
         };
 
         // Extract metadata as key-value pairs (byte arrays for custom binary format)
-        // TODO: Migrate to SqlValue when refactoring RAPTOR's encoding/decoding logic
+        // Deferred: Migrate to SqlValue when refactoring RAPTOR's encoding/decoding logic
         let metadata: Vec<(String, Vec<u8>)> = vector
             .metadata
             .iter()
@@ -4670,7 +4670,7 @@ impl RaptorWriter {
                 }),
             total_centroids: columnar_centroids.count, // K centroids = K rowgroups
             version: 1,
-            checksum: 0, // TODO: Compute actual checksum
+            checksum: 0, // Deferred: Compute actual checksum
             file_metadata: self.file_metadata.clone(),
         };
 

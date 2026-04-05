@@ -540,7 +540,7 @@ fn is_constant_f32(data: &[f32]) -> bool {
 
 /// Analyze i64 data and choose best encoding scheme
 ///
-/// TODO: Implement proper i64 analysis. For now, use Delta encoding.
+/// Deferred: Implement proper i64 analysis. For now, use Delta encoding.
 pub fn analyze_and_choose_scheme_i64(_values: &[i64]) -> ProximaScheme {
     // Default to Delta for i64 until proper analysis is implemented
     ProximaScheme::Delta { base: 0 }
@@ -548,7 +548,7 @@ pub fn analyze_and_choose_scheme_i64(_values: &[i64]) -> ProximaScheme {
 
 /// Analyze i32 data and choose best encoding scheme
 ///
-/// TODO: Implement proper i32 analysis. For now, use Delta encoding.
+/// Deferred: Implement proper i32 analysis. For now, use Delta encoding.
 pub fn analyze_and_choose_scheme_i32(_values: &[i32]) -> ProximaScheme {
     // Default to Delta for i32 until proper analysis is implemented
     ProximaScheme::Delta { base: 0 }

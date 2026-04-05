@@ -938,7 +938,7 @@ async fn execute_graph_traversal_with_context(
             max_depth: expr.max_depth,
             edge_types: expr.edge_types.clone(),
             node_labels: extract_node_labels(&expr.node_filters),
-            filters: Vec::new(), // TODO: Convert property filters
+            filters: Vec::new(), // Deferred: Convert property filters
             algorithm: match expr.direction {
                 TraversalDirection::Outgoing => {
                     crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32

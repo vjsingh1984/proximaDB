@@ -695,7 +695,7 @@ mod tests {
             },
         ];
 
-        // TODO: Update to use proper data structure
+        // Deferred: Update to use proper data structure
         // Temporarily using ProximaDataBlock
         let blocks = vec![ProximaDataBlock {
             encoding_marker: 0x00,

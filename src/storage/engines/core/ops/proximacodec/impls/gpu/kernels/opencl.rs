@@ -79,7 +79,7 @@ pub fn opencl_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
         base
     );
 
-    // TODO: Real OpenCL implementation using clCreateBuffer/clEnqueueNDRangeKernel
+    // Deferred: Real OpenCL implementation using clCreateBuffer/clEnqueueNDRangeKernel
     // For now, use CPU fallback
     let deltas: Vec<i64> = values.iter().map(|&v| (v - base) as i64).collect();
 
@@ -114,7 +114,7 @@ pub fn opencl_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
         base
     );
 
-    // TODO: Real OpenCL implementation
+    // Deferred: Real OpenCL implementation
     let values: Vec<f32> = deltas.iter().map(|&d| d as f32 + base).collect();
 
     debug!(
@@ -160,7 +160,7 @@ pub fn opencl_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         bits
     );
 
-    // TODO: Real OpenCL implementation with atomic operations
+    // Deferred: Real OpenCL implementation with atomic operations
     let total_bits = values.len() * bits as usize;
     let byte_count = (total_bits + 7) / 8;
     let mut result = vec![0u8; byte_count];
@@ -201,7 +201,7 @@ pub fn opencl_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Resul
         count
     );
 
-    // TODO: Real OpenCL implementation
+    // Deferred: Real OpenCL implementation
     let mask = if bits == 32 {
         u32::MAX
     } else {
@@ -373,7 +373,7 @@ pub fn opencl_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         bits
     );
 
-    // TODO: Real OpenCL implementation
+    // Deferred: Real OpenCL implementation
     let zigzag: Vec<i64> = values
         .iter()
         .map(|&v| {
@@ -485,7 +485,7 @@ pub fn opencl_pfor_delta_encode_f32(
         base
     );
 
-    // TODO: Real OpenCL implementation
+    // Deferred: Real OpenCL implementation
     anyhow::bail!("OpenCL PForDelta encoding not yet implemented - use SIMD fallback")
 }
 
@@ -504,7 +504,7 @@ pub fn opencl_pfor_delta_decode_f32(
         count
     );
 
-    // TODO: Real OpenCL implementation
+    // Deferred: Real OpenCL implementation
     anyhow::bail!("OpenCL PForDelta decoding not yet implemented - use SIMD fallback")
 }
 

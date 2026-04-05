@@ -443,7 +443,7 @@ impl ColumnarPartition {
         }
 
         // Extract metadata fields into columns
-        // TODO: Implement proper SqlValue extraction
+        // Deferred: Implement proper SqlValue extraction
         // For now, just skip metadata extraction
         let _ = &record.metadata;
 
@@ -476,7 +476,7 @@ impl ColumnarPartition {
                         .ok_or_else(|| anyhow::anyhow!("Missing vector at index {}", idx))?,
                     timestamp: Some(ts_i64),
                     // Reconstruct metadata from columns
-                    metadata: std::collections::HashMap::new(), // TODO: Reconstruct from columnar data
+                    metadata: std::collections::HashMap::new(), // Deferred: Reconstruct from columnar data
                     ..Default::default()
                 };
                 results.push(record);

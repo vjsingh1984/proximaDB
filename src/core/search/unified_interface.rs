@@ -321,8 +321,8 @@ impl IntegratedSearchOptimizer {
                 crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
             ],
             storage_info,
-            filter_expression: None, // TODO: Extract from search request
-            query_vector: None,      // TODO: Extract from search request
+            filter_expression: None, // Deferred: Extract from search request
+            query_vector: None,      // Deferred: Extract from search request
             top_k: 100,              // Default top-k
             min_score: None,         // No minimum score by default
             enable_early_termination: true, // Enable optimizations by default

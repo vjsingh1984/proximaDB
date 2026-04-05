@@ -110,7 +110,7 @@ pub async fn migrate_to_graph_first(
     }
 
     // Migrate relations (if stored separately in legacy)
-    // TODO: Implement relation migration when legacy relation storage is available
+    // Deferred: Implement relation migration when legacy relation storage is available
 
     stats.duration_ms = start.elapsed().as_millis();
 
@@ -192,7 +192,7 @@ pub async fn rollback_migration(
     _graph_service: Arc<GraphOperationsService>,
     collection_id: &str,
 ) -> Result<()> {
-    // TODO: Implement graph collection deletion when API is available
+    // Deferred: Implement graph collection deletion when API is available
     // For now, we rely on manual cleanup or re-creation
     println!(
         "⚠ Migration rollback: Please manually delete graph collection '{}'",

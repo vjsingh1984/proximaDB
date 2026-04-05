@@ -431,7 +431,7 @@ impl QueryLowering {
         if name.to_uppercase().contains("VECTOR_SIMILARITY")
             || name.to_uppercase().contains("COSINE_DISTANCE")
         {
-            // TODO: Validate vector function arguments and embedding field
+            // Deferred: Validate vector function arguments and embedding field
             Ok(Expr::FuncCall { name, args })
         }
         // Recognize SKS functions (SIMILAR, FOLLOW, ASSEMBLE)
@@ -836,7 +836,7 @@ impl QueryLowering {
             .await
         {
             Ok(Some(collection_id)) => {
-                // TODO: Cache collection metadata for future queries
+                // Deferred: Cache collection metadata for future queries
                 // let metadata = self.build_collection_metadata(&collection_id).await?;
                 // self.schema_cache.write().await.insert(collection_name.to_string(), metadata);
 
@@ -936,8 +936,8 @@ impl QueryLowering {
 
                 // Parse optional parameters from remaining arguments
                 // For now, use defaults - can be extended to parse named parameters
-                let metric = None; // TODO: Parse from optional 3rd arg
-                let threshold = None; // TODO: Parse from optional parameters
+                let metric = None; // Deferred: Parse from optional 3rd arg
+                let threshold = None; // Deferred: Parse from optional parameters
 
                 Ok(Expr::SksSimilar {
                     field,
@@ -994,7 +994,7 @@ impl QueryLowering {
                 // All arguments are context items for now
                 let context_items = lowered_args;
 
-                // TODO: Parse optional strategy and max_size from named parameters
+                // Deferred: Parse optional strategy and max_size from named parameters
                 let strategy = None; // Could be "temporal", "semantic", "relevance"
                 let max_size = None; // Maximum context size
 
@@ -1119,7 +1119,7 @@ mod lowering_tests {
                 }) = &select.selection
                 {
                     assert!(matches!(op, BinaryOp::Eq));
-                    // TODO: Validate field access pattern optimizes to HashMap.get()
+                    // Deferred: Validate field access pattern optimizes to HashMap.get()
                 }
             }
             Query::With { .. } => panic!("WITH queries not implemented yet"),

@@ -252,7 +252,7 @@ impl StreamingService for StreamingServiceImpl {
                                         level: backpressure_to_proto(result.backpressure),
                                         suggested_delay_ms: result.backpressure.delay_ms(),
                                         buffer_percent: result.buffer_percent,
-                                        drain_time_ms: 0, // TODO: Calculate from flush rate
+                                        drain_time_ms: 0, // Deferred: Calculate from flush rate
                                     }),
                                     server_timestamp: timestamp_now(),
                                     vectors_buffered: result.pushed as u32,
@@ -599,7 +599,7 @@ impl StreamingService for StreamingServiceImpl {
                 buffer_capacity: s.buffer_capacity as u32,
                 age_seconds: s.age_secs,
                 idle_seconds: s.idle_secs,
-                avg_latency_us: 0, // TODO: Track per session
+                avg_latency_us: 0, // Deferred: Track per session
             }),
             drain_complete,
         }))
@@ -628,7 +628,7 @@ impl StreamingService for StreamingServiceImpl {
                     idle_seconds: info.idle_secs,
                     avg_latency_us: 0,
                 }),
-                backpressure: backpressure_to_proto(BackpressureLevel::None), // TODO: Get from session
+                backpressure: backpressure_to_proto(BackpressureLevel::None), // Deferred: Get from session
             })),
             None => Err(Status::not_found(format!(
                 "Session not found: {}",

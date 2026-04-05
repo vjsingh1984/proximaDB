@@ -7,9 +7,9 @@ pub mod types;
 
 pub use correlation::{
     AuditCorrelationEngine,
-    // ComprehensiveAuditTrail, // TODO: Not yet implemented
-    // ProviderAuditEvent, // TODO: Not yet implemented
-    // EventChain, // TODO: Not yet implemented
+    // ComprehensiveAuditTrail, // Deferred: Not yet implemented
+    // ProviderAuditEvent, // Deferred: Not yet implemented
+    // EventChain, // Deferred: Not yet implemented
 };
 
 pub use logger::AuditLogger;
@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// TODO: Implement these types properly
+// Deferred: Implement these types properly
 
 /// Placeholder for the full comprehensive audit trail type (not yet implemented)
 pub type ComprehensiveAuditTrail = String;

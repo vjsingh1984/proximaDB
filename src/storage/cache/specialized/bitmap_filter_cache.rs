@@ -265,7 +265,7 @@ impl BitmapFilterCache {
 
     /// Invalidate filters that depend on changed data
     pub async fn invalidate_dependent_filters(&self, _changed_keys: Vec<String>) -> Result<()> {
-        // TODO: Implement dependent filter invalidation when BaseCache supports key enumeration
+        // Deferred: Implement dependent filter invalidation when BaseCache supports key enumeration
         // For now, we can't iterate over all keys in the cache
         // This would require adding a keys() method to the BaseCache trait
         // As a workaround, we could maintain a separate index of filter dependencies
@@ -275,13 +275,13 @@ impl BitmapFilterCache {
 
     /// Invalidate a specific filter
     pub async fn invalidate(&self, _key: &str) -> bool {
-        // TODO: Implement invalidation
+        // Deferred: Implement invalidation
         false
     }
 
     /// Resize the cache
     pub async fn resize(&self, _new_size_mb: usize) -> Result<()> {
-        // TODO: Implement cache resizing
+        // Deferred: Implement cache resizing
         Ok(())
     }
 

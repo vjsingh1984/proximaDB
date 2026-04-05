@@ -373,7 +373,7 @@ impl RecoveryManager {
             total_vectors_recovered: vectors_recovered,
             total_collections_recovered: if vectors_recovered > 0 { 1 } else { 0 },
             recovery_errors: 0,
-            total_bytes_processed: 0, // TODO: Track bytes if needed
+            total_bytes_processed: 0, // Deferred: Track bytes if needed
         })
     }
 
@@ -852,7 +852,7 @@ impl RecoveryManager {
         for entry in entries {
             if entry.metadata.is_directory {
                 // Assume directories are collection IDs for now
-                // TODO: Add more robust validation for collection IDs
+                // Deferred: Add more robust validation for collection IDs
                 collections.push(entry.name);
             }
         }

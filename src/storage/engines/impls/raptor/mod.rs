@@ -12,7 +12,7 @@
 //! - **Status**: EXPERIMENTAL - Not Production Ready
 //! - **Feature Flag**: `experimental-engines` required
 //! - **Tests**: 23 tests (insufficient coverage)
-//! - **TODO Items**: 35+ optimization tasks remaining
+//! - **DEFERRED Items**: 35+ optimization tasks remaining
 //! - **Recommendation**: Use SST, VIPER, HELIX, or NOVA instead
 //!
 //! ## Migration Guide

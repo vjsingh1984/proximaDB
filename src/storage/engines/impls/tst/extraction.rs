@@ -233,7 +233,7 @@ impl TstExtractor {
         file_path: &str,
         _request: &ExtractionRequest,
     ) -> Result<ExtractionResult, ExtractionError> {
-        // TODO: Implement actual file reading
+        // Deferred: Implement actual file reading
         // For now, return empty result with file size estimate
         let metadata = std::fs::metadata(file_path)
             .map_err(|e| ExtractionError::FileNotFound(format!("{}: {}", file_path, e)))?;

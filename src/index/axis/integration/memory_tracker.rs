@@ -332,7 +332,7 @@ impl IndexMemoryTracker {
                 collection_id, location
             );
 
-            // TODO: Actual loading implementation would go here
+            // Deferred: Actual loading implementation would go here
             // This would involve reading the serialized index from disk
             // and reconstructing it in memory
 

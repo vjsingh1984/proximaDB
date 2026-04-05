@@ -676,7 +676,7 @@ impl RowBasedBatchOperations {
         _blocks: &mut [ProximaDataBlock],
         _index: &RowBasedIdIndex,
     ) -> Result<Option<VectorRecord>> {
-        // TODO: Implement actual update logic
+        // Deferred: Implement actual update logic
         Ok(None)
     }
 
@@ -791,7 +791,7 @@ mod tests {
         assert!(batch_size <= batch_ops.config.max_batch_size);
     }
 
-    // TODO: Re-enable test after row_based module is implemented
+    // Deferred: Re-enable test after row_based module is implemented
     // #[test]
     // fn test_batch_splitting() {
     //     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();

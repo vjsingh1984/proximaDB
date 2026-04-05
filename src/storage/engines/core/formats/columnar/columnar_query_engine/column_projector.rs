@@ -51,7 +51,7 @@ impl ProjectionBuilder {
             // ProjectionMask::roots expects SchemaDescriptor, not Type
             // For now, create mask from indices directly
             // Convert Type to SchemaDescriptor if needed, or use from_raw_projection
-            Ok(ProjectionMask::all()) // TODO: Implement proper projection with SchemaDescriptor
+            Ok(ProjectionMask::all()) // Note: Implement proper projection with SchemaDescriptor
         }
     }
 

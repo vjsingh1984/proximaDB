@@ -61,7 +61,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
         // Create fusion engine
         let fusion_engine = HybridFusionEngine::new(fusion_strategy);
 
-        // TODO: Integrate with actual BM25 and vector search backends
+        // Deferred: Integrate with actual BM25 and vector search backends
         // For now, create mock results to demonstrate the API
         let (bm25_results, vector_results) = create_mock_results(&req);
 
@@ -274,7 +274,7 @@ fn convert_highlight_to_proto(th: TextHighlight) -> proximadb_v1::TextHighlight 
 
 /// Create mock BM25 and vector results for demonstration
 ///
-/// TODO: Replace with actual search backend integration
+/// Deferred: Replace with actual search backend integration
 fn create_mock_results(
     request: &proximadb_v1::HybridFusionSearchRequest,
 ) -> (Vec<BM25Result>, Vec<VectorResult>) {

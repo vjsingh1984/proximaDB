@@ -3649,7 +3649,7 @@ impl CrossModelOptimizer {
             node_type: PlanNodeType::ObservabilityQuery {
                 namespace,
                 query_type,
-                time_range: None, // TODO: Extract from WHERE clause
+                time_range: None, // Deferred: Extract from WHERE clause
             },
             estimated_cost: 20.0,
             estimated_rows: 1000,

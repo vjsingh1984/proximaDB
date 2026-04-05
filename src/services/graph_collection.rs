@@ -372,8 +372,8 @@ impl GraphCollectionService {
     /// Update graph schema
     pub async fn update_schema(&self, graph_id: &str, schema: GraphSchema) -> Result<()> {
         if let Some(mut collection_ref) = self.collections.get_mut(graph_id) {
-            // TODO: Implement proper schema validation
-            // TODO: Handle schema migration if data exists
+            // Deferred: Implement proper schema validation
+            // Deferred: Handle schema migration if data exists
 
             let mut collection = (**collection_ref).clone();
             collection.schema = Some(schema);

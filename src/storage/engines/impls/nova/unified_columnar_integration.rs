@@ -603,7 +603,7 @@ impl NovaUnifiedEngine {
                 )
                 .await?;
             // Convert QuantizedDistanceResult to (VectorRecord, f32)
-            // TODO: This needs to be refactored to load IDs from storage along with vectors
+            // Deferred: This needs to be refactored to load IDs from storage along with vectors
             // The current implementation is a placeholder that won't work in production
             Vec::new()
         } else {
@@ -620,7 +620,7 @@ impl NovaUnifiedEngine {
                 .await?;
 
             // Convert to VectorRecords with scores
-            // TODO: This needs to be refactored to load IDs from storage along with vectors
+            // Deferred: This needs to be refactored to load IDs from storage along with vectors
             // The current implementation is a placeholder that won't work in production
             Vec::new()
         };

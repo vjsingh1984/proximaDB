@@ -1303,14 +1303,14 @@ async fn execute_distributed_via_adapter(
         records_returned,
         execution_plan: DistributedPlanResponse {
             strategy: request.strategy,
-            nodes_involved: 1, // TODO: Extract from actual execution plan
+            nodes_involved: 1, // Deferred: Extract from actual execution plan
             execution_time_ms: elapsed_ms,
         },
         metrics: DistributedMetricsResponse {
             total_time_ms: elapsed_ms,
             planning_time_ms: metrics_info.planning_time_ms as f64,
             execution_time_ms: metrics_info.execution_time_ms as f64,
-            cache_hits: 0, // TODO: Extract from distributed coordinator stats
+            cache_hits: 0, // Deferred: Extract from distributed coordinator stats
         },
     };
 

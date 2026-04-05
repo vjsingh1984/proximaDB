@@ -419,7 +419,7 @@ impl FilterIndexEvaluator for BaseFilterIndexEvaluator {
             metadata: IndexMetadata {
                 source_id,
                 selectivity,
-                filter_complexity: FilterComplexity::Simple, // TODO: Analyze complexity
+                filter_complexity: FilterComplexity::Simple, // Deferred: Analyze complexity
                 columns_evaluated,
                 optimization_hints: HashMap::new(),
             },

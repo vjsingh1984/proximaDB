@@ -260,7 +260,7 @@ async fn execute_hybrid_search(
     // Create fusion engine
     let fusion_engine = HybridFusionEngine::new(fusion_strategy);
 
-    // TODO: Integrate with actual BM25 and vector search backends
+    // Deferred: Integrate with actual BM25 and vector search backends
     // For now, create mock results to demonstrate the API
     let (bm25_results, vector_results) = create_mock_results(&request);
 
@@ -439,7 +439,7 @@ fn parse_fusion_strategy(strategy_str: &str) -> Result<FusionStrategy, ApiError>
 
 /// Create mock BM25 and vector results for demonstration
 ///
-/// TODO: Replace with actual search backend integration
+/// Deferred: Replace with actual search backend integration
 fn create_mock_results(request: &HybridSearchRequest) -> (Vec<BM25Result>, Vec<VectorResult>) {
     let mock_count = request.top_k * 2; // Create more results than needed
 

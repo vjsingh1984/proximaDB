@@ -58,7 +58,7 @@ pub struct MigrationResult {
     pub total_time_ms: u64,
     pub average_throughput: f64,
     pub performance_metrics: HashMap<String, f64>,
-    // TODO: Restore validation module
+    // Deferred: Restore validation module
     // pub validation_results: Option<super::validation::ValidationReport>,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,

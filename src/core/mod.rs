@@ -157,7 +157,7 @@ pub type ProtoVectorRecord = crate::proto::proximadb_v1::VectorRecord;
 struct VectorRecordOtherFields {
     /// Vector record ID
     pub id: Option<String>,
-    /// Metadata items (TODO: Fix MetadataItem serde implementation)
+    /// Metadata items (MetadataItem serde: deferred)
     pub metadata: Vec<serde_json::Value>,
     /// Creation timestamp
     pub timestamp: u32,

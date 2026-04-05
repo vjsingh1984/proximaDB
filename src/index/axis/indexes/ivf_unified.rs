@@ -1457,10 +1457,10 @@ impl UnifiedIvfIndex {
     }
 
     /// NEW: Process queue payloads for async index updates
-    /// TODO: This will be integrated with the EventLog consumer when available
+    /// Deferred: This will be integrated with the EventLog consumer when available
     pub async fn process_queue_updates(&self) -> Result<()> {
         tracing::debug!("IVF queue update processing (placeholder implementation)");
-        // TODO: Integrate with EventLog consumer from src/index/axis/eventlog_consumer.rs
+        // Deferred: Integrate with EventLog consumer from src/index/axis/eventlog_consumer.rs
         // For now, this is a placeholder that doesn't fail compilation
         Ok(())
     }

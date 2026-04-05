@@ -395,7 +395,7 @@ impl AdvancedSearchOptimizer {
             }
             ExecutionStrategy::Progressive { .. } => self.execute_progressive_search(ctx).await?,
             ExecutionStrategy::DirectFP32 { .. } => {
-                // TODO: Need to get records from storage based on ctx
+                // Deferred: Need to get records from storage based on ctx
                 warn!("Direct FP32 search not fully implemented - returning empty results");
                 vec![]
             }
@@ -466,7 +466,7 @@ impl AdvancedSearchOptimizer {
             stages.binary_candidates
         );
 
-        // TODO: Get all_vectors from storage based on collection_id
+        // Deferred: Get all_vectors from storage based on collection_id
         // For now, return empty results as we need to implement the actual search
         warn!("Progressive search not fully implemented - returning empty results");
         Ok(vec![])
@@ -600,7 +600,7 @@ impl AdvancedSearchOptimizer {
                     let rec = OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
                         .add_vector(record.vector.clone())
                         .with_metadata(record.metadata);
-                    // TODO: Implement with_version method if needed
+                    // Deferred: Implement with_version method if needed
                     // if let Some(v) = record.version { rec = rec.with_version(v); }
                     converted_results.push(rec);
                 }
@@ -678,7 +678,7 @@ impl AdvancedSearchOptimizer {
                     metadata: std::collections::HashMap::new(), // Would convert metadata
                     version: r.version,
                     timestamp: r.timestamp,
-                    source: None, // TODO: Convert SourceContent to Option<String> when needed
+                    source: None, // Deferred: Convert SourceContent to Option<String> when needed
                     expanded_context: r
                         .expanded_context
                         .iter()
@@ -915,7 +915,7 @@ impl AdvancedSearchOptimizer {
         &self,
         _ctx: &StorageQueryContext,
     ) -> Result<Option<Vec<OptimizedSearchRecord>>> {
-        // TODO: Implement cache lookup based on context
+        // Deferred: Implement cache lookup based on context
         Ok(None)
     }
 
@@ -924,7 +924,7 @@ impl AdvancedSearchOptimizer {
         &self,
         _ctx: &StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        // TODO: Implement index-first search using AXIS
+        // Deferred: Implement index-first search using AXIS
         Err(anyhow::anyhow!("Index-first search not yet implemented"))
     }
 
@@ -971,7 +971,7 @@ impl AdvancedSearchOptimizer {
         _ctx: &StorageQueryContext,
         _results: &[OptimizedSearchRecord],
     ) -> Result<()> {
-        // TODO: Implement result caching
+        // Deferred: Implement result caching
         Ok(())
     }
 

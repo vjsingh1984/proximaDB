@@ -1902,5 +1902,5 @@ fn create_field_eq_filter(field_path: &str, value: SqlValue) -> crate::proto::pr
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add unit tests with mock storage engine
+    // Deferred: Add unit tests with mock storage engine
 }

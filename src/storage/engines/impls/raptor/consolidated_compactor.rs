@@ -308,7 +308,7 @@ impl RaptorCompactor {
     fn cluster_vectors(&self, vectors: &[VectorRecord], k: usize) -> Result<Vec<usize>> {
         // Use AXIS clustering engine with K-means++ initialization
         // This provides fast convergence for high-dimensional data
-        // TODO: Use AXIS clustering when available
+        // Deferred: Use AXIS clustering when available
         // use crate::index::axis::clustering::AxisClustering;
         use crate::compute::distance_computation::engine::DistanceMetric;
 

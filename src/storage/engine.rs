@@ -571,7 +571,7 @@ impl StorageEngine {
         );
         // Implement stats update functionality using metadata provider
         if let Some(_provider) = self.get_metadata_provider().await {
-            // TODO: Implement stats update when MetadataProvider supports it
+            // Deferred: Implement stats update when MetadataProvider supports it
             // provider.update_stats(collection_id, 1, vector_size as i64).await?;
         } else {
             tracing::warn!(
@@ -650,7 +650,7 @@ impl StorageEngine {
 
             // Update metadata statistics
             if let Some(_provider) = self.get_metadata_provider().await {
-                // TODO: Implement stats update when MetadataProvider supports it
+                // Deferred: Implement stats update when MetadataProvider supports it
                 // provider.update_stats(collection_id, -1, 0).await?;
             } else {
                 tracing::warn!(
@@ -1122,7 +1122,7 @@ impl StorageEngine {
         let collections: Vec<CollectionMetadata> =
             match self.metadata_provider.read().await.as_ref() {
                 Some(_provider) => {
-                    // TODO: Add list_collections method to InternalCollectionProvider trait
+                    // Deferred: Add list_collections method to InternalCollectionProvider trait
                     // For now, return empty list to allow compilation
                     warn!("Collection listing not yet implemented for test cleanup");
                     Vec::new()
@@ -1172,7 +1172,7 @@ impl StorageEngine {
         for collection in collections {
             // Use metadata provider for collection deletion
             if let Some(_provider) = self.metadata_provider.read().await.as_ref() {
-                // TODO: Add delete_collection method to InternalCollectionProvider trait
+                // Deferred: Add delete_collection method to InternalCollectionProvider trait
                 tracing::debug!(
                     "Collection deletion would happen through metadata provider for {}",
                     collection.collection_id

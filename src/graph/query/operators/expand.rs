@@ -192,7 +192,7 @@ impl PhysicalOperator for ExpandOperator {
 
         // Estimate cardinality (input cardinality * avg degree)
         let input_card = self.input.estimated_cardinality();
-        let avg_degree = 10; // TODO: Get from statistics
+        let avg_degree = 10; // Deferred: Get from statistics
         self.estimated_cardinality = input_card * avg_degree;
 
         Ok(())

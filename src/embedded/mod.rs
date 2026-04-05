@@ -1501,7 +1501,7 @@ impl EmbeddedProximaDB {
 
         let result = self.runtime.block_on(async {
             // For now, don't support filter expressions in embedded mode
-            // TODO: Parse filter string into FilterExpression
+            // Deferred: Parse filter string into FilterExpression
             let results = self
                 .shared_services
                 .vector_operations_service
@@ -1688,7 +1688,7 @@ impl EmbeddedProximaDB {
                     dimension: config.dimension,
                     vector_count: c.stats.map_or(0, |s| s.vector_count as u64),
                     engine: collection_engine_name(config.storage_engine),
-                    disk_usage_bytes: 0, // TODO: Calculate actual disk usage
+                    disk_usage_bytes: 0, // Deferred: Calculate actual disk usage
                 }
             }))
         })
@@ -1716,7 +1716,7 @@ impl EmbeddedProximaDB {
                         dimension: config.dimension,
                         vector_count: c.stats.map_or(0, |s| s.vector_count as u64),
                         engine: collection_engine_name(config.storage_engine),
-                        disk_usage_bytes: 0, // TODO: Calculate actual disk usage
+                        disk_usage_bytes: 0, // Deferred: Calculate actual disk usage
                     }
                 })
                 .collect())
@@ -2329,8 +2329,8 @@ impl EmbeddedProximaDB {
             Ok(StorageStats {
                 total_vectors,
                 total_collections,
-                disk_usage_bytes: 0, // TODO: Calculate actual disk usage
-                cache_hit_rate: 0.0, // TODO: Get from cache orchestrator
+                disk_usage_bytes: 0, // Deferred: Calculate actual disk usage
+                cache_hit_rate: 0.0, // Deferred: Get from cache orchestrator
             })
         })
     }

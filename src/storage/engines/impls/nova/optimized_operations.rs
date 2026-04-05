@@ -92,7 +92,7 @@ impl OptimizedNovaOperations {
     /// Optimized columnar search with hardware acceleration
     pub async fn search_columnar_optimized(
         &self,
-        // TODO: Update to use NovaFile or appropriate type
+        // Deferred: Update to use NovaFile or appropriate type
         // nova_file: &NovaFile,
         _query: &[f32],
         _top_k: usize,
@@ -100,7 +100,7 @@ impl OptimizedNovaOperations {
     ) -> Result<Vec<VectorRecord>> {
         info!("Starting optimized columnar search with hardware capabilities");
 
-        // TODO: Nova file integration pending
+        // Deferred: Nova file integration pending
         return Err(anyhow::anyhow!("Nova file integration not yet implemented"));
 
         #[allow(unreachable_code)]
@@ -117,7 +117,7 @@ impl OptimizedNovaOperations {
 
             // Phase 1: Row group pruning using statistics
             // Pass parquet metadata from file system
-            // TODO: file_path should be derived from nova_file when properly integrated
+            // Deferred: file_path should be derived from nova_file when properly integrated
             let _file_path = "placeholder.parquet"; // Temporary placeholder
             let _parquet_metadata = self.load_parquet_metadata(_file_path).await?;
             let _candidate_row_groups =

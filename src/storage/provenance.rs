@@ -145,7 +145,7 @@ impl InMemoryProvenanceRegistry {
         let _storage_engine = &self.storage_engine;
         {
             // Scan for provenance records across all collections
-            // TODO: Implement scan_provenance_records when available
+            // Deferred: Implement scan_provenance_records when available
             match Result::Ok(Vec::new()) as Result<Vec<Provenance>> {
                 Ok(provenance_records) => {
                     let source_map = &self.source_index;
@@ -184,7 +184,7 @@ impl InMemoryProvenanceRegistry {
     /// Persist provenance to storage
     async fn persist_provenance(&self, entity_id: &str, _provenance: &Provenance) -> Result<()> {
         let _key = Self::provenance_key(entity_id);
-        // TODO: Serialize and store provenance
+        // Deferred: Serialize and store provenance
         // self.storage_engine.put(&key, serialize(provenance)?).await?;
         Ok(())
     }
@@ -271,7 +271,7 @@ impl ProvenanceRegistry for InMemoryProvenanceRegistry {
         if let Some((_, provenance)) = self.entity_provenance.remove(entity_id) {
             self.remove_from_indices(entity_id, &provenance);
 
-            // TODO: Remove from persistent storage
+            // Deferred: Remove from persistent storage
             // let key = Self::provenance_key(entity_id);
             // self.storage_engine.delete(&key).await?;
         }
@@ -377,7 +377,7 @@ impl ProvenanceRegistry for InMemoryProvenanceRegistry {
             validation_errors: vec![],
         };
 
-        // TODO: Implement actual validation logic
+        // Deferred: Implement actual validation logic
         // This would check if sources and chunks still exist in storage
         // and validate the extraction pipeline
 

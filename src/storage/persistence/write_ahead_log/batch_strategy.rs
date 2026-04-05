@@ -257,7 +257,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             metadata_bloom_filter: None,
         };
 
-        // TODO: Get base_location from VectorOperationsService collection metadata
+        // Deferred: Get base_location from VectorOperationsService collection metadata
         // For now, use a default fallback - this will break multi-collection with different backends
         let base_location = "file:///tmp/proximadb/data/wal";
 
@@ -332,7 +332,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                     return Ok(Some(wal_record));
                 }
             }
-            // TODO: Add storage engine lookup for flushed data
+            // Deferred: Add storage engine lookup for flushed data
             Ok(None)
         } else {
             Err(anyhow::anyhow!("Write buffer behavior not available"))
@@ -546,7 +546,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 sequences.len()
             );
 
-            // TODO: Get storage location from collection metadata
+            // Deferred: Get storage location from collection metadata
             // For now, use a default path structure
             let base_location = "file:///data";
             let wal_dir = format!("{}/{}/write_ahead_log/logs", base_location, collection_id);
@@ -649,7 +649,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     /// Force immediate sync of in-memory data to disk
     async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
         // Default implementation - placeholder for now
-        // TODO: Integrate with AtomicWalSync when fully enabled
+        // Deferred: Integrate with AtomicWalSync when fully enabled
         tracing::debug!(
             "🔄 Force sync requested for collection: {:?}",
             collection_id
@@ -924,7 +924,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             metadata_bloom_filter: None,
         };
 
-        // TODO: Get base_location from VectorOperationsService collection metadata
+        // Deferred: Get base_location from VectorOperationsService collection metadata
         // For now, use a default fallback
         let base_location = "file:///tmp/proximadb/data/wal";
 

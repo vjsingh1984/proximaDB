@@ -107,7 +107,7 @@ impl ParquetReader {
 
         // For now, we'll read the entire file into memory and create a byte slice
         // This is not optimal for large files, but works with the current Parquet reader API
-        // TODO: In the future, implement streaming readers that work with async I/O
+        // Note: In the future, implement streaming readers that work with async I/O
         let file_data = filesystem
             .read(file_path)
             .await

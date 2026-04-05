@@ -1243,7 +1243,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                             collection_id,
                             result.file_paths.clone(),
                             vector_count,
-                            false, // has_quantized - TODO: pass from params
+                            false, // has_quantized - DEFERRED: pass from params
                             true,  // has_fp32
                             storage_engine_type,
                         )

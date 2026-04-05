@@ -21,7 +21,7 @@ use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheValue};
 
 // Temporary placeholder for MmappedMetadata
-// TODO: Import from zero_copy_io_system::metadata_cache when circular dependency is resolved
+// Deferred: Import from zero_copy_io_system::metadata_cache when circular dependency is resolved
 #[derive(Debug, Clone)]
 pub struct MmappedMetadata;
 

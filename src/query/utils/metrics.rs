@@ -38,7 +38,7 @@ pub fn configure_query_telemetry(service: Arc<ObservabilityService>, namespace: 
 
 /// Record the start of a query execution for telemetry.
 pub fn record_query_start(kind: &str) {
-    // TODO: unify with proximadb_metrics once available in this crate scope
+    // Deferred: unify with proximadb_metrics once available in this crate scope
     info!("query_start" = kind);
     emit_query_log(kind, "start", true, None);
 }

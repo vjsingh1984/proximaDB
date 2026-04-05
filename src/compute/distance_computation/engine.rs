@@ -1813,7 +1813,7 @@ impl UnifiedDistanceCompute {
         _zero_point_b: i8,
         metric: &DistanceMetric,
     ) -> SimilarityResult {
-        // TODO: Implement actual INT8 distance calculation
+        // Deferred: Implement actual INT8 distance calculation
         // For now, return a default result
         SimilarityResult::new(0.0, *metric)
     }

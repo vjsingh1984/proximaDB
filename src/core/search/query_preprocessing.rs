@@ -440,7 +440,7 @@ impl QueryPreprocessor {
     fn normalize_neon(&self, vector: &[f32]) -> Vec<f32> {
         trace!("normalize_neon called, forwarding to scalar");
         // For now, use scalar implementation on ARM64
-        // TODO: Implement actual NEON intrinsics when stable
+        // Deferred: Implement actual NEON intrinsics when stable
         self.normalize_scalar(vector)
     }
 

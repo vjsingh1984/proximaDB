@@ -835,7 +835,7 @@ impl ColumnarFactory {
     }
 
     /// Create columnar optimizer with hardware-specific settings
-    #[allow(clippy::todo)]  // TODO: Refactor to async and provide proper arguments (5 args required)
+    #[allow(clippy::todo)]  // Deferred: Refactor to async and provide proper arguments (5 args required)
     pub fn create_optimizer(
         _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         _config: ColumnarConfig,
@@ -845,7 +845,7 @@ impl ColumnarFactory {
                 crate::compute::distance_computation::engine::DistanceMetric::Cosine,
             ),
         );
-        // TODO: Fix this to be async and provide proper arguments
+        // Deferred: Fix this to be async and provide proper arguments
         todo!("ColumnarOptimizer::new requires async and 5 arguments - needs refactoring")
     }
 }

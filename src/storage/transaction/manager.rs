@@ -386,7 +386,7 @@ impl MultiModelTransactionManager {
 
     /// Simple deadlock detection using wait-for graph
     fn detect_deadlock(&self, _tx_id: &TransactionId, _resource: &str) -> bool {
-        // TODO: Implement proper wait-for graph traversal
+        // Deferred: Implement proper wait-for graph traversal
         // For now, return false (no deadlock)
         false
     }

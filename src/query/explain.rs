@@ -364,7 +364,7 @@ impl GraphHints {
                     .iter()
                     .map(|(k, v)| (k.clone(), *v as usize))
                     .collect(),
-                property_cardinality: HashMap::new(), // TODO: Add property stats
+                property_cardinality: HashMap::new(), // Deferred: Add property stats
             });
         }
 

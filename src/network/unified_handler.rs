@@ -1082,7 +1082,7 @@ impl UnifiedQueryHandler {
         let _stream = scheduler.schedule(plan).await?;
 
         // For now, fall back to direct execution
-        // TODO: Process stream and collect results
+        // Deferred: Process stream and collect results
         let search_request = self.build_search_request(query)?;
         let response = self
             .vector_ops

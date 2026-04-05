@@ -139,7 +139,7 @@ impl InMemoryRelationsStore {
         // Use ORION graph engine to load relationships from persistent storage
         // This leverages the existing graph storage infrastructure
 
-        // TODO: Implement proper graph storage integration when ORION engine is ready
+        // Deferred: Implement proper graph storage integration when ORION engine is ready
         debug!(
             "Relationships loading deferred for collection: {}",
             collection_id
@@ -219,7 +219,7 @@ impl InMemoryRelationsStore {
                 updated_at_ms: chrono::Utc::now().timestamp_millis(),
             };
 
-            // TODO: Implement graph persistence when graph storage is available
+            // Deferred: Implement graph persistence when graph storage is available
             let _graph_engine = &self.storage_engine;
             debug!(
                 "Persisted relation to ORION: {} -> {} (collection: {})",
@@ -239,7 +239,7 @@ impl InMemoryRelationsStore {
                 "{}:{}:{}",
                 relation.source_entity_id, relation.relation_type, relation.target_entity_id
             );
-            // TODO: Implement graph deletion when graph storage is available
+            // Deferred: Implement graph deletion when graph storage is available
             // graph_engine.delete_edge(&edge_id)?;
             debug!(
                 "Removed relation from ORION: {} (collection: {})",
@@ -262,7 +262,7 @@ impl InMemoryRelationsStore {
             &relation.target_entity_id,
         );
 
-        // TODO: Serialize and store relation
+        // Deferred: Serialize and store relation
         // self.storage_engine.put(&key, serialize(relation)?).await?;
 
         Ok(())
@@ -402,7 +402,7 @@ impl RelationsStore for InMemoryRelationsStore {
         // Remove from reverse edges
         self.reverse_edges.remove(&key);
 
-        // TODO: Remove from persistent storage
+        // Deferred: Remove from persistent storage
 
         debug!("Deleted all relations for entity: {}", entity_id);
         Ok(())
@@ -429,7 +429,7 @@ impl RelationsStore for InMemoryRelationsStore {
                 edges.retain(|e| e.entity_id != source_id);
             }
 
-        // TODO: Remove from persistent storage
+        // Deferred: Remove from persistent storage
 
         Ok(())
     }

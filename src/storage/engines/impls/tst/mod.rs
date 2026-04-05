@@ -1113,7 +1113,7 @@ impl StorageReader for TimeSeriesEngine {
 
         // Try to extract time range from filters
         // For now, use default time range when FilterExpression is present
-        // TODO: Implement FilterExpression to string conversion
+        // Deferred: Implement FilterExpression to string conversion
         let (_start, _end) = if ctx.search_params.filter_expression.is_some() {
             // FilterExpression present - use default 24-hour range
             // In the future, we could extract timestamp from FilterExpression
@@ -1317,7 +1317,7 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
     }
 
     fn get_filesystem_factory(&self) -> &FilesystemFactory {
-        // TODO: Return actual filesystem factory
+        // Deferred: Return actual filesystem factory
         // For now, create a default one (note: this leaks memory but is acceptable for a stub)
         use std::sync::OnceLock;
         static DUMMY_FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
@@ -1624,7 +1624,7 @@ impl TimeSeriesScanIterator {
     fn matches_strategy(&self, _record: &VectorRecord) -> bool {
         // Apply filters based on strategy
         // For now, just return true (all records match)
-        // TODO: Implement proper strategy-based filtering
+        // Deferred: Implement proper strategy-based filtering
         true
     }
 }

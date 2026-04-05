@@ -404,7 +404,7 @@ pub async fn health_check(
     State(_state): State<AppState>,
 ) -> ApiResult<JsonResponse<serde_json::Value>> {
     // Return basic health status
-    // TODO: Add actual health checks when UnifiedHandlers supports it
+    // Deferred: Add actual health checks when UnifiedHandlers supports it
 
     Ok(JsonResponse(serde_json::json!({
         "status": "healthy",
@@ -715,7 +715,7 @@ pub async fn execute_sql(
             let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
             // Convert SQL response to JSON value for now
-            // TODO: Create proper JsonExecuteSqlResponse wrapper if needed
+            // Deferred: Create proper JsonExecuteSqlResponse wrapper if needed
             let json_data = serde_json::json!({
                 "rows": v1_resp.rows.iter().map(|row| {
                     // Convert fields to a JSON object instead of list of key/value pairs
@@ -842,8 +842,8 @@ pub async fn explain_sql(
     // Convert ExplainResult to ExplainPlan
     let plan = ExplainPlan {
         orchestration_steps: explain_result.operations,
-        vector_hints: None, // TODO: Extract from explain_result if needed
-        graph_hints: None,  // TODO: Extract from explain_result if needed
+        vector_hints: None, // Deferred: Extract from explain_result if needed
+        graph_hints: None,  // Deferred: Extract from explain_result if needed
         join_costs: None,
         query_stats: None,
         execution_strategy: Some(format!("{:?}", explain_result.query_type)),

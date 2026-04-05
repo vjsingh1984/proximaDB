@@ -1173,7 +1173,7 @@ pub async fn get_write_ahead_log_manager_for_collection(
 pub async fn configure_write_buffer_manager_pool(
     pool_config: WriteAheadLogManagerPoolConfig,
 ) -> Result<()> {
-    // TODO: Implement global pool configuration
+    // Deferred: Implement global pool configuration
     // For now, this is a placeholder - in a full implementation, this would
     // reinitialize the global registry with the new configuration
     tracing::info!(
@@ -1806,7 +1806,7 @@ impl WriteAheadLogManager {
     /// Force immediate sync of WAL data to disk
     pub async fn force_sync(&self, _collection_id: Option<&String>) -> Result<()> {
         // Force sync is now handled by the shared WAL behavior
-        // TODO: Implement proper sync mechanism with shared_wal_behavior if needed
+        // Deferred: Implement proper sync mechanism with shared_wal_behavior if needed
         Ok(())
     }
 

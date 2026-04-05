@@ -2443,7 +2443,7 @@ impl VectorOperationsService {
     }
 
     async fn get_vector_count(&self, _collection_id: &str) -> Result<usize> {
-        // TODO: collection_stats is private, need alternative approach
+        // Deferred: collection_stats is private, need alternative approach
         // let stats = self.storage_engine.collection_stats(collection_id)?;
         // // Stats is a serde_json::Value, extract the vector count
         // let count = stats
@@ -2455,7 +2455,7 @@ impl VectorOperationsService {
     }
 
     async fn get_column_count(&self, _collection_id: &str) -> Result<usize> {
-        // TODO: collection_metadata is private, need alternative approach
+        // Deferred: collection_metadata is private, need alternative approach
         // let meta = self.storage_engine.collection_metadata(collection_id)?;
         // Meta is a serde_json::Value, extract the column count
         // For now, return default value

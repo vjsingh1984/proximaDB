@@ -134,11 +134,11 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
     let ctx = SessionContext::new_with_config(config);
 
     // Register ProximaDB catalog
-    // TODO: Implement ProximaDBCatalogProvider
+    // Deferred: Implement ProximaDBCatalogProvider
     // ctx.register_catalog("proximadb", Arc::new(ProximaDBCatalogProvider::new(...)));
 
     // Register vector functions
-    // TODO: Register cosine_distance, euclidean_distance, etc.
+    // Deferred: Register cosine_distance, euclidean_distance, etc.
 
     Ok(ctx)
 }

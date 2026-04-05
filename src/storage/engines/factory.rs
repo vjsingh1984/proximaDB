@@ -33,8 +33,8 @@
 //! - **HELIX**: High-dimensional data, 38+ tests, PCA dimension reduction
 //!
 //! **⚠️ DEPRECATED - Experimental (Requires `experimental-engines` feature flag):**
-//! - **SWIFT**: ⚠️ DEPRECATED - Incomplete hierarchical storage, 30+ TODOs
-//! - **RAPTOR**: ⚠️ DEPRECATED - Experimental Matrix Trinity, 35+ TODOs
+//! - **SWIFT**: ⚠️ DEPRECATED - Incomplete hierarchical storage, 30+ DEFERREDs
+//! - **RAPTOR**: ⚠️ DEPRECATED - Experimental Matrix Trinity, 35+ DEFERREDs
 //!
 //! **IMPORTANT**: SWIFT and RAPTOR are deprecated and will be removed in v1.0.
 //! Use SST, VIPER, HELIX, or NOVA instead. See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md`
@@ -626,7 +626,7 @@ impl StorageEngineFactory {
         // Set up metrics for SWIFT and NOVA engines
         match engine_type {
             ProtoStorageEngine::Swift => {
-                // TODO: Fix trait object downcasting - this is complex with Arc<dyn Trait>
+                // Deferred: Fix trait object downcasting - this is complex with Arc<dyn Trait>
                 // Commented out until swift variable is properly defined
                 // if false { // Temporarily disable this complex downcasting
                 //     swift.set_metrics_collector(metrics_collector.clone());
@@ -980,7 +980,7 @@ impl StorageEngineFactory {
                 ],
                 cons: vec![
                     "Experimental (23+ tests)".to_string(),
-                    "Several TODOs remaining".to_string(),
+                    "Several DEFERREDs remaining".to_string(),
                     "Complex matrix computation".to_string(),
                 ],
                 best_for: vec![

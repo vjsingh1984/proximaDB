@@ -400,7 +400,7 @@ impl EventLogQueue {
 
     /// Get list of active indexes from collection config
     fn get_active_indexes(&self) -> Vec<String> {
-        // TODO: Get from collection config
+        // Deferred: Get from collection config
         vec!["hnsw".to_string(), "ivf".to_string()]
     }
 

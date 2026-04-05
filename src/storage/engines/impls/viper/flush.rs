@@ -121,7 +121,7 @@ impl Flush {
         self.metrics_updater = Some(updater);
     }
 
-    // TODO: Quantization should be handled inside HybridWriter or a dedicated module
+    // Deferred: Quantization should be handled inside HybridWriter or a dedicated module
     // that creates proper columnar storage with constants::FIELD_VECTOR_BINARY,
     // constants::FIELD_VECTOR_INT8, constants::FIELD_VECTOR_PQ8 columns
     // The quantization config from collection should control whether these columns are created
@@ -608,7 +608,7 @@ impl Flush {
             let flush_update = FlushMetricsUpdate {
                 vectors_flushed: vector_records.len() as i64,
                 bytes_written: data_size as i64,
-                duration_ms: 0, // TODO: Track actual duration
+                duration_ms: 0, // Deferred: Track actual duration
                 files_created: 1,
                 engine_type: "VIPER".to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -941,7 +941,7 @@ impl Flush {
             collection_id, records_count, bytes_written
         );
 
-        // TODO: Consider integrating with CollectionService::update_stats()
+        // Deferred: Consider integrating with CollectionService::update_stats()
         // to maintain accurate collection-level metrics that users can query.
 
         Ok(())

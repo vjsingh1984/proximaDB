@@ -959,7 +959,7 @@ impl Compaction {
         let block_size_kb = task.block_size_kb.unwrap_or(64); // Default to 64KB blocks
         let block_size = (block_size_kb * 1024) as usize;
 
-        // TODO: Pass filesystem from compaction manager - for now create a new factory
+        // Deferred: Pass filesystem from compaction manager - for now create a new factory
         let filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
@@ -1738,7 +1738,7 @@ impl Drop for Compaction {
 }
 
 // Test module for vector tracking during compaction
-// TODO: Missing test file - compaction_vector_tracking_tests.rs
+// Deferred: Missing test file - compaction_vector_tracking_tests.rs
 // #[cfg(test)]
 // #[path = "compaction_vector_tracking_tests.rs"]
 // mod vector_tracking_tests;

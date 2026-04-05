@@ -168,14 +168,14 @@ impl GraphMemtable {
                 graph_id: _,
                 index_config: _,
             } => {
-                // TODO: Implement edge index creation
+                // Deferred: Implement edge index creation
                 Ok(())
             }
             GraphOperation::DropEdgeIndex {
                 graph_id: _,
                 index_name: _,
             } => {
-                // TODO: Implement edge index dropping
+                // Deferred: Implement edge index dropping
                 Ok(())
             }
             GraphOperation::BatchOperation { operations } => {

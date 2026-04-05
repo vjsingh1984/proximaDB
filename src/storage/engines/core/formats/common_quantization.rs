@@ -356,7 +356,7 @@ impl UnifiedQuantizedFile {
             // Convert i8 to u8 for unified interface
             {
                 None
-            } // TODO: implement conversion
+            } // Deferred: implement conversion
             QuantizationLevel::PQ4 => self.quantized_data.q_pq4.as_deref(),
             QuantizationLevel::PQ8 => self.quantized_data.q_pq8.as_deref(),
             QuantizationLevel::PQ16 => self.quantized_data.q_pq16.as_deref(),

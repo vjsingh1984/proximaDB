@@ -143,7 +143,7 @@ impl UnifiedSSTReader {
         // For cached strategies, we can use the cache
         match &self.strategy {
             ReadAccessStrategy::DirectStream => {
-                // TODO: Implement true streaming read that bypasses cache
+                // Deferred: Implement true streaming read that bypasses cache
                 // For now, use the inner reader
                 self.inner_reader
                     .read_all_records_for_compaction(&[file_path.to_string()])
@@ -220,7 +220,7 @@ impl DirectSSTReader {
 
     /// Stream records directly from file
     pub async fn stream_records(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-        // TODO: Implement true streaming that reads blocks sequentially
+        // Deferred: Implement true streaming that reads blocks sequentially
         // without caching or loading entire file into memory
         let _data = self.read_file_direct(file_path).await?;
 

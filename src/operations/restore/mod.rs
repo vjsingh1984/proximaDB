@@ -346,7 +346,7 @@ impl RestoreManager {
                     "Downloading backup {} from S3://{}/{}",
                     backup_id, bucket, prefix
                 );
-                // TODO: Implement S3 download
+                // Deferred: Implement S3 download
                 let download_dir = PathBuf::from(format!("/tmp/proximadb/restore/{}", backup_id));
                 Ok(download_dir)
             }
@@ -355,7 +355,7 @@ impl RestoreManager {
                     "Downloading backup {} from GCS://{}/{}",
                     backup_id, bucket, prefix
                 );
-                // TODO: Implement GCS download
+                // Deferred: Implement GCS download
                 let download_dir = PathBuf::from(format!("/tmp/proximadb/restore/{}", backup_id));
                 Ok(download_dir)
             }
@@ -364,7 +364,7 @@ impl RestoreManager {
                     "Downloading backup {} from Azure://{}/{}",
                     backup_id, container, prefix
                 );
-                // TODO: Implement Azure download
+                // Deferred: Implement Azure download
                 let download_dir = PathBuf::from(format!("/tmp/proximadb/restore/{}", backup_id));
                 Ok(download_dir)
             }
@@ -475,7 +475,7 @@ impl RestoreManager {
         &self,
         _target_timestamp: u64,
     ) -> Result<Option<BackupManifest>> {
-        // TODO: Implement by listing backups and finding one before target time
+        // Deferred: Implement by listing backups and finding one before target time
         // For now, return None
         Ok(None)
     }

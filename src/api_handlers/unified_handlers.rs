@@ -1171,7 +1171,7 @@ impl UnifiedHandlers {
                     if !start_node_ids.is_empty() {
                         let graph_req = request.graph_traversal_request.clone().unwrap_or_default();
                         let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
-                            graph_id: "default".to_string(), // TODO: Extract from request or pass as parameter
+                            graph_id: "default".to_string(), // Deferred: Extract from request or pass as parameter
                             start_node_id: start_node_ids.first().cloned().unwrap_or_default(), // Use first for now, need to handle multiple starts
                             max_depth: if graph_req.max_depth == 0 {
                                 3
@@ -1201,7 +1201,7 @@ impl UnifiedHandlers {
                     }
                 }
             }
-            // TODO: Implement other combination strategies
+            // Deferred: Implement other combination strategies
             _ => return Err(anyhow::anyhow!("Unsupported combination strategy")),
         }
 

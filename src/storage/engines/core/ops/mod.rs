@@ -150,7 +150,7 @@ pub mod proxima_tensor_encoding;
 
 // Zero-copy I/O system moved to core/io/zero_copy
 // Import from there: use crate::storage::engines::core::io::zero_copy::*;
-// TODO: Create these modules when needed:
+// Deferred: Create these modules when needed:
 // pub mod validation_common;
 // pub mod statistics_common;
 // pub mod batch_common;
@@ -546,7 +546,7 @@ pub trait UniversalEngineCapabilities {
     /// Get performance characteristics
     fn get_performance_profile(&self) -> PerformanceProfile;
 
-    // TODO: Restore when ResourceRequirements is available
+    // Deferred: Restore when ResourceRequirements is available
     // fn get_resource_requirements(&self) -> ResourceRequirements;
 }
 
@@ -626,7 +626,7 @@ pub trait UniversalEngineOperations {
     ) -> Result<Vec<VectorRecord>>;
 
     /// Batch operations
-    // TODO: Restore when BatchResult is available
+    // Deferred: Restore when BatchResult is available
     // async fn batch_insert(&self, vectors: Vec<VectorRecord>) -> Result<BatchResult>;
     async fn batch_search(
         &self,
@@ -638,7 +638,7 @@ pub trait UniversalEngineOperations {
     /// Administrative operations
     async fn optimize(&self) -> Result<()>;
     async fn compact(&self) -> Result<()>;
-    // TODO: Restore when UniversalStatistics is available
+    // Deferred: Restore when UniversalStatistics is available
     // async fn get_statistics(&self) -> Result<UniversalStatistics>;
     async fn health_check(&self) -> Result<HealthStatus>;
 }

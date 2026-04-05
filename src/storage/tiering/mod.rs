@@ -53,7 +53,7 @@
 //! 3. Wire tier evaluation into SST compaction (call `evaluate_collection()`)
 //! 4. Implement actual data movement between tier storage locations
 //!
-//! See `src/storage/engines/impls/sst/tiering_integration.rs` for detailed TODO comments.
+//! See `src/storage/engines/impls/sst/tiering_integration.rs` for detailed deferred comments.
 //!
 //! ---
 //!

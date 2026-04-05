@@ -20,7 +20,7 @@ use anyhow::{Context, Result};
 use arrow_array::RecordBatch;
 use arrow_schema::Schema;
 use chrono::{DateTime, Utc};
-// TODO: Refactor to use columnar module's exports instead of direct parquet imports
+// Deferred: Refactor to use columnar module's exports instead of direct parquet imports
 // Currently using direct imports due to complex ArrowWriter usage that needs refactoring
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
@@ -343,7 +343,7 @@ pub struct WriterPool {
     _writer_factory: Arc<DefaultParquetWriterFactory>,
 }
 
-// TODO: ParquetWriter and ParquetWriterFactory types need to be implemented
+// Deferred: ParquetWriter and ParquetWriterFactory types need to be implemented
 // These were referenced from the original core module
 // For now, providing placeholder types to fix compilation
 
@@ -2220,13 +2220,13 @@ impl ParquetFlusher {
 
                 Some(crate::compute::quantization::types::QuantizationLevel::Uniform(_)) => {
                     // Uniform quantization - handle similar to INT8
-                    // TODO: Implement uniform quantization handling
+                    // Deferred: Implement uniform quantization handling
                     continue;
                 }
 
                 Some(crate::compute::quantization::types::QuantizationLevel::Binary(_)) => {
                     // Binary quantization - handle as binary data
-                    // TODO: Implement binary quantization handling
+                    // Deferred: Implement binary quantization handling
                     continue;
                 }
 

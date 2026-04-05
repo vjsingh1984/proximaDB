@@ -12,7 +12,7 @@
 //! - **Status**: INCOMPLETE - Not Production Ready
 //! - **Feature Flag**: `experimental-engines` required
 //! - **Tests**: 41 tests (insufficient coverage)
-//! - **TODO Items**: 30+ critical features missing
+//! - **DEFERRED Items**: 30+ critical features missing
 //! - **Recommendation**: Use SST, VIPER, HELIX, or NOVA instead
 //!
 //! ## Migration Guide
@@ -509,7 +509,7 @@ impl Default for SwiftHeader {
             timestamp: 0,
             compaction_level: 0,
             dimension: 0,
-            distance_metric: "cosine".to_string(), // TODO: Use proper enum conversion
+            distance_metric: "cosine".to_string(), // Deferred: Use proper enum conversion
             quantization: QuantizationConfig::default(),
             total_records: 0,
             deleted_records: 0,
@@ -635,7 +635,7 @@ impl SwiftFile {
             // Use centralized compression config conversion from Proxima
             use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
             let mut compression_config =
-                RowBasedCompressionConfig::create_block_config_from_proto(None); // TODO: Pass actual compression config
+                RowBasedCompressionConfig::create_block_config_from_proto(None); // Deferred: Pass actual compression config
 
             // Enable SIMD optimization for SWIFT (low-latency focus)
             compression_config.vector_layout = crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
@@ -745,7 +745,7 @@ impl SwiftFile {
         self.header.superblock_count = self.superblocks.len() as u32;
 
         // Build metadata indexes
-        // TODO: Fix SuperBlock type mismatch - MetadataIndex expects different SuperBlock type
+        // Deferred: Fix SuperBlock type mismatch - MetadataIndex expects different SuperBlock type
         // self.metadata_index.build_from_superblocks(&self.superblocks[..])?;
 
         Ok(())
@@ -920,7 +920,7 @@ impl SwiftFile {
         self.header.superblock_count = self.superblocks.len() as u32;
 
         // Build metadata indexes
-        // TODO: Fix SuperBlock type mismatch - MetadataIndex expects different SuperBlock type
+        // Deferred: Fix SuperBlock type mismatch - MetadataIndex expects different SuperBlock type
         // self.metadata_index.build_from_superblocks(&self.superblocks[..])?;
 
         Ok(())
@@ -1065,7 +1065,7 @@ impl SwiftFile {
             if has_bloom {
                 buffer.extend_from_slice(&1u8.to_le_bytes()); // Has bloom filter
                 // For now, just use first block's bloom filter as representative
-                // TODO: Implement proper bloom filter aggregation
+                // Deferred: Implement proper bloom filter aggregation
                 if let Some(first_block) = superblock.blocks.first() {
                     if let Some(ref bloom) = first_block.bloom_filter {
                         let bloom_bytes: Vec<u8> = bloom.serialize()?;

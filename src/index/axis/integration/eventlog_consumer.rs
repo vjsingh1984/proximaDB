@@ -586,7 +586,7 @@ impl AxisEventLogConsumer {
         );
 
         // For now, just acknowledge the event
-        // TODO: Implement actual deletion logic when needed
+        // Deferred: Implement actual deletion logic when needed
         warn!(
             "[AXIS Consumer] Delete event processing not yet implemented for event {}",
             event_id

@@ -540,7 +540,7 @@ impl CommonColumnarOperations {
 
         // Initialize serializer
         let serialization_config = ColumnarSerializationConfig {
-            dimension: 768, // TODO: Make configurable
+            dimension: 768, // Deferred: Make configurable
             quantization: config.base_config.quantization.clone().into(),
             compression: config.serialization_config.to_serialization_compression(),
             memory_optimization: config.serialization_config.to_memory_optimization(),

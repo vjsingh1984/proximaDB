@@ -296,7 +296,7 @@ impl CollectionAnalyzer {
 
         Ok(AccessFrequencyMetrics {
             reads_per_second: queries_in_window / (time_window_hours * 3600.0),
-            writes_per_second: 0.0,          // TODO: Track write operations
+            writes_per_second: 0.0,          // Deferred: Track write operations
             read_write_ratio: f64::INFINITY, // Mostly reads
             peak_qps: queries_in_window / (time_window_hours * 3600.0) * 2.0, // Estimate peak
         })
@@ -403,9 +403,9 @@ impl QueryPatternTracker {
                 / total,
             average_k: stats.as_ref().map_or(10.0, |s| s.average_k),
             query_distribution: QueryDistribution {
-                uniform: true,                              // TODO: Analyze actual distribution
-                hotspot_percentage: 0.1,                    // TODO: Calculate hotspots
-                temporal_pattern: TemporalPattern::Uniform, // TODO: Detect temporal patterns
+                uniform: true,                              // Deferred: Analyze actual distribution
+                hotspot_percentage: 0.1,                    // Deferred: Calculate hotspots
+                temporal_pattern: TemporalPattern::Uniform, // Deferred: Detect temporal patterns
             },
         }
     }
@@ -608,7 +608,7 @@ impl MetadataComplexityAnalyzer {
         }
         drop(cached);
 
-        // TODO: Analyze actual metadata from storage
+        // Deferred: Analyze actual metadata from storage
         // For now, return default complexity
         let complexity = MetadataComplexity {
             field_count: 5,

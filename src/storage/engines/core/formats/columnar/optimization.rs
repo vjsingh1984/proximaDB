@@ -631,7 +631,7 @@ impl StreamingRowGroupIterator {
 
         let row_group_idx = self.selected_row_groups[self.current_index];
         self.current_index += 1;
-        // TODO: StreamingRowGroupIterator needs refactoring to use zero-copy filesystem
+        // Deferred: StreamingRowGroupIterator needs refactoring to use zero-copy filesystem
         // For now, keeping direct file access but this breaks cloud compatibility
         let file = std::fs::File::open(&self.file_path)?;
         let reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;

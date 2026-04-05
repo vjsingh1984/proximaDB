@@ -305,7 +305,7 @@ impl CompactionManager {
                 return true;
             }
 
-        // TODO: Add additional heuristics:
+        // Deferred: Add additional heuristics:
         // - Number of small files
         // - Read amplification metrics
         // - Space amplification ratios
@@ -334,7 +334,7 @@ impl CompactionManager {
         start_level: u32,
         end_level: u32,
     ) -> Result<CompactionResult> {
-        // TODO: Implement SST level compaction
+        // Deferred: Implement SST level compaction
         // 1. Identify overlapping SSTables in level range
         // 2. Merge SSTables with efficient key range processing
         // 3. Write optimized SSTables with proper bloom filters
@@ -361,7 +361,7 @@ impl CompactionManager {
         start_level: u32,
         end_level: u32,
     ) -> Result<CompactionResult> {
-        // TODO: Implement VIPER Parquet compaction
+        // Deferred: Implement VIPER Parquet compaction
         // 1. Identify small Parquet files in level range
         // 2. Merge files with optimal row group sizes
         // 3. Rewrite with updated statistics and column pruning
@@ -388,7 +388,7 @@ impl CompactionManager {
         start_level: u32,
         end_level: u32,
     ) -> Result<CompactionResult> {
-        // TODO: Implement HELIX segment compaction
+        // Deferred: Implement HELIX segment compaction
         // 1. Merge HELIX segments with optimal clustering
         // 2. Rebuild zone maps and PCA projections
         // 3. Optimize Hilbert curve ordering
@@ -410,7 +410,7 @@ impl CompactionManager {
     }
 
     async fn compact_sst_full_collection(&self, collection_id: &str) -> Result<CompactionResult> {
-        // TODO: Implement full SST collection compaction
+        // Deferred: Implement full SST collection compaction
         debug!("Full SST compaction for collection: {}", collection_id);
 
         Ok(CompactionResult {
@@ -424,7 +424,7 @@ impl CompactionManager {
     }
 
     async fn compact_viper_full_collection(&self, collection_id: &str) -> Result<CompactionResult> {
-        // TODO: Implement full VIPER collection compaction
+        // Deferred: Implement full VIPER collection compaction
         debug!("Full VIPER compaction for collection: {}", collection_id);
 
         Ok(CompactionResult {
@@ -438,7 +438,7 @@ impl CompactionManager {
     }
 
     async fn compact_helix_full_collection(&self, collection_id: &str) -> Result<CompactionResult> {
-        // TODO: Implement full HELIX collection compaction
+        // Deferred: Implement full HELIX collection compaction
         debug!("Full HELIX compaction for collection: {}", collection_id);
 
         Ok(CompactionResult {

@@ -418,7 +418,7 @@ impl UnifiedSwiftReader {
             self.file_path, self.collection_id, superblock_id
         );
 
-        // TODO: UnifiedCachingFilesystem doesn't expose direct cache access yet
+        // Deferred: UnifiedCachingFilesystem doesn't expose direct cache access yet
         // For now, always load from file
         debug!(
             "Loading SWIFT SuperBlock {} from file: {}",

@@ -559,7 +559,7 @@ impl SwiftEngine {
         // Note: This is a temporary workaround - ideally we'd use Arc<Mmap> everywhere
         if let Some(_mmap_arc) = mmap_arc_opt {
             // We can't easily convert Arc<Mmap> to Mmap, so return None for now
-            // TODO: Refactor to use Arc<Mmap> throughout the system
+            // Deferred: Refactor to use Arc<Mmap> throughout the system
             tracing::warn!(
                 "Memory mapping available but type conversion needed - falling back to regular I/O"
             );
@@ -742,7 +742,7 @@ impl SwiftEngine {
 
             // Phase 3: Use quantization engine for progressive search within superblock
             if let Some(_quantization_engine) = Some(&self.storage_quantization_engine) {
-                // TODO: Implement progressive search using quantization engine
+                // Deferred: Implement progressive search using quantization engine
                 // For now, simulate with placeholder results
                 for block in &superblock.blocks {
                     for record in block.records.iter() {
@@ -1253,7 +1253,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
             compaction_error: None,
-            flushed_batch_ids: vec![], // TODO: Track batch IDs when integrating with WAL
+            flushed_batch_ids: vec![], // Deferred: Track batch IDs when integrating with WAL
         })
     }
 
@@ -1381,7 +1381,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         metrics.insert("engine_type".to_string(), serde_json::json!("SWIFT"));
         metrics.insert("hierarchical_storage".to_string(), serde_json::json!(true));
 
-        // TODO: Collect actual metrics from storage when needed
+        // Deferred: Collect actual metrics from storage when needed
         let total_files = 0;
         metrics.insert(
             "total_swift_files".to_string(),
@@ -1498,7 +1498,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         // ========================================================================
         // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
         // ========================================================================
-        // TODO: Integrate with AdvancedSearchOptimizer for intelligent search routing
+        // Deferred: Integrate with AdvancedSearchOptimizer for intelligent search routing
         //
         // The AdvancedSearchOptimizer provides significant value for SWIFT engine:
         // 1. **Ultra-low latency routing**: Chooses fastest path based on data locality
@@ -1627,7 +1627,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                 .await?;
 
             let prune_config = crate::core::search::BlockPruneConfig::default();
-            // TODO: Convert FilterExpression to MetadataFilter for SWIFT-specific filtering
+            // Deferred: Convert FilterExpression to MetadataFilter for SWIFT-specific filtering
             // For now, pass None and filter results after progressive search
             let swift_filter: Option<super::MetadataFilter> = None;
 

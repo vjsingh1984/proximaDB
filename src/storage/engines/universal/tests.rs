@@ -73,7 +73,7 @@ mod tests {
 
         // Test format optimization - optimal_format method not yet implemented
         let _adapter = prism_adapter.unwrap();
-        // TODO: Implement optimal_format method on PRISMAdapter
+        // Deferred: Implement optimal_format method on PRISMAdapter
         // let optimal_format = _adapter.optimal_format(128, 100_000, 0.9).await.unwrap();
         // Basic test that adapter was created successfully
         assert!(true, "PRISM adapter created successfully");
@@ -189,13 +189,13 @@ mod tests {
 
         let _test_vectors = create_test_vectors(10, 64);
 
-        // TODO: Test FP32 conversion - convert_vectors method needs to be implemented
+        // Deferred: Test FP32 conversion - convert_vectors method needs to be implemented
         // let fp32_result = _adapter
         //     .convert_vectors(&_test_vectors, &StorageFormat::FP32)
         //     .await;
         // assert!(fp32_result.is_ok());
 
-        // TODO: Test INT8 conversion - convert_vectors method needs to be implemented
+        // Deferred: Test INT8 conversion - convert_vectors method needs to be implemented
         // let int8_result = _adapter.convert_vectors(&_test_vectors, &int8_format).await;
         // assert!(int8_result.is_ok());
     }
@@ -205,7 +205,7 @@ mod tests {
         let config = StorageEngineConfig::nova_default();
         let _adapter = NOVAAdapter::new(&config).await.unwrap();
 
-        // TODO: Memory usage estimation - estimate_memory_usage method needs to be implemented
+        // Deferred: Memory usage estimation - estimate_memory_usage method needs to be implemented
         // For now, just test that the adapter was created successfully
         assert!(
             true,

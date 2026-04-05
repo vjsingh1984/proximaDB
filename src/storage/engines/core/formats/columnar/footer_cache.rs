@@ -734,7 +734,7 @@ mod tests {
 
         let cache = ParquetFooterCache::new(config, filesystem).await.unwrap();
 
-        // TODO: Add stats() method to ParquetFooterCache if needed
+        // Deferred: Add stats() method to ParquetFooterCache if needed
         // let stats = cache.stats().await;
         // assert_eq!(stats.hit_count, 0);
         // assert_eq!(stats.miss_count, 0);

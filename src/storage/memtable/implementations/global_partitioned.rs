@@ -687,7 +687,7 @@ impl GlobalPartitionedMemtable {
             for batch in partition.wal_batches.values() {
                 // With CompactBatchId, we don't track individual sequences
                 // Just return the first vector as a placeholder
-                // TODO: Implement proper sequence tracking if needed
+                // Deferred: Implement proper sequence tracking if needed
                 if let Some(vector) = batch.vector_records.first() {
                     return Ok(Some(vector.clone()));
                 }

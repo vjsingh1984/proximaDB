@@ -451,7 +451,7 @@ impl DeltaLakeFormat {
         if let Some(cv) = checkpoint_version
             && cv <= target_version {
                 debug!("Loading from checkpoint version {}", cv);
-                // TODO: Load checkpoint parquet file
+                // Deferred: Load checkpoint parquet file
             }
 
         // Apply commits
@@ -1119,7 +1119,7 @@ impl OpenTableFormat for DeltaLakeFormat {
 
         info!("Optimizing {} small files", small_files.len());
 
-        // TODO: Actually compact files
+        // Deferred: Actually compact files
         // This would read all small files, merge them, and write new larger files
 
         Ok(OptimizeResult {

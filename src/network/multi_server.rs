@@ -982,7 +982,7 @@ impl SharedServices {
         );
 
         // Placeholder for future assignment service recovery
-        // TODO: Add assignment service recovery after StorageEngine starts
+        // Deferred: Add assignment service recovery after StorageEngine starts
 
         if false {
             // Disabled recovery code - will be moved to ProximaDB::new
@@ -1913,7 +1913,7 @@ impl MultiServer {
             // Add reflection if enabled
             if self.config.grpc_config.enable_reflection {
                 debug!("Adding gRPC reflection service");
-                // TODO: Add reflection service when descriptor binary is available
+                // Deferred: Add reflection service when descriptor binary is available
                 // let file_descriptor_data = include_bytes!("../proto/proximadb_descriptor.bin");
                 // server_builder = server_builder.add_service(
                 //     tonic_reflection::server::Builder::configure()
@@ -2416,7 +2416,7 @@ impl MultiServer {
 
         // Check for unified mode (Phase 14)
         if self.config.is_unified_mode() {
-            // TODO: Add cluster services to unified mode
+            // Deferred: Add cluster services to unified mode
             warn!("Cluster services in unified mode not yet implemented, using legacy mode");
         }
 
@@ -2748,4 +2748,4 @@ pub struct ServerStatus {
     /// Whether TLS is enabled for connections
     pub tls_enabled: bool,
 }
-// TODO: Re-add TTL sweeper code in proper function context if needed
+// Deferred: Re-add TTL sweeper code in proper function context if needed

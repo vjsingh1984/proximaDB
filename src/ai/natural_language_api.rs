@@ -1,6 +1,6 @@
 //! Natural Language Business Intelligence API - Market Leadership Implementation
 //!
-//! TODO 1: Complete Natural Language Business Intelligence API
+//! DEFERRED 1: Complete Natural Language Business Intelligence API
 //! Business Driver: 89% of enterprises want conversational business intelligence
 //! Market Impact: AI-native platform differentiation
 

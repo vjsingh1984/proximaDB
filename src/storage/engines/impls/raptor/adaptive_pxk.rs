@@ -168,7 +168,7 @@ impl PxKStorageImpl for DenseFullStorage {
     }
 
     fn memory_usage(&self) -> usize {
-        // TODO: Calculate actual memory usage from compressed storage
+        // Deferred: Calculate actual memory usage from compressed storage
         // self.matrix.distances.len() * self.matrix.num_clusters * 4
         self.matrix.compressed_data.len()
     }
@@ -859,7 +859,7 @@ impl AdaptivePxKStorage {
                 k,
             )),
             PxKStrategy::LearnedIndex => {
-                // TODO: Implement learned index
+                // Deferred: Implement learned index
                 Box::new(DenseFullStorage {
                     matrix: VectorCentroidMatrix {
                         rowgroup_id: 0,

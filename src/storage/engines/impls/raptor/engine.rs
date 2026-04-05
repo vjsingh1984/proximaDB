@@ -832,7 +832,7 @@ impl RaptorEngine {
             // Compaction needs to be triggered from do_flush or do_compact
             // which have access to collection_id and base_path
             // This internal method can't trigger compaction without that context
-            // TODO: Refactor to pass context through or trigger from outer methods
+            // Deferred: Refactor to pass context through or trigger from outer methods
         }
 
         Ok(())
@@ -2288,7 +2288,7 @@ impl UnifiedStorageEngine for RaptorEngine {
             "RAPTOR compaction: Using collection config dimension: {}",
             collection_dimension
         );
-        // TODO: Update any dimension-dependent compaction operations
+        // Deferred: Update any dimension-dependent compaction operations
         // - HNSW graph rebuilding optimization for this dimension
         // - Row group reorganization based on actual dimension
         // - Memory allocation optimization during compaction

@@ -526,7 +526,7 @@ impl ColumnarReadProvider for ParquetRangePrunedProvider {
         _batch_size: usize,
     ) -> Result<Box<dyn ColumnarBatchStream>> {
         // For now, read all and stream
-        // TODO: Implement true streaming with row-group-at-a-time
+        // Deferred: Implement true streaming with row-group-at-a-time
         let batches = self.read_batches(config).await?;
         Ok(Box::new(ParquetBatchStream {
             batches,

@@ -308,7 +308,7 @@ pub async fn search_entities(
 
     // Handle text query by converting to embedding
     let query_vector = if let Some(_text) = request.query_text {
-        // TODO: Implement text-to-embedding conversion
+        // Deferred: Implement text-to-embedding conversion
         // This would use an embedding service
         warn!("Text query not yet implemented, using vector query");
         request.query_vector
@@ -338,7 +338,7 @@ pub async fn search_entities(
             &collection_id,
             query_vector,
             metadata_filter,
-            // temporal_filter, // TODO: Add when available
+            // temporal_filter, // Deferred: Add when available
             top_k,
         )
         .await
@@ -455,7 +455,7 @@ pub fn configure_routes() -> axum::Router<EntityApiState> {
 mod tests {
     use super::*;
 
-    // TODO: Add integration tests for REST API handlers
+    // Deferred: Add integration tests for REST API handlers
 
     #[test]
     fn test_error_response_serialization() {

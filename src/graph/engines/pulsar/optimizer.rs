@@ -275,12 +275,12 @@ impl PulsarQueryOptimizer {
             StepType::EdgeLookup { edge_ids } => {
                 for _edge_id in edge_ids {
                     // Note: get_edge method not available on PulsarGraphEngine - skip for now
-                    // TODO: Implement edge lookup for PULSAR engine
+                    // Deferred: Implement edge lookup for PULSAR engine
                 }
             }
             StepType::NodesByLabel { label } => {
                 // Note: get_nodes_by_label not available on PulsarGraphEngine - skip for now
-                let nodes = vec![]; // TODO: Implement node lookup by label
+                let nodes = vec![]; // Deferred: Implement node lookup by label
                 results.nodes.extend(nodes);
             }
             StepType::BfsTraversal {

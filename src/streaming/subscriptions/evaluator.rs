@@ -89,7 +89,7 @@ impl QueryEvaluator {
         top_k: usize,
         score_threshold: f32,
     ) -> Vec<ScoredResult> {
-        let _start = std::time::Instant::now(); // TODO: Add timing metrics
+        let _start = std::time::Instant::now(); // Deferred: Add timing metrics
 
         // Use a max-heap with negated scores (to get min behavior for top-k)
         let mut heap: BinaryHeap<HeapEntry> = BinaryHeap::with_capacity(top_k + 1);

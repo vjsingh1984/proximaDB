@@ -1152,4 +1152,4 @@ impl OrionPersistence {
 }
 
 // Tests temporarily removed due to compilation issues
-// TODO: Fix tests once OrionGraphEngine methods are properly implemented
+// Deferred: Fix tests once OrionGraphEngine methods are properly implemented

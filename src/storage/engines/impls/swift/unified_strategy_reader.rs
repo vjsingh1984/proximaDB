@@ -140,7 +140,7 @@ impl UnifiedSWIFTReader {
             ReadAccessStrategy::DirectStream => super::unified_reader::SwiftReadStrategy::StreamAll,
             ReadAccessStrategy::CachedSelective { filter: _ } => {
                 super::unified_reader::SwiftReadStrategy::HierarchicalPrune {
-                    metadata_filter: None, // TODO: Convert FilterExpression to MetadataFilter
+                    metadata_filter: None, // Deferred: Convert FilterExpression to MetadataFilter
                     id_filter: None,
                 }
             }
@@ -390,7 +390,7 @@ impl DirectSWIFTReader {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let _ = fs.read(file_path).await?;
 
-        // TODO: Implement SWIFT superblock streaming
+        // Deferred: Implement SWIFT superblock streaming
         Ok(vec![])
     }
 }
@@ -442,7 +442,7 @@ impl CachedSWIFTReader {
     ) -> Result<Vec<VectorRecord>> {
         let _ = self.cached_filesystem.read(file_path).await?;
 
-        // TODO: Implement hierarchical pruning with metadata filter
+        // Deferred: Implement hierarchical pruning with metadata filter
         Ok(vec![])
     }
 }

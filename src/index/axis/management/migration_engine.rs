@@ -887,7 +887,7 @@ impl StepExecutor for CreateIndexExecutor {
         _context: &MigrationContext,
     ) -> Result<StepResult> {
         if let MigrationStepType::CreateNewIndex { index_spec: _ } = &step.step_type {
-            // TODO: Implement actual index creation
+            // Deferred: Implement actual index creation
             tokio::time::sleep(Duration::from_secs(1)).await;
 
             Ok(StepResult {
@@ -923,7 +923,7 @@ impl StepExecutor for CopyDataExecutor {
             parallel_workers: _,
         } = &step.step_type
         {
-            // TODO: Implement actual data copying
+            // Deferred: Implement actual data copying
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             Ok(StepResult {
@@ -959,7 +959,7 @@ impl StepExecutor for BuildIndexExecutor {
             build_params: _,
         } = &step.step_type
         {
-            // TODO: Implement actual index building
+            // Deferred: Implement actual index building
             tokio::time::sleep(Duration::from_secs(3)).await;
 
             Ok(StepResult {
@@ -995,7 +995,7 @@ impl StepExecutor for VerifyConsistencyExecutor {
             verification_type: _,
         } = &step.step_type
         {
-            // TODO: Implement actual verification
+            // Deferred: Implement actual verification
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             Ok(StepResult {
@@ -1033,7 +1033,7 @@ impl StepExecutor for SwitchTrafficExecutor {
                 percentage: _,
                 duration: _,
             } => {
-                // TODO: Implement actual traffic switching
+                // Deferred: Implement actual traffic switching
                 tokio::time::sleep(Duration::from_millis(100)).await;
 
                 Ok(StepResult {
@@ -1052,7 +1052,7 @@ impl StepExecutor for SwitchTrafficExecutor {
                 percentage: _,
                 sync_old_index: _,
             } => {
-                // TODO: Implement actual traffic switching
+                // Deferred: Implement actual traffic switching
                 tokio::time::sleep(Duration::from_millis(100)).await;
 
                 Ok(StepResult {

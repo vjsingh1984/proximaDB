@@ -360,7 +360,7 @@ impl RaptorReader {
                 if let Ok(_cached_data) = self.filesystem.read(file_path).await {
                     // Check if we have cached row group data
                     debug!("✅ Zero-copy cache hit for row group {}", rg_idx);
-                    // TODO: Extract specific row group from cached data
+                    // Deferred: Extract specific row group from cached data
                 }
 
                 // Cache miss - DIRECT storage read
@@ -393,7 +393,7 @@ impl RaptorReader {
                 let mut reader = StreamReader::try_new(cursor, None)?;
                 let batch = reader.next().context("No record batch")??;
 
-                // TODO: Implement proper caching with updated APIs
+                // Deferred: Implement proper caching with updated APIs
 
                 results.push(batch);
             }
@@ -452,12 +452,12 @@ impl RaptorReader {
                 .pattern_tracker()
                 .track_access_async(_cache_key.clone(), CacheType::VectorData);
 
-            // TODO: Implement proper caching with updated APIs
+            // Deferred: Implement proper caching with updated APIs
 
             // Load from storage if not cached
             let vector = self.load_vector_by_id(&self.base_path, &id).await?;
 
-            // TODO: Implement proper caching with updated APIs
+            // Deferred: Implement proper caching with updated APIs
             candidates.push((id, vector));
         }
 

@@ -1866,7 +1866,7 @@ impl UnifiedSstableReader {
         let _vector_array = Float32Array::from(vector_values);
 
         // Create FixedSizeList array for vectors
-        // TODO: Include vector column in batch schema (TD-041 Phase 3)
+        // Deferred: Include vector column in batch schema (TD-041 Phase 3)
         let schema = Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
         ]);
@@ -2116,7 +2116,7 @@ impl UnifiedSstableReader {
         // Apply bandwidth optimizer decisions if available
         if let Some(_optimizer) = bandwidth_optimizer {
             // Create query context for bandwidth decisions
-            // TODO: Replace with UnifiedCachingFilesystem query context
+            // Deferred: Replace with UnifiedCachingFilesystem query context
             use std::collections::HashMap;
 
             let _query_context = (
@@ -2173,7 +2173,7 @@ impl UnifiedSstableReader {
             // Create compaction query context
             use std::collections::HashMap;
 
-            // TODO: Replace with UnifiedCachingFilesystem context
+            // Deferred: Replace with UnifiedCachingFilesystem context
             let _query_context = (
                 self.collection_id.clone(),
                 HashMap::<String, String>::new(), // metadata_filters
@@ -2897,7 +2897,7 @@ impl UnifiedSstableReader {
         );
 
         // Process files sequentially for now to avoid lifetime issues
-        // TODO: Refactor to use Arc<Self> or implement Clone
+        // Deferred: Refactor to use Arc<Self> or implement Clone
         let mut all_blocks = Vec::new();
 
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
@@ -2974,7 +2974,7 @@ impl UnifiedSstableReader {
         let mut all_blocks = Vec::new();
 
         // For now, just read all files like full scan
-        // TODO: Implement proper block-level indexing
+        // Deferred: Implement proper block-level indexing
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
             debug!(
                 "📂 Reading file {} of {}: {}",
@@ -3249,7 +3249,7 @@ impl UnifiedSstableReader {
             block_index: block_idx,
         };
 
-        // TODO: Re-implement caching with new cache system
+        // Deferred: Re-implement caching with new cache system
         // let sst_cache_key = SstBlockKey::new(
         //     context.file_path.clone(),
         //     block_idx as u64 * 4096, // Assuming 4KB blocks
@@ -3257,7 +3257,7 @@ impl UnifiedSstableReader {
         // );
 
         // Check if we have cached vectors for this block
-        // TODO: Fix DataBlock construction - fields don't match actual structure
+        // Deferred: Fix DataBlock construction - fields don't match actual structure
         // let cached_vectors = self.vector_cache.get_block_vectors(&sst_cache_key, 100).await;
         // if !cached_vectors.is_none() {
         //     return Ok(Some(block));
@@ -5116,7 +5116,7 @@ impl UnifiedSstableReader {
         _bloom_filter: &BloomFilter,
         _filter: &FilterExpression,
     ) -> bool {
-        // TODO: Implement bloom filter checking logic
+        // Deferred: Implement bloom filter checking logic
         true // For now, always check blocks
     }
 

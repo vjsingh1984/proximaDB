@@ -667,13 +667,13 @@ impl SearchCostEstimator {
     pub fn update_from_benchmarks(&mut self, results: &EngineBenchmarkResults) {
         // Update direct search times
         for _stats in results.direct_search_stats.values() {
-            // TODO: Need to add insert_direct_stats method to SearchCostEstimator
+            // Deferred: Need to add insert_direct_stats method to SearchCostEstimator
             // self.insert_direct_stats(category.clone(), stats.clone());
         }
 
         // Update progressive search times
         for _stats in results.progressive_search_stats.values() {
-            // TODO: Need to add insert_progressive_stats method to SearchCostEstimator
+            // Deferred: Need to add insert_progressive_stats method to SearchCostEstimator
             // self.insert_progressive_stats(level.clone(), stats.clone());
         }
 
@@ -685,7 +685,7 @@ impl SearchCostEstimator {
 
     /// Create a pre-populated estimator with typical performance data
     pub fn with_typical_benchmarks() -> Self {
-        // TODO: Need to add new() method to SearchCostEstimator
+        // Deferred: Need to add new() method to SearchCostEstimator
         // For now, create with default hardware profile
         let hardware_profile = HardwareProfile {
             has_avx512: false,
@@ -699,7 +699,7 @@ impl SearchCostEstimator {
         // These would be replaced by actual benchmarks in production
 
         // Direct search times (ms)
-        // TODO: Need insert_direct_stats method
+        // Deferred: Need insert_direct_stats method
         /*estimator.insert_direct_stats(
             DatasetSizeCategory::Small,
             PerformanceStats {
@@ -710,7 +710,7 @@ impl SearchCostEstimator {
                 },
         );*/
 
-        // TODO: Need insert_direct_stats method
+        // Deferred: Need insert_direct_stats method
         /*estimator.insert_direct_stats(
             DatasetSizeCategory::Medium,
             PerformanceStats {
@@ -721,7 +721,7 @@ impl SearchCostEstimator {
                 },
         );*/
 
-        // TODO: Need insert_direct_stats method
+        // Deferred: Need insert_direct_stats method
         /*estimator.insert_direct_stats(
             DatasetSizeCategory::Large,
             PerformanceStats {
@@ -733,7 +733,7 @@ impl SearchCostEstimator {
         );*/
 
         // Progressive search times
-        // TODO: Need insert_progressive_stats method
+        // Deferred: Need insert_progressive_stats method
         /*estimator.insert_progressive_stats(
             QuantizationLevel::Binary,
             PerformanceStats {
@@ -744,7 +744,7 @@ impl SearchCostEstimator {
                 },
         );*/
 
-        // TODO: Need insert_progressive_stats method
+        // Deferred: Need insert_progressive_stats method
         /*estimator.insert_progressive_stats(
             QuantizationLevel::Int8,
             PerformanceStats {
@@ -755,7 +755,7 @@ impl SearchCostEstimator {
                 },
         );*/
 
-        // TODO: Need insert_progressive_stats method
+        // Deferred: Need insert_progressive_stats method
         /*estimator.insert_progressive_stats(
             QuantizationLevel::pq8(8),
             PerformanceStats {

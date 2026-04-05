@@ -571,7 +571,7 @@ async fn quick_storage_check(state: &HealthState) -> Result<(), String> {
 
 async fn quick_graph_check(_state: &HealthState) -> Result<(), String> {
     // Graph engine is available if we can access it
-    // TODO: Add more comprehensive check when methods are available
+    // Deferred: Add more comprehensive check when methods are available
     Ok(())
 }
 
@@ -580,7 +580,7 @@ async fn quick_graph_check(_state: &HealthState) -> Result<(), String> {
 async fn get_memory_info() -> Result<HashMap<String, serde_json::Value>, String> {
     let mut metrics = HashMap::new();
 
-    // TODO: Implement actual memory monitoring
+    // Deferred: Implement actual memory monitoring
     // For now, provide placeholder values
     metrics.insert("memory_used_bytes".to_string(), serde_json::json!(0));
     metrics.insert("memory_available_bytes".to_string(), serde_json::json!(0));

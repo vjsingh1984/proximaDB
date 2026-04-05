@@ -455,10 +455,10 @@ impl FilterPushdownPlanner {
         let selectivity = self.estimate_selectivity(storage_filter, collection_stats);
 
         Ok(IndexFilter {
-            allowed_ids: None, // TODO: Query metadata index
+            allowed_ids: None, // Deferred: Query metadata index
             blocked_ids: None,
             bloom_filter: if self.config.enable_bloom_filters {
-                // TODO: Create bloom filter from allowed IDs
+                // Deferred: Create bloom filter from allowed IDs
                 None
             } else {
                 None

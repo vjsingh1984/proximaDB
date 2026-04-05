@@ -268,7 +268,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         // For now, similarity search is delegated to storage engine
         let engine = self.storage_engine.read().await;
         if let Some(_engine) = engine.as_ref() {
-            // TODO: Implement similarity search through storage engine
+            // Deferred: Implement similarity search through storage engine
             Err(anyhow::anyhow!(
                 "Similarity search should be done through storage engine"
             ))

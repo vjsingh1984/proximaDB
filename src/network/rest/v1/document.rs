@@ -558,7 +558,7 @@ async fn aggregate_documents(
 
 /// Create an index
 /// Note: Indexes are created during collection creation via the config.
-/// This endpoint is for adding indexes to existing collections (TODO: implement)
+/// This endpoint is for adding indexes to existing collections (deferred: implement)
 async fn create_index(
     State(_state): State<DocumentApiState>,
     Path(collection): Path<String>,
@@ -566,7 +566,7 @@ async fn create_index(
 ) -> ApiResult<JsonResponse<serde_json::Value>> {
     info!("Creating index on {}: {:?}", collection, request.path);
 
-    // TODO: Implement adding indexes to existing collections
+    // Deferred: Implement adding indexes to existing collections
     // For now, indexes must be specified at collection creation time
     Err(ApiError::InvalidArgument(
         "Creating indexes on existing collections is not yet supported. Specify indexes when creating the collection.".to_string()

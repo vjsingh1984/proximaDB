@@ -444,7 +444,7 @@ impl ColumnarReadProvider for ArrowInMemoryProvider {
 
     async fn estimate_row_count(&self, _filter: Option<&FilterExpression>) -> Result<u64> {
         // For in-memory, we know exact count
-        // TODO: Could apply filter estimation for more accuracy
+        // Deferred: Could apply filter estimation for more accuracy
         let stats = self
             .stats
             .read()

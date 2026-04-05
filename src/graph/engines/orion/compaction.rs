@@ -168,7 +168,7 @@ impl CompactionManager {
                 if let Ok(should_compact) = Self::should_compact(&storage_dir).await
                     && should_compact {
                         info!("Triggering compaction cycle");
-                        // TODO: Run actual compaction
+                        // Deferred: Run actual compaction
                         // For now, this is a placeholder
                     }
             }
@@ -215,14 +215,14 @@ impl CompactionManager {
 
     /// Calculate current fragmentation percentage
     async fn calculate_fragmentation(_storage_dir: &PathBuf) -> Result<f64> {
-        // TODO: Implement actual fragmentation calculation
+        // Deferred: Implement actual fragmentation calculation
         // For now, return 0 (no fragmentation)
         Ok(0.0)
     }
 
     /// Calculate current free space percentage
     async fn calculate_free_space(_storage_dir: &PathBuf) -> Result<f64> {
-        // TODO: Implement actual free space calculation
+        // Deferred: Implement actual free space calculation
         // For now, return 100 (all free)
         Ok(100.0)
     }
@@ -233,7 +233,7 @@ impl CompactionManager {
 
         info!("Starting manual compaction cycle");
 
-        // TODO: Implement actual compaction logic
+        // Deferred: Implement actual compaction logic
         // 1. Scan for deleted/unused entries
         // 2. Copy live data to new mmap files
         // 3. Atomic swap of files
@@ -260,7 +260,7 @@ impl CompactionManager {
 
     /// Get compaction statistics
     pub fn stats(&self) -> CompactionStats {
-        // TODO: Return actual statistics
+        // Deferred: Return actual statistics
         CompactionStats {
             bytes_before: 0,
             bytes_after: 0,

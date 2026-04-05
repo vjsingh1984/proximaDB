@@ -680,7 +680,7 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
             true,
         ));
         // Use FixedSizeList with a default dimension - actual dimension should come from collection config
-        // TODO: Get dimension from collection config context
+        // Deferred: Get dimension from collection config context
         let default_dimension = 128; // This should come from collection config
         fields.push(Field::new(
             crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32,

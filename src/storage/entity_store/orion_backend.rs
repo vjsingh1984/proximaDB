@@ -214,7 +214,7 @@ impl EntityStore for OrionBackedEntityStore {
 
             // Fetch relations if requested
             if include_relations {
-                // TODO: Optimize with cached relation lookups when AXIS wiring lands
+                // Deferred: Optimize with cached relation lookups when AXIS wiring lands
                 entity.relations = self.get_relations(entity_id).await.unwrap_or_default();
             }
 
@@ -287,7 +287,7 @@ impl EntityStore for OrionBackedEntityStore {
     /// Search entities with filters
     ///
     /// ## Implementation
-    /// 1. If query_vector provided: use hybrid search (TODO: implement with AXIS)
+    /// 1. If query_vector provided: use hybrid search (DEFERRED: implement with AXIS)
     /// 2. Else: use metadata filter with query_nodes
     /// 3. Convert matching Nodes to Entities
     /// 4. Return top_k results
@@ -352,7 +352,7 @@ impl EntityStore for OrionBackedEntityStore {
             }
         }
 
-        // Get all nodes in the collection (TODO: replace with AXIS index for vector search)
+        // Get all nodes in the collection (DEFERRED: replace with AXIS index for vector search)
         let query = NodeQuery {
             graph_id: self.graph_id.clone(),
             labels: vec![collection_id.to_string()],

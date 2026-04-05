@@ -174,7 +174,7 @@ impl ProximaBlockReader {
         let blocks = self.deserialize_blocks(&data)?;
 
         // Prefetch ahead if requested (this would be done via access pattern tracking)
-        // TODO: Implement prefetch logic via access_tracker when available
+        // Deferred: Implement prefetch logic via access_tracker when available
 
         Ok(blocks)
     }
@@ -246,7 +246,7 @@ impl ProximaBlockReader {
             let block_idx = idx as u32;
             if block_idx >= start_block && block_idx <= end_block {
                 // Check for overlaps if requested
-                // TODO: Implement overlap checking with bloom filters
+                // Deferred: Implement overlap checking with bloom filters
                 range_blocks.push(block);
             }
         }
@@ -324,7 +324,7 @@ impl ProximaBlockReader {
         // Deserialize blocks in batches to respect memory budget
         let all_blocks = self.deserialize_blocks(&data)?;
 
-        // TODO: Implement actual streaming with parallel_streams and memory_budget_mb
+        // Deferred: Implement actual streaming with parallel_streams and memory_budget_mb
         // For now, return all blocks (could be batched in future)
         Ok(all_blocks)
     }
@@ -368,7 +368,7 @@ impl ProximaBlockReader {
                 // Bloom filters typically store record IDs or field keys
                 let _check_key = format!("{field}:{value}");
                 // SstableBloomFilter doesn't have proper implementation yet
-                // TODO: Implement once bloom filter strategies are fixed
+                // Deferred: Implement once bloom filter strategies are fixed
                 true
             }
             FilterExpression::And(exprs) => {

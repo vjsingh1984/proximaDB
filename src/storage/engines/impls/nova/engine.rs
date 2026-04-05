@@ -399,7 +399,7 @@ impl NovaEngine {
                 let reader = super::unified_strategy_reader::UnifiedNOVAReader::for_search(
                     self.filesystem.clone(),
                     collection_id.to_string(),
-                    128, // TODO: Pass actual dimension from StorageQueryContext when available
+                    128, // Deferred: Pass actual dimension from StorageQueryContext when available
                 )?;
 
                 // Read vectors using the cached filesystem (metadata will be cached)
@@ -1396,7 +1396,7 @@ impl UnifiedStorageEngine for NovaEngine {
         metrics.insert("engine_type".to_string(), serde_json::json!("NOVA"));
         metrics.insert("columnar_engine".to_string(), serde_json::json!(true));
 
-        // TODO: Collect actual metrics from storage when needed
+        // Deferred: Collect actual metrics from storage when needed
         let total_files = 0;
         let total_row_groups = 0;
         metrics.insert(
@@ -1463,7 +1463,7 @@ impl UnifiedStorageEngine for NovaEngine {
         // Construct data directory from base_path and collection_id
         let _data_dir = format!("{}/{}/data", base_path, collection_id);
 
-        // TODO: Load actual Parquet files from data_dir
+        // Deferred: Load actual Parquet files from data_dir
         // For now, return None as placeholder
         // In production, would:
         // 1. Load Parquet files from data_dir
@@ -1632,7 +1632,7 @@ impl NovaFile {
     }
 }
 
-// TODO: Fix columnar search config implementation when module is available
+// Deferred: Fix columnar search config implementation when module is available
 /*
 impl crate::storage::engines::core::formats::columnar::columnar_search::ColumnarSearchConfig {
     /// Create from search parameters

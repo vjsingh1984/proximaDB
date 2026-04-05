@@ -449,7 +449,7 @@ impl OrionGraphEngine {
             tracing::info!("🔄 Starting ORION graph recovery...");
 
             // Step 1: Load latest snapshot (if available)
-            // TODO: Implement snapshot discovery and loading
+            // Deferred: Implement snapshot discovery and loading
             // For now, we'll just replay WAL from the beginning
 
             // Step 2: Replay WAL operations

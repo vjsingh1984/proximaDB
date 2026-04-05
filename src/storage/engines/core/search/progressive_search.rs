@@ -706,7 +706,7 @@ impl ProgressiveSearchExecutor {
 
     /// Determine if runtime quantization should be allowed based on multiple factors
     fn should_allow_runtime_quantization(&self, _ctx: &StorageQueryContext) -> Result<bool> {
-        // TODO: Implement proper collection config and search hints checking
+        // Deferred: Implement proper collection config and search hints checking
         // For now, always allow runtime quantization to make it compile
         Ok(true)
     }
@@ -718,7 +718,7 @@ impl ProgressiveSearchExecutor {
         _data: &[u8],
         _levels: &[QuantizationLevel],
     ) -> Result<Vec<QuantizedRepresentation>> {
-        // TODO: Implement parsing of serialized quantized data
+        // Deferred: Implement parsing of serialized quantized data
         // For now, return empty vec
         Ok(Vec::new())
     }

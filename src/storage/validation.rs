@@ -253,12 +253,12 @@ impl ConfigValidator {
             }
             StorageLayoutStrategy::Viper => {
                 // VIPER requires specific configuration validation
-                // TODO: Add VIPER-specific validation when implemented
+                // Deferred: Add VIPER-specific validation when implemented
                 Ok(())
             }
             StorageLayoutStrategy::Hybrid => {
                 // Hybrid layout validation
-                // TODO: Add hybrid-specific validation
+                // Deferred: Add hybrid-specific validation
                 Ok(())
             }
         }

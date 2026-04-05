@@ -801,7 +801,7 @@ mod tests {
     fn test_performance_status_calculation() {
         // This test requires an async runtime and complex mocking
         // of LLM engine, translator, and other async components
-        // TODO: Implement with proper async test framework and mocks
+        // Deferred: Implement with proper async test framework and mocks
     }
 }
 

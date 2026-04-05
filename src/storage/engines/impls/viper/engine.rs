@@ -2249,7 +2249,7 @@ impl UnifiedStorageEngine for ViperEngine {
         // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
         // ========================================================================
 
-        // TODO: Enable AdvancedSearchOptimizer for intelligent search routing
+        // Deferred: Enable AdvancedSearchOptimizer for intelligent search routing
         //
         // The AdvancedSearchOptimizer provides significant value for VIPER engine:
         // 1. **Columnar predicate pushdown**: Optimizes Parquet file filtering

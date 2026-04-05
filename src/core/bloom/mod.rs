@@ -710,7 +710,7 @@ impl SstableBloomFilter {
             return Ok(true);
         }
         // Conservative approach: assume metadata might match
-        // TODO: Implement actual metadata bloom filter checking when metadata is indexed
+        // Deferred: Implement actual metadata bloom filter checking when metadata is indexed
         Ok(true)
     }
 

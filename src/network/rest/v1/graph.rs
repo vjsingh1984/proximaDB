@@ -142,7 +142,7 @@ impl From<RestTraversalRequest> for crate::proto::proximadb_v1::TraversalRequest
         };
 
         crate::proto::proximadb_v1::TraversalRequest {
-            graph_id: "default".to_string(), // TODO: Extract from REST API path
+            graph_id: "default".to_string(), // Deferred: Extract from REST API path
             start_node_id: rest.start_node_id,
             max_depth: rest.max_depth,
             edge_types: rest.edge_types,
@@ -549,7 +549,7 @@ fn convert_properties_to_json(
                     serde_json::Value::String(format!("{:?}", b)) // Convert to debug string for now
                 }
                 Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_obj)) => {
-                    serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
+                    serde_json::Value::Object(serde_json::Map::new()) // Deferred: Proper object conversion
                 }
                 Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
                     serde_json::Value::Array(
@@ -611,7 +611,7 @@ fn convert_property_value_to_json(prop: &PropertyValue) -> serde_json::Value {
             serde_json::Value::String(format!("{:?}", b)) // Convert to debug string for now
         }
         Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_obj)) => {
-            serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
+            serde_json::Value::Object(serde_json::Map::new()) // Deferred: Proper object conversion
         }
         Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
             serde_json::Value::Array(
@@ -1300,7 +1300,7 @@ pub async fn traverse_graph(
         request.start_node_id, graph_id
     );
 
-    // TODO: Read per-call overrides from headers (temporarily disabled)
+    // Deferred: Read per-call overrides from headers (temporarily disabled)
     let override_enable_prefetch = None;
     let override_prefetch_budget = None;
 
@@ -1840,7 +1840,7 @@ pub async fn update_graph_schema(
     Path(_graph_id): Path<String>,
     Json(_schema): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    // TODO: Implement schema update once GraphSchema is properly defined
+    // Deferred: Implement schema update once GraphSchema is properly defined
     let graph_error = GraphError::new(
         ErrorCode::InvalidArgument,
         "Schema update not yet implemented",

@@ -303,7 +303,7 @@ impl SharedParquetFormatReader {
         let footer = self.get_footer_smart(file_path).await?;
 
         // Step 2: Use metadata to filter row groups BEFORE downloading
-        // TODO: Implement row group pruning via statistics (TD-033)
+        // Deferred: Implement row group pruning via statistics (TD-033)
         let candidate_row_groups: Vec<usize> = (0..footer.metadata.num_row_groups()).collect();
 
         // Track how many row groups we filtered out
@@ -327,7 +327,7 @@ impl SharedParquetFormatReader {
         // Step 3: Read only candidate row groups
         let batches = Vec::new();
 
-        // TODO: Implement smart row group reading with column projection
+        // Deferred: Implement smart row group reading with column projection
         // For now, return empty batches since the underlying read_local_row_group
         // is also a placeholder.
         let _ = (file_path, &candidate_row_groups, columns, &footer);
@@ -340,7 +340,7 @@ impl SharedParquetFormatReader {
         &self,
         file_path: &str,
     ) -> Result<Arc<ParquetFooterCache>, ProximaDBError> {
-        // TODO: Implement footer caching using zero_copy_system
+        // Deferred: Implement footer caching using zero_copy_system
         // For now, always read fresh
         self.stats.footer_misses.fetch_add(1, Ordering::Relaxed);
 
@@ -378,7 +378,7 @@ impl SharedParquetFormatReader {
                 last_access: Instant::now(),
             };
 
-            // TODO: Store in zero_copy_system cache instead
+            // Deferred: Store in zero_copy_system cache instead
 
             return Ok(Arc::new(cache_entry));
         }

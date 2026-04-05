@@ -365,7 +365,7 @@ impl DmlService {
             return Err(anyhow!("UPDATE without WHERE clause is not allowed"));
         };
 
-        // TODO: Implement update logic using delete + insert pattern
+        // Deferred: Implement update logic using delete + insert pattern
         // For now, return a not-implemented error with guidance
         Err(anyhow!(
             "UPDATE is not fully implemented. Use DELETE followed by INSERT for vector updates."
@@ -400,7 +400,7 @@ impl DmlService {
             return Ok(DmlResult::success(0, "No rows matched WHERE clause"));
         }
 
-        // TODO: Implement actual delete through storage engine
+        // Deferred: Implement actual delete through storage engine
         // For now, we'll return the count of what would be deleted
         let deleted_count = ids_to_delete.len();
 

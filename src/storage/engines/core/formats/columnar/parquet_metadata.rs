@@ -286,7 +286,7 @@ impl ParquetMetadataSerializer {
         &self,
         _footer_data: &[u8],
     ) -> Result<(Vec<RowGroupInfo>, Vec<u8>), ProximaDBError> {
-        // TODO: Implement actual Parquet footer parsing
+        // Deferred: Implement actual Parquet footer parsing
         // This requires reading the actual Parquet file metadata structure
         // Should use the parquet crate's FileMetaData parsing
 

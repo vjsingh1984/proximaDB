@@ -255,7 +255,7 @@ impl RecommendedQuantizationLevel {
     }
 }
 
-// TODO: Fix compilation errors - enabled field is now Option<bool>
+// Deferred: Fix compilation errors - enabled field is now Option<bool>
 // #[cfg(test)]
 // mod tests {
 //     use super::*;

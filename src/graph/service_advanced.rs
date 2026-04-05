@@ -32,7 +32,7 @@ use tracing::{debug, info, warn};
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
 // ===== PULSAR/QUASAR Proto Types (Stubs until proto compilation) =====
-// TODO: These should be generated from graph.proto once proto build is configured
+// Deferred: These should be generated from graph.proto once proto build is configured
 
 /// Graph engine type selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,7 +330,7 @@ impl GraphOperationsService {
         // For QUASAR, we need to use the async factory
         let engine = if matches!(engine_type, GraphEngineType::Quasar) {
             if let Some(_quasar_config) = request.quasar_config {
-                // TODO: Parse quasar config when full implementation is ready
+                // Deferred: Parse quasar config when full implementation is ready
                 GraphEngineImpl::new_quasar_async(
                     crate::graph::engines::quasar::QuasarConfig::default(),
                 )

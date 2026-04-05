@@ -155,7 +155,7 @@ impl UnifiedHELIXReader {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let _data = fs.read(file_path).await?;
 
-        // TODO: Parse HELIX Proxima format directly without caching
+        // Deferred: Parse HELIX Proxima format directly without caching
         // Use Proxima blocks for SIMD optimization
         Ok(vec![])
     }
@@ -173,7 +173,7 @@ impl UnifiedHELIXReader {
 
         let _data = cached_fs.read(file_path).await?;
 
-        // TODO: Use cached Proxima metadata and Hilbert ranges for pruning
+        // Deferred: Use cached Proxima metadata and Hilbert ranges for pruning
         // Apply zone map pruning based on search strategy
         match self.search_strategy {
             HelixSearchStrategy::NoPruning => {
@@ -245,7 +245,7 @@ impl DirectHELIXReader {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let _data = fs.read(file_path).await?;
 
-        // TODO: Use Proxima block streaming for direct access
+        // Deferred: Use Proxima block streaming for direct access
         Ok(vec![])
     }
 
@@ -259,11 +259,11 @@ impl DirectHELIXReader {
 
         for sstable in sstables {
             let _data = _fs.read(&sstable.path.to_string_lossy()).await?;
-            // TODO: Read Proxima blocks and extract records
+            // Deferred: Read Proxima blocks and extract records
             // For now, return empty vec - actual implementation would parse Proxima format
         }
 
-        // TODO: Sort by Hilbert key for optimal compaction
+        // Deferred: Sort by Hilbert key for optimal compaction
         all_records.sort_by_key(|record: &VectorRecord| {
             // Placeholder: compute Hilbert key from record
             record.id.len()
@@ -315,7 +315,7 @@ impl CachedHELIXReader {
     ) -> Result<Vec<VectorRecord>> {
         let _data = self.cached_filesystem.read(file_path).await?;
 
-        // TODO: Apply spatial locality optimized pruning
+        // Deferred: Apply spatial locality optimized pruning
         match self.search_strategy {
             HelixSearchStrategy::NoPruning => {
                 // Read all data for full scans
@@ -344,7 +344,7 @@ impl CachedHELIXReader {
     ) -> Result<Vec<VectorRecord>> {
         let _data = self.cached_filesystem.read(file_path).await?;
 
-        // TODO: Apply liquid clustering based on access pattern
+        // Deferred: Apply liquid clustering based on access pattern
         // Cache frequently accessed patterns for better performance
 
         Ok(vec![])

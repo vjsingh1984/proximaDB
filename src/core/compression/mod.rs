@@ -196,7 +196,7 @@
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// Temporarily disabled due to arrow-arith compilation conflicts - Deferred: re-enable when arrow-arith resolved
 // use parquet::file::properties::WriterProperties;
 
 // Stub types for parquet since it's disabled

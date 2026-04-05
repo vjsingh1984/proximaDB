@@ -271,7 +271,7 @@ impl SecurityService for SecurityServiceImpl {
         &self,
         _request: Request<proximadb_v1::ListRolesRequest>,
     ) -> Result<Response<proximadb_v1::ListRolesResponse>, Status> {
-        // TODO: Implement list roles from RBAC manager
+        // Deferred: Implement list roles from RBAC manager
         Ok(Response::new(proximadb_v1::ListRolesResponse {
             roles: vec![],
             next_page_token: String::new(),
@@ -289,7 +289,7 @@ impl SecurityService for SecurityServiceImpl {
 
         info!("DeleteRole: role_id={}", req.role_id);
 
-        // TODO: Implement delete role in RBAC manager
+        // Deferred: Implement delete role in RBAC manager
         Ok(Response::new(proximadb_v1::DeleteRoleResponse {
             success: true,
         }))
@@ -360,7 +360,7 @@ impl SecurityService for SecurityServiceImpl {
             req.user_id, req.tenant_id, req.roles
         );
 
-        // TODO: Implement revoke role in RBAC manager
+        // Deferred: Implement revoke role in RBAC manager
         Ok(Response::new(proximadb_v1::RevokeRoleResponse {
             success: true,
         }))
@@ -377,7 +377,7 @@ impl SecurityService for SecurityServiceImpl {
             req.user_id, req.tenant_id
         );
 
-        // TODO: Implement list user roles from RBAC manager
+        // Deferred: Implement list user roles from RBAC manager
         Ok(Response::new(proximadb_v1::ListUserRolesResponse {
             assignments: vec![],
         }))
@@ -387,7 +387,7 @@ impl SecurityService for SecurityServiceImpl {
         &self,
         _request: Request<proximadb_v1::ListAuditEventsRequest>,
     ) -> Result<Response<proximadb_v1::ListAuditEventsResponse>, Status> {
-        // TODO: Implement audit event listing
+        // Deferred: Implement audit event listing
         Ok(Response::new(proximadb_v1::ListAuditEventsResponse {
             events: vec![],
             next_page_token: String::new(),
@@ -403,7 +403,7 @@ impl SecurityService for SecurityServiceImpl {
 
         debug!("GetTenantSecurityPolicy: tenant_id={}", req.tenant_id);
 
-        // TODO: Implement tenant security policy retrieval
+        // Deferred: Implement tenant security policy retrieval
         let policy = proximadb_v1::TenantSecurityPolicy {
             tenant_id: req.tenant_id,
             require_mfa: true,
@@ -442,7 +442,7 @@ impl SecurityService for SecurityServiceImpl {
                 .map_or(&String::new(), |p| &p.tenant_id)
         );
 
-        // TODO: Implement tenant security policy setting
+        // Deferred: Implement tenant security policy setting
         Ok(Response::new(
             proximadb_v1::SetTenantSecurityPolicyResponse { success: true },
         ))

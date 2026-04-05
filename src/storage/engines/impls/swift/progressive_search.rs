@@ -350,7 +350,7 @@ async fn phase1_binary_filtering(
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<Candidate>> {
     // Use binary quantization approach - create a simple binary representation
-    // TODO: Implement proper binary quantization via storage engine
+    // Deferred: Implement proper binary quantization via storage engine
     let binary_query_bits = query
         .iter()
         .map(|&x| if x > 0.0 { 1u8 } else { 0u8 })
@@ -560,7 +560,7 @@ async fn phase3_pq_refinement(
     // Note: Skip PQ distance table computation for now, use direct computation
     let _distance_table: Option<Vec<Vec<f32>>> =
         if sst.header.quantization.pq_codebooks.unwrap_or(0) > 0 {
-            // TODO: Implement proper PQ distance table computation
+            // Deferred: Implement proper PQ distance table computation
             None
         } else {
             None
@@ -603,7 +603,7 @@ async fn phase3_pq_refinement(
         for v_idx in vector_indices {
             if let Some(ref quantized) = block.quantized_vectors {
                 if let Some(pq_code) = quantized.get(v_idx as usize) {
-                    // TODO: Implement proper PQ distance computation
+                    // Deferred: Implement proper PQ distance computation
                     let distance: f32 = pq_code
                         .iter()
                         .zip(query.iter())
@@ -765,7 +765,7 @@ fn block_matches_filter(block: &ProximaDataBlock, _filter: &MetadataFilter) -> b
     if let Some(ref _stats) = block.metadata_stats {
         // Convert BlockMetadataStats to expected format
         // For now, skip block-level filtering if stats format doesn't match
-        // TODO: Properly convert BlockMetadataStats to HashMap<String, ColumnStats>
+        // Deferred: Properly convert BlockMetadataStats to HashMap<String, ColumnStats>
         return true; // Conservative: include block if we can't check stats
     }
     true

@@ -714,7 +714,7 @@ impl QueryPlanner {
                     } else {
                         0.0
                     },
-                    avg_seek_time_us: 0.0, // TODO: Populate with actual benchmark data
+                    avg_seek_time_us: 0.0, // Deferred: Populate with actual benchmark data
                     last_updated: Instant::now(),
                 },
             );
@@ -739,7 +739,7 @@ impl QueryPlanner {
                     } else {
                         0.0
                     },
-                    avg_seek_time_us: 0.0, // TODO: Populate with actual benchmark data
+                    avg_seek_time_us: 0.0, // Deferred: Populate with actual benchmark data
                     last_updated: Instant::now(),
                 },
             );

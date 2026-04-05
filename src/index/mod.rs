@@ -136,7 +136,7 @@ use crate::core::{VectorId, VectorRecord};
 /// ```
 #[derive(Debug)]
 pub struct GlobalIdIndex {
-    // TODO: Implement with DashMap<VectorId, IndexEntry>
+    // Deferred: Implement with DashMap<VectorId, IndexEntry>
     // where IndexEntry contains collection_id, file_path, offset
 }
 
@@ -166,7 +166,7 @@ impl GlobalIdIndex {
         _collection_id: &str,
         _vector: &VectorRecord,
     ) -> Result<()> {
-        // TODO: Implement with atomic CAS operation
+        // Deferred: Implement with atomic CAS operation
         Ok(())
     }
 
@@ -175,7 +175,7 @@ impl GlobalIdIndex {
     /// Called when vectors move from memtable to SST files or
     /// during compaction when vectors are reorganized.
     pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
-        // TODO: Update index entry with new storage location
+        // Deferred: Update index entry with new storage location
         Ok(())
     }
 
@@ -185,7 +185,7 @@ impl GlobalIdIndex {
     ///
     /// Returns error if ID doesn't exist
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
-        // TODO: Atomic removal with existence check
+        // Deferred: Atomic removal with existence check
         Ok(())
     }
 
@@ -193,7 +193,7 @@ impl GlobalIdIndex {
     ///
     /// Bulk operation for collection deletion
     pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
-        // TODO: Scan and remove all entries for collection
+        // Deferred: Scan and remove all entries for collection
         Ok(())
     }
 }

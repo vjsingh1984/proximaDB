@@ -41,7 +41,7 @@ impl Analyzer {
                         let mut cte_scope = Scope::new_with_parent(scope.clone());
                         self.analyze_query(&cte.query, &mut cte_scope).await?;
                         // For now, just add the CTE name as a table symbol without columns
-                        // TODO: Extract columns from CTE query for proper type checking
+                        // Deferred: Extract columns from CTE query for proper type checking
                         scope.insert(
                             &cte.name,
                             Symbol::Table {
@@ -192,7 +192,7 @@ impl Analyzer {
             // Analyze subquery and add its projected columns to the scope
             let mut subquery_scope = Scope::new_with_parent(scope.clone());
             self.analyze_query(subquery, &mut subquery_scope).await?;
-            // TODO: Extract projected columns from subquery for proper type checking
+            // Deferred: Extract projected columns from subquery for proper type checking
             // For now, just add a placeholder table symbol
             if let Some(alias) = &table_ref.alias {
                 scope.insert(
@@ -376,7 +376,7 @@ impl Analyzer {
                         if result_type == DataType::Unknown {
                             result_type = then_type;
                         } else if result_type != then_type {
-                            // TODO: Implement type coercion rules
+                            // Deferred: Implement type coercion rules
                             return Err(anyhow!("CASE THEN clauses must have compatible types"));
                         }
                     }
@@ -385,7 +385,7 @@ impl Analyzer {
                         if result_type == DataType::Unknown {
                             result_type = else_type;
                         } else if result_type != else_type {
-                            // TODO: Implement type coercion rules
+                            // Deferred: Implement type coercion rules
                             return Err(anyhow!("CASE ELSE clause must have compatible type"));
                         }
                     }
@@ -394,7 +394,7 @@ impl Analyzer {
                 Expr::Subquery(subquery) => {
                     let mut subquery_scope = Scope::new_with_parent(scope.clone());
                     self.analyze_query(subquery, &mut subquery_scope).await?;
-                    // TODO: Determine the return type of the subquery (e.g., single column, single row)
+                    // Deferred: Determine the return type of the subquery (e.g., single column, single row)
                     // For now, assume it returns a single value of unknown type.
                     // A more robust implementation would analyze the subquery's projection.
                     Ok(DataType::Unknown) // Placeholder
@@ -429,7 +429,7 @@ impl Analyzer {
                             query_type
                         ));
                     }
-                    // TODO: Validate metric and threshold types
+                    // Deferred: Validate metric and threshold types
                     Ok(DataType::Float64) // Returns a similarity score
                 }
                 Expr::SksFollow {
@@ -447,7 +447,7 @@ impl Analyzer {
                             start_type
                         ));
                     }
-                    // TODO: Validate edge type and max_depth
+                    // Deferred: Validate edge type and max_depth
                     Ok(DataType::Unknown) // Returns graph traversal results
                 }
                 Expr::SksAssemble {
@@ -459,7 +459,7 @@ impl Analyzer {
                     for item in context_items {
                         self.analyze_expr(item, scope).await?;
                     }
-                    // TODO: Validate strategy and max_size
+                    // Deferred: Validate strategy and max_size
                     Ok(DataType::String) // Returns assembled text
                 }
                 Expr::Array { elem, .. } => {

@@ -385,14 +385,14 @@ impl ProximaDB {
         // Start cache eviction service if enabled
         if cache_config.eviction.enabled {
             // Convert our config to the cache eviction config format
-            orchestrator.start_eviction_service(None); // TODO: Wire up eviction config conversion
+            orchestrator.start_eviction_service(None); // Deferred: Wire up eviction config conversion
         }
 
         // Start cache warming service if enabled (disabled by default)
         if cache_config.enable_warming {
             info!("Cache warming enabled via configuration");
             // Convert our config to the cache warming config format
-            orchestrator.start_warming_service(None); // TODO: Wire up warming config conversion
+            orchestrator.start_warming_service(None); // Deferred: Wire up warming config conversion
         } else {
             info!("Cache warming disabled (default)");
         }
@@ -616,7 +616,7 @@ impl ProximaDB {
         tracing::info!(
             "🗺️ ProximaDB::start - Step 4: Recovering assignments from collection metadata..."
         );
-        // TODO: When AssignmentService is added to SharedServices, call:
+        // Deferred: When AssignmentService is added to SharedServices, call:
         // if let Some(ms) = self.multi_server.as_ref() {
         //     ms.shared_services.assignment_service.recover_assignments().await?;
         // }

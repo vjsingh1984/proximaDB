@@ -348,7 +348,7 @@ impl QueryOptimizer {
             cached_result,
             prefetch_files,
             use_progressive_search: stats.avg_latency_ms > 50.0,
-            skip_levels: Vec::new(), // TODO: Implement level skipping logic
+            skip_levels: Vec::new(), // Deferred: Implement level skipping logic
         }
     }
 

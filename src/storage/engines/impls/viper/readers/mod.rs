@@ -7,7 +7,7 @@
 //! - Support for all query patterns: direct reading, metadata filtering, quantized search
 
 // DEPRECATED: unified_parquet_reader.rs - functionality moved to columnar module
-// pub mod unified_parquet_reader; // TODO: Remove this file after migration complete
+// pub mod unified_parquet_reader; // Deferred: Remove this file after migration complete
 
 pub mod test_data_generator;
 

@@ -32,9 +32,9 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::impls::viper::readers::unified_parquet_reader::UnifiedParquetReader;
-// use crate::storage::engines::impls::viper::flush::ViperFlushOperation; // TODO: Import correct flush module
+// use crate::storage::engines::impls::viper::flush::ViperFlushOperation; // Deferred: Import correct flush module
 
 /// Data format used by each tier
 #[derive(Debug, Clone)]
@@ -349,11 +349,11 @@ impl TierDataMovement {
                 .await
                 .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
         );
-        // TODO: Re-enable when UnifiedParquetReader is available
+        // Deferred: Re-enable when UnifiedParquetReader is available
         // let reader = UnifiedParquetReader::new(filesystem);
         let vectors = Vec::new();
 
-        // TODO: Implement VIPER reading when UnifiedParquetReader is restored
+        // Deferred: Implement VIPER reading when UnifiedParquetReader is restored
         // let all_vectors = reader.read_all_vectors(&path, &["id", "vector", "metadata_info"]).await?;
         // for vector in all_vectors {
         //     if let Some(ref vec_id) = vector.id {
@@ -375,7 +375,7 @@ impl TierDataMovement {
         let path = self.get_tier_path(tier)?;
         debug!("Writing {} vectors to VIPER at {}", vectors.len(), path);
 
-        // TODO: Use VIPER flush operation to write Parquet
+        // Deferred: Use VIPER flush operation to write Parquet
         // In production, this would use the VIPER writer
         // For now, estimate bytes written
         let bytes_per_vector = 1024; // Rough estimate

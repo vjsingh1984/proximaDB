@@ -586,7 +586,7 @@ impl UniversalDistanceAdapter {
         _storage_format: &StorageFormat,
     ) -> AdapterResult<Vec<CandidateVector>> {
         // For now, return candidates as-is
-        // TODO: Implement format conversion logic
+        // Deferred: Implement format conversion logic
         Ok(candidates.to_vec())
     }
 

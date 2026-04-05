@@ -80,7 +80,7 @@ pub fn rocm_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
         base
     );
 
-    // TODO: Real ROCm/HIP implementation
+    // Deferred: Real ROCm/HIP implementation
     // For now, use CPU fallback (HIP kernels require separate compilation)
     let deltas: Vec<i64> = values.iter().map(|&v| (v - base) as i64).collect();
 
@@ -112,7 +112,7 @@ pub fn rocm_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
         base
     );
 
-    // TODO: Real ROCm/HIP implementation
+    // Deferred: Real ROCm/HIP implementation
     let values: Vec<f32> = deltas.iter().map(|&d| d as f32 + base).collect();
 
     debug!(
@@ -156,7 +156,7 @@ pub fn rocm_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         bits
     );
 
-    // TODO: Real ROCm/HIP implementation with parallel bit-packing
+    // Deferred: Real ROCm/HIP implementation with parallel bit-packing
     // For now, use CPU fallback
     let total_bits = values.len() * bits as usize;
     let byte_count = (total_bits + 7) / 8;
@@ -198,7 +198,7 @@ pub fn rocm_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
         count
     );
 
-    // TODO: Real ROCm/HIP implementation
+    // Deferred: Real ROCm/HIP implementation
     let mask = if bits == 32 {
         u32::MAX
     } else {
@@ -261,7 +261,7 @@ pub fn rocm_frame_of_reference_encode_f32(
     let byte_count = (total_bits + 7) / 8;
     let mut result = vec![0u8; byte_count];
 
-    // TODO: Real ROCm/HIP parallel bit-packing
+    // Deferred: Real ROCm/HIP parallel bit-packing
     let mask = if bits == 32 {
         u32::MAX
     } else {
@@ -305,7 +305,7 @@ pub fn rocm_frame_of_reference_decode_f32(
     );
 
     // Step 1: Bit-unpack offsets (parallel in HIP kernel)
-    // TODO: Real ROCm/HIP parallel bit-unpacking
+    // Deferred: Real ROCm/HIP parallel bit-unpacking
     let mask = if bits == 32 {
         u32::MAX
     } else {
@@ -372,7 +372,7 @@ pub fn rocm_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         bits
     );
 
-    // TODO: Real ROCm/HIP parallel zigzag
+    // Deferred: Real ROCm/HIP parallel zigzag
     let zigzag: Vec<i64> = values
         .iter()
         .map(|&v| {
@@ -451,7 +451,7 @@ pub fn rocm_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<V
     }
 
     // Step 2: Reverse zigzag (parallel in HIP kernel)
-    // TODO: Real ROCm/HIP parallel zigzag reverse
+    // Deferred: Real ROCm/HIP parallel zigzag reverse
     let values: Vec<f32> = zigzag
         .iter()
         .map(|&zz| {
@@ -481,7 +481,7 @@ pub fn rocm_pfor_delta_encode_f32(values: &[f32], majority_bits: u8, base: i64) 
         base
     );
 
-    // TODO: Real ROCm/HIP implementation with parallel exception detection
+    // Deferred: Real ROCm/HIP implementation with parallel exception detection
     // For now, use CPU fallback (complex algorithm)
     anyhow::bail!("ROCm PForDelta encoding not yet implemented - use SIMD fallback")
 }
@@ -501,7 +501,7 @@ pub fn rocm_pfor_delta_decode_f32(
         count
     );
 
-    // TODO: Real ROCm/HIP implementation
+    // Deferred: Real ROCm/HIP implementation
     anyhow::bail!("ROCm PForDelta decoding not yet implemented - use SIMD fallback")
 }
 

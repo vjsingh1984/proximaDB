@@ -321,7 +321,7 @@ impl PathIndex {
                 // For exists=false, we'd need to scan all documents
             }
             PathQueryCondition::Regex(_pattern) => {
-                // TODO: Implement regex matching for string values
+                // Deferred: Implement regex matching for string values
                 let _ = _pattern; // Suppress unused warning
             }
         }

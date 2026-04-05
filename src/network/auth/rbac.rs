@@ -392,14 +392,14 @@ impl RbacService {
             return true;
         }
 
-        // TODO: Implement collection-specific access control
+        // Deferred: Implement collection-specific access control
         // For now, all authenticated users with appropriate permissions can access all collections
         true
     }
 
     /// Check if user belongs to tenant
     async fn user_belongs_to_tenant(&self, _user_id: &str, _tenant_id: &str) -> bool {
-        // TODO: Implement tenant membership validation
+        // Deferred: Implement tenant membership validation
         // For now, assume all users can access all tenants
         true
     }

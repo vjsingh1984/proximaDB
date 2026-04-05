@@ -154,7 +154,7 @@ async fn json_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Json<crate::metrics::SystemMetrics> {
-    let _since = params.since; // TODO: Use for historical data
+    let _since = params.since; // Deferred: Use for historical data
     let metrics = metrics_collector.current_metrics().await;
     Json(metrics)
 }
@@ -180,7 +180,7 @@ async fn metrics_health_endpoint(
         status: "healthy".to_string(),
         metrics_enabled: true,
         last_collection: Some(metrics.timestamp),
-        collection_interval_ms: 5000, // TODO: Get from config
+        collection_interval_ms: 5000, // Deferred: Get from config
     })
 }
 

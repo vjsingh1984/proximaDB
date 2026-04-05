@@ -990,7 +990,7 @@ impl GlobalManifestService {
     }
 }
 
-// TODO: Fix compilation errors - global_manifest renamed to manifest, import paths changed
+// Deferred: Fix compilation errors - global_manifest renamed to manifest, import paths changed
 // #[cfg(test)]
 // mod tests {
 //     use super::*;

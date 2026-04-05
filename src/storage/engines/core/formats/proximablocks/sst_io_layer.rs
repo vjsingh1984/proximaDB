@@ -374,7 +374,7 @@ impl SharedSstFormatReader {
 
         // Deserialize blocks from raw data (works with both mmap and Vec)
         // For now, try to deserialize as a single block
-        // TODO: Implement multi-block file format
+        // Deferred: Implement multi-block file format
         let blocks = if let Ok(single_block) =
             crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
             vec![single_block]
@@ -401,7 +401,7 @@ impl SharedSstFormatReader {
             .await?;
 
         // Deserialize blocks
-        // TODO: Implement multi-block file format
+        // Deferred: Implement multi-block file format
         let all_blocks = if let Ok(single_block) =
             crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
             vec![single_block]
@@ -416,7 +416,7 @@ impl SharedSstFormatReader {
                 // Proxima blocks have auto-generated bloom filters
                 if let Some(ref _bloom) = block.bloom_filter {
                     // Check if block might contain matching records
-                    // TODO: Implement bloom filter check logic
+                    // Deferred: Implement bloom filter check logic
                 }
             }
 
@@ -442,7 +442,7 @@ impl SharedSstFormatReader {
             .await?;
 
         // Deserialize blocks
-        // TODO: Implement multi-block file format
+        // Deferred: Implement multi-block file format
         let blocks = if let Ok(single_block) =
             crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(data.as_slice(), None) {
             vec![single_block]

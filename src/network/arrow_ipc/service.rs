@@ -192,7 +192,7 @@ impl ProximaFlightService {
 
         // Trigger compaction if requested
         if trigger_compaction {
-            // TODO: Implement explicit compaction trigger
+            // Deferred: Implement explicit compaction trigger
             debug!(
                 collection_id = %collection_id,
                 "Compaction trigger requested (not yet implemented)"

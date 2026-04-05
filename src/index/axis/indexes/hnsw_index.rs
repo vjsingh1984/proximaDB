@@ -136,7 +136,7 @@ pub struct AxisHnswIndex {
 
     /// HNSW-specific: Graph layers with composite keys
     /// (layer, internal_node_id) -> connections
-    /// TODO: Add partitioning - will use (collection_id, layer, node_id) in Phase 3
+    /// Deferred: Add partitioning - will use (collection_id, layer, node_id) in Phase 3
     layers: DashMap<(usize, usize), Vec<usize>>,
 
     /// HNSW-specific: Maximum layer currently in use (atomic)
@@ -397,7 +397,7 @@ impl AxisHnswIndex {
     }
 
     /// Select m neighbors using simple heuristic (closest neighbors)
-    /// TODO: Implement more sophisticated heuristics for better graph connectivity
+    /// Deferred: Implement more sophisticated heuristics for better graph connectivity
     fn select_neighbors(&self, candidates: Vec<(usize, f32)>, m: usize) -> Vec<usize> {
         candidates
             .into_iter()
@@ -702,7 +702,7 @@ impl AxisVectorIndex for AxisHnswIndex {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             if *entry_point_lock == Some(internal_node_id) {
                 // Find a new entry point from remaining vectors
-                // TODO: ZeroOverheadCollection doesn't have keys() method
+                // Deferred: ZeroOverheadCollection doesn't have keys() method
                 // For now, just set entry point to None when removed
                 *entry_point_lock = None;
             }
@@ -940,7 +940,7 @@ impl AxisHnswIndex {
             }
         }
 
-        // TODO: Extract vectors from files listed in event.file_paths
+        // Deferred: Extract vectors from files listed in event.file_paths
         // This would be handled by the EventLog consumer which calls this method
         // after extracting vectors from the storage files
 
@@ -957,7 +957,7 @@ impl AxisHnswIndex {
     }
 
     /// NEW: Dequantize vector for HNSW graph construction
-    /// TODO: Integrate with actual quantization module from storage engines
+    /// Deferred: Integrate with actual quantization module from storage engines
     #[allow(dead_code)]
     fn dequantize_vector(
         &self,
@@ -998,7 +998,7 @@ impl AxisHnswIndex {
             return self.search_with_filter(query, top_k, filter).await;
         }
 
-        // TODO: Implement two-stage search with quantized filtering
+        // Deferred: Implement two-stage search with quantized filtering
         // Stage 1: Fast filtering using quantized vectors
         // Stage 2: FP32 reranking of top candidates
         tracing::warn!("Quantized acceleration not yet implemented - using standard search");

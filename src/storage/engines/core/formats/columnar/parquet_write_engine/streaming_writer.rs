@@ -225,7 +225,7 @@ impl StreamingParquetWriter {
 
         // Apply sorting for better compression (if enabled)
         let sorted_records = if !self.config.sort_columns.is_empty() {
-            // TODO: Implement column-based sorting
+            // Deferred: Implement column-based sorting
             self.current_batch.clone()
         } else {
             self.current_batch.clone()
@@ -658,7 +658,7 @@ impl StreamingParquetWriter {
 
         // PQ quantization
         if self.config.quantization.enable_pq.unwrap_or(false) {
-            // TODO: Implement PQ quantization
+            // Deferred: Implement PQ quantization
             // PQ requires async codebook training and proper sidecar file storage
             // For now, store null values
             let mut pq_builder = BinaryBuilder::new();

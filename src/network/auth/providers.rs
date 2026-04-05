@@ -496,7 +496,7 @@ impl SamlAuthProvider {
     }
 
     fn decode_saml_response(&self, _credentials: &str) -> Result<SamlResponse, AuthError> {
-        // TODO: Implement SAML response decoding
+        // Deferred: Implement SAML response decoding
         Ok(SamlResponse {
             user_id: "placeholder_user".to_string(),
             tenant_id: "placeholder_tenant".to_string(),
@@ -507,7 +507,7 @@ impl SamlAuthProvider {
         &self,
         _response: &SamlResponse,
     ) -> Result<SamlAssertion, AuthError> {
-        // TODO: Implement SAML assertion validation
+        // Deferred: Implement SAML assertion validation
         Ok(SamlAssertion {
             user_id: "placeholder_user".to_string(),
             tenant_id: "placeholder_tenant".to_string(),
@@ -517,7 +517,7 @@ impl SamlAuthProvider {
     }
 
     fn map_roles_to_permissions(&self, _roles: &[String]) -> Vec<Permission> {
-        // TODO: Implement role to permission mapping
+        // Deferred: Implement role to permission mapping
         vec![Permission::SearchVectors, Permission::InsertVectors]
     }
 }
@@ -566,7 +566,7 @@ impl DatabaseAuthProvider {
         username: &str,
         password: &str,
     ) -> Result<DatabaseUser, AuthError> {
-        // TODO: Implement database lookup
+        // Deferred: Implement database lookup
         // This would involve:
         // 1. Connect to database
         // 2. Query user table

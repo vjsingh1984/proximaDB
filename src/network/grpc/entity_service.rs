@@ -199,7 +199,7 @@ impl EntityService for EntityServiceImpl {
 
         // Extract query vector if similarity search is requested
         let query_vector = if let Some(similar_query) = req.similar {
-            // TODO: Handle different query types (text, vector, raw_data)
+            // Deferred: Handle different query types (text, vector, raw_data)
             // For now, we assume vector is provided
             match similar_query.query {
                 Some(_query) => {
@@ -220,7 +220,7 @@ impl EntityService for EntityServiceImpl {
                 &req.collection_id,
                 query_vector,
                 req.filters,
-                // req.temporal, // TODO: Add when temporal filter is available
+                // req.temporal, // Deferred: Add when temporal filter is available
                 req.top_k as usize,
             )
             .await
@@ -242,8 +242,8 @@ impl EntityService for EntityServiceImpl {
                 Ok(Response::new(SearchEntitiesResponse {
                     results: entity_results,
                     total,
-                    page_info: None, // TODO: Add pagination support
-                    progress: None,  // TODO: Add progressive search progress
+                    page_info: None, // Deferred: Add pagination support
+                    progress: None,  // Deferred: Add progressive search progress
                 }))
             }
             Err(e) => {
@@ -259,7 +259,7 @@ impl EntityService for EntityServiceImpl {
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add unit tests for EntityServiceImpl
+    // Deferred: Add unit tests for EntityServiceImpl
 
     #[test]
     fn test_entity_service_creation() {

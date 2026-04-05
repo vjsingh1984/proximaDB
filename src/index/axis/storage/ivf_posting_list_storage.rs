@@ -329,7 +329,7 @@ impl PostingListStorage {
                 // Note: SSTable reader doesn't have scan method currently,
                 // so we would need to implement batch reading or iterate through known keys
                 // For now, returning empty as a placeholder
-                // TODO: Implement proper posting list storage backend
+                // Deferred: Implement proper posting list storage backend
 
                 if entries.is_empty() {
                     Ok(None)

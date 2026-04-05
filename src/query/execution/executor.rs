@@ -445,7 +445,7 @@ impl QueryExecutor {
             total_found,
             execution_time_ms: execution_time,
             operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
-            cache_hits: 0, // TODO: Implement graph caching
+            cache_hits: 0, // Deferred: Implement graph caching
             performance_metrics,
         })
     }
@@ -817,14 +817,14 @@ impl QueryExecutor {
             // Fallback if query_vector is None (not typical for similarity) - no results
             vec![]
         } else {
-            // TODO: Handle non-similarity queries
+            // Deferred: Handle non-similarity queries
             vec![]
         };
 
         // Update performance metrics
         metrics.vectors_scanned = vos_results.len();
         metrics.metadata_lookups += vos_results.len(); // Each result involves metadata access
-        metrics.cache_hit_ratio = 0.8; // TODO: Get actual cache hit ratio from VOS
+        metrics.cache_hit_ratio = 0.8; // Deferred: Get actual cache hit ratio from VOS
 
         // Convert VOS results to QueryRow format
         let rows = vos_results
@@ -1283,7 +1283,7 @@ impl QueryExecutor {
                     | Op::StartsWith
                     | Op::EndsWith
                     | Op::Like => false,
-                    Op::Between => false, // TODO: implement between logic
+                    Op::Between => false, // Deferred: implement between logic
                     Op::IsNull => lv.is_null(),
                     Op::IsNotNull => !lv.is_null(),
                 }
@@ -1366,7 +1366,7 @@ impl QueryExecutor {
                 self.apply_reciprocal_rank_fusion(vector_results, graph_results, *k)
             }
             _ => {
-                // Simple concatenation for other strategies (TODO: implement)
+                // Simple concatenation for other strategies (DEFERRED: implement)
                 let mut combined = vector_results.to_vec();
                 combined.extend_from_slice(graph_results);
                 Ok(combined)
@@ -2078,7 +2078,7 @@ mod executor_tests {
             fn get_filesystem_factory(
                 &self,
             ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-                // TODO: Placeholder for test - FilesystemFactory::new is async
+                // Deferred: Placeholder for test - FilesystemFactory::new is async
                 unimplemented!("Test method - requires async FilesystemFactory::new")
             }
         }

@@ -509,7 +509,7 @@ impl WALBehaviorWrapper {
         );
 
         // Convert unified DistanceMetric to CoreDistanceMetric for now
-        // TODO: Update global partitioned memtable to accept unified DistanceMetric for all 13 metrics
+        // Deferred: Update global partitioned memtable to accept unified DistanceMetric for all 13 metrics
         let core_metric = match distance_metric {
             crate::compute::distance_computation::DistanceMetric::Unspecified => {
                 CoreDistanceMetric::Cosine

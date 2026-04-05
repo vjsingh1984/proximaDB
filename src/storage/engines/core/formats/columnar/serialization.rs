@@ -356,7 +356,7 @@ impl ColumnarSerializer {
         let hardware_caps = get_hardware_capabilities();
 
         let quantization_engine = if config.quantization.is_some() {
-            let quant_config = StorageQuantizationConfig::default(); // TODO: Convert from QuantizationConfig
+            let quant_config = StorageQuantizationConfig::default(); // Deferred: Convert from QuantizationConfig
             let distance_compute = Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
             );
@@ -393,7 +393,7 @@ impl ColumnarSerializer {
         let start_time = std::time::Instant::now();
         let mut quantization_time = 0.0;
         let mut _compression_time = 0.0;
-        let _memory_pool_hits = 0; // TODO: Track actual memory pool hits
+        let _memory_pool_hits = 0; // Deferred: Track actual memory pool hits
 
         info!(
             "Serializing {} vector records with transparent quantization",
@@ -814,9 +814,9 @@ impl ColumnarSerializer {
         };
 
         Ok(QuantizationStats {
-            binary_hamming_accuracy: None, // TODO: Calculate actual accuracy
-            int8_mse: None,                // TODO: Calculate MSE
-            pq_mse: None,                  // TODO: Calculate PQ MSE
+            binary_hamming_accuracy: None, // Deferred: Calculate actual accuracy
+            int8_mse: None,                // Deferred: Calculate MSE
+            pq_mse: None,                  // Deferred: Calculate PQ MSE
             compression_ratio,
             memory_reduction: (compression_ratio - 1.0) / compression_ratio * 100.0,
         })

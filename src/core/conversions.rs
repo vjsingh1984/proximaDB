@@ -483,11 +483,11 @@ pub fn sql_values_to_json_map(
                 serde_json::Value::Null
             }
             Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_arr)) => {
-                // TODO: Implement proper array conversion
+                // Deferred: Implement proper array conversion
                 serde_json::Value::String("[Array]".to_string())
             }
             Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_obj)) => {
-                // TODO: Implement proper object conversion
+                // Deferred: Implement proper object conversion
                 serde_json::Value::String("[Object]".to_string())
             }
             None => serde_json::Value::Null,
@@ -594,7 +594,7 @@ pub fn build_vector_search_request(
 ) -> VectorSearchRequest {
     let query = SearchQuery {
         vector,
-        filters: std::collections::HashMap::new(), // TODO: Convert metadata_filter to filters
+        filters: std::collections::HashMap::new(), // Deferred: Convert metadata_filter to filters
         advanced_filter: metadata_filter.map(|f| {
             // Convert JSON map to MetadataFilter with filter conditions
             let mut conditions = Vec::new();

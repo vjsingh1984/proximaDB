@@ -552,7 +552,7 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: 
     if subscribe_msg.include_initial {
         let initial = ServerMessage::Update(UpdateMessage {
             update_type: "initial".to_string(),
-            results: vec![], // TODO: Perform initial query
+            results: vec![], // Deferred: Perform initial query
             position: 0,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

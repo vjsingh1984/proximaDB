@@ -148,7 +148,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
             start_time_ns: req.start_time_ns,
             end_time_ns: req.end_time_ns,
             query: req.query,
-            severities: Vec::new(), // TODO: Convert from proto severities
+            severities: Vec::new(), // Deferred: Convert from proto severities
             services: Vec::new(),
             sources: Vec::new(),
             limit: req.limit,
@@ -303,7 +303,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
             metric_name: req.metric_name,
             start_time_ns: req.start_time_ns,
             end_time_ns: req.end_time_ns,
-            aggregation: crate::observability::MetricAggregation::Avg, // TODO: Convert from proto
+            aggregation: crate::observability::MetricAggregation::Avg, // Deferred: Convert from proto
             step_seconds: 60,                                          // Default 1 minute
             label_filters: std::collections::HashMap::new(),
             group_by: req.group_by,

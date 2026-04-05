@@ -54,7 +54,7 @@ pub trait EntityStore: Send + Sync {
         collection_id: &str,
         query_vector: Option<Vec<f32>>,
         metadata_filter: Option<MetadataFilter>,
-        // temporal_filter: Option<TemporalFilter>, // TODO: Add when proto is available
+        // temporal_filter: Option<TemporalFilter>, // Deferred: Add when proto is available
         top_k: usize,
     ) -> Result<Vec<(Entity, f32)>>;
 
@@ -629,7 +629,7 @@ impl EntityStore for ProximaEntityStore {
         collection_id: &str,
         query_vector: Option<Vec<f32>>,
         metadata_filter: Option<MetadataFilter>,
-        // temporal_filter: Option<TemporalFilter>, // TODO: Add when proto is available
+        // temporal_filter: Option<TemporalFilter>, // Deferred: Add when proto is available
         top_k: usize,
     ) -> Result<Vec<(Entity, f32)>> {
         let mut results: Vec<(Entity, f32)> = Vec::new();
@@ -1083,7 +1083,7 @@ impl ProximaEntityStore {
                             let mut all_match = true;
 
                             // Early exit on first non-matching filter
-                            // TODO: Implement header-level filtering once EntityHeader serialization is resolved
+                            // Deferred: Implement header-level filtering once EntityHeader serialization is resolved
                             // For now, defer to entity-level filtering
                             for filter in filters {
                                 if let Ok(Some(_entity)) = self

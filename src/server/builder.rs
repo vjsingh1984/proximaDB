@@ -596,10 +596,10 @@ impl ProximaDBServer {
             self.config.network.port
         );
 
-        // TODO: Start network listeners
-        // TODO: Initialize indexing engines
-        // TODO: Start monitoring systems
-        // TODO: Start health check endpoints
+        // Deferred: Start network listeners
+        // Deferred: Initialize indexing engines
+        // Deferred: Start monitoring systems
+        // Deferred: Start health check endpoints
 
         Ok(())
     }

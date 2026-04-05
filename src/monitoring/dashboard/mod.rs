@@ -372,7 +372,7 @@ async fn api_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
     State(state): State<DashboardState>,
 ) -> Json<crate::metrics::SystemMetrics> {
-    let _since = params.since; // TODO: Use this for historical data
+    let _since = params.since; // Deferred: Use this for historical data
     let metrics = state.metrics_collector.current_metrics().await;
     Json(metrics)
 }

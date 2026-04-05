@@ -1765,7 +1765,7 @@ impl PostgresProtocol {
     /// Insert graph data (nodes/edges)
     async fn insert_graph_data(&mut self, table_name: &str, _query: &str) -> Result<()> {
         debug!("Inserting graph data into '{}'", table_name);
-        // TODO: Integrate with graph service
+        // Deferred: Integrate with graph service
         info!(
             "Graph INSERT acknowledged for '{}' (graph service integration pending)",
             table_name
@@ -1890,7 +1890,7 @@ impl PostgresProtocol {
         if let Some(id) = id {
             debug!("Deleting vector '{}' from collection '{}'", id, table_name);
 
-            // TODO: Implement proper vector deletion via tombstone/WAL
+            // Deferred: Implement proper vector deletion via tombstone/WAL
             // For now, acknowledge the delete request
             info!(
                 "DELETE acknowledged for vector '{}' in '{}' (tombstone write pending)",

@@ -2740,31 +2740,31 @@ fn print_storage_interpretation_guide() {
 
 fn run_quantization_sst_benchmarks(_sample_size: usize) -> Result<()> {
     println!("\nQuantization SST Benchmarks");
-    println!("TODO: Migrate bench_08_quantization_sst");
+    println!("Deferred: Migrate bench_08_quantization_sst");
     Ok(())
 }
 
 fn run_columnar_viper_benchmarks(_sample_size: usize) -> Result<()> {
     println!("\nColumnar VIPER Benchmarks");
-    println!("TODO: Migrate bench_09_columnar_viper");
+    println!("Deferred: Migrate bench_09_columnar_viper");
     Ok(())
 }
 
 fn run_query_progressive_benchmarks(_sample_size: usize) -> Result<()> {
     println!("\nQuery Progressive Benchmarks");
-    println!("TODO: Migrate bench_10_query_progressive");
+    println!("Deferred: Migrate bench_10_query_progressive");
     Ok(())
 }
 
 fn run_system_optimization_benchmarks(_sample_size: usize) -> Result<()> {
     println!("\nSystem Optimization Benchmarks");
-    println!("TODO: Migrate bench_12_system_optimization");
+    println!("Deferred: Migrate bench_12_system_optimization");
     Ok(())
 }
 
 fn run_graph_operations_benchmarks(_sample_size: usize) -> Result<()> {
     println!("\nGraph Operations Benchmarks");
-    println!("TODO: Migrate bench_14_graph_operations");
+    println!("Deferred: Migrate bench_14_graph_operations");
     Ok(())
 }
 

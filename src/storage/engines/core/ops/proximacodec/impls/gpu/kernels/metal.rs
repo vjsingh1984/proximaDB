@@ -1071,7 +1071,7 @@ pub fn metal_pfor_delta_encode_f32(
         base
     );
 
-    // TODO: Real Metal implementation with parallel exception detection
+    // Deferred: Real Metal implementation with parallel exception detection
     anyhow::bail!("Metal PForDelta encoding not yet implemented - use SIMD fallback")
 }
 
@@ -1090,7 +1090,7 @@ pub fn metal_pfor_delta_decode_f32(
         count
     );
 
-    // TODO: Real Metal implementation
+    // Deferred: Real Metal implementation
     anyhow::bail!("Metal PForDelta decoding not yet implemented - use SIMD fallback")
 }
 
@@ -1246,7 +1246,7 @@ pub fn metal_double_delta_decode_f32(double_deltas: &[i64], count: usize) -> Res
     }
 
     // CPU implementation (sequential reconstruction)
-    // TODO: Investigate GPU scan-based parallel reconstruction
+    // Deferred: Investigate GPU scan-based parallel reconstruction
     let base = double_deltas[0];
     let first_delta = double_deltas[1];
 

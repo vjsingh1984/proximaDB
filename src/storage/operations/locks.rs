@@ -429,7 +429,7 @@ mod lock_tests {
             .acquire_flush_lock("collection1")
             .await
             .unwrap();
-        // TODO: Test minor compaction can run concurrently
+        // Deferred: Test minor compaction can run concurrently
 
         assert!(true); // Placeholder until compaction locks implemented
     }

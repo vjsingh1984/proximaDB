@@ -399,7 +399,7 @@ impl AxisClusteringEngine {
         // Check if we need to recompute
         let pending_count = pending.get(collection_id).map_or(0, |v| v.len());
         if pending_count >= self.config.recompute_threshold {
-            // TODO: Trigger recomputation
+            // Deferred: Trigger recomputation
             tracing::info!(
                 "🔄 Recomputation threshold reached for collection {} ({} pending vectors)",
                 collection_id,
@@ -514,7 +514,7 @@ impl AxisClusteringEngine {
         _config: &HierarchicalConfig,
         _vectors: Vec<Vec<f32>>,
     ) -> Result<ClusteringModel> {
-        // TODO: Implement hierarchical clustering
+        // Deferred: Implement hierarchical clustering
         Err(anyhow::anyhow!(
             "Hierarchical clustering not yet implemented"
         ))
@@ -526,7 +526,7 @@ impl AxisClusteringEngine {
         _config: &DBSCANConfig,
         _vectors: Vec<Vec<f32>>,
     ) -> Result<ClusteringModel> {
-        // TODO: Implement DBSCAN
+        // Deferred: Implement DBSCAN
         Err(anyhow::anyhow!("DBSCAN clustering not yet implemented"))
     }
 

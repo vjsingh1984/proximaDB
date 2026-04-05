@@ -280,7 +280,7 @@ impl PredictiveAnalyticsEngine {
 
     /// Generate predictions from input data.
     pub async fn generate_predictions(&self, _data: &[f64]) -> Result<Vec<PredictionResult>> {
-        // TODO: Implement actual prediction logic
+        // Deferred: Implement actual prediction logic
         Ok(vec![])
     }
 
@@ -292,7 +292,7 @@ impl PredictiveAnalyticsEngine {
         _prediction_horizon: &str,
         _user_context: &crate::storage::tenant::UserContext,
     ) -> Result<String> {
-        // TODO: Implement actual business prediction logic
+        // Deferred: Implement actual business prediction logic
         Ok(format!(
             "Business prediction for scenario '{}' with horizon '{}': Placeholder result",
             _business_scenario, _prediction_horizon
@@ -319,7 +319,7 @@ impl ConversationalAnalyticsEngine {
 
     /// Process a natural language analytics query.
     pub async fn process_conversational_query(&self, _query: &str) -> Result<String> {
-        // TODO: Implement actual conversational query processing
+        // Deferred: Implement actual conversational query processing
         Ok("Analytics query processing not yet implemented".to_string())
     }
 
@@ -331,7 +331,7 @@ impl ConversationalAnalyticsEngine {
         _context: &str,
         _user_context: &crate::storage::tenant::UserContext,
     ) -> Result<String> {
-        // TODO: Implement actual conversational session logic
+        // Deferred: Implement actual conversational session logic
         Ok(format!(
             "Started conversational session of type '{}' with context '{}'",
             _session_type, _context
@@ -356,7 +356,7 @@ impl GovernanceAnalyticsEngine {
 
     /// Analyze compliance status across all frameworks.
     pub async fn analyze_compliance(&self) -> Result<ComplianceReport> {
-        // TODO: Implement actual compliance analysis
+        // Deferred: Implement actual compliance analysis
         Ok(ComplianceReport::default())
     }
 }

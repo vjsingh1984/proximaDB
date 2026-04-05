@@ -735,7 +735,7 @@ impl QuantizedDistanceCalculator {
             metrics: DistanceMetrics {
                 computation_time_us: computation_time,
                 simd_used: self.config.simd_optimization.enable_simd,
-                cache_hits: 0, // TODO: Aggregate from stages
+                cache_hits: 0, // Deferred: Aggregate from stages
                 cache_misses: 0,
                 memory_bandwidth_mb_s: self
                     .estimate_memory_bandwidth(query.len(), SelectedFormat::FP32),

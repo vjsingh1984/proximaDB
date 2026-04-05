@@ -392,7 +392,7 @@ impl UniversalMetadataBackend {
             let final_sequence = self.sequence.load(Ordering::SeqCst);
 
             // Check if we should create a checkpoint after recovery
-            // TODO: Temporarily disabled to debug startup hang
+            // Deferred: Temporarily disabled to debug startup hang
             // self.maybe_checkpoint_at_restart().await?;
             debug!("⏭️ Skipping checkpoint at restart to debug startup issue");
 
@@ -404,7 +404,7 @@ impl UniversalMetadataBackend {
         let max_sequence = self.recover_from_operations().await?;
 
         // Check if we should create a checkpoint after recovery
-        // TODO: Temporarily disabled to debug startup hang
+        // Deferred: Temporarily disabled to debug startup hang
         // self.maybe_checkpoint_at_restart().await?;
         debug!("⏭️ Skipping checkpoint at restart to debug startup issue");
 

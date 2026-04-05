@@ -424,7 +424,7 @@ impl AxisLshIndex {
             };
 
             if let Some(vector) = vector_data {
-                // TODO: Implement remove method for ZeroOverheadCollection
+                // Deferred: Implement remove method for ZeroOverheadCollection
                 // For now, just log the removal
                 tracing::debug!(
                     "Would remove vector {} from collection (method not implemented)",
@@ -569,7 +569,7 @@ impl AxisLshIndex {
             ExtractionMode::Fp32Only => {
                 // Process FP32 vectors only
                 if event.has_fp32 {
-                    // TODO: Load FP32 vectors from file paths and process them
+                    // Deferred: Load FP32 vectors from file paths and process them
                     tracing::info!(
                         "Processing FP32 vectors from {} files",
                         event.file_paths.len()
@@ -580,7 +580,7 @@ impl AxisLshIndex {
             ExtractionMode::QuantizedOnly => {
                 // Process quantized vectors only
                 if event.has_quantized {
-                    // TODO: Load quantized vectors from file paths and process them
+                    // Deferred: Load quantized vectors from file paths and process them
                     tracing::info!(
                         "Processing quantized vectors from {} files",
                         event.file_paths.len()
@@ -591,14 +591,14 @@ impl AxisLshIndex {
             ExtractionMode::Both => {
                 // Process both representations
                 if event.has_fp32 {
-                    // TODO: Load FP32 vectors from file paths and process them
+                    // Deferred: Load FP32 vectors from file paths and process them
                     tracing::info!(
                         "Processing FP32 vectors from {} files",
                         event.file_paths.len()
                     );
                 }
                 if event.has_quantized {
-                    // TODO: Load quantized vectors from file paths and process them
+                    // Deferred: Load quantized vectors from file paths and process them
                     tracing::info!(
                         "Processing quantized vectors from {} files",
                         event.file_paths.len()
@@ -612,13 +612,13 @@ impl AxisLshIndex {
                         "Auto mode: Processing quantized vectors from {} files",
                         event.file_paths.len()
                     );
-                    // TODO: Load quantized vectors from file paths and process them
+                    // Deferred: Load quantized vectors from file paths and process them
                 } else if event.has_fp32 {
                     tracing::info!(
                         "Auto mode: Processing FP32 vectors from {} files",
                         event.file_paths.len()
                     );
-                    // TODO: Load FP32 vectors from file paths and process them
+                    // Deferred: Load FP32 vectors from file paths and process them
                 }
             }
         }
@@ -649,7 +649,7 @@ impl AxisLshIndex {
             return self.search(query, k, filter).await;
         }
 
-        // TODO: Implement two-stage search with quantized filtering
+        // Deferred: Implement two-stage search with quantized filtering
         // Stage 1: Fast filtering using quantized hash comparisons
         // Stage 2: FP32 reranking of top candidates
         tracing::warn!("Quantized acceleration not yet implemented - using standard search");

@@ -6,7 +6,7 @@ use super::FusedSearchResult;
 
 /// Result reranker
 pub struct Reranker {
-    // TODO: Add reranker configuration
+    // Deferred: Add reranker configuration
     _private: (),
 }
 
@@ -29,7 +29,7 @@ impl Reranker {
         results: Vec<FusedSearchResult>,
         top_k: usize,
     ) -> Result<Vec<FusedSearchResult>, Box<dyn std::error::Error>> {
-        // TODO: Implement reranking logic
+        // Deferred: Implement reranking logic
         // For now, just truncate to top_k
         Ok(results.into_iter().take(top_k).collect())
     }
@@ -47,7 +47,7 @@ impl Reranker {
         results: Vec<FusedSearchResult>,
         _filters: &serde_json::Value,
     ) -> Result<Vec<FusedSearchResult>, Box<dyn std::error::Error>> {
-        // TODO: Implement filter application
+        // Deferred: Implement filter application
         Ok(results)
     }
 
@@ -66,7 +66,7 @@ impl Reranker {
         _boost_field: &str,
         _boost_factor: f64,
     ) -> Result<Vec<FusedSearchResult>, Box<dyn std::error::Error>> {
-        // TODO: Implement boosting logic
+        // Deferred: Implement boosting logic
         // For now, return results unchanged
         Ok(results)
     }

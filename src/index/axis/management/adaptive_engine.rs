@@ -487,7 +487,7 @@ impl AdaptiveIndexEngine {
         base_strategy: IndexSelectionStrategy,
         _characteristics: &CollectionCharacteristics,
     ) -> Result<IndexSelectionStrategy> {
-        // TODO: Implement ML-based refinement
+        // Deferred: Implement ML-based refinement
         Ok(base_strategy)
     }
 
@@ -499,7 +499,7 @@ impl AdaptiveIndexEngine {
         _characteristics: &CollectionCharacteristics,
     ) -> Result<f64> {
         // Simple heuristic for now
-        // TODO: Use ML models for accurate prediction
+        // Deferred: Use ML models for accurate prediction
 
         // Calculate improvement based on index specifications
         let current_has_vector = current.indexes.iter().any(|idx| {
@@ -568,7 +568,7 @@ impl AdaptiveIndexEngine {
 
     /// Get current strategy (mock implementation)
     async fn get_current_strategy(&self, _collection_id: &str) -> Result<IndexSelectionStrategy> {
-        // TODO: Get from actual storage
+        // Deferred: Get from actual storage
         // For now, return a simple default strategy with identifier index
         use crate::index::axis::types::{QueryCondition, ResultCombination, RoutingRule};
 

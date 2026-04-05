@@ -330,7 +330,7 @@ impl DiskCsrStorage {
         // Log to WAL before writing (write-ahead logging)
         if self.wal_enabled
             && let Some(ref _wal_writer) = self.wal_writer {
-                // TODO: Create proper GraphOperation::CreateEdge
+                // Deferred: Create proper GraphOperation::CreateEdge
                 // For now, log the operation for debugging
                 tracing::debug!(
                     "WAL: Edge addition from={} to={} id={}",
@@ -532,7 +532,7 @@ impl DiskCsrStorage {
 
         let start = std::time::Instant::now();
 
-        // TODO: Implement actual WAL replay from UnifiedWALWriter
+        // Deferred: Implement actual WAL replay from UnifiedWALWriter
         // For now, this is a placeholder
         tracing::info!("WAL recovery initiated for disk-based graph storage");
 

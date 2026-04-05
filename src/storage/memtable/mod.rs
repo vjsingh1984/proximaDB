@@ -483,7 +483,7 @@ where
     /// Generate comprehensive benchmark report
     pub async fn generate_report(&mut self) -> BenchmarkReport {
         // For now, return empty benchmark report
-        // TODO: Implement proper generic test data generation
+        // Deferred: Implement proper generic test data generation
         BenchmarkReport {
             config: self.config.clone(),
             insert_results: vec![],

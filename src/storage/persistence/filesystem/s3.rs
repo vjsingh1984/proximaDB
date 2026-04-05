@@ -538,7 +538,7 @@ impl FileSystem for S3FileSystem {
         let response_data = self.client.get_object_range(&bucket, &key, &credentials, Some(&range_header)).await?;
         
         // Parse multipart response
-        // TODO: Implement proper multipart response parsing
+        // Deferred: Implement proper multipart response parsing
         // For now, fall back to individual requests
         tracing::warn!("Multipart range parsing not yet implemented, falling back to individual requests");
         

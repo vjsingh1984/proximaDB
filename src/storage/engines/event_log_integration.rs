@@ -220,7 +220,7 @@ impl EventLogNotifierFactory {
             "viper" => Ok(Box::new(Self::create_viper_notifier(event_log))),
             "nova" | "swift" | "raptor" | "prism" | "helix" => {
                 // For now, use SST notifier for engines without specific implementations
-                // TODO: Implement specific notifiers for each engine
+                // Deferred: Implement specific notifiers for each engine
                 Ok(Box::new(Self::create_sst_notifier(event_log)))
             }
             _ => Err(anyhow::anyhow!(

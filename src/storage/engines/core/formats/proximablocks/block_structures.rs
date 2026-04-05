@@ -5827,7 +5827,7 @@ mod tests {
         // NOTE: The ProximaEncoder scheme selection may misidentify random data patterns
         // (e.g., Small-sample random data may appear "sequential" and get Simple8b encoding)
         // This can result in unexpectedly high compression ratios for truly random data
-        // TODO: Improve pattern detection in analyze_and_choose_scheme_f32() to handle random data better
+        // Deferred: Improve pattern detection in analyze_and_choose_scheme_f32() to handle random data better
         // For now, just verify serialization succeeds
         assert!(
             compression_ratio > 0.1,

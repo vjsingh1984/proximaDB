@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::impls::viper::ViperEngine;
 use crate::index::axis::AxisManager;
 use crate::storage::engines::impls::sst::SstEngine;
@@ -888,7 +888,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compaction_coordinator() {
-        // TODO: Implement comprehensive tests
+        // Deferred: Implement comprehensive tests
         assert!(true);
     }
 

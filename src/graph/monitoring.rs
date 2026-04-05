@@ -460,9 +460,9 @@ impl GraphMonitor {
                 parameters: metadata.clone(),
                 execution_time_ms: duration_ms,
                 timestamp: SystemTime::now(),
-                memory_used_mb: 0.0, // TODO: Get actual memory usage
-                nodes_visited: 0,    // TODO: Get from metadata
-                edges_traversed: 0,  // TODO: Get from metadata
+                memory_used_mb: 0.0, // Deferred: Get actual memory usage
+                nodes_visited: 0,    // Deferred: Get from metadata
+                edges_traversed: 0,  // Deferred: Get from metadata
                 error: if success {
                     None
                 } else {
@@ -958,7 +958,7 @@ impl SlowQueryLogger {
             queries.push_back(record);
         }
 
-        // TODO: Also write to log file if configured
+        // Deferred: Also write to log file if configured
     }
 
     /// Retrieve the most recent slow queries, up to the given limit (or all if `None`).

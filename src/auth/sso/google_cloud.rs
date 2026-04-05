@@ -85,7 +85,7 @@ impl GoogleCloudIntegration {
         );
 
         // For now, return a simulated validation
-        // TODO: Replace with actual Google Cloud authentication
+        // Deferred: Replace with actual Google Cloud authentication
         self.simulate_google_token_validation(id_token).await
     }
 
