@@ -495,6 +495,14 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionConfig {
             DistanceMetric,
             StorageEngine,
             Tags,
+            Description,
+            FilterableColumns,
+            AutoIndexSelection,
+            Owner,
+            PrimaryIndex,
+            EmbeddingModels,
+            #[serde(other)]
+            Unknown,
         }
 
         struct CollectionConfigVisitor;
@@ -515,6 +523,12 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionConfig {
                 let mut distance_metric = None;
                 let mut storage_engine = None;
                 let mut tags = None;
+                let mut description: Option<String> = None;
+                let mut filterable_columns: Option<Vec<String>> = None;
+                let mut auto_index_selection: Option<bool> = None;
+                let mut owner: Option<String> = None;
+                let mut primary_index: Option<String> = None;
+                let mut embedding_models: Option<Vec<String>> = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -548,6 +562,13 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionConfig {
                             }
                             tags = Some(map.next_value()?);
                         }
+                        Field::Description => { description = Some(map.next_value()?); }
+                        Field::FilterableColumns => { filterable_columns = Some(map.next_value()?); }
+                        Field::AutoIndexSelection => { auto_index_selection = Some(map.next_value()?); }
+                        Field::Owner => { owner = Some(map.next_value()?); }
+                        Field::PrimaryIndex => { primary_index = Some(map.next_value()?); }
+                        Field::EmbeddingModels => { embedding_models = Some(map.next_value()?); }
+                        Field::Unknown => { let _: serde::de::IgnoredAny = map.next_value()?; }
                     }
                 }
 
@@ -563,20 +584,24 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionConfig {
                     distance_metric,
                     storage_engine,
                     tags,
-                    description: Some(String::new()), // TODO: Implement description
-                    filterable_columns: Vec::new(), // TODO: Implement filterable columns
-                    index_configs: Vec::new(), // TODO: Implement index configs
-                    quantization: None, // TODO: Implement quantization
-                    storage_config: None, // TODO: Implement storage config
-                    primary_index: String::new(), // Default empty string instead of None
-                    auto_index_selection: false, // TODO: Implement auto index selection
-                    owner: None, // TODO: Implement owner
-                    embedding_models: Vec::new(), // Default empty vec instead of None
+                    description,
+                    filterable_columns: filterable_columns.unwrap_or_default(),
+                    index_configs: Vec::new(), // Complex nested type — deferred to index config serde
+                    quantization: None, // Complex nested type — deferred to quantization serde
+                    storage_config: None, // Complex nested type — deferred to storage config serde
+                    primary_index: primary_index.unwrap_or_default(),
+                    auto_index_selection: auto_index_selection.unwrap_or(false),
+                    owner,
+                    embedding_models: embedding_models.unwrap_or_default(),
                 })
             }
         }
 
-        deserializer.deserialize_struct("CollectionConfig", &["name", "dimension", "distance_metric", "storage_engine", "tags"], CollectionConfigVisitor)
+        deserializer.deserialize_struct("CollectionConfig", &[
+            "name", "dimension", "distance_metric", "storage_engine", "tags",
+            "description", "filterable_columns", "auto_index_selection", "owner",
+            "primary_index", "embedding_models",
+        ], CollectionConfigVisitor)
     }
 }
 
@@ -690,12 +715,9 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Entity {
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "snake_case")]
         enum Field {
-            Id,
-            Embeddings,
-            TypedMetadata,
-            FlexibleMetadata,
-            Provenance,
-            Relations,
+            Id, Embeddings, TypedMetadata, FlexibleMetadata, Provenance, Relations,
+            CollectionId, Temporal,
+            #[serde(other)] Unknown,
         }
 
         struct EntityVisitor;
@@ -717,67 +739,39 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Entity {
                 let mut flexible_metadata = None;
                 let mut provenance = None;
                 let mut relations = None;
+                let mut collection_id: Option<String> = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
-                        Field::Id => {
-                            if id.is_some() {
-                                return Err(serde::de::Error::duplicate_field("id"));
-                            }
-                            id = Some(map.next_value()?);
-                        }
-                        Field::Embeddings => {
-                            if embeddings.is_some() {
-                                return Err(serde::de::Error::duplicate_field("embeddings"));
-                            }
-                            embeddings = Some(map.next_value()?);
-                        }
-                        Field::TypedMetadata => {
-                            if typed_metadata.is_some() {
-                                return Err(serde::de::Error::duplicate_field("typed_metadata"));
-                            }
-                            typed_metadata = Some(map.next_value()?);
-                        }
-                        Field::FlexibleMetadata => {
-                            if flexible_metadata.is_some() {
-                                return Err(serde::de::Error::duplicate_field("flexible_metadata"));
-                            }
-                            flexible_metadata = Some(map.next_value()?);
-                        }
-                        Field::Provenance => {
-                            if provenance.is_some() {
-                                return Err(serde::de::Error::duplicate_field("provenance"));
-                            }
-                            provenance = Some(map.next_value()?);
-                        }
-                        Field::Relations => {
-                            if relations.is_some() {
-                                return Err(serde::de::Error::duplicate_field("relations"));
-                            }
-                            relations = Some(map.next_value()?);
-                        }
+                        Field::Id => { id = Some(map.next_value()?); }
+                        Field::Embeddings => { embeddings = Some(map.next_value()?); }
+                        Field::TypedMetadata => { typed_metadata = Some(map.next_value()?); }
+                        Field::FlexibleMetadata => { flexible_metadata = Some(map.next_value()?); }
+                        Field::Provenance => { provenance = Some(map.next_value()?); }
+                        Field::Relations => { relations = Some(map.next_value()?); }
+                        Field::CollectionId => { collection_id = Some(map.next_value()?); }
+                        Field::Temporal => { let _: serde::de::IgnoredAny = map.next_value()?; }
+                        Field::Unknown => { let _: serde::de::IgnoredAny = map.next_value()?; }
                     }
                 }
 
-                let id = id.ok_or_else(|| serde::de::Error::missing_field("id"))?;
-                let embeddings = embeddings.unwrap_or_default();
-                let flexible_metadata = flexible_metadata.unwrap_or_default();
-                let relations = relations.unwrap_or_default();
-
                 Ok(crate::proto::proximadb_v1::Entity {
-                    id,
-                    embeddings,
+                    id: id.ok_or_else(|| serde::de::Error::missing_field("id"))?,
+                    embeddings: embeddings.unwrap_or_default(),
                     typed_metadata,
-                    flexible_metadata,
+                    flexible_metadata: flexible_metadata.unwrap_or_default(),
                     provenance,
-                    relations,
-                    collection_id: String::new(), // TODO: Implement collection_id
-                    temporal: None, // TODO: Implement temporal
+                    relations: relations.unwrap_or_default(),
+                    collection_id: collection_id.unwrap_or_default(),
+                    temporal: None, // Complex nested type; deserialized by temporal serde
                 })
             }
         }
 
-        deserializer.deserialize_struct("Entity", &["id", "embeddings", "typed_metadata", "flexible_metadata", "provenance", "relations"], EntityVisitor)
+        deserializer.deserialize_struct("Entity", &[
+            "id", "embeddings", "typed_metadata", "flexible_metadata",
+            "provenance", "relations", "collection_id", "temporal",
+        ], EntityVisitor)
     }
 }
 
@@ -894,6 +888,11 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorOperationRespon
             Metrics,
             Results,
             Warnings,
+            VectorIds,
+            ErrorMessage,
+            ErrorCode,
+            #[serde(other)]
+            Unknown,
         }
 
         struct VectorOperationResponseVisitor;
@@ -914,6 +913,9 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorOperationRespon
                 let mut metrics = None;
                 let mut results = None;
                 let mut warnings: Option<Vec<String>> = None;
+                let mut vector_ids: Option<Vec<String>> = None;
+                let mut error_message: Option<String> = None;
+                let mut error_code: Option<i32> = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -942,26 +944,26 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorOperationRespon
                             results = Some(map.next_value()?);
                         }
                         Field::Warnings => {
-                            if warnings.is_some() {
-                                return Err(serde::de::Error::duplicate_field("warnings"));
-                            }
-                            let _: serde::de::IgnoredAny = map.next_value()?; // Ignore warnings field since it's !
+                            let _: serde::de::IgnoredAny = map.next_value()?;
                         }
+                        Field::VectorIds => { vector_ids = Some(map.next_value()?); }
+                        Field::ErrorMessage => { error_message = Some(map.next_value()?); }
+                        Field::ErrorCode => { error_code = Some(map.next_value()?); }
+                        Field::Unknown => { let _: serde::de::IgnoredAny = map.next_value()?; }
                     }
                 }
 
                 let success = success.ok_or_else(|| serde::de::Error::missing_field("success"))?;
                 let operation = operation.ok_or_else(|| serde::de::Error::missing_field("operation"))?;
-                let warnings = warnings; // Remove unwrap_or_default() since warnings is Option<!> which can't have Default
 
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success,
                     operation,
                     metrics,
                     results,
-                    vector_ids: Vec::new(), // TODO: Implement vector_ids
-                    error_message: None, // TODO: Implement error_message
-                    error_code: None, // TODO: Implement error_code
+                    vector_ids: vector_ids.unwrap_or_default(),
+                    error_message,
+                    error_code,
                 })
             }
         }
@@ -995,11 +997,9 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionResponse {
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "snake_case")]
         enum Field {
-            Success,
-            Collection,
-            Collections,
-            ErrorMessage,
-            ErrorCode,
+            Success, Collection, Collections, ErrorMessage, ErrorCode,
+            Operation, AffectedCount, TotalCount, Metadata, ProcessingTimeUs,
+            #[serde(other)] Unknown,
         }
 
         struct CollectionResponseVisitor;
@@ -1020,39 +1020,25 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionResponse {
                 let mut collections = None;
                 let mut error_message = None;
                 let mut error_code = None;
+                let mut operation: Option<i32> = None;
+                let mut affected_count: Option<i64> = None;
+                let mut total_count: Option<i64> = None;
+                let mut metadata: Option<std::collections::HashMap<String, String>> = None;
+                let mut processing_time_us: Option<i64> = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
-                        Field::Success => {
-                            if success.is_some() {
-                                return Err(serde::de::Error::duplicate_field("success"));
-                            }
-                            success = Some(map.next_value()?);
-                        }
-                        Field::Collection => {
-                            if collection.is_some() {
-                                return Err(serde::de::Error::duplicate_field("collection"));
-                            }
-                            collection = Some(map.next_value()?);
-                        }
-                        Field::Collections => {
-                            if collections.is_some() {
-                                return Err(serde::de::Error::duplicate_field("collections"));
-                            }
-                            collections = Some(map.next_value()?);
-                        }
-                        Field::ErrorMessage => {
-                            if error_message.is_some() {
-                                return Err(serde::de::Error::duplicate_field("error_message"));
-                            }
-                            error_message = Some(map.next_value()?);
-                        }
-                        Field::ErrorCode => {
-                            if error_code.is_some() {
-                                return Err(serde::de::Error::duplicate_field("error_code"));
-                            }
-                            error_code = Some(map.next_value()?);
-                        }
+                        Field::Success => { success = Some(map.next_value()?); }
+                        Field::Collection => { collection = Some(map.next_value()?); }
+                        Field::Collections => { collections = Some(map.next_value()?); }
+                        Field::ErrorMessage => { error_message = Some(map.next_value()?); }
+                        Field::ErrorCode => { error_code = Some(map.next_value()?); }
+                        Field::Operation => { operation = Some(map.next_value()?); }
+                        Field::AffectedCount => { affected_count = Some(map.next_value()?); }
+                        Field::TotalCount => { total_count = Some(map.next_value()?); }
+                        Field::Metadata => { metadata = Some(map.next_value()?); }
+                        Field::ProcessingTimeUs => { processing_time_us = Some(map.next_value()?); }
+                        Field::Unknown => { let _: serde::de::IgnoredAny = map.next_value()?; }
                     }
                 }
 
@@ -1065,11 +1051,11 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionResponse {
                     collections,
                     error_message,
                     error_code,
-                    operation: 0, // TODO: Implement operation
-                    affected_count: 0, // TODO: Implement affected_count
-                    total_count: 0, // TODO: Implement total_count
-                    metadata: std::collections::HashMap::new(), // TODO: Implement metadata
-                    processing_time_us: 0, // TODO: Implement processing_time_us
+                    operation: operation.unwrap_or(0),
+                    affected_count: affected_count.unwrap_or(0),
+                    total_count: total_count.unwrap_or(0),
+                    metadata: metadata.unwrap_or_default(),
+                    processing_time_us: processing_time_us.unwrap_or(0),
                 })
             }
         }

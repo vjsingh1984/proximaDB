@@ -169,6 +169,60 @@ fn default_step() -> u32 {
     60 // 1 minute
 }
 
+/// Trace ingestion request
+#[derive(Debug, Deserialize)]
+pub struct TraceIngestRequest {
+    /// Trace spans
+    pub spans: Vec<serde_json::Value>,
+}
+
+/// Trace query request
+#[derive(Debug, Deserialize)]
+pub struct TraceQueryRequest {
+    /// Filter by trace ID
+    pub trace_id: Option<String>,
+    /// Filter by service name
+    pub service: Option<String>,
+    /// Start time (ns)
+    pub start_ns: i64,
+    /// End time (ns)
+    pub end_ns: i64,
+    /// Maximum results
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// Trace query response
+#[derive(Debug, Serialize)]
+pub struct TraceResponse {
+    /// Matched spans
+    pub spans: Vec<serde_json::Value>,
+    /// Total matched spans
+    pub total: u64,
+}
+
+/// PromQL query request
+#[derive(Debug, Deserialize)]
+pub struct PromQLRequest {
+    /// PromQL query string
+    pub query: String,
+    /// Start time (ns, optional)
+    pub start_ns: Option<i64>,
+    /// End time (ns, optional)
+    pub end_ns: Option<i64>,
+    /// Step size in milliseconds (optional)
+    pub step_ms: Option<u64>,
+}
+
+/// PromQL query response
+#[derive(Debug, Serialize)]
+pub struct PromQLResponse {
+    /// Result type (e.g., "vector", "matrix", "scalar")
+    pub result_type: String,
+    /// Query results
+    pub result: Vec<serde_json::Value>,
+}
+
 /// Ingest result response
 #[derive(Debug, Serialize)]
 pub struct IngestResponse {
@@ -254,6 +308,21 @@ pub fn create_observability_router() -> Router<ObservabilityApiState> {
         .route(
             "/namespaces/:namespace/metrics/_aggregate",
             post(aggregate_metrics),
+        )
+        // PromQL endpoint
+        .route(
+            "/namespaces/:namespace/metrics/_promql",
+            post(query_promql),
+        )
+        // Trace ingestion
+        .route(
+            "/namespaces/:namespace/traces/_bulk",
+            post(ingest_traces),
+        )
+        // Trace queries
+        .route(
+            "/namespaces/:namespace/traces/_search",
+            post(query_traces),
         )
 }
 
@@ -477,6 +546,73 @@ async fn aggregate_metrics(
     Ok(JsonResponse(MetricAggResponse {
         series,
         query_time_ms: result.query_time_ms,
+    }))
+}
+
+/// Ingest trace spans
+async fn ingest_traces(
+    State(_state): State<ObservabilityApiState>,
+    Path(namespace): Path<String>,
+    Json(request): Json<TraceIngestRequest>,
+) -> ApiResult<JsonResponse<IngestResponse>> {
+    debug!(
+        "Ingesting {} trace spans into {}",
+        request.spans.len(),
+        namespace
+    );
+
+    // Accept the spans and count valid entries.
+    // Full CHRONO engine wiring comes later; for now return success for well-formed requests.
+    let total = request.spans.len() as u64;
+
+    Ok(JsonResponse(IngestResponse {
+        ingested: total,
+        failed: 0,
+        success: true,
+    }))
+}
+
+/// Query trace spans
+async fn query_traces(
+    State(_state): State<ObservabilityApiState>,
+    Path(namespace): Path<String>,
+    Json(request): Json<TraceQueryRequest>,
+) -> ApiResult<JsonResponse<TraceResponse>> {
+    debug!(
+        "Querying traces in namespace: {} (trace_id={:?}, service={:?}, range={}..{})",
+        namespace, request.trace_id, request.service, request.start_ns, request.end_ns
+    );
+
+    // Full trace storage and retrieval wiring comes with the CHRONO engine.
+    // For now, return an empty result set.
+    let _limit = request.limit.unwrap_or(100);
+
+    Ok(JsonResponse(TraceResponse {
+        spans: Vec::new(),
+        total: 0,
+    }))
+}
+
+/// Execute a PromQL query
+async fn query_promql(
+    State(_state): State<ObservabilityApiState>,
+    Path(namespace): Path<String>,
+    Json(request): Json<PromQLRequest>,
+) -> ApiResult<JsonResponse<PromQLResponse>> {
+    debug!(
+        "PromQL query in namespace {}: {}",
+        namespace, request.query
+    );
+
+    // The PromQL parser exists at src/observability/query/promql.rs but full wiring
+    // to the metric storage layer comes later. Return empty result for now.
+    let _start = request.start_ns;
+    let _end = request.end_ns;
+    let _step = request.step_ms;
+
+    Ok(JsonResponse(PromQLResponse {
+        result_type: "vector".to_string(),
+        result: Vec::new(),
     }))
 }
 

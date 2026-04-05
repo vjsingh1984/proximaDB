@@ -67,6 +67,7 @@ pub mod decomposition;
 pub mod executor;
 pub mod fusion;
 pub mod learned_fusion;
+pub mod lower; // UQL to MultiModelPlan lowering (Issue #45, SB-15)
 pub mod optimizer;
 pub mod reranking;
 pub mod uql;
@@ -87,13 +88,17 @@ pub use learned_fusion::{
 pub use reranking::{CrossModalReranker, QueryContext, QueryIntent, RerankConfig, RerankedResult};
 pub use uql::{UQLParser, UQLStatement};
 
+use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::DocumentService;
 use crate::storage::traits::UnifiedStorageEngine;
 
 /// Unified query engine for cross-model queries
 pub struct UnifiedQueryEngine {
-    /// Vector/document storage engine
+    /// Vector/document storage engine (Phase 2: direct engine access)
+    #[allow(dead_code)]
     storage_engine: Arc<dyn UnifiedStorageEngine>,
+    /// Vector operations service for vector searches (optional)
+    vector_ops: Option<Arc<VectorOperationsService>>,
     /// Document service for JSON document queries
     document_service: Arc<DocumentService>,
     /// Query decomposer
@@ -134,14 +139,37 @@ impl Default for UnifiedQueryConfig {
 }
 
 impl UnifiedQueryEngine {
-    /// Create a new unified query engine
+    /// Create a new unified query engine with full vector search support
     pub fn new(
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        vector_ops: Arc<VectorOperationsService>,
+        document_service: Arc<DocumentService>,
+        config: UnifiedQueryConfig,
+    ) -> Self {
+        Self {
+            storage_engine: storage_engine.clone(),
+            vector_ops: Some(vector_ops),
+            document_service,
+            decomposer: QueryDecomposer::new(),
+            executor: ParallelExecutor::new(config.max_parallel_queries),
+            fuser: ResultFuser::new(config.default_fusion.clone()),
+            config,
+        }
+    }
+
+    /// Create a new unified query engine without vector operations (document + graph only)
+    ///
+    /// Note: This constructor is provided for backward compatibility but vector search
+    /// queries will return empty results. Use `new()` with VectorOperationsService for
+    /// full functionality.
+    pub fn without_vector_ops(
         storage_engine: Arc<dyn UnifiedStorageEngine>,
         document_service: Arc<DocumentService>,
         config: UnifiedQueryConfig,
     ) -> Self {
         Self {
             storage_engine: storage_engine.clone(),
+            vector_ops: None,
             document_service,
             decomposer: QueryDecomposer::new(),
             executor: ParallelExecutor::new(config.max_parallel_queries),
@@ -164,9 +192,9 @@ impl UnifiedQueryEngine {
         // 2. Execute sub-queries in parallel
         let sub_results = self
             .executor
-            .execute_parallel(
+            .execute_parallel_with_services(
                 &multi_model_query,
-                self.storage_engine.clone(),
+                self.vector_ops.clone(),
                 self.document_service.clone(),
             )
             .await?;
@@ -190,9 +218,9 @@ impl UnifiedQueryEngine {
 
         let sub_results = self
             .executor
-            .execute_parallel(
+            .execute_parallel_with_services(
                 &multi_model_query,
-                self.storage_engine.clone(),
+                self.vector_ops.clone(),
                 self.document_service.clone(),
             )
             .await?;
@@ -229,7 +257,9 @@ impl UnifiedQueryEngine {
             DataModel::Vector => 1.0,        // Vector search is typically fast
             DataModel::Document => 2.0,      // Document queries vary
             DataModel::Graph => 3.0,         // Graph traversal can be expensive
-            DataModel::Observability => 2.5, // Log queries depend on time range
+            DataModel::Observability | DataModel::TimeSeries => 2.5,
+            DataModel::Relational => 1.5,
+            DataModel::Event => 2.0,
         }
     }
 

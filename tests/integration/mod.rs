@@ -137,6 +137,9 @@ pub mod sst_quantization_comprehensive_test; // Comprehensive quantization cover
 // Query facade integration tests - REST/gRPC parity validation
 pub mod query_facade;
 
+// Multi-model end-to-end routing tests (all 7 data models, cross-protocol)
+pub mod multimodel_e2e_test;
+
 // SQL frontend integration tests
 // Note: sql_frontend module only contains unified_query_tests.rs which needs a mod.rs
 // TODO: Add mod.rs to sql_frontend directory when tests are ready

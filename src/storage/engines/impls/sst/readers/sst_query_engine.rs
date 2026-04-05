@@ -63,14 +63,9 @@ use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 // Vectorized execution imports (TD-041)
-use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::{
-    DataChunk, evaluate_predicate_vectorized,
-};
+use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::evaluate_predicate_vectorized;
 
-// Morsel-driven parallelism imports (TD-039)
-use crate::storage::engines::impls::sst::readers::morsel_scheduler::{MorselScheduler, MORSEL_SIZE};
-
-use arrow::array::{Float32Array, RecordBatch};
+use arrow::array::RecordBatch;
 use arrow::datatypes::{Schema, Field, DataType};
 
 // Type alias for bloom filter
@@ -1642,35 +1637,40 @@ impl UnifiedSstableReader {
         let metric = distance_metric;
 
         // Process morsels in parallel
+        let filter_arc = filter.clone();
+        let query_vec_owned = query_vector.to_vec();
         let morsel_results = scheduler
             .process_morsels(all_records, move |morsel_records| {
-                // Create distance compute for this morsel
-                let distance_compute =
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        metric,
-                    );
+                let filter_clone = filter_arc.clone();
+                let qv = query_vec_owned.clone();
+                async move {
+                    // Create distance compute for this morsel
+                    let distance_compute =
+                        crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                            metric,
+                        );
 
-                // Process each record in the morsel
-                let mut results = Vec::new();
-                for record in morsel_records {
-                    // Apply filter if present
-                    if let Some(filter_expr) = &filter {
-                        if !crate::core::search::sql_value_filter::evaluate_filter(
-                            filter_expr,
-                            &record.metadata,
-                        ) {
-                            continue; // Skip filtered records
+                    // Process each record in the morsel
+                    let mut results = Vec::new();
+                    for record in morsel_records {
+                        // Apply filter if present
+                        if let Some(filter_expr) = &filter_clone {
+                            if !crate::core::search::sql_value_filter::evaluate_filter(
+                                filter_expr,
+                                &record.metadata,
+                            ) {
+                                continue; // Skip filtered records
+                            }
                         }
-                    }
 
-                    // Compute distance
-                    let distance = distance_compute.calculate_distance(
-                        query_vector,
-                        &record.vector,
-                        &metric,
-                    );
+                        // Compute distance
+                        let distance = distance_compute.calculate_distance(
+                            &qv,
+                            &record.vector,
+                            &metric,
+                        );
 
-                    // Create result
+                        // Create result
                     let result = crate::core::search::results::OptimizedSearchRecord::new(
                         record.id.clone(),
                         distance.normalized_score,
@@ -1683,14 +1683,12 @@ impl UnifiedSstableReader {
                 }
 
                 Ok(results)
+                }
             })
             .await?;
 
-        // Combine results from all morsels
-        let mut combined_results = Vec::new();
-        for morsel_result in morsel_results {
-            combined_results.extend(morsel_result);
-        }
+        // Combine results from all morsels (process_morsels already flattens)
+        let combined_results = morsel_results;
 
         // Use bounded priority queue for efficient top-k selection
         let mut priority_queue = BoundedPriorityQueue::new(k);
@@ -1707,9 +1705,137 @@ impl UnifiedSstableReader {
         Ok(final_results)
     }
 
+    /// Pipeline-based execution with DataChunks (TD-031)
+    ///
+    /// This method provides pull-based pipeline execution with selection vectors:
+    /// - Operators: Scan, Filter, Project, Sort, TopK
+    /// - Zero-copy operations using selection vectors
+    /// - Late materialization of results
+    /// - Pull-based execution with next_chunk() pattern
+    ///
+    /// Best for: Complex queries with multiple operations (filter + sort + top-k)
+    pub async fn search_with_pipeline_execution(
+        &self,
+        file_path: &str,
+        query_vector: &[f32],
+        filter: Option<FilterExpression>,
+        k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+        block_prune: &crate::core::search::BlockPruneConfig,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        use crate::compute::PipelineOperator;
+        use crate::compute::PipelineExecutor;
+
+        trace!(
+            "SST Reader: pipeline execution search called with file_path: {}",
+            file_path
+        );
+
+        // Create search context
+        let context = CollectionContext {
+            file_path: file_path.to_string(),
+            sstable_files: vec![file_path.to_string()],
+            total_vectors: 0,
+            metadata_columns: Vec::new(),
+            level: 0,
+            creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
+            collection: collection.map(|c| Arc::new(c.clone())),
+        };
+
+        let params = SearchParams {
+            vector: Some(query_vector.to_vec()),
+            filter_expression: filter.clone(),
+            top_k: Some(k),
+            distance_metric: Some(distance_metric),
+            block_prune: block_prune.clone(),
+            ..Default::default()
+        };
+
+        // Get blocks using existing modular search
+        let blocks = self
+            .search_optimized_strategy_modular(&context, &params)
+            .await?;
+
+        trace!(
+            "SST Reader: pipeline execution processing {} blocks",
+            blocks.len()
+        );
+
+        // Flatten all records from all blocks
+        let all_records: Vec<VectorRecord> = blocks
+            .into_iter()
+            .flat_map(|block| block.records)
+            .collect();
+
+        trace!(
+            "Pipeline execution: processing {} records with filter and top-k",
+            all_records.len()
+        );
+
+        // Build pipeline operators
+        let mut operators = vec![
+            PipelineOperator::Scan {
+                source: file_path.to_string(),
+            },
+        ];
+
+        // Add filter operator if filter expression exists
+        if let Some(filter_expr) = &filter {
+            operators.push(PipelineOperator::Filter {
+                expression: filter_expr.clone(),
+            });
+        }
+
+        // Add TopK operator for final results
+        // Note: We compute distances first, then apply TopK
+        operators.push(PipelineOperator::TopK {
+            k,
+            sort_column: "score".to_string(),
+        });
+
+        // Create pipeline executor
+        let executor = PipelineExecutor::new(operators.clone());
+
+        // Execute pipeline on records
+        let pipeline_results = executor.execute_on_records(all_records).await?;
+
+        // Convert VectorRecord results to OptimizedSearchRecord
+        let results: Vec<crate::core::search::results::OptimizedSearchRecord> = pipeline_results
+            .into_iter()
+            .map(|record| {
+                // Calculate distance for final ranking
+                let distance_compute =
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                        distance_metric,
+                    );
+                let distance = distance_compute.calculate_distance(
+                    query_vector,
+                    &record.vector,
+                    &distance_metric,
+                );
+
+                crate::core::search::results::OptimizedSearchRecord::new(
+                    record.id.clone(),
+                    distance.normalized_score,
+                )
+                .with_similarity(distance.normalized_score)
+                .add_vector(record.vector.clone())
+                .with_metadata(record.metadata.clone())
+            })
+            .collect();
+
+        debug!(
+            "✅ SST: Pipeline execution complete, found {} results",
+            results.len()
+        );
+        Ok(results)
+    }
+
     /// Convert VectorRecord batch to Arrow RecordBatch for vectorized processing
     fn records_to_batch(&self, records: &[VectorRecord]) -> Result<RecordBatch> {
-        use arrow::array::{StringArray, Float32Array, MapArray};
+        use arrow::array::{StringArray, Float32Array};
 
         if records.is_empty() {
             // Return empty batch with correct schema
@@ -1720,7 +1846,7 @@ impl UnifiedSstableReader {
                     384, // Default dimension
                 ), true),
             ]);
-            return Ok(RecordBatch::new_empty(schema));
+            return Ok(RecordBatch::new_empty(Arc::new(schema)));
         }
 
         // Extract IDs
@@ -1737,11 +1863,10 @@ impl UnifiedSstableReader {
             vector_values.extend_from_slice(&record.vector);
         }
 
-        let vector_array = Float32Array::from(vector_values);
+        let _vector_array = Float32Array::from(vector_values);
 
         // Create FixedSizeList array for vectors
-        // Note: For simplicity, we're using a basic schema. In production,
-        // you'd want to include metadata columns as well.
+        // TODO: Include vector column in batch schema (TD-041 Phase 3)
         let schema = Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
         ]);

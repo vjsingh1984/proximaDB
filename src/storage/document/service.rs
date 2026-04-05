@@ -19,7 +19,7 @@ use tracing::{debug, info, warn};
 
 use crate::metrics::collectors::DocumentMetricsCollector;
 use crate::proto::proximadb_v1::{
-    DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlArray, SqlObject, SqlValue,
+    DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject, SqlValue,
     UpdateOperation,
 };
 use crate::storage::persistence::write_ahead_log::unified_operations::{
@@ -27,7 +27,8 @@ use crate::storage::persistence::write_ahead_log::unified_operations::{
 };
 use crate::storage::traits::UnifiedStorageEngine;
 
-use super::aggregation_extensions::{LookupConfig, LookupFetcher};
+use super::DocumentStorageEngine;
+use super::aggregation_extensions::LookupFetcher;
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
@@ -38,8 +39,13 @@ use super::{
 
 /// Document service for CRUD operations
 pub struct DocumentService {
-    /// Storage engine for persistence
+    /// Storage engine for persistence (vector-centric, used for legacy flush path)
     storage_engine: Arc<dyn UnifiedStorageEngine>,
+    /// Document-native storage engine (CEDAR) for direct document operations.
+    /// When present, CRUD operations delegate to this engine instead of
+    /// the in-memory HashMap cache. (Phase 2: wire CRUD through this)
+    #[allow(dead_code)]
+    document_engine: Option<Arc<dyn DocumentStorageEngine>>,
     /// Index manager for path and full-text indexes
     index_manager: Arc<IndexManager>,
     /// Query executor for filter evaluation
@@ -47,6 +53,7 @@ pub struct DocumentService {
     /// Collection metadata cache
     collections: Arc<RwLock<HashMap<String, DocumentCollection>>>,
     /// In-memory document store (hot cache, backed by WAL)
+    /// Used when document_engine is None (legacy mode)
     documents: Arc<RwLock<HashMap<String, HashMap<String, DocumentRecord>>>>,
     /// WAL writer for durability
     wal_writer: Arc<Mutex<Option<UnifiedWALWriter>>>,
@@ -57,10 +64,32 @@ pub struct DocumentService {
 }
 
 impl DocumentService {
-    /// Create a new document service
+    /// Create a new document service (legacy mode, uses in-memory HashMap)
     pub fn new(storage_engine: Arc<dyn UnifiedStorageEngine>) -> Self {
         Self {
             storage_engine,
+            document_engine: None,
+            index_manager: Arc::new(IndexManager::new()),
+            query_executor: Arc::new(QueryExecutor::new()),
+            collections: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(RwLock::new(HashMap::new())),
+            wal_writer: Arc::new(Mutex::new(None)),
+            wal_path: String::new(),
+            metrics_collector: None,
+        }
+    }
+
+    /// Create a document service backed by a DocumentStorageEngine (CEDAR).
+    ///
+    /// When a document engine is provided, all CRUD operations delegate to it
+    /// instead of the in-memory HashMap cache.
+    pub fn with_document_engine(
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        document_engine: Arc<dyn DocumentStorageEngine>,
+    ) -> Self {
+        Self {
+            storage_engine,
+            document_engine: Some(document_engine),
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
@@ -78,6 +107,7 @@ impl DocumentService {
     ) -> Self {
         Self {
             storage_engine,
+            document_engine: None,
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
@@ -109,6 +139,7 @@ impl DocumentService {
 
         let mut service = Self {
             storage_engine,
+            document_engine: None,
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),

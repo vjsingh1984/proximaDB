@@ -675,8 +675,8 @@ impl SstableWriter {
                 .map(|e| 4 + e.serialize().unwrap_or_default().len()) // Include 4-byte length prefix!
                 .sum::<usize>() as u32,
             total_records: processed_count as u64,
-            min_timestamp: 0,        // TODO: extract from data
-            max_timestamp: u64::MAX, // TODO: extract from data
+            min_timestamp: vector_records.iter().filter_map(|r| r.timestamp).map(|t| t as u64).min().unwrap_or(0),
+            max_timestamp: vector_records.iter().filter_map(|r| r.timestamp).map(|t| t as u64).max().unwrap_or(0),
             compression_ratio: 70,   // Estimated compression ratio
             reserved: [0; 7],
         };
@@ -684,16 +684,28 @@ impl SstableWriter {
         // Create block headers for each data block
         let mut block_headers = Vec::new();
         for block in data_blocks.iter() {
+            // Compute min/max key hashes for block-level pruning
+            let key_hashes: Vec<u64> = block.records.iter()
+                .map(|r| {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    r.id.hash(&mut hasher);
+                    hasher.finish()
+                })
+                .collect();
+            let min_key_hash = key_hashes.iter().copied().min().unwrap_or(0);
+            let max_key_hash = key_hashes.iter().copied().max().unwrap_or(u64::MAX);
+
             let header = SstBlockHeader {
-                offset: 0,            // Will be calculated during writing
-                compressed_size: 0,   // Will be calculated during compression
-                uncompressed_size: 0, // Will be calculated
+                offset: 0,
+                compressed_size: 0,
+                uncompressed_size: 0,
                 record_count: block.records.len() as u32,
-                bloom_offset: 0,        // Block-level bloom filter offset (if any)
-                bloom_size: 0,          // Block-level bloom filter size
-                min_key_hash: 0,        // TODO: calculate from block data
-                max_key_hash: u64::MAX, // TODO: calculate from block data
-                priority: 128,          // Medium priority
+                bloom_offset: 0,
+                bloom_size: 0,
+                min_key_hash,
+                max_key_hash,
+                priority: 128,
                 reserved: [0; 7],
             };
             block_headers.push(header);

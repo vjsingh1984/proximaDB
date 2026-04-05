@@ -1580,15 +1580,17 @@ impl UQLParser {
                 edge_filters: vec![],
                 return_paths: false,
             }),
-            DataModel::Observability => ModelOperation::LogQuery(LogQueryExpr {
-                namespace: source.collection.clone(),
-                start_time_ns: 0,
-                end_time_ns: i64::MAX,
-                query: None,
-                severities: vec![],
-                services: vec![],
-                limit: 100,
-            }),
+            DataModel::Observability | DataModel::TimeSeries | DataModel::Relational | DataModel::Event => {
+                ModelOperation::LogQuery(LogQueryExpr {
+                    namespace: source.collection.clone(),
+                    start_time_ns: 0,
+                    end_time_ns: i64::MAX,
+                    query: None,
+                    severities: vec![],
+                    services: vec![],
+                    limit: 100,
+                })
+            }
         };
 
         Ok(QueryComponent {

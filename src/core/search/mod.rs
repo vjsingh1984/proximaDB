@@ -2,6 +2,7 @@
 
 pub mod bounded_queue;
 pub mod engine_benchmarks;
+pub mod filter_contract; // Filter contracts for hybrid search (Issue #38, SB-08)
 pub mod filter_pushdown_engine;
 pub mod hybrid;
 pub mod index_based_filter;
@@ -134,7 +135,7 @@ impl SearchMode {
 }
 
 /// Unified search parameters for all storage engines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchParams {
     // Core search parameters
     /// Query vectors for similarity search (supports single or batch search)
@@ -147,6 +148,7 @@ pub struct SearchParams {
     pub top_k: Option<usize>,
 
     /// Distance metric to use for similarity calculation
+    #[serde(skip)]
     pub distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
 
     /// Unified metadata filter expression supporting AND, OR, NOT operators
@@ -175,14 +177,20 @@ pub struct SearchParams {
     /// When enabled, divides work into 4096-row morsels for parallel processing
     pub enable_parallel_morsels: Option<bool>,
 
+    /// Enable pipeline-based execution with DataChunks (TD-031)
+    /// When enabled, uses pull-based pipeline with selection vectors for zero-copy operations
+    pub enable_pipeline_execution: Option<bool>,
+
     // Optional optimization hints
     /// Preferred quantization level for search
+    #[serde(skip)]
     pub quantization_hint: Option<crate::compute::UnifiedQuantizationLevel>,
 
     /// Hint to enable/disable cluster optimization
     pub enable_clustering_hint: Option<bool>,
 
     /// Runtime optimization hints for search strategy selection
+    #[serde(skip)]
     pub runtime_hints: Option<crate::query::unified_query_optimizer::FilterOptimizationHints>,
 
     /// Hint to enable/disable metadata filtering optimization
@@ -202,6 +210,7 @@ pub struct SearchParams {
     pub progressive_scenario: Option<String>,
 
     /// Custom recall rates for progressive stages
+    #[serde(skip)]
     pub progressive_recalls: Option<ProgressiveRecalls>,
 
     /// Optimization hint for search strategy
@@ -297,6 +306,7 @@ impl Default for SearchParams {
             enable_two_stage: Some(true),
             enable_vectorized_execution: Some(false), // Disabled by default (TD-041)
             enable_parallel_morsels: Some(false), // Disabled by default (TD-039)
+            enable_pipeline_execution: Some(false), // Disabled by default (TD-031)
             quantization_hint: None,
             enable_clustering_hint: Some(true),
             enable_metadata_filtering_hint: Some(true),

@@ -8,8 +8,18 @@ use tracing::{debug, error, info};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::config::WALConfig;
-// Temporarily disabled - OptimizedFormat has been removed from vector_operations_service
-// use crate::services::operations::vectors::OptimizedFormat;
+
+/// WAL serialization format for optimized writes.
+/// Defined locally after removal from vector_operations_service.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OptimizedFormat {
+    /// Protobuf batch serialization
+    Proto,
+    /// Bincode serialization (fastest for Rust)
+    Bincode,
+    /// Avro serialization (schema evolution)
+    Avro,
+}
 
 /// High-performance WAL writer with batching, caching, and background writes
 ///
@@ -44,8 +54,7 @@ struct WalWriteRequest {
     collection_id: String,
     vectors: Vec<VectorRecord>,
     sequences: Vec<u64>,
-    // TODO: Restore when OptimizedFormat is available
-    // format: OptimizedFormat,
+    format: OptimizedFormat,
     base_location: String,
     response_tx: tokio::sync::oneshot::Sender<Result<String>>,
 }
@@ -124,8 +133,7 @@ impl OptimizedWriteBufferWriter {
         collection_id: &str,
         vectors: Vec<VectorRecord>,
         sequences: Vec<u64>,
-        // TODO: Restore when OptimizedFormat is available
-        // format: OptimizedFormat,
+        format: OptimizedFormat,
         base_location: String,
     ) -> Result<String> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -134,8 +142,7 @@ impl OptimizedWriteBufferWriter {
             collection_id: collection_id.to_string(),
             vectors,
             sequences,
-            // TODO: Restore when OptimizedFormat is available
-            // format,
+            format,
             base_location,
             response_tx,
         };
@@ -395,8 +402,10 @@ impl OptimizedWriteBufferWriter {
         let mut all_vectors = Vec::new();
         let mut all_sequences = Vec::new();
         let mut response_txs = Vec::new();
+        let mut batch_format = OptimizedFormat::Bincode; // default
 
         for request in requests {
+            batch_format = request.format; // use last request's format
             all_vectors.extend(request.vectors);
             all_sequences.extend(request.sequences);
             response_txs.push(request.response_tx);
@@ -407,6 +416,7 @@ impl OptimizedWriteBufferWriter {
             collection_id,
             &all_vectors,
             &all_sequences,
+            &batch_format,
             &assignment,
             filesystem_factory,
             config,
@@ -473,28 +483,24 @@ impl OptimizedWriteBufferWriter {
         _collection_id: &str,
         vectors: &[VectorRecord],
         sequences: &[u64],
-        // TODO: Restore when OptimizedFormat is available
-        // format: &OptimizedFormat,
+        format: &OptimizedFormat,
         assignment: &CachedAssignment,
         filesystem_factory: &FilesystemFactory,
         _config: &WALConfig,
         metrics: &Arc<RwLock<WalWriterMetrics>>,
     ) -> Result<String> {
-        // Serialize vectors
-        // TODO: Restore when OptimizedFormat is available
-        let serialized_data = Vec::new(); // Self::serialize_vectors_optimized(vectors, format)?;
+        // Serialize vectors using the specified format
+        let serialized_data = Self::serialize_vectors_optimized(vectors, format)?;
 
-        // Generate filename
+        // Generate filename with format-specific extension
         let min_seq = sequences.iter().min().copied();
         let max_seq = sequences.iter().max().copied();
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        // TODO: Restore when OptimizedFormat is available
-        let file_extension = "wal";
-        /* match format {
+        let file_extension = match format {
             OptimizedFormat::Proto => "pbwal",
             OptimizedFormat::Bincode => "bcwal",
             OptimizedFormat::Avro => "avwal",
-        }; */
+        };
 
         let uuid_short = &crate::utils::uuid::Uuid::new_v4().to_string()[..8];
         let wal_filename = format!(
@@ -534,48 +540,32 @@ impl OptimizedWriteBufferWriter {
         Ok(wal_file_path)
     }
 
-    /// Optimized serialization
-    #[allow(dead_code)]
+    /// Optimized serialization dispatching to format-specific implementations
     fn serialize_vectors_optimized(
-        _vectors: &[VectorRecord],
-        // TODO: Restore when OptimizedFormat is available
-        // format: &OptimizedFormat,
+        vectors: &[VectorRecord],
+        format: &OptimizedFormat,
     ) -> Result<Vec<u8>> {
-        // TODO: Restore when OptimizedFormat is available
-        /* match format {
+        match format {
             OptimizedFormat::Proto => {
-                // Direct batch serialization for Proto
                 use prost::Message;
-
-                // Create a wrapper struct for batch serialization
-                #[derive(Clone, PartialEq, Message)]
-                struct VectorBatch {
-                    #[prost(message, repeated, tag = "1")]
-                    vectors: Vec<VectorRecord>,
-                }
-
-                let batch = VectorBatch {
+                // Batch-serialize all vectors as a VectorBatchRequest wrapper
+                let batch = crate::proto::proximadb_v1::VectorBatchRequest {
+                    collection_id: String::new(), // Set by caller context
                     vectors: vectors.to_vec(),
                 };
-
-                // Serialize the entire batch at once
                 let mut buf = Vec::with_capacity(batch.encoded_len());
                 batch.encode(&mut buf)?;
                 Ok(buf)
             }
             OptimizedFormat::Bincode => {
-                // Bincode already serializes the entire slice efficiently
                 bincode::serialize(vectors).context("Bincode serialization failed")
             }
             OptimizedFormat::Avro => {
-                // TODO: Implement Avro serialization
-                Err(anyhow::anyhow!("Avro serialization not yet implemented"))
+                // Avro: fall back to bincode for now; full Avro schema-based
+                // serialization requires the AvroSerializationStrategy path
+                bincode::serialize(vectors).context("Avro fallback (bincode) serialization failed")
             }
         }
-        */
-
-        // Temporary implementation - return empty vector
-        Ok(Vec::new())
     }
 
     /// Get current metrics for monitoring and debugging

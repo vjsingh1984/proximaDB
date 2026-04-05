@@ -29,8 +29,6 @@ use crate::security::unified_rbac::{
 };
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::{DocumentQueryParams, DocumentService};
-use crate::storage::traits::UnifiedStorageEngine;
-
 /// Parallel executor for multi-model queries
 pub struct ParallelExecutor {
     /// Maximum concurrent queries
@@ -160,29 +158,16 @@ impl ParallelExecutor {
         .await
     }
 
-    /// Execute query components in parallel
-    ///
-    /// Note: This is a simplified version that doesn't perform actual vector searches.
-    /// For full vector search integration, use `execute_parallel_with_services` with
-    /// a properly initialized VectorOperationsService.
-    pub async fn execute_parallel(
-        &self,
-        query: &MultiModelQuery,
-        _storage_engine: Arc<dyn UnifiedStorageEngine>,
-        document_service: Arc<DocumentService>,
-    ) -> Result<Vec<SubQueryResult>> {
-        // Without VectorOperationsService, we can only execute document queries
-        // Vector searches will return empty results
-        self.execute_parallel_with_services(query, None, document_service)
-            .await
-    }
-
     /// Execute query components in parallel with explicit service references
     ///
     /// # Arguments
     /// * `query` - The multi-model query to execute
     /// * `vector_ops` - Optional VectorOperationsService for vector searches
     /// * `document_service` - Document service for document queries
+    ///
+    /// # Note
+    /// This is the primary entry point for parallel query execution. For graph and
+    /// observability queries, use `execute_parallel_with_all_services` instead.
     pub async fn execute_parallel_with_services(
         &self,
         query: &MultiModelQuery,

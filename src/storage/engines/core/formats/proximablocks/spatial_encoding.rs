@@ -475,8 +475,11 @@ impl CodeType {
         } else if total_bits <= 512 {
             Self::Bits512
         } else {
-            #[allow(clippy::panic)]  // API contract violation - exceeds maximum architectural limit
-            panic!("Total bits ({}) exceeds maximum (512)", total_bits);
+            // API contract violation - exceeds maximum architectural limit
+            #[allow(clippy::panic)]
+            {
+                panic!("Total bits ({}) exceeds maximum (512)", total_bits);
+            }
         }
     }
 }

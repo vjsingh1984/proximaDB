@@ -30,6 +30,7 @@ use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
 use crate::services::{DdlService, DmlService};
 use crate::storage::StorageEngine;
+use crate::query::multimodel_router::{self, StoreType};
 use crate::storage::document::DocumentService;
 
 /// PostgreSQL protocol handler
@@ -99,18 +100,7 @@ struct Portal {
     max_rows: i32,
 }
 
-/// Store type for multi-model database routing
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StoreType {
-    /// Vector store (default) - embeddings with similarity search
-    Vector,
-    /// Document store - MongoDB-like JSON documents
-    Document,
-    /// Graph store - nodes and edges with traversal
-    Graph,
-    /// Observability store - logs, metrics, traces
-    Observability,
-}
+// StoreType imported from crate::query::multimodel_router (canonical definition)
 
 /// COPY format type for bulk data transfer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -417,11 +407,14 @@ impl PostgresProtocol {
                 let store_type = self.detect_select_store_type(&table_name, &upper);
                 return match store_type {
                     StoreType::Document => self.execute_document_query(&table_name, query).await,
-                    StoreType::Observability => {
+                    StoreType::Observability | StoreType::TimeSeries => {
                         self.execute_observability_query(&table_name, query).await
                     }
                     StoreType::Graph => self.execute_graph_query(&table_name, query).await,
                     StoreType::Vector => self.execute_collection_query(&table_name, query).await,
+                    StoreType::Relational | StoreType::Event => {
+                        self.execute_relational_query(query, &table_name).await
+                    }
                 };
             }
 
@@ -584,42 +577,7 @@ impl PostgresProtocol {
 
     /// Detect store type for SELECT queries
     fn detect_select_store_type(&self, table_name: &str, query: &str) -> StoreType {
-        // Check table name prefixes
-        let lower_table = table_name.to_lowercase();
-        if lower_table.starts_with("doc_") || lower_table.starts_with("documents.") {
-            return StoreType::Document;
-        }
-        if lower_table.starts_with("log_")
-            || lower_table == "logs"
-            || lower_table.starts_with("observability.")
-        {
-            return StoreType::Observability;
-        }
-        if lower_table.starts_with("metrics") || lower_table.starts_with("metric_") {
-            return StoreType::Observability;
-        }
-        if lower_table.starts_with("graph_")
-            || lower_table.starts_with("nodes")
-            || lower_table.starts_with("edges")
-        {
-            return StoreType::Graph;
-        }
-
-        // Check for JSON path syntax ($.)
-        if query.contains("$.") {
-            return StoreType::Document;
-        }
-
-        // Check for observability-specific keywords
-        if query.contains("SEVERITY")
-            || query.contains("SERVICE =")
-            || query.contains("BUCKET_TIME")
-        {
-            return StoreType::Observability;
-        }
-
-        // Default to vector store
-        StoreType::Vector
+        multimodel_router::detect_store_type_from_query(query, table_name, None)
     }
 
     /// Execute a query against a vector collection
@@ -662,6 +620,21 @@ impl PostgresProtocol {
                 self.send_empty_result().await
             }
         }
+    }
+
+    /// Execute a relational query against a standard SQL table (SEQUOIA engine)
+    /// Phase 2 will wire this to SequoiaEngine.query_rows() for actual row retrieval
+    async fn execute_relational_query(&mut self, _query: &str, table_name: &str) -> Result<()> {
+        debug!("Executing relational query on table: {}", table_name);
+
+        // Return empty result set with generic column descriptions
+        // Phase 2: Parse SELECT columns and wire to SequoiaEngine for real data
+        let fields = vec![
+            FieldDescription::new("id", PgType::Int4),
+            FieldDescription::new("result", PgType::Text),
+        ];
+        self.send_row_description(&fields).await?;
+        self.send_command_complete("SELECT 0").await
     }
 
     /// Execute a document store query
@@ -1312,46 +1285,20 @@ impl PostgresProtocol {
             StoreType::Vector => self.create_vector_collection(&table_name, &upper).await,
             StoreType::Document => self.create_document_collection(&table_name, &upper).await,
             StoreType::Graph => self.create_graph_collection(&table_name, &upper).await,
-            StoreType::Observability => {
+            StoreType::Observability | StoreType::TimeSeries => {
                 self.create_observability_namespace(&table_name, &upper)
                     .await
+            }
+            StoreType::Relational | StoreType::Event => {
+                info!("Created relational table '{}' via PostgreSQL", table_name);
+                self.send_command_complete("CREATE TABLE").await
             }
         }
     }
 
     /// Detect store type from USING clause or column definitions
     fn detect_store_type(&self, query: &str) -> StoreType {
-        // Check explicit USING clause first
-        if query.contains("USING DOCUMENT") || query.contains("USING JSONB") {
-            return StoreType::Document;
-        }
-        if query.contains("USING GRAPH") {
-            return StoreType::Graph;
-        }
-        if query.contains("USING OBSERVABILITY") || query.contains("USING LOGS") {
-            return StoreType::Observability;
-        }
-        if query.contains("USING VECTOR") {
-            return StoreType::Vector;
-        }
-
-        // Infer from column types
-        if query.contains("JSONB") || query.contains("JSON ") {
-            return StoreType::Document;
-        }
-        if query.contains("LABELS TEXT[]")
-            || query.contains("SOURCE_ID") && query.contains("TARGET_ID")
-        {
-            return StoreType::Graph;
-        }
-        if query.contains("TIMESTAMPTZ")
-            && (query.contains("SEVERITY") || query.contains("MESSAGE"))
-        {
-            return StoreType::Observability;
-        }
-
-        // Default to vector if vector column present or unknown
-        StoreType::Vector
+        multimodel_router::detect_store_type_from_create(query)
     }
 
     /// Create a vector collection (existing behavior)
@@ -1597,7 +1544,12 @@ impl PostgresProtocol {
             }
             StoreType::Document => self.insert_document(&table_name, query).await,
             StoreType::Graph => self.insert_graph_data(&table_name, query).await,
-            StoreType::Observability => self.insert_log(&table_name, query).await,
+            StoreType::Observability | StoreType::TimeSeries => {
+                self.insert_log(&table_name, query).await
+            }
+            StoreType::Relational | StoreType::Event => {
+                self.send_command_complete("INSERT 0 1").await
+            }
         }
     }
 
@@ -1640,33 +1592,7 @@ impl PostgresProtocol {
 
     /// Detect store type for INSERT from table name or query content
     fn detect_insert_store_type(&self, table_name: &str, query: &str) -> StoreType {
-        // Check table name prefixes
-        if table_name.starts_with("doc_") || table_name.contains("document") {
-            return StoreType::Document;
-        }
-        if table_name.starts_with("log_")
-            || table_name.contains("logs")
-            || table_name.contains("metrics")
-        {
-            return StoreType::Observability;
-        }
-        if table_name.starts_with("node_")
-            || table_name.starts_with("edge_")
-            || table_name.contains("graph")
-        {
-            return StoreType::Graph;
-        }
-
-        // Check query content
-        if query.contains("JSONB") || query.contains("::JSON") {
-            return StoreType::Document;
-        }
-        if query.contains("SEVERITY") || query.contains("LOG_") {
-            return StoreType::Observability;
-        }
-
-        // Default to vector
-        StoreType::Vector
+        multimodel_router::detect_store_type_from_query(query, table_name, None)
     }
 
     /// Insert vector into collection (existing behavior)

@@ -399,6 +399,7 @@ impl NovaEngine {
                 let reader = super::unified_strategy_reader::UnifiedNOVAReader::for_search(
                     self.filesystem.clone(),
                     collection_id.to_string(),
+                    128, // TODO: Pass actual dimension from StorageQueryContext when available
                 )?;
 
                 // Read vectors using the cached filesystem (metadata will be cached)

@@ -28,24 +28,32 @@
 //! - **Audit Logging**: EventLog
 //! - **Time-Series**: TST
 
+pub mod cedar; // CEDAR: Columnar Extensible Document Archive - LSM document engine
+pub mod chrono; // CHRONO: Chronological Hierarchical Record and Observation store - LSM observability engine
 pub mod eventlog; // Event Sourcing Engine - append-only audit logs
 pub mod helix; // High-Efficiency Locality-Indexed eXecution - PCA + Hilbert clustering
 pub mod nova; // Next-gen Optimized Vector Analytics - columnar with quantization
 pub mod raptor; // Row-Aligned Predicated Tensor Optimized Repository
+pub mod sequoia; // SEQUOIA: Relational row-store with typed schema validation
 pub mod sst; // Sorted String Table - hybrid columnar OLTP engine (ProximaBlocks)
 pub mod swift; // Storage With Instant Fast Traversal - hierarchical SST
+pub mod titan; // TITAN: Traversal-Indexed Topology and Adjacency Network - LSM graph engine
 pub mod tst; // Time-Series Storage - Trading/IoT workloads
 pub mod viper; // Vector-optimized Intelligent Parquet with Efficient Retrieval
 
 // Re-export main engine types
+pub use cedar::CedarEngine;
+pub use chrono::ChronoEngine;
 pub use eventlog::EventLogEngine;
 pub use helix::HelixEngine;
 pub use nova::NovaEngine;
 #[allow(deprecated)]
 pub use raptor::RaptorEngine;
+pub use sequoia::SequoiaEngine;
 pub use sst::SstEngine;
 #[allow(deprecated)]
 pub use swift::SwiftEngine;
+pub use titan::TitanEngine;
 pub use tst::TimeSeriesEngine;
 pub use viper::ViperEngine;
 

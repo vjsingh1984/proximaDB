@@ -37,11 +37,13 @@
 //! ```
 
 pub mod bm25_wrapper;
+pub mod builder; // Filtered hybrid query builder (Issue #39, SB-09)
 pub mod coordinator;
 pub mod fusion;
 pub mod reranker;
 
 // Export fusion engine, error, and coordinator
+pub use builder::{HybridExecutionStrategy, HybridQuery, HybridQueryBuilder, HybridQueryResult};
 pub use coordinator::HybridCoordinator;
 pub use fusion::{FusionError, HybridFusionEngine};
 

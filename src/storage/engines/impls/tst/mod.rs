@@ -1328,8 +1328,11 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
                 FilesystemFactory::create(FilesystemConfig::default())
                     .await
                     .unwrap_or_else(|_| {
-                        #[allow(clippy::panic)]  // Stub implementation panic - indicates incomplete code
-                        panic!("Failed to create filesystem factory")
+                        // Stub implementation panic - indicates incomplete code
+                        #[allow(clippy::panic)]
+                        {
+                            panic!("Failed to create filesystem factory")
+                        }
                     })
             })
         })

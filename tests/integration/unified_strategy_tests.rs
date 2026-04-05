@@ -66,6 +66,7 @@ async fn test_strategy_aware_trait_consistency() -> Result<()> {
         factory.clone(),
         collection_id.clone(),
         ReadAccessStrategy::CachedSearch { prefetch_metadata: true },
+        128, // default dimension for tests
     )?;
 
     assert!(matches!(nova_reader.strategy(), ReadAccessStrategy::CachedSearch { .. }));
@@ -224,6 +225,7 @@ async fn test_adaptive_strategy() -> Result<()> {
         factory.clone(),
         collection_id.clone(),
         adaptive_strategy.clone(),
+        128,
     )?;
 
     assert!(matches!(nova_reader.strategy(), ReadAccessStrategy::Adaptive { .. }));
@@ -350,6 +352,7 @@ async fn test_cross_engine_compatibility() -> Result<()> {
         factory.clone(),
         collection_id.clone(),
         test_strategy.clone(),
+        128,
     )?;
 
     let _viper_reader = UnifiedVIPERReader::new(

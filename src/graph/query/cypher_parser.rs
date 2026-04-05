@@ -81,6 +81,8 @@ enum TokenKind {
     Desc,
     Ascending,
     Descending,
+    Unwind,
+    Reduce,
 
     // Punctuation / operators
     LParen,
@@ -235,6 +237,8 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 "DESC" => TokenKind::Desc,
                 "ASCENDING" => TokenKind::Ascending,
                 "DESCENDING" => TokenKind::Descending,
+                "UNWIND" => TokenKind::Unwind,
+                "REDUCE" => TokenKind::Reduce,
                 "TRUE" => TokenKind::BoolTrue,
                 "FALSE" => TokenKind::BoolFalse,
                 "NULL" => TokenKind::Null,
@@ -472,6 +476,11 @@ impl CypherParser {
                     self.advance();
                     let wc = self.parse_with_clause()?;
                     clauses.push(CypherClause::With(wc));
+                }
+                TokenKind::Unwind => {
+                    self.advance();
+                    let uc = self.parse_unwind_clause()?;
+                    clauses.push(CypherClause::Unwind(uc));
                 }
                 TokenKind::Union => {
                     self.advance();
@@ -842,6 +851,22 @@ impl CypherParser {
         Ok(WithClause { items, where_clause })
     }
 
+    // -- UNWIND -----------------------------------------------------------
+
+    fn parse_unwind_clause(&mut self) -> Result<UnwindClause> {
+        // UNWIND expression AS variable
+        let expression = self.parse_expression()?;
+
+        if !self.at(&TokenKind::As) {
+            bail!("Expected AS after UNWIND expression");
+        }
+        self.advance();
+
+        let variable = self.consume_name()?;
+
+        Ok(UnwindClause { expression, variable })
+    }
+
     // -- Expressions (precedence climbing) --------------------------------
 
     fn parse_expression(&mut self) -> Result<Expression> {
@@ -1047,6 +1072,33 @@ impl CypherParser {
 
             TokenKind::LBracket => {
                 self.advance();
+                // Check for list comprehension: [x IN list WHERE pred | projection]
+                // or pattern comprehension: [(a)-->(b) WHERE pred | b.name]
+                if self.at(&TokenKind::LParen) {
+                    // This is a pattern comprehension
+                    return self.parse_pattern_comprehension();
+                } else {
+                    // Check if this might be a list comprehension: [x IN list ...]
+                    // We need to look ahead to see if there's an IN keyword
+                    let save_cursor = self.cursor;
+                    let is_comprehension = matches!(self.peek(), TokenKind::Ident(_)) &&
+                        {
+                            // Peek ahead to check for IN
+                            let temp_cursor = save_cursor + 1;
+                            if temp_cursor < self.tokens.len() {
+                                matches!(self.tokens[temp_cursor].kind, TokenKind::In)
+                            } else {
+                                false
+                            }
+                        };
+                    self.cursor = save_cursor; // Restore cursor
+
+                    if is_comprehension {
+                        return self.parse_list_comprehension();
+                    }
+                }
+
+                // Regular list literal
                 let mut items = Vec::new();
                 if !self.at(&TokenKind::RBracket) {
                     loop {
@@ -1073,6 +1125,13 @@ impl CypherParser {
                 // Check for function call
                 if self.at(&TokenKind::LParen) {
                     self.advance();
+                    let name_upper = name.to_ascii_uppercase();
+
+                    // Check for REDUCE function
+                    if name_upper == "REDUCE" {
+                        return self.parse_reduce_expression();
+                    }
+
                     let mut args = Vec::new();
                     if !self.at(&TokenKind::RParen) {
                         // Handle COUNT(*) specially
@@ -1090,7 +1149,7 @@ impl CypherParser {
                         }
                     }
                     self.expect(&TokenKind::RParen)?;
-                    Ok(Expression::FunctionCall(name.to_ascii_uppercase(), args))
+                    Ok(Expression::FunctionCall(name_upper, args))
                 } else {
                     Ok(Expression::Variable(name))
                 }
@@ -1098,6 +1157,143 @@ impl CypherParser {
 
             other => bail!("Expected expression but found {:?} at position {}", other, self.tokens[self.cursor].pos),
         }
+    }
+
+    // -- REDUCE expression --------------------------------------------------
+
+    fn parse_reduce_expression(&mut self) -> Result<Expression> {
+        // REDUCE(accumulator = initial, variable IN list | update)
+        // Parse accumulator variable
+        let accumulator = self.expect_ident()?;
+
+        // Expect '='
+        if !self.at(&TokenKind::Eq) {
+            bail!("Expected '=' after accumulator name in REDUCE");
+        }
+        self.advance();
+
+        // Parse initial value
+        let initial = self.parse_expression()?;
+
+        // Expect ','
+        if !self.at(&TokenKind::Comma) {
+            bail!("Expected ',' after initial value in REDUCE");
+        }
+        self.advance();
+
+        // Parse iteration variable
+        let variable = self.expect_ident()?;
+
+        // Expect IN
+        if !self.at(&TokenKind::In) {
+            bail!("Expected IN after variable name in REDUCE");
+        }
+        self.advance();
+
+        // Parse list expression
+        let list = self.parse_expression()?;
+
+        // Expect '|'
+        if !self.at(&TokenKind::Pipe) {
+            bail!("Expected '|' after list expression in REDUCE");
+        }
+        self.advance();
+
+        // Parse update expression
+        let update = self.parse_expression()?;
+
+        // Expect closing ')'
+        self.expect(&TokenKind::RParen)?;
+
+        Ok(Expression::Reduce {
+            accumulator,
+            initial: Box::new(initial),
+            variable,
+            list: Box::new(list),
+            update: Box::new(update),
+        })
+    }
+
+    // -- List comprehension -------------------------------------------------
+
+    fn parse_list_comprehension(&mut self) -> Result<Expression> {
+        // [variable IN list WHERE filter | projection]
+        // [variable IN list | projection]
+        // [variable IN list]
+
+        // Parse variable name
+        let variable = self.expect_ident()?;
+
+        // Expect IN
+        if !self.at(&TokenKind::In) {
+            bail!("Expected IN in list comprehension");
+        }
+        self.advance();
+
+        // Parse list expression
+        let list = self.parse_expression()?;
+
+        // Optional WHERE clause
+        let filter = if self.at(&TokenKind::Where) {
+            self.advance();
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        // Optional projection (after '|')
+        let projection = if self.at(&TokenKind::Pipe) {
+            self.advance();
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        // Expect closing ']'
+        self.expect(&TokenKind::RBracket)?;
+
+        Ok(Expression::ListComprehension {
+            variable,
+            list: Box::new(list),
+            filter,
+            projection,
+        })
+    }
+
+    // -- Pattern comprehension ----------------------------------------------
+
+    fn parse_pattern_comprehension(&mut self) -> Result<Expression> {
+        // [(a)-->(b) WHERE filter | projection]
+        // [(a:Person)-->(b) | b.name]
+
+        // Parse pattern
+        let pattern = self.parse_pattern_path()?;
+
+        // Optional WHERE clause
+        let filter = if self.at(&TokenKind::Where) {
+            self.advance();
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        // Expect '|' before projection
+        if !self.at(&TokenKind::Pipe) {
+            bail!("Expected '|' in pattern comprehension");
+        }
+        self.advance();
+
+        // Parse projection expression
+        let projection = self.parse_expression()?;
+
+        // Expect closing ']'
+        self.expect(&TokenKind::RBracket)?;
+
+        Ok(Expression::PatternComprehension {
+            pattern,
+            filter,
+            projection: Box::new(projection),
+        })
     }
 }
 
@@ -1539,5 +1735,214 @@ mod tests {
             }
             other => panic!("Expected Where, got {:?}", other),
         }
+    }
+
+    // UNWIND clause tests
+
+    #[test]
+    fn test_parse_unwind() {
+        let stmt = CypherParser::parse("UNWIND [1, 2, 3] AS x RETURN x").unwrap();
+        assert_eq!(stmt.clauses.len(), 2);
+
+        match &stmt.clauses[0] {
+            CypherClause::Unwind(uw) => {
+                match &uw.expression {
+                    Expression::List(items) => {
+                        assert_eq!(items.len(), 3);
+                    }
+                    other => panic!("Expected List, got {:?}", other),
+                }
+                assert_eq!(uw.variable, "x");
+            }
+            other => panic!("Expected Unwind, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_unwind_with_variable() {
+        let stmt = CypherParser::parse("UNWIND $list AS item RETURN item").unwrap();
+
+        match &stmt.clauses[0] {
+            CypherClause::Unwind(uw) => {
+                match &uw.expression {
+                    Expression::Parameter(name) => {
+                        assert_eq!(name, "list");
+                    }
+                    other => panic!("Expected Parameter, got {:?}", other),
+                }
+                assert_eq!(uw.variable, "item");
+            }
+            other => panic!("Expected Unwind, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_unwind_after_match() {
+        let stmt = CypherParser::parse("MATCH (n) UNWIND n.items AS item RETURN item").unwrap();
+        assert_eq!(stmt.clauses.len(), 3);
+
+        match &stmt.clauses[1] {
+            CypherClause::Unwind(uw) => {
+                assert_eq!(uw.variable, "item");
+            }
+            other => panic!("Expected Unwind, got {:?}", other),
+        }
+    }
+
+    // REDUCE expression tests
+
+    #[test]
+    fn test_parse_reduce() {
+        let stmt = CypherParser::parse("RETURN REDUCE(total = 0, x IN [1, 2, 3] | total + x)").unwrap();
+
+        match &stmt.clauses[0] {
+            CypherClause::Return(rc) => {
+                match &rc.items[0].expression {
+                    Expression::Reduce { accumulator, variable, .. } => {
+                        assert_eq!(accumulator, "total");
+                        assert_eq!(variable, "x");
+                    }
+                    other => panic!("Expected Reduce, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Return, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_reduce_complex() {
+        let stmt = CypherParser::parse(
+            "RETURN REDUCE(sum = 0, n IN collect(| n.price) | sum + n)"
+        ).unwrap();
+
+        match &stmt.clauses[0] {
+            CypherClause::Return(rc) => {
+                match &rc.items[0].expression {
+                    Expression::Reduce { accumulator, variable, .. } => {
+                        assert_eq!(accumulator, "sum");
+                        assert_eq!(variable, "n");
+                    }
+                    other => panic!("Expected Reduce, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Return, got {:?}", other),
+        }
+    }
+
+    // List comprehension tests
+
+    #[test]
+    fn test_parse_list_comprehension_simple() {
+        let stmt = CypherParser::parse("RETURN [x IN [1, 2, 3] | x * 2]").unwrap();
+
+        match &stmt.clauses[0] {
+            CypherClause::Return(rc) => {
+                match &rc.items[0].expression {
+                    Expression::ListComprehension { variable, filter, projection } => {
+                        assert_eq!(variable, "x");
+                        assert!(filter.is_none());
+                        assert!(projection.is_some());
+                    }
+                    other => panic!("Expected ListComprehension, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Return, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_list_comprehension_with_filter() {
+        let stmt = CypherParser::parse("RETURN [x IN [1, 2, 3, 4, 5] WHERE x > 2 | x * 2]").unwrap();
+
+        match &stmt.clauses[0] {
+            CypherClause::Return(rc) => {
+                match &rc.items[0].expression {
+                    Expression::ListComprehension { variable, filter, projection } => {
+                        assert_eq!(variable, "x");
+                        assert!(filter.is_some());
+                        assert!(projection.is_some());
+                    }
+                    other => panic!("Expected ListComprehension, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Return, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_list_comprehension_no_projection() {
+        let stmt = CypherParser::parse("RETURN [x IN [1, 2, 3] WHERE x > 1]").unwrap();
+
+        match &stmt.clauses[0] {
+            CypherClause::Return(rc) => {
+                match &rc.items[0].expression {
+                    Expression::ListComprehension { variable, filter, projection } => {
+                        assert_eq!(variable, "x");
+                        assert!(filter.is_some());
+                        assert!(projection.is_none());
+                    }
+                    other => panic!("Expected ListComprehension, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Return, got {:?}", other),
+        }
+    }
+
+    // Pattern comprehension tests
+
+    #[test]
+    fn test_parse_pattern_comprehension() {
+        let stmt = CypherParser::parse(
+            "MATCH (a:Person) RETURN [(a)-->(b:Friend) | b.name]"
+        ).unwrap();
+
+        match &stmt.clauses[1] {
+            CypherClause::Return(rc) => {
+                match &rc.items[0].expression {
+                    Expression::PatternComprehension { filter, .. } => {
+                        assert!(filter.is_none());
+                    }
+                    other => panic!("Expected PatternComprehension, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Return, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_pattern_comprehension_with_filter() {
+        let stmt = CypherParser::parse(
+            "MATCH (a:Person) RETURN [(a)-->(b:Friend) WHERE b.age > 25 | b.name]"
+        ).unwrap();
+
+        match &stmt.clauses[1] {
+            CypherClause::Return(rc) => {
+                match &rc.items[0].expression {
+                    Expression::PatternComprehension { filter, .. } => {
+                        assert!(filter.is_some());
+                    }
+                    other => panic!("Expected PatternComprehension, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Return, got {:?}", other),
+        }
+    }
+
+    // Combined feature tests
+
+    #[test]
+    fn test_parse_unwind_with_comprehension() {
+        let stmt = CypherParser::parse(
+            "UNWIND [1, 2, 3] AS x RETURN [y IN [x, x*2] | y * 3]"
+        ).unwrap();
+        assert_eq!(stmt.clauses.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_reduce_with_unwind() {
+        let stmt = CypherParser::parse(
+            "UNWIND [[1, 2], [3, 4]] AS nested RETURN REDUCE(sum = 0, x IN nested | sum + x)"
+        ).unwrap();
+        assert_eq!(stmt.clauses.len(), 3);
     }
 }

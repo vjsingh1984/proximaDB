@@ -9,7 +9,7 @@ use axum::{
     Router,
     extract::{Json, Path, Query, State},
     response::Json as JsonResponse,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -18,7 +18,9 @@ use tracing::{debug, info};
 
 use crate::errors::{ApiError, ApiResult};
 use crate::proto::proximadb_v1::{
-    DocIndexType, DocumentCollectionConfig, IndexDefinition, SqlObject, SqlValue,
+    AggregationStage, DocIndexType, DocumentCollectionConfig, DocumentUpdate, GroupStage,
+    IndexDefinition, LimitStage, LookupStage, MatchStage, ProjectStage, SkipStage, SortStage,
+    SqlObject, SqlValue, UnwindStage, UpdateOperation,
 };
 use crate::storage::document::{
     DocumentQueryParams as ServiceQueryParams, DocumentRecord, DocumentService,
@@ -40,6 +42,9 @@ pub struct DocumentQueryParams {
     /// Maximum results
     #[serde(default = "default_limit")]
     pub limit: u32,
+    /// JSON filter string (parsed as DocumentFilter)
+    #[serde(default)]
+    pub filter: Option<String>,
 }
 
 fn default_limit() -> u32 {
@@ -111,6 +116,47 @@ pub struct QueryResponse {
     pub has_more: bool,
 }
 
+/// Update document request
+#[derive(Debug, Deserialize)]
+pub struct UpdateDocumentRequest {
+    /// Update operations to apply
+    pub updates: Vec<serde_json::Value>,
+    /// Expected version for optimistic locking (optional)
+    pub expected_version: Option<u64>,
+}
+
+/// Batch insert request
+#[derive(Debug, Deserialize)]
+pub struct BatchInsertRequest {
+    /// Documents to insert
+    pub documents: Vec<CreateDocumentRequest>,
+}
+
+/// Batch insert response
+#[derive(Debug, Serialize)]
+pub struct BatchInsertResponse {
+    /// Number of documents successfully inserted
+    pub inserted: u64,
+    /// Number of documents that failed
+    pub failed: u64,
+}
+
+/// Aggregate request
+#[derive(Debug, Deserialize)]
+pub struct AggregateRequest {
+    /// Aggregation pipeline stages
+    pub pipeline: Vec<serde_json::Value>,
+}
+
+/// Aggregate response
+#[derive(Debug, Serialize)]
+pub struct AggregateResponse {
+    /// Aggregated results
+    pub results: Vec<serde_json::Value>,
+    /// Query execution time in milliseconds
+    pub query_time_ms: u64,
+}
+
 /// Create document collection router
 pub fn create_document_router() -> Router<DocumentApiState> {
     Router::new()
@@ -126,6 +172,19 @@ pub fn create_document_router() -> Router<DocumentApiState> {
         .route(
             "/collections/:collection/documents/:id",
             delete(delete_document),
+        )
+        .route(
+            "/collections/:collection/documents/:id",
+            patch(update_document),
+        )
+        // Batch and aggregate operations
+        .route(
+            "/collections/:collection/documents/_batch",
+            post(batch_insert_documents),
+        )
+        .route(
+            "/collections/:collection/documents/_aggregate",
+            post(aggregate_documents),
         )
         // Index operations
         .route("/collections/:collection/indexes", post(create_index))
@@ -334,8 +393,20 @@ async fn query_documents(
         })
         .unwrap_or_default();
 
+    // Parse filter from JSON string if present
+    let filter = match &params.filter {
+        Some(filter_str) => {
+            let parsed: crate::proto::proximadb_v1::DocumentFilter =
+                serde_json::from_str(filter_str).map_err(|e| {
+                    ApiError::InvalidArgument(format!("Invalid filter JSON: {}", e))
+                })?;
+            Some(parsed)
+        }
+        None => None,
+    };
+
     let query_params = ServiceQueryParams {
-        filter: None,
+        filter,
         projection,
         sort: Vec::new(),
         limit: params.limit,
@@ -361,6 +432,127 @@ async fn query_documents(
         documents,
         total_count: result.total_count,
         has_more,
+    }))
+}
+
+/// Update a document by ID
+async fn update_document(
+    State(state): State<DocumentApiState>,
+    Path((collection, id)): Path<(String, String)>,
+    Json(request): Json<UpdateDocumentRequest>,
+) -> ApiResult<JsonResponse<DocumentResponse>> {
+    debug!("Updating document: {}/{}", collection, id);
+
+    // Convert JSON update operations to DocumentUpdate proto objects
+    let updates: Vec<DocumentUpdate> = request
+        .updates
+        .iter()
+        .map(|v| {
+            // Each update value should be an object with operation, path, value fields
+            let operation = v
+                .get("operation")
+                .and_then(|o| o.as_str())
+                .map(|s| match s.to_lowercase().as_str() {
+                    "set" => UpdateOperation::Set as i32,
+                    "unset" => UpdateOperation::Unset as i32,
+                    "inc" => UpdateOperation::Inc as i32,
+                    "push" => UpdateOperation::Push as i32,
+                    "pull" => UpdateOperation::Pull as i32,
+                    _ => UpdateOperation::Set as i32,
+                })
+                .unwrap_or(UpdateOperation::Set as i32);
+
+            let path = v
+                .get("path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let value = v.get("value").map(|val| json_to_sql_value(val));
+
+            DocumentUpdate {
+                operation,
+                path,
+                value,
+            }
+        })
+        .collect();
+
+    let record = state
+        .document_service
+        .update_document(&collection, &id, updates, request.expected_version)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to update document: {}", e)))?;
+
+    Ok(JsonResponse(document_record_to_response(&record)?))
+}
+
+/// Batch insert documents
+async fn batch_insert_documents(
+    State(state): State<DocumentApiState>,
+    Path(collection): Path<String>,
+    Json(request): Json<BatchInsertRequest>,
+) -> ApiResult<JsonResponse<BatchInsertResponse>> {
+    debug!(
+        "Batch inserting {} documents into collection: {}",
+        request.documents.len(),
+        collection
+    );
+
+    let mut inserted: u64 = 0;
+    let mut failed: u64 = 0;
+
+    for doc in &request.documents {
+        let sql_object = match json_to_sql_object(&doc.document) {
+            Ok(obj) => obj,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
+
+        let id_ref = doc.id.as_deref();
+        match state
+            .document_service
+            .insert_document(&collection, id_ref, sql_object)
+            .await
+        {
+            Ok(_) => inserted += 1,
+            Err(_) => failed += 1,
+        }
+    }
+
+    Ok(JsonResponse(BatchInsertResponse { inserted, failed }))
+}
+
+/// Aggregate documents
+async fn aggregate_documents(
+    State(state): State<DocumentApiState>,
+    Path(collection): Path<String>,
+    Json(request): Json<AggregateRequest>,
+) -> ApiResult<JsonResponse<AggregateResponse>> {
+    debug!("Aggregating documents in collection: {}", collection);
+
+    // Convert JSON pipeline stages to AggregationStage proto objects.
+    // AggregationStage is a prost oneof without serde derives, so we parse manually
+    // based on the stage type key in each JSON object.
+    let pipeline: Vec<AggregationStage> = request
+        .pipeline
+        .iter()
+        .filter_map(|v| json_to_aggregation_stage(v).ok())
+        .collect();
+
+    let result = state
+        .document_service
+        .aggregate_documents(&collection, None, pipeline)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to aggregate documents: {}", e)))?;
+
+    let results: Vec<serde_json::Value> = result.results.iter().map(sql_object_to_json).collect();
+
+    Ok(JsonResponse(AggregateResponse {
+        results,
+        query_time_ms: result.query_time_ms,
     }))
 }
 
@@ -491,6 +683,80 @@ fn sql_object_to_json(obj: &SqlObject) -> serde_json::Value {
         .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
         .collect();
     serde_json::Value::Object(map)
+}
+
+/// Convert a JSON value into an AggregationStage.
+///
+/// Expected format: `{ "$match": {...} }` or `{ "$group": {...} }` etc.
+fn json_to_aggregation_stage(value: &serde_json::Value) -> ApiResult<AggregationStage> {
+    use crate::proto::proximadb_v1::aggregation_stage::Stage;
+
+    let obj = value
+        .as_object()
+        .ok_or_else(|| ApiError::InvalidArgument("Pipeline stage must be a JSON object".into()))?;
+
+    // Determine stage type from the first key
+    if let Some(match_val) = obj.get("$match").or_else(|| obj.get("match")) {
+        let stage: MatchStage = serde_json::from_value(match_val.clone())
+            .map_err(|e| ApiError::InvalidArgument(format!("Invalid $match stage: {}", e)))?;
+        Ok(AggregationStage {
+            stage: Some(Stage::Match(stage)),
+        })
+    } else if let Some(group_val) = obj.get("$group").or_else(|| obj.get("group")) {
+        let stage: GroupStage = serde_json::from_value(group_val.clone())
+            .map_err(|e| ApiError::InvalidArgument(format!("Invalid $group stage: {}", e)))?;
+        Ok(AggregationStage {
+            stage: Some(Stage::Group(stage)),
+        })
+    } else if let Some(project_val) = obj.get("$project").or_else(|| obj.get("project")) {
+        let stage: ProjectStage = serde_json::from_value(project_val.clone())
+            .map_err(|e| ApiError::InvalidArgument(format!("Invalid $project stage: {}", e)))?;
+        Ok(AggregationStage {
+            stage: Some(Stage::Project(stage)),
+        })
+    } else if let Some(sort_val) = obj.get("$sort").or_else(|| obj.get("sort")) {
+        let stage: SortStage = serde_json::from_value(sort_val.clone())
+            .map_err(|e| ApiError::InvalidArgument(format!("Invalid $sort stage: {}", e)))?;
+        Ok(AggregationStage {
+            stage: Some(Stage::Sort(stage)),
+        })
+    } else if let Some(limit_val) = obj.get("$limit").or_else(|| obj.get("limit")) {
+        // $limit can be a plain number: { "$limit": 10 }
+        let limit = limit_val.as_u64().unwrap_or(100) as u32;
+        Ok(AggregationStage {
+            stage: Some(Stage::Limit(LimitStage { limit })),
+        })
+    } else if let Some(skip_val) = obj.get("$skip").or_else(|| obj.get("skip")) {
+        let skip = skip_val.as_u64().unwrap_or(0) as u32;
+        Ok(AggregationStage {
+            stage: Some(Stage::Skip(SkipStage { skip })),
+        })
+    } else if let Some(unwind_val) = obj.get("$unwind").or_else(|| obj.get("unwind")) {
+        let stage: UnwindStage = if unwind_val.is_string() {
+            UnwindStage {
+                path: unwind_val.as_str().unwrap_or("").to_string(),
+                preserve_null: false,
+            }
+        } else {
+            serde_json::from_value(unwind_val.clone()).map_err(|e| {
+                ApiError::InvalidArgument(format!("Invalid $unwind stage: {}", e))
+            })?
+        };
+        Ok(AggregationStage {
+            stage: Some(Stage::Unwind(stage)),
+        })
+    } else if let Some(lookup_val) = obj.get("$lookup").or_else(|| obj.get("lookup")) {
+        let stage: LookupStage = serde_json::from_value(lookup_val.clone())
+            .map_err(|e| ApiError::InvalidArgument(format!("Invalid $lookup stage: {}", e)))?;
+        Ok(AggregationStage {
+            stage: Some(Stage::Lookup(stage)),
+        })
+    } else {
+        Err(ApiError::InvalidArgument(format!(
+            "Unknown pipeline stage: {}",
+            value
+        )))
+    }
 }
 
 /// Convert DocumentRecord to response

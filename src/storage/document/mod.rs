@@ -19,14 +19,96 @@ pub mod service;
 pub mod storage;
 
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::{
-    DocumentCollectionConfig, DocumentContent, DocumentFilter, DocumentResult, IndexDefinition,
-    SortField, SqlObject,
+    DocumentCollectionConfig, DocumentContent, DocumentFilter, DocumentResult, DocumentUpdate,
+    IndexDefinition, SortField, SqlObject,
 };
 
 pub use self::service::DocumentService;
+
+// ---------------------------------------------------------------------------
+// DocumentStorageEngine trait -- the contract for document-native storage
+// ---------------------------------------------------------------------------
+
+/// Storage engine trait for document data model.
+///
+/// Unlike `UnifiedStorageEngine` (which is vector-centric and returns
+/// `OptimizedSearchRecord`), this trait operates on `DocumentRecord` natively.
+/// CEDAR implements this trait. DocumentService delegates to it.
+#[async_trait]
+pub trait DocumentStorageEngine: Send + Sync {
+    /// Engine identity
+    fn engine_name(&self) -> &'static str;
+
+    /// Insert a document. Returns the stored record with version=1.
+    async fn insert_document(
+        &self,
+        collection: &str,
+        doc: DocumentRecord,
+    ) -> Result<DocumentRecord>;
+
+    /// Get a document by ID. Returns None if not found.
+    async fn get_document(
+        &self,
+        collection: &str,
+        id: &str,
+    ) -> Result<Option<DocumentRecord>>;
+
+    /// Update a document by ID. Returns the updated record with incremented version.
+    async fn update_document(
+        &self,
+        collection: &str,
+        id: &str,
+        updates: Vec<DocumentUpdate>,
+    ) -> Result<DocumentRecord>;
+
+    /// Delete a document by ID. Returns true if the document existed.
+    async fn delete_document(&self, collection: &str, id: &str) -> Result<bool>;
+
+    /// Query documents with filters, projection, sort, and pagination.
+    async fn query_documents(
+        &self,
+        collection: &str,
+        params: DocumentQueryParams,
+    ) -> Result<DocumentQueryResult>;
+
+    /// Scan all documents in a collection (with optional limit).
+    async fn scan_documents(
+        &self,
+        collection: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<DocumentRecord>>;
+
+    /// Run an aggregation pipeline.
+    async fn aggregate(
+        &self,
+        collection: &str,
+        pipeline: Vec<crate::proto::proximadb_v1::AggregationStage>,
+    ) -> Result<AggregateResult>;
+
+    /// Create a secondary index on a field.
+    async fn create_index(
+        &self,
+        collection: &str,
+        index_def: IndexDefinition,
+    ) -> Result<()>;
+
+    /// Flush in-memory data to persistent storage.
+    async fn flush(&self, collection: &str) -> Result<FlushToStorageResult>;
+
+    /// Compact on-disk files (merge, deduplicate, reclaim space).
+    async fn compact(&self, collection: &str) -> Result<FlushToStorageResult>;
+
+    /// Get document count for a collection.
+    async fn document_count(&self, collection: &str) -> Result<u64>;
+
+    /// Collect engine-specific metrics.
+    async fn collect_metrics(&self) -> Result<HashMap<String, serde_json::Value>>;
+}
 
 /// Document record with ID, version, and content
 #[derive(Debug, Clone, Serialize, Deserialize)]

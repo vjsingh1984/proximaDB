@@ -176,7 +176,7 @@ pub enum DurabilityLevel {
 }
 
 /// WAL strategy type selection
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Default)]
 pub enum WriteBufferStrategyType {
     /// Modern Avro batch strategy with zero-copy optimization

@@ -93,8 +93,8 @@ impl SSTMetadataSource {
             sst_metadata: SSTFileMetadata {
                 total_rows,
                 column_info,
-                block_count: 1,     // TODO: Read actual block count from SST metadata
-                file_size_bytes: 0, // TODO: Get actual file size
+                block_count: 1, // Single block assumed until SST header parsing is wired
+                file_size_bytes: std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0),
             },
             column_metadata_cache,
         })

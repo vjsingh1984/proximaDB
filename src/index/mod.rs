@@ -79,6 +79,12 @@ pub mod config;
 pub mod diskann;
 /// Geo-spatial indexing (geohash-based).
 pub mod geo;
+/// HNSW filtered search implementation.
+pub mod hnsw;
+/// IVF filtered search implementation.
+pub mod ivf;
+/// Sparse vector HNSW index for text and feature-based applications.
+pub mod sparse_hnsw;
 
 // Re-export main types for easier access
 pub use axis::{AxisConfig, AxisManager};

@@ -4,7 +4,6 @@
 // including slot creation, replication streaming, and LSN tracking.
 
 use std::time::{Duration, Instant};
-use std::str::FromStr;
 
 use anyhow::{Result, anyhow};
 use tracing::{info, warn};

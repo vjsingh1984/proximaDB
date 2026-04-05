@@ -41,6 +41,7 @@ pub enum CypherClause {
     Delete(DeleteClause),
     With(WithClause),
     Union(UnionClause),
+    Unwind(UnwindClause),
 }
 
 /// MATCH or OPTIONAL MATCH clause containing one or more pattern paths.
@@ -179,6 +180,15 @@ pub struct UnionClause {
     pub all: bool,
 }
 
+/// UNWIND clause for list expansion.
+#[derive(Debug, Clone)]
+pub struct UnwindClause {
+    /// Expression that evaluates to a list
+    pub expression: Expression,
+    /// Variable name to bind to each element
+    pub variable: String,
+}
+
 /// An expression in the Cypher language.
 #[derive(Debug, Clone)]
 pub enum Expression {
@@ -191,6 +201,39 @@ pub enum Expression {
     Parameter(String),
     List(Vec<Expression>),
     Comparison(Box<Expression>, CompOp, Box<Expression>),
+    /// REDUCE expression for list aggregation
+    Reduce {
+        /// Variable name for the accumulator
+        accumulator: String,
+        /// Initial value for the accumulator
+        initial: Box<Expression>,
+        /// Variable name for list elements
+        variable: String,
+        /// List expression to iterate over
+        list: Box<Expression>,
+        /// Expression to evaluate for each element
+        update: Box<Expression>,
+    },
+    /// List comprehension: [x IN list WHERE x > 5 | x * 2]
+    ListComprehension {
+        /// Variable name for list elements
+        variable: String,
+        /// List expression to iterate over
+        list: Box<Expression>,
+        /// Optional filter predicate (WHERE clause)
+        filter: Option<Box<Expression>>,
+        /// Optional transformation expression
+        projection: Option<Box<Expression>>,
+    },
+    /// Pattern comprehension: [ (a)-->(b) WHERE a.name = 'Alice' | b.name ]
+    PatternComprehension {
+        /// Pattern to match
+        pattern: PatternPath,
+        /// Optional filter predicate (WHERE clause)
+        filter: Option<Box<Expression>>,
+        /// Projection expression
+        projection: Box<Expression>,
+    },
 }
 
 /// Binary operators.
@@ -232,7 +275,7 @@ pub enum CompOp {
 }
 
 /// A Cypher literal value.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CypherValue {
     Integer(i64),
     Float(f64),

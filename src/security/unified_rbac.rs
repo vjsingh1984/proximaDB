@@ -20,14 +20,8 @@ pub use crate::storage::tenant::rbac::{
     CollectionOperation as EnhancedCollectionOperation, Permission as EnhancedPermission,
 };
 
-/// Data model enum for cross-model permission validation
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DataModel {
-    Vector,
-    Document,
-    Graph,
-    Observability,
-}
+/// Data model enum for cross-model permission validation — re-exported from canonical definition
+pub use crate::query::multimodel_router::StoreType as DataModel;
 
 /// Permission cache entry with TTL
 #[derive(Debug, Clone)]

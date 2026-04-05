@@ -820,7 +820,9 @@ fn estimate_cost(model: &DataModel) -> f64 {
         DataModel::Vector => 1.0,
         DataModel::Document => 2.0,
         DataModel::Graph => 3.0,
-        DataModel::Observability => 2.5,
+        DataModel::Observability | DataModel::TimeSeries => 2.5,
+        DataModel::Relational => 1.5,
+        DataModel::Event => 2.0,
     }
 }
 

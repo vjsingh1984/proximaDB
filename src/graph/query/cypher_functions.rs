@@ -785,7 +785,7 @@ fn cypher_rand(_args: &[Expression], _ctx: &FunctionContext) -> Result<CypherVal
 // DATE/TIME FUNCTIONS
 // =============================================================================
 
-fn cypher_date(args: &[Expression], _ctx: &FunctionContext) -> Result<CypherValue> {
+fn cypher_date(_args: &[Expression], _ctx: &FunctionContext) -> Result<CypherValue> {
     // Return current date as ISO string
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1069,6 +1069,10 @@ pub fn evaluate_expression(
             let r = evaluate_expression(right, ctx)?;
             Ok(CypherValue::Boolean(evaluate_comparison(&l, comp_op, &r)?))
         }
+
+        // Reduce, ListComprehension, PatternComprehension are advanced Cypher
+        // features not yet fully supported in the expression evaluator.
+        _ => bail!("Unsupported expression type in evaluator"),
     }
 }
 

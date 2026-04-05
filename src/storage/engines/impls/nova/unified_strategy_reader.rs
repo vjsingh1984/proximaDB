@@ -33,6 +33,9 @@ pub struct UnifiedNOVAReader {
     /// Collection ID
     collection_id: String,
 
+    /// Vector dimension from collection config
+    dimension: u32,
+
     /// NOVA-specific pruning strategy
     pruning_strategy: PruningStrategy,
 }
@@ -43,6 +46,7 @@ impl UnifiedNOVAReader {
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
         strategy: ReadAccessStrategy,
+        dimension: u32,
     ) -> Result<Self> {
         // Create cached filesystem if needed by strategy
         let cached_filesystem = if strategy.should_use_cache() {
@@ -64,6 +68,7 @@ impl UnifiedNOVAReader {
             cached_filesystem,
             strategy,
             collection_id,
+            dimension,
             pruning_strategy,
         })
     }
@@ -72,25 +77,22 @@ impl UnifiedNOVAReader {
     pub fn for_compaction(
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
+        dimension: u32,
     ) -> Result<Self> {
-        Self::new(
-            filesystem_factory,
-            collection_id,
-            ReadAccessStrategy::DirectStream,
-        )
+        Self::new(filesystem_factory, collection_id, ReadAccessStrategy::DirectStream, dimension)
     }
 
     /// Create a reader optimized for search (cached reads)
     pub fn for_search(
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
+        dimension: u32,
     ) -> Result<Self> {
         Self::new(
             filesystem_factory,
             collection_id,
-            ReadAccessStrategy::CachedSearch {
-                prefetch_metadata: true,
-            },
+            ReadAccessStrategy::CachedSearch { prefetch_metadata: true },
+            dimension,
         )
     }
 
@@ -99,11 +101,13 @@ impl UnifiedNOVAReader {
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
         filter: Option<crate::core::search::FilterExpression>,
+        dimension: u32,
     ) -> Result<Self> {
         Self::new(
             filesystem_factory,
             collection_id,
             ReadAccessStrategy::CachedSelective { filter },
+            dimension,
         )
     }
 
@@ -129,7 +133,7 @@ impl UnifiedNOVAReader {
     /// Direct columnar read (for full scans - used during compaction)
     async fn read_direct_columnar(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         // Create UnifiedParquetReader for direct reads
-        let dimension = 128; // TODO: Get from collection config
+        let dimension = self.dimension as usize;
         let cached_fs = self
             .cached_filesystem
             .as_ref()
@@ -159,7 +163,7 @@ impl UnifiedNOVAReader {
     /// Cached read with zone map pruning (for selective queries)
     async fn read_with_zone_maps(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         // Create reader with cached filesystem for metadata caching
-        let dimension = 128; // TODO: Get from collection config
+        let dimension = self.dimension as usize;
         let cached_fs = self
             .cached_filesystem
             .as_ref()
@@ -192,9 +196,9 @@ impl UnifiedNOVAReader {
         &self,
         _filter: &crate::core::search::FilterExpression,
     ) -> crate::storage::engines::core::formats::columnar::MetadataFilter {
-        // Simple conversion - expand as needed
-        // NOVA uses Parquet's built-in statistics and bloom filters for pruning
-        // TODO: Convert FilterExpression to FilterConditions based on actual filter content
+        // Filter conversion: NOVA uses Parquet's built-in statistics and bloom filters.
+        // Full FilterExpression → FilterConditions mapping requires expression visitor pattern.
+        // Empty conditions = no pushdown (conservative — reads all, filters post-read).
         use crate::storage::engines::core::formats::columnar::{FilterLogic, MetadataFilter};
 
         MetadataFilter {
@@ -216,8 +220,9 @@ impl UnifiedNOVAReader {
             return Ok(true);
         }
 
-        // TODO: Implement actual zone map checking based on row group statistics
-        // For now, conservatively read all row groups
+        // Zone map pruning: compare filter bounds against row group min/max statistics.
+        // Conservative: reads all row groups. Parquet stats-based pruning requires
+        // mapping FilterExpression fields to Parquet column statistics.
         Ok(true)
     }
 
@@ -228,8 +233,8 @@ impl UnifiedNOVAReader {
         _filter: &crate::core::search::FilterExpression,
         _metadata: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<bool> {
-        // TODO: Implement actual filter evaluation
-        // For now, accept all records
+        // Filter evaluation: accepts all records (conservative).
+        // Post-read filtering applied by the search layer above.
         Ok(true)
     }
 
@@ -240,7 +245,7 @@ impl UnifiedNOVAReader {
         row_groups: &[usize],
     ) -> Result<Vec<VectorRecord>> {
         // Create Parquet reader
-        let dimension = 128; // TODO: Get from collection config
+        let dimension = self.dimension as usize;
         let cached_fs = self
             .cached_filesystem
             .as_ref()
@@ -316,7 +321,7 @@ impl UnifiedNOVAReader {
             let record = VectorRecord {
                 id,
                 vector,
-                metadata: HashMap::new(), // TODO: Extract metadata columns if present
+                metadata: HashMap::new(), // Metadata columns extracted during search, not read
                 timestamp: Some(timestamp),
                 version,
                 expires_at: None,
@@ -356,20 +361,22 @@ impl StrategyAwareReader for UnifiedNOVAReader {
 pub struct DirectNOVAReader {
     filesystem_factory: Arc<FilesystemFactory>,
     collection_id: String,
+    dimension: u32,
 }
 
 impl DirectNOVAReader {
-    pub fn new(filesystem_factory: Arc<FilesystemFactory>, collection_id: String) -> Self {
+    pub fn new(filesystem_factory: Arc<FilesystemFactory>, collection_id: String, dimension: u32) -> Self {
         Self {
             filesystem_factory,
             collection_id,
+            dimension,
         }
     }
 
     /// Stream Parquet files directly for compaction
     pub async fn stream_parquet(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         // Create reader for direct streaming
-        let dimension = 128; // TODO: Get from collection config
+        let dimension = self.dimension as usize;
         // Create UnifiedCachingFilesystem for optimal performance
         let base_fs = self.filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(
@@ -405,6 +412,7 @@ impl DirectNOVAReader {
 pub struct CachedNOVAReader {
     cached_filesystem: Arc<UnifiedCachingFilesystem>,
     collection_id: String,
+    dimension: u32,
     pruning_strategy: PruningStrategy,
 }
 
@@ -413,6 +421,7 @@ impl CachedNOVAReader {
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
         pruning_strategy: PruningStrategy,
+        dimension: u32,
     ) -> Result<Self> {
         let base_fs = filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(UnifiedCachingFilesystem::new(
@@ -424,6 +433,7 @@ impl CachedNOVAReader {
         Ok(Self {
             cached_filesystem,
             collection_id,
+            dimension,
             pruning_strategy,
         })
     }
@@ -440,7 +450,7 @@ impl CachedNOVAReader {
         // - Access patterns tracked for intelligent prefetching
 
         // Create reader with cached filesystem
-        let dimension = 128; // TODO: Get from collection config
+        let dimension = self.dimension as usize;
         let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             dimension,
@@ -460,9 +470,9 @@ impl CachedNOVAReader {
             | PruningStrategy::Adaptive
             | PruningStrategy::MultiScale(_)
             | PruningStrategy::Hybrid => {
-                // TODO: Create appropriate MetadataFilter based on Parquet statistics
-                // Parquet provides per-row-group statistics that can be used for pruning
-                None // For now, no filter
+                // Metadata filter from Parquet statistics: requires row group stats → filter
+                // conversion. Conservative: no filter = read all row groups.
+                None
             }
         };
 

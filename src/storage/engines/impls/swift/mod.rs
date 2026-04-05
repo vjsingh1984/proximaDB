@@ -1,8 +1,36 @@
-//! # SWIFT Engine - INCOMPLETE
+//! # SWIFT Engine - ⚠️ DEPRECATED - INCOMPLETE
 //!
-//! **WARNING**: This engine has incomplete implementations.
-//! Several critical features are not yet implemented.
-//! Use SST, VIPER, or HELIX for production workloads.
+//! **WARNING**: This engine is DEPRECATED and INCOMPLETE.
+//!
+//! ## Deprecation Notice (2026-04-03)
+//!
+//! SWIFT is deprecated and will be removed in v1.0 unless contributors complete the
+//! remaining implementation. See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md` for details.
+//!
+//! ## Current Status
+//!
+//! - **Status**: INCOMPLETE - Not Production Ready
+//! - **Feature Flag**: `experimental-engines` required
+//! - **Tests**: 41 tests (insufficient coverage)
+//! - **TODO Items**: 30+ critical features missing
+//! - **Recommendation**: Use SST, VIPER, HELIX, or NOVA instead
+//!
+//! ## Migration Guide
+//!
+//! For hierarchical storage needs, use application-level hierarchy with production engines:
+//! - **SST**: For range queries and efficient access patterns
+//! - **NOVA**: For columnar analytics with zone maps
+//! - **Multiple Collections**: Use collection naming for hierarchy
+//!
+//! Example:
+//! ```rust,ignore
+//! // Instead of SWIFT hierarchy:
+//! // swift_engine.create_department_hierarchy(&org_structure).await?;
+//!
+//! // Use multiple SST collections:
+//! let marketing = sst_engine.create_collection("tenant_marketing").await?;
+//! let sales = sst_engine.create_collection("tenant_sales").await?;
+//! ```
 //!
 //! ## SWIFT Engine: Storage With Indexed Fast Traversal
 //!

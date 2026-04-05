@@ -150,29 +150,13 @@ pub enum JoinType {
     Anti,
 }
 
-/// Data models supported by ProximaDB
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum DataModel {
-    /// Vector embeddings for similarity search
-    Vector,
-    /// JSON documents for document queries
-    Document,
-    /// Graph nodes and edges
-    Graph,
-    /// Observability data (logs, metrics, traces)
-    Observability,
-}
-
-impl std::fmt::Display for DataModel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DataModel::Vector => write!(f, "vector"),
-            DataModel::Document => write!(f, "document"),
-            DataModel::Graph => write!(f, "graph"),
-            DataModel::Observability => write!(f, "observability"),
-        }
-    }
-}
+/// Data models supported by ProximaDB.
+///
+/// Re-exported from `crate::query::multimodel_router::StoreType` -- the single
+/// source of truth for all data model type discrimination across the codebase.
+/// The `DataModel` alias is maintained for backward compatibility with existing
+/// code that imports `DataModel` from this module.
+pub type DataModel = crate::query::multimodel_router::StoreType;
 
 /// Operations that can be performed on each data model
 #[derive(Debug, Clone)]

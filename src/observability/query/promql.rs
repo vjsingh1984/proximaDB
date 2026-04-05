@@ -22,6 +22,45 @@ impl PromQLParser {
     pub fn parse(query: &str) -> Result<PromQLExpr> {
         let query = query.trim();
 
+        // Check for unary negation first
+        if query.starts_with('-') {
+            let rest = &query[1..];
+            let expr = Self::parse(rest)?;
+            return Ok(PromQLExpr::Unary {
+                op: UnaryOp::Neg,
+                expr: Box::new(expr),
+            });
+        }
+
+        // Check for parentheses
+        if query.starts_with('(') {
+            {
+                let inner = Self::extract_parentheses(query)?;
+                let expr = Self::parse(inner)?;
+                // Check for suffix after parentheses (like offset modifier)
+                let after_paren = &query[inner.len() + 2..];
+                if !after_paren.is_empty() {
+                    // Handle offset @ modifier
+                    if let Some(offset_duration) = Self::parse_offset_modifier(after_paren)? {
+                        if let PromQLExpr::VectorSelector { name, matchers, range, .. } = expr {
+                            return Ok(PromQLExpr::VectorSelector {
+                                name,
+                                matchers,
+                                range,
+                                offset: Some(offset_duration),
+                            });
+                        }
+                    }
+                }
+                return Ok(PromQLExpr::Paren(Box::new(expr)));
+            }
+        }
+
+        // Check for function calls (math functions, etc.)
+        if let Some(func_expr) = Self::parse_function_call(query)? {
+            return Ok(func_expr);
+        }
+
         // Check for aggregation functions first
         if let Some(agg_expr) = Self::parse_aggregation(query)? {
             return Ok(agg_expr);
@@ -33,7 +72,22 @@ impl PromQLParser {
         }
 
         // Parse as vector selector (instant or range)
-        Self::parse_vector_selector(query)
+        let mut selector = Self::parse_vector_selector(query)?;
+
+        // Check for offset modifier @
+        let remaining = &query[Self::get_selector_length(&selector)..];
+        if let Some(offset_duration) = Self::parse_offset_modifier(remaining)? {
+            if let PromQLExpr::VectorSelector { name, matchers, range, .. } = selector {
+                selector = PromQLExpr::VectorSelector {
+                    name,
+                    matchers,
+                    range,
+                    offset: Some(offset_duration),
+                };
+            }
+        }
+
+        Ok(selector)
     }
 
     /// Parse aggregation function: sum(metric{label="value"}) by (label)
@@ -289,6 +343,146 @@ impl PromQLParser {
         Ok(matchers)
     }
 
+    /// Parse function calls: abs(), sqrt(), log(), etc.
+    fn parse_function_call(query: &str) -> Result<Option<PromQLExpr>> {
+        // Supported mathematical and utility functions
+        let functions = [
+            "abs", "sqrt", "cbrt", "exp", "ln", "log2", "log10",
+            "sgn", "sin", "cos", "tan", "asin", "acos", "atan",
+            "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+            "atan2", "round", "floor", "ceil", "trunc", "clamp", "max", "min",
+            "vector", "scalar", "label_join", "label_replace",
+            "hour", "minute", "month", "year", "day_of_month", "day_of_week",
+            "day_of_year", "days_in_month", "timestamp",
+        ];
+
+        for func_name in &functions {
+            if query.starts_with(func_name) && query[func_name.len()..].trim_start().starts_with('(') {
+                let rest = &query[func_name.len()..].trim_start();
+                let inner = Self::extract_parentheses(rest)?;
+
+                // Parse function arguments (comma-separated)
+                let args = Self::parse_function_args(inner)?;
+
+                return Ok(Some(PromQLExpr::Function {
+                    name: func_name.to_string(),
+                    args,
+                }));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Parse function arguments (comma-separated expressions)
+    fn parse_function_args(s: &str) -> Result<Vec<PromQLExpr>> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Simple split by comma (doesn't handle nested function calls well)
+        let mut args = Vec::new();
+        let mut current = String::new();
+        let mut paren_depth = 0;
+
+        for c in s.chars() {
+            match c {
+                '(' | '{' | '[' => {
+                    paren_depth += 1;
+                    current.push(c);
+                }
+                ')' | '}' | ']' => {
+                    paren_depth -= 1;
+                    current.push(c);
+                }
+                ',' if paren_depth == 0 => {
+                    if !current.trim().is_empty() {
+                        args.push(Self::parse(current.trim())?);
+                    }
+                    current = String::new();
+                }
+                _ => {
+                    current.push(c);
+                }
+            }
+        }
+
+        if !current.trim().is_empty() {
+            args.push(Self::parse(current.trim())?);
+        }
+
+        Ok(args)
+    }
+
+    /// Parse offset modifier: @ [5m], @ [1h], etc.
+    fn parse_offset_modifier(s: &str) -> Result<Option<Duration>> {
+        let s = s.trim();
+        if let Some(rest) = s.strip_prefix('@') {
+            let rest = rest.trim();
+            if rest.starts_with('[') && rest.ends_with(']') {
+                let duration_str = &rest[1..rest.len() - 1];
+                let duration = Self::parse_duration(duration_str)?;
+                return Ok(Some(duration));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Get the length of a selector in the original query string
+    fn get_selector_length(expr: &PromQLExpr) -> usize {
+        match expr {
+            PromQLExpr::VectorSelector { name, matchers, range, offset } => {
+                let mut len = name.len();
+                if !matchers.is_empty() {
+                    len += 2; // {}
+                    for matcher in matchers {
+                        len += matcher.name.len() + matcher.value.len() + 3; // name="value"
+                        if let Some(op_str) = Self::match_op_string(&matcher.op) {
+                            len += op_str.len();
+                        }
+                    }
+                    len += matchers.len() - 1; // commas between matchers
+                }
+                if let Some(range) = range {
+                    len += 2; // []
+                    len += Self::format_duration(range).len();
+                }
+                if let Some(offset) = offset {
+                    len += 2; // @
+                    len += 2; // []
+                    len += Self::format_duration(offset).len();
+                }
+                len
+            }
+            _ => 0,
+        }
+    }
+
+    /// Convert MatchOp to string representation
+    fn match_op_string(op: &MatchOp) -> Option<&'static str> {
+        match op {
+            MatchOp::Equal => Some("="),
+            MatchOp::NotEqual => Some("!="),
+            MatchOp::Regex => Some("=~"),
+            MatchOp::NotRegex => Some("!~"),
+        }
+    }
+
+    /// Format duration for length calculation
+    fn format_duration(duration: &Duration) -> String {
+        let ns = duration.nanoseconds;
+        if ns % 3_600_000_000_000 == 0 {
+            format!("{}h", ns / 3_600_000_000_000)
+        } else if ns % 60_000_000_000 == 0 {
+            format!("{}m", ns / 60_000_000_000)
+        } else if ns % 1_000_000_000 == 0 {
+            format!("{}s", ns / 1_000_000_000)
+        } else {
+            format!("{}ms", ns / 1_000_000)
+        }
+    }
+
     /// Parse duration string: 5m, 1h, 30s, 1d, etc.
     pub fn parse_duration(s: &str) -> Result<Duration> {
         let s = s.trim();
@@ -398,8 +592,31 @@ pub enum PromQLExpr {
         /// Optional vector matching configuration.
         matching: Option<VectorMatching>,
     },
+    /// Function call (mathematical and utility functions)
+    Function {
+        /// Function name (abs, sqrt, log, exp, etc.)
+        name: String,
+        /// Function arguments
+        args: Vec<PromQLExpr>,
+    },
+    /// Parenthesized expression
+    Paren(Box<PromQLExpr>),
+    /// Unary expression (negation)
+    Unary {
+        /// Operator (currently only negation)
+        op: UnaryOp,
+        /// Expression to apply operator to
+        expr: Box<PromQLExpr>,
+    },
     /// Scalar value
     Scalar(f64),
+}
+
+/// Unary operator
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    /// Negation (`-`)
+    Neg,
 }
 
 /// Label matcher
@@ -582,6 +799,17 @@ impl PromQLExecutor {
                 let lhs_results = Self::execute(lhs, samples.clone(), eval_time_ns, lookback_ns)?;
                 let rhs_results = Self::execute(rhs, samples, eval_time_ns, lookback_ns)?;
                 Self::execute_binary(op, lhs_results, rhs_results, matching)
+            }
+            PromQLExpr::Function { name, args } => {
+                Self::execute_function(name, args, samples, eval_time_ns, lookback_ns)
+            }
+            PromQLExpr::Paren(inner) => {
+                // Execute inner expression
+                Self::execute(inner, samples, eval_time_ns, lookback_ns)
+            }
+            PromQLExpr::Unary { op, expr } => {
+                let results = Self::execute(expr, samples, eval_time_ns, lookback_ns)?;
+                Self::execute_unary(op, results)
             }
             PromQLExpr::Scalar(v) => Ok(vec![MetricResult {
                 timestamp_ns: eval_time_ns,
@@ -948,6 +1176,309 @@ impl PromQLExecutor {
             .collect::<Vec<_>>()
             .join(",")
     }
+
+    /// Execute function call
+    fn execute_function(
+        name: &str,
+        args: &[PromQLExpr],
+        samples: Vec<MetricSample>,
+        eval_time_ns: i64,
+        lookback_ns: i64,
+    ) -> Result<Vec<MetricResult>> {
+        // Execute all arguments
+        let mut arg_results: Vec<Vec<MetricResult>> = Vec::new();
+        for arg in args {
+            let results = Self::execute(arg, samples.clone(), eval_time_ns, lookback_ns)?;
+            arg_results.push(results);
+        }
+
+        // Apply function to results
+        match name {
+            "abs" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: r.value.abs(),
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("abs() requires exactly 1 argument"))
+                }
+            }
+            "sqrt" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: r.value.sqrt().max(0.0), // sqrt of negative returns 0
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("sqrt() requires exactly 1 argument"))
+                }
+            }
+            "exp" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: r.value.exp(),
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("exp() requires exactly 1 argument"))
+                }
+            }
+            "ln" | "log" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: if r.value > 0.0 {
+                                r.value.ln()
+                            } else {
+                                f64::NAN
+                            },
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("ln()/log() requires exactly 1 argument"))
+                }
+            }
+            "log2" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: if r.value > 0.0 {
+                                r.value.log2()
+                            } else {
+                                f64::NAN
+                            },
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("log2() requires exactly 1 argument"))
+                }
+            }
+            "log10" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: if r.value > 0.0 {
+                                r.value.log10()
+                            } else {
+                                f64::NAN
+                            },
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("log10() requires exactly 1 argument"))
+                }
+            }
+            "round" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: r.value.round(),
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else if arg_results.len() == 2 {
+                    // round(x, precision) - precision is number of decimal places
+                    Ok(arg_results[0]
+                        .iter()
+                        .zip(arg_results[1].iter())
+                        .map(|(r, prec)| MetricResult {
+                            timestamp_ns: r.timestamp_ns.max(prec.timestamp_ns),
+                            value: (r.value * 10_f64.powi(prec.value as i32)).round()
+                                / 10_f64.powi(prec.value as i32),
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("round() requires 1 or 2 arguments"))
+                }
+            }
+            "floor" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: r.value.floor(),
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("floor() requires exactly 1 argument"))
+                }
+            }
+            "ceil" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: r.value.ceil(),
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("ceil() requires exactly 1 argument"))
+                }
+            }
+            "sgn" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| MetricResult {
+                            timestamp_ns: r.timestamp_ns,
+                            value: if r.value > 0.0 {
+                                1.0
+                            } else if r.value < 0.0 {
+                                -1.0
+                            } else {
+                                0.0
+                            },
+                            labels: r.labels.clone(),
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("sgn() requires exactly 1 argument"))
+                }
+            }
+            // Two-argument functions
+            "max" | "min" | "atan2" | "clamp" => {
+                if arg_results.len() == 2 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .zip(arg_results[1].iter())
+                        .map(|(l, r)| {
+                            let timestamp_ns = l.timestamp_ns.max(r.timestamp_ns);
+                            let value = match name {
+                                "max" => l.value.max(r.value),
+                                "min" => l.value.min(r.value),
+                                "atan2" => l.value.atan2(r.value),
+                                "clamp" => r.value.max(l.value.min(r.value)),
+                                _ => f64::NAN,
+                            };
+                            MetricResult {
+                                timestamp_ns,
+                                value,
+                                labels: l.labels.clone(),
+                            }
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("{}() requires exactly 2 arguments", name))
+                }
+            }
+            // Time functions
+            "hour" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| {
+                            let timestamp_secs = r.timestamp_ns / 1_000_000_000;
+                            let hour = (timestamp_secs % 86400) / 3600;
+                            MetricResult {
+                                timestamp_ns: r.timestamp_ns,
+                                value: hour as f64,
+                                labels: r.labels.clone(),
+                            }
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("hour() requires exactly 1 argument"))
+                }
+            }
+            "minute" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0]
+                        .iter()
+                        .map(|r| {
+                            let timestamp_secs = r.timestamp_ns / 1_000_000_000;
+                            let minute = (timestamp_secs % 3600) / 60;
+                            MetricResult {
+                                timestamp_ns: r.timestamp_ns,
+                                value: minute as f64,
+                                labels: r.labels.clone(),
+                            }
+                        })
+                        .collect())
+                } else {
+                    Err(anyhow!("minute() requires exactly 1 argument"))
+                }
+            }
+            "timestamp" => {
+                // timestamp() returns the current timestamp as seconds since epoch
+                Ok(vec![MetricResult {
+                    timestamp_ns: eval_time_ns,
+                    value: eval_time_ns as f64 / 1_000_000_000.0,
+                    labels: HashMap::new(),
+                }])
+            }
+            // Vector and scalar conversions
+            "vector" => {
+                if arg_results.len() == 1 {
+                    Ok(arg_results[0].clone()) // vector(s) returns the argument as-is
+                } else {
+                    Err(anyhow!("vector() requires exactly 1 argument"))
+                }
+            }
+            "scalar" => {
+                if arg_results.len() == 1 {
+                    // scalar(v) returns a single result from the vector
+                    Ok(vec![arg_results[0].first().map(|r| MetricResult {
+                        timestamp_ns: eval_time_ns,
+                        value: r.value,
+                        labels: HashMap::new(),
+                    }).unwrap_or(MetricResult {
+                        timestamp_ns: eval_time_ns,
+                        value: f64::NAN,
+                        labels: HashMap::new(),
+                    })])
+                } else {
+                    Err(anyhow!("scalar() requires exactly 1 argument"))
+                }
+            }
+            _ => {
+                // Unknown function - return error
+                Err(anyhow!("Unknown function: {}", name))
+            }
+        }
+    }
+
+    /// Execute unary operation
+    fn execute_unary(op: &UnaryOp, results: Vec<MetricResult>) -> Result<Vec<MetricResult>> {
+        match op {
+            UnaryOp::Neg => Ok(results
+                .iter()
+                .map(|r| MetricResult {
+                    timestamp_ns: r.timestamp_ns,
+                    value: -r.value,
+                    labels: r.labels.clone(),
+                })
+                .collect()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1199,5 +1730,185 @@ mod tests {
             }
             _ => panic!("Expected VectorSelector"),
         }
+    }
+
+    #[test]
+    fn test_parse_function_abs() {
+        let expr = PromQLParser::parse("abs(http_requests_total)").expect("should parse abs function");
+        match expr {
+            PromQLExpr::Function { name, args } => {
+                assert_eq!(name, "abs");
+                assert_eq!(args.len(), 1);
+            }
+            _ => panic!("Expected Function expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_unary_negation() {
+        let expr = PromQLParser::parse("-http_requests_total").expect("should parse negation");
+        match expr {
+            PromQLExpr::Unary { op, expr } => {
+                assert_eq!(*op, UnaryOp::Neg);
+                match *expr {
+                    PromQLExpr::VectorSelector { ref name, .. } => {
+                        assert_eq!(name, "http_requests_total");
+                    }
+                    _ => panic!("Expected VectorSelector inside Unary"),
+                }
+            }
+            _ => panic!("Expected Unary expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_parentheses() {
+        let expr = PromQLParser::parse("(http_requests_total)").expect("should parse parentheses");
+        match expr {
+            PromQLExpr::Paren(inner) => {
+                match *inner {
+                    PromQLExpr::VectorSelector { ref name, .. } => {
+                        assert_eq!(name, "http_requests_total");
+                    }
+                    _ => panic!("Expected VectorSelector inside Paren"),
+                }
+            }
+            _ => panic!("Expected Paren expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_expression() {
+        let expr = PromQLParser::parse("sum(rate(http_requests_total[5m])) by (method)")
+            .expect("should parse complex expression");
+        match expr {
+            PromQLExpr::Aggregation { op, expr, by, .. } => {
+                assert_eq!(op, AggregationOp::Sum);
+                assert_eq!(by, vec!["method"]);
+                match *expr {
+                    PromQLExpr::Aggregation { op: inner_op, .. } => {
+                        assert_eq!(*inner_op, AggregationOp::Rate);
+                    }
+                    _ => panic!("Expected Rate aggregation inside Sum"),
+                }
+            }
+            _ => panic!("Expected Aggregation"),
+        }
+    }
+
+    #[test]
+    fn test_execute_abs_function() {
+        let samples = vec![
+            MetricSample {
+                name: "values".to_string(),
+                timestamp_ns: 1000,
+                value: -5.0,
+                labels: HashMap::new(),
+            },
+            MetricSample {
+                name: "values".to_string(),
+                timestamp_ns: 1000,
+                value: 3.0,
+                labels: HashMap::new(),
+            },
+        ];
+
+        let expr = PromQLParser::parse("abs(values)").expect("should parse abs");
+        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000)
+            .expect("should execute abs");
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].value, 5.0); // |-5|
+        assert_eq!(results[1].value, 3.0); // |3|
+    }
+
+    #[test]
+    fn test_execute_sqrt_function() {
+        let samples = vec![
+            MetricSample {
+                name: "values".to_string(),
+                timestamp_ns: 1000,
+                value: 9.0,
+                labels: HashMap::new(),
+            },
+            MetricSample {
+                name: "values".to_string(),
+                timestamp_ns: 1000,
+                value: 16.0,
+                labels: HashMap::new(),
+            },
+        ];
+
+        let expr = PromQLParser::parse("sqrt(values)").expect("should parse sqrt");
+        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000)
+            .expect("should execute sqrt");
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].value, 3.0); // √9
+        assert_eq!(results[1].value, 4.0); // √16
+    }
+
+    #[test]
+    fn test_execute_unary_negation() {
+        let samples = vec![
+            MetricSample {
+                name: "counter".to_string(),
+                timestamp_ns: 1000,
+                value: 10.0,
+                labels: HashMap::new(),
+            },
+        ];
+
+        let expr = PromQLParser::parse("-counter").expect("should parse negation");
+        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000)
+            .expect("should execute negation");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].value, -10.0);
+    }
+
+    #[test]
+    fn test_execute_round_function() {
+        let samples = vec![
+            MetricSample {
+                name: "values".to_string(),
+                timestamp_ns: 1000,
+                value: 3.14159,
+                labels: HashMap::new(),
+            },
+        ];
+
+        let expr = PromQLParser::parse("round(values)").expect("should parse round");
+        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000)
+            .expect("should execute round");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].value, 3.0);
+    }
+
+    #[test]
+    fn test_execute_binary_with_functions() {
+        let samples = vec![
+            MetricSample {
+                name: "a".to_string(),
+                timestamp_ns: 1000,
+                value: 4.0,
+                labels: HashMap::new(),
+            },
+            MetricSample {
+                name: "b".to_string(),
+                timestamp_ns: 1000,
+                value: 9.0,
+                labels: HashMap::new(),
+            },
+        ];
+
+        let expr = PromQLParser::parse("sqrt(a) + sqrt(b)").expect("should parse complex binary");
+        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000)
+            .expect("should execute binary with functions");
+
+        assert_eq!(results.len(), 1);
+        // sqrt(4) + sqrt(9) = 2 + 3 = 5
+        assert_eq!(results[0].value, 5.0);
     }
 }

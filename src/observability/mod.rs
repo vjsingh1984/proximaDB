@@ -74,15 +74,90 @@ pub mod query;
 /// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
+use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::{
-    IngestionFormat, LogEntry, MetricSample, ObservabilityNamespaceConfig, Severity,
+    IngestionFormat, LogEntry, MetricSample, ObservabilityNamespaceConfig, Severity, TraceData,
 };
+
+// ---------------------------------------------------------------------------
+// ObservabilityStorageEngine trait -- the contract for observability-native storage
+// ---------------------------------------------------------------------------
+
+/// Storage engine trait for observability data model (metrics, logs, traces).
+///
+/// Unlike `UnifiedStorageEngine` (vector-centric), this trait operates on
+/// `MetricSample`, `LogEntry`, and `TraceData` natively. CHRONO implements this.
+#[async_trait]
+pub trait ObservabilityStorageEngine: Send + Sync {
+    /// Engine identity
+    fn engine_name(&self) -> &'static str;
+
+    // -- Metrics --
+
+    /// Ingest metric samples. Returns count of successfully ingested samples.
+    async fn ingest_metrics(&self, namespace: String, samples: Vec<MetricSample>) -> Result<u64>;
+
+    /// Query raw metric samples by name, labels, and time range.
+    async fn query_metrics(
+        &self,
+        namespace: String,
+        metric_name: String,
+        label_matchers: Vec<(String, String)>,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<MetricSample>>;
+
+    // -- Logs --
+
+    /// Ingest log entries. Returns count of successfully ingested entries.
+    async fn ingest_logs(&self, namespace: String, entries: Vec<LogEntry>) -> Result<u64>;
+
+    /// Query logs by time range, severity, and optional text filter.
+    async fn query_logs(
+        &self,
+        namespace: String,
+        start_ns: i64,
+        end_ns: i64,
+        severity: Option<i32>,
+        text_filter: Option<String>,
+    ) -> Result<Vec<LogEntry>>;
+
+    // -- Traces --
+
+    /// Ingest trace spans. Returns count of successfully ingested spans.
+    async fn ingest_spans(&self, namespace: String, spans: Vec<TraceData>) -> Result<u64>;
+
+    /// Query traces by trace_id, service, or time range.
+    async fn query_traces(
+        &self,
+        namespace: String,
+        trace_id: Option<String>,
+        service: Option<String>,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<TraceData>>;
+
+    // -- Lifecycle --
+
+    /// Flush in-memory data to persistent storage.
+    async fn flush(&self, namespace: String) -> Result<u64>;
+
+    /// Compact on-disk time partitions (merge + downsample).
+    async fn compact(&self, namespace: String) -> Result<u64>;
+
+    /// Get total number of active time series.
+    async fn series_count(&self) -> u64;
+
+    /// Collect engine-specific metrics.
+    async fn collect_metrics(&self) -> Result<HashMap<String, serde_json::Value>>;
+}
 
 pub use self::ingestion::ObservabilityIngester;
 pub use self::query::ObservabilityQueryEngine;
@@ -96,6 +171,11 @@ pub struct ObservabilityService {
     query_engine: Arc<ObservabilityQueryEngine>,
     /// Storage layer
     storage: Arc<ObservabilityStorage>,
+    /// Observability-native storage engine (CHRONO).
+    /// When present, metric/log/trace operations delegate to this engine.
+    /// (Phase 2: wire ingest/query through this)
+    #[allow(dead_code)]
+    observability_engine: Option<Arc<dyn ObservabilityStorageEngine>>,
     /// Namespace configurations
     namespaces: RwLock<std::collections::HashMap<String, NamespaceState>>,
 }
@@ -113,7 +193,7 @@ struct NamespaceState {
 }
 
 impl ObservabilityService {
-    /// Create a new observability service
+    /// Create a new observability service (legacy mode, uses internal partitioned storage)
     pub async fn new(storage: Arc<ObservabilityStorage>) -> Result<Self> {
         let ingester = Arc::new(ObservabilityIngester::new(storage.clone()).await?);
         let query_engine = Arc::new(ObservabilityQueryEngine::new(storage.clone()));
@@ -122,6 +202,27 @@ impl ObservabilityService {
             ingester,
             query_engine,
             storage,
+            observability_engine: None,
+            namespaces: RwLock::new(std::collections::HashMap::new()),
+        })
+    }
+
+    /// Create an observability service backed by an ObservabilityStorageEngine (CHRONO).
+    ///
+    /// When a CHRONO engine is provided, metric/log/trace operations delegate to it
+    /// for native time-series storage with Gorilla encoding and time-window compaction.
+    pub async fn with_observability_engine(
+        storage: Arc<ObservabilityStorage>,
+        engine: Arc<dyn ObservabilityStorageEngine>,
+    ) -> Result<Self> {
+        let ingester = Arc::new(ObservabilityIngester::new(storage.clone()).await?);
+        let query_engine = Arc::new(ObservabilityQueryEngine::new(storage.clone()));
+
+        Ok(Self {
+            ingester,
+            query_engine,
+            storage,
+            observability_engine: Some(engine),
             namespaces: RwLock::new(std::collections::HashMap::new()),
         })
     }
@@ -821,7 +922,6 @@ use crate::storage::traits::{
     MetricAggregationResult as TraitMetricAggResult, NamespaceInfo as TraitNamespaceInfo,
     ObservabilityStorageOperations, TimeSeriesData as TraitTimeSeriesData,
 };
-use async_trait::async_trait;
 
 /// Convert internal IngestResult to trait IngestResult
 fn to_trait_ingest_result(result: &IngestResult) -> TraitIngestResult {

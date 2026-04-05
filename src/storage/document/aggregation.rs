@@ -11,7 +11,6 @@
 // - Full-text search scoring
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
@@ -91,7 +90,7 @@ impl AggregationExecutor {
             Some(Stage::Sort(sort_stage)) => self.process_sort(documents, sort_stage),
             Some(Stage::Limit(limit_stage)) => self.process_limit(documents, limit_stage),
             Some(Stage::Skip(skip_stage)) => self.process_skip(documents, skip_stage),
-            Some(Stage::Lookup(lookup_stage)) => {
+            Some(Stage::Lookup(_lookup_stage)) => {
                 // For now, return an error - lookup requires a fetcher callback
                 // In production, this would be passed through the executor context
                 Err(anyhow!(

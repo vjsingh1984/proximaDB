@@ -325,7 +325,25 @@ pub struct SwiftEngine {
 impl SwiftEngine {
     /// Create a new SWIFT engine instance (stateless)
     /// Collection info comes from FlushParameters and StorageQueryContext at runtime
+    ///
+    /// # DEPRECATION WARNING
+    ///
+    /// SWIFT engine is DEPRECATED and INCOMPLETE. Do not use in production.
+    ///
+    /// **Status**: Will be removed in v1.0 unless completed by contributors
+    /// **Alternatives**: Use SST, VIPER, HELIX, or NOVA engines instead
+    /// **Documentation**: See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md`
+    ///
+    /// For hierarchical storage, use application-level hierarchy with production engines.
+    #[deprecated(since = "0.2.0", note = "SWIFT engine is deprecated. Use SST, VIPER, HELIX, or NOVA instead.")]
     pub async fn new() -> Result<Self> {
+        tracing::warn!(
+            "⚠️  SWIFT ENGINE DEPRECATION WARNING ⚠️ \
+             SWIFT is deprecated and incomplete. \
+             Use SST, VIPER, HELIX, or NOVA instead. \
+             See /docs/storage/EXPERIMENTAL_ENGINES_STATUS.md for details."
+        );
+
         let distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
         );

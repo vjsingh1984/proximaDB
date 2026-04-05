@@ -32,11 +32,14 @@
 //! - **NOVA**: Advanced columnar analytics, 66+ tests, zone maps & predicate pushdown
 //! - **HELIX**: High-dimensional data, 38+ tests, PCA dimension reduction
 //!
-//! **Experimental (Requires `experimental-engines` feature flag):**
-//! - **SWIFT**: Fast traversal, 41+ tests, some methods return errors
-//! - **RAPTOR**: Matrix Trinity navigation, 23+ tests, several TODOs for optimization
+//! **⚠️ DEPRECATED - Experimental (Requires `experimental-engines` feature flag):**
+//! - **SWIFT**: ⚠️ DEPRECATED - Incomplete hierarchical storage, 30+ TODOs
+//! - **RAPTOR**: ⚠️ DEPRECATED - Experimental Matrix Trinity, 35+ TODOs
 //!
-//! To enable experimental engines: `cargo build --features experimental-engines`
+//! **IMPORTANT**: SWIFT and RAPTOR are deprecated and will be removed in v1.0.
+//! Use SST, VIPER, HELIX, or NOVA instead. See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md`
+//!
+//! To enable deprecated engines: `cargo build --features experimental-engines`
 //!
 //! ## Selection Criteria:
 //!
@@ -205,6 +208,13 @@ impl StorageEngineFactory {
                 }
             }
             ProtoStorageEngine::Tst => Self::create_tst(),
+            ProtoStorageEngine::Cedar => Self::create_cedar(),
+            ProtoStorageEngine::Chrono => Self::create_chrono(),
+            ProtoStorageEngine::Titan => {
+                // TITAN is primarily a GraphEngine; for UnifiedStorageEngine, use SST as backing
+                warn!("TITAN is a graph engine; using SST for vector storage operations");
+                Self::create_sst()
+            }
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
                 Self::create_sst()
@@ -258,6 +268,12 @@ impl StorageEngineFactory {
                 }
             }
             ProtoStorageEngine::Tst => Self::create_tst_async().await,
+            ProtoStorageEngine::Cedar => Self::create_cedar_async().await,
+            ProtoStorageEngine::Chrono => Self::create_chrono_async().await,
+            ProtoStorageEngine::Titan => {
+                warn!("TITAN is a graph engine; using SST for vector storage operations");
+                Self::create_sst_async().await
+            }
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
                 Self::create_sst_async().await
@@ -347,6 +363,14 @@ impl StorageEngineFactory {
                 info!("Creating TimeSeries (TST) engine");
                 Self::create_tst()
             }
+            StorageEngineStrategy::Cedar => {
+                info!("Creating CEDAR (Document) engine");
+                Self::create_cedar()
+            }
+            StorageEngineStrategy::Chrono => {
+                info!("Creating CHRONO (Observability) engine");
+                Self::create_chrono()
+            }
         }
     }
 
@@ -367,6 +391,43 @@ impl StorageEngineFactory {
     /// Async version for use within async contexts (e.g., tests)
     pub async fn create_tst_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         Self::create_tst()
+    }
+
+    /// Create CEDAR document storage engine
+    ///
+    /// LSM-based engine optimized for:
+    /// - JSON document CRUD with MVCC versioning
+    /// - Secondary indexes on document fields
+    /// - BSON encoding with LZ4 compression
+    pub fn create_cedar() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating CEDAR (Document) storage engine");
+        Ok(Arc::new(
+            crate::storage::engines::impls::cedar::CedarEngine::new()?,
+        ))
+    }
+
+    /// Async version for CEDAR
+    pub async fn create_cedar_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        Self::create_cedar()
+    }
+
+    /// Create CHRONO observability storage engine
+    ///
+    /// LSM-based engine optimized for:
+    /// - Metrics with Gorilla timestamp/value encoding
+    /// - Logs with label indexing and text search
+    /// - Traces with span assembly
+    /// - Time-window compaction with downsampling
+    pub fn create_chrono() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating CHRONO (Observability) storage engine");
+        Ok(Arc::new(
+            crate::storage::engines::impls::chrono::ChronoEngine::new()?,
+        ))
+    }
+
+    /// Async version for CHRONO
+    pub async fn create_chrono_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        Self::create_chrono()
     }
 
     /// Create VIPER engine with default configuration

@@ -105,7 +105,7 @@ mod wal_writer_tests {
             let base_location = format!("file://{}", temp_dir.path().display());
 
             let result = writer
-                .write_vectors("test_collection", vectors, sequences, base_location)
+                .write_vectors("test_collection", vectors, sequences, proximadb::storage::persistence::write_ahead_log::optimized_write_buffer_writer::OptimizedFormat::Bincode, base_location)
                 .await;
 
             assert!(

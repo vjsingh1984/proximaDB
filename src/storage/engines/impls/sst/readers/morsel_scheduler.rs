@@ -216,7 +216,7 @@ impl MorselScheduler {
             let task = tokio::spawn(async move {
                 let _permit = permit; // Hold permit until processing completes
                 trace!("Processing morsel {} ({} records)", morsel.id, morsel.row_count);
-                processor_clone(morsel_records)
+                processor_clone(morsel_records).await
             });
 
             tasks.push(task);

@@ -43,7 +43,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     fn get_filesystem(&self) -> Option<Arc<FilesystemFactory>>;
 
     /// Set storage engine for delegated flush/compaction operations
-    fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>);
+    fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>, collection_id: &str);
 
     /// Write Write Buffer batch to cloud storage with URL-based routing
     async fn write_batch_to_cloud(

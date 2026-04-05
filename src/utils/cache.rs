@@ -176,8 +176,11 @@ where
     /// Create a new LRU cache with specified capacity
     pub fn new(capacity: usize) -> Self {
         if capacity == 0 {
-            #[allow(clippy::panic)]  // API contract violation - cache requires capacity > 0
-            panic!("Cache capacity must be greater than 0");
+            // API contract violation - cache requires capacity > 0
+            #[allow(clippy::panic)]
+            {
+                panic!("Cache capacity must be greater than 0");
+            }
         }
 
         LruCache {

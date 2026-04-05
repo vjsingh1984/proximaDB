@@ -2564,6 +2564,9 @@ pub enum StorageEngine {
     Mmap = 7,
     Hybrid = 8,
     Tst = 9,
+    Cedar = 10,
+    Titan = 11,
+    Chrono = 12,
 }
 impl StorageEngine {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2582,6 +2585,9 @@ impl StorageEngine {
             Self::Mmap => "MMAP",
             Self::Hybrid => "HYBRID",
             Self::Tst => "TST",
+            Self::Cedar => "CEDAR",
+            Self::Titan => "TITAN",
+            Self::Chrono => "CHRONO",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2597,6 +2603,9 @@ impl StorageEngine {
             "MMAP" => Some(Self::Mmap),
             "HYBRID" => Some(Self::Hybrid),
             "TST" => Some(Self::Tst),
+            "CEDAR" => Some(Self::Cedar),
+            "TITAN" => Some(Self::Titan),
+            "CHRONO" => Some(Self::Chrono),
             _ => None,
         }
     }

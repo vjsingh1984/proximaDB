@@ -411,7 +411,7 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::VectorSearch { collection, top_k, query_vector_source } => {
+            PlanNodeType::VectorSearch { collection: _, top_k: _, query_vector_source } => {
                 capabilities.add(Capability::VectorSearch);
                 capabilities.add(Capability::Scan);
 
@@ -426,7 +426,7 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::GraphTraversal { cypher, start_nodes } => {
+            PlanNodeType::GraphTraversal { cypher, start_nodes: _ } => {
                 capabilities.add(Capability::GraphQuery);
                 capabilities.add(Capability::GraphTraversal);
                 capabilities.add(Capability::PatternMatching);
@@ -438,7 +438,7 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::DocumentQuery { collection, filter } => {
+            PlanNodeType::DocumentQuery { collection: _, filter } => {
                 capabilities.add(Capability::DocumentQuery);
                 capabilities.add(Capability::Scan);
                 capabilities.add(Capability::FullTextSearch);
@@ -451,7 +451,7 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::ObservabilityQuery { namespace, query_type, time_range } => {
+            PlanNodeType::ObservabilityQuery { namespace: _, query_type, time_range } => {
                 capabilities.add(Capability::Scan);
 
                 match query_type {
@@ -474,7 +474,7 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::HashJoin { left, right, join_keys, join_type } => {
+            PlanNodeType::HashJoin { left, right, join_keys: _, join_type: _ } => {
                 capabilities.add(Capability::Join);
                 capabilities.add(Capability::Scan);
 
@@ -488,7 +488,7 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::NestedLoopJoin { outer, inner, correlation } => {
+            PlanNodeType::NestedLoopJoin { outer, inner, correlation: _ } => {
                 capabilities.add(Capability::Join);
                 capabilities.add(Capability::Scan);
 
@@ -500,7 +500,7 @@ impl PlanNode {
                 capabilities = capabilities.union(&inner.required_capabilities);
             }
 
-            PlanNodeType::IndexJoin { left, right, index_lookup } => {
+            PlanNodeType::IndexJoin { left, right, index_lookup: _ } => {
                 capabilities.add(Capability::Join);
                 capabilities.add(Capability::Scan);
                 capabilities.add(Capability::Filter);
@@ -510,19 +510,17 @@ impl PlanNode {
                 capabilities = capabilities.union(&right.required_capabilities);
             }
 
-            PlanNodeType::Filter { input, predicate } => {
+            PlanNodeType::Filter { input, predicate: _ } => {
                 capabilities.add(Capability::Filter);
                 capabilities.add(Capability::PredicatePushdown);
 
-                // Add capabilities from child node
                 capabilities = capabilities.union(&input.required_capabilities);
             }
 
-            PlanNodeType::Project { input, columns } => {
+            PlanNodeType::Project { input, columns: _ } => {
                 capabilities.add(Capability::Project);
                 capabilities.add(Capability::Scan);
 
-                // Add capabilities from child node
                 capabilities = capabilities.union(&input.required_capabilities);
             }
 
@@ -530,38 +528,33 @@ impl PlanNode {
                 capabilities.add(Capability::Aggregate);
                 capabilities.add(Capability::Scan);
 
-                // Add capabilities from child node
                 capabilities = capabilities.union(&input.required_capabilities);
             }
 
-            PlanNodeType::Sort { input, order_by } => {
+            PlanNodeType::Sort { input, order_by: _ } => {
                 capabilities.add(Capability::Sort);
                 capabilities.add(Capability::Scan);
 
-                // Add capabilities from child node
                 capabilities = capabilities.union(&input.required_capabilities);
             }
 
-            PlanNodeType::Limit { input, limit, offset } => {
+            PlanNodeType::Limit { input, limit: _, offset: _ } => {
                 capabilities.add(Capability::Limit);
                 capabilities.add(Capability::Scan);
 
-                // Add capabilities from child node
                 capabilities = capabilities.union(&input.required_capabilities);
             }
 
-            PlanNodeType::Aggregate { input, group_by, aggregates } => {
+            PlanNodeType::Aggregate { input, group_by: _, aggregates: _ } => {
                 capabilities.add(Capability::Aggregate);
                 capabilities.add(Capability::Scan);
 
-                // Add capabilities from child node
                 capabilities = capabilities.union(&input.required_capabilities);
             }
 
-            PlanNodeType::Union { inputs, all } => {
+            PlanNodeType::Union { inputs, all: _ } => {
                 capabilities.add(Capability::Scan);
 
-                // Add capabilities from all child nodes
                 for input in inputs {
                     capabilities = capabilities.union(&input.required_capabilities);
                 }
@@ -574,6 +567,77 @@ impl PlanNode {
     /// Check if this plan node involves a specific model type
     fn has_model(&self, model_type: ModelType) -> bool {
         self.node_type.has_model(model_type)
+    }
+
+    /// Get honest capabilities by intersecting claimed capabilities with actual engine capabilities
+    ///
+    /// This method closes the "honesty gap" by ensuring that the plan node only claims
+    /// capabilities that are actually supported by the underlying storage engine.
+    ///
+    /// # Arguments
+    /// * `actual_engine_capabilities` - The actual capabilities supported by the storage engine
+    ///
+    /// # Returns
+    /// A new CapabilitySet containing only the capabilities that are both claimed and actually available
+    pub fn get_honest_capabilities(&self, actual_engine_capabilities: &CapabilitySet) -> CapabilitySet {
+        self.required_capabilities.intersection(actual_engine_capabilities)
+    }
+
+    /// Validate that this plan node's capabilities are supported by the storage engine
+    ///
+    /// Returns an error if the plan node requires capabilities that the storage engine doesn't support.
+    ///
+    /// # Arguments
+    /// * `engine_capabilities` - The actual capabilities supported by the storage engine
+    /// * `node_description` - Human-readable description of the node for error messages
+    pub fn validate_capabilities(
+        &self,
+        engine_capabilities: &CapabilitySet,
+        node_description: &str,
+    ) -> Result<()> {
+        let honest_caps = self.get_honest_capabilities(engine_capabilities);
+
+        // Check if we're missing any required capabilities
+        let missing_caps = self.required_capabilities.difference(&honest_caps);
+
+        if !missing_caps.is_empty() {
+            let missing_list: Vec<String> = missing_caps
+                .iter()
+                .map(|c| format!("{:?}", c))
+                .collect();
+
+            return Err(anyhow!(
+                "Plan node '{}' requires capabilities that the storage engine doesn't support: {:?}. \
+                 Please either use a different storage engine or modify the query.",
+                node_description, missing_list
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Get a capability honesty report for this plan node
+    ///
+    /// Returns a detailed report showing the gap between claimed and actual capabilities.
+    /// This is useful for debugging and optimization.
+    ///
+    /// # Arguments
+    /// * `actual_engine_capabilities` - The actual capabilities supported by the storage engine
+    ///
+    /// # Returns
+    /// A tuple of (honest_capabilities, missing_capabilities, extra_capabilities)
+    /// * honest_capabilities: Capabilities that are both claimed and available
+    /// * missing_capabilities: Capabilities that are claimed but not available (the gap)
+    /// * extra_capabilities: Capabilities that are available but not claimed (opportunities)
+    pub fn get_capability_honesty_report(
+        &self,
+        actual_engine_capabilities: &CapabilitySet,
+    ) -> (CapabilitySet, CapabilitySet, CapabilitySet) {
+        let honest_capabilities = self.get_honest_capabilities(actual_engine_capabilities);
+        let missing_capabilities = self.required_capabilities.difference(&honest_capabilities);
+        let extra_capabilities = actual_engine_capabilities.difference(&honest_capabilities);
+
+        (honest_capabilities, missing_capabilities, extra_capabilities)
     }
 }
 
@@ -6519,5 +6583,154 @@ mod tests {
         let caps = node.infer_capabilities();
         // Should return the pre-inferred capabilities, not re-infer
         assert_eq!(caps, pre_inferred);
+    }
+
+    #[test]
+    fn test_honest_capability_reporting() {
+        // Test that honest capability reporting correctly identifies gaps
+        let claimed_capabilities = CapabilitySet::from_capabilities(&[
+            Capability::VectorSearch,
+            Capability::Filter,
+            Capability::PredicatePushdown,
+            Capability::CosineDistance,
+        ]);
+
+        let actual_engine_capabilities = CapabilitySet::from_capabilities(&[
+            Capability::VectorSearch,
+            Capability::Filter,
+            // Note: Missing PredicatePushdown and CosineDistance
+        ]);
+
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::Scan {
+                target: "test_collection".to_string(),
+                model_type: ModelType::Vector,
+                predicates: vec![],
+            },
+            estimated_cost: 50.0,
+            estimated_rows: 100,
+            output_columns: vec!["id".to_string(), "vector".to_string()],
+            required_capabilities: claimed_capabilities.clone(),
+        };
+
+        let (honest, missing, extra) = node.get_capability_honesty_report(&actual_engine_capabilities);
+
+        // Honest capabilities should only include what's actually available
+        assert!(honest.contains_capability(&Capability::VectorSearch));
+        assert!(honest.contains_capability(&Capability::Filter));
+        assert!(!honest.contains_capability(&Capability::PredicatePushdown));
+
+        // Missing capabilities should include the gap
+        assert!(missing.contains_capability(&Capability::PredicatePushdown));
+        assert!(missing.contains_capability(&Capability::CosineDistance));
+        assert!(!missing.contains_capability(&Capability::VectorSearch));
+
+        // Extra capabilities show what's available but not claimed
+        assert!(!extra.contains_capability(&Capability::VectorSearch));
+    }
+
+    #[test]
+    fn test_capability_validation_passes_when_supported() {
+        // Test that validation passes when all claimed capabilities are supported
+        let claimed_capabilities = CapabilitySet::from_capabilities(&[
+            Capability::VectorSearch,
+            Capability::Filter,
+        ]);
+
+        let engine_capabilities = CapabilitySet::from_capabilities(&[
+            Capability::VectorSearch,
+            Capability::Filter,
+            Capability::PredicatePushdown, // Extra capability not claimed
+        ]);
+
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::VectorSearch {
+                collection: "embeddings".to_string(),
+                top_k: 10,
+                query_vector_source: VectorSource::Literal(vec![0.1, 0.2, 0.3]),
+            },
+            estimated_cost: 50.0,
+            estimated_rows: 10,
+            output_columns: vec!["id".to_string()],
+            required_capabilities: claimed_capabilities.clone(),
+        };
+
+        // Should pass validation
+        assert!(node.validate_capabilities(&engine_capabilities, "test node").is_ok());
+    }
+
+    #[test]
+    fn test_capability_validation_fails_when_unsupported() {
+        // Test that validation fails when claimed capabilities are not supported
+        let claimed_capabilities = CapabilitySet::from_capabilities(&[
+            Capability::VectorSearch,
+            Capability::GraphQuery, // Not supported by engine
+        ]);
+
+        let engine_capabilities = CapabilitySet::from_capabilities(&[
+            Capability::VectorSearch,
+            Capability::Filter,
+        ]);
+
+        let node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::VectorSearch {
+                collection: "embeddings".to_string(),
+                top_k: 10,
+                query_vector_source: VectorSource::Literal(vec![0.1, 0.2, 0.3]),
+            },
+            estimated_cost: 50.0,
+            estimated_rows: 10,
+            output_columns: vec!["id".to_string()],
+            required_capabilities: claimed_capabilities.clone(),
+        };
+
+        // Should fail validation with descriptive error
+        let result = node.validate_capabilities(&engine_capabilities, "vector search node");
+        assert!(result.is_err());
+
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("GraphQuery"));
+        assert!(error_msg.contains("capabilities that the storage engine doesn't support"));
+    }
+
+    #[test]
+    fn test_scan_honesty_gap_detection() {
+        // Test detection of honesty gap in scan operations
+        let scan_node = PlanNode {
+            id: 1,
+            node_type: PlanNodeType::Scan {
+                target: "products".to_string(),
+                model_type: ModelType::Vector,
+                predicates: vec![Predicate {
+                    column: "price".to_string(),
+                    op: PredicateOp::Lt,
+                    value: PredicateValue::Int(100),
+                }],
+            },
+            estimated_cost: 50.0,
+            estimated_rows: 100,
+            output_columns: vec!["id".to_string(), "vector".to_string(), "price".to_string()],
+            required_capabilities: CapabilitySet::new(), // Will be inferred
+        };
+
+        // Infer capabilities
+        let claimed = scan_node.infer_capabilities();
+
+        // Simulate a storage engine that doesn't support predicate pushdown
+        let limited_engine = CapabilitySet::from_capabilities(&[
+            Capability::Scan,
+            Capability::VectorSearch,
+            // Missing: Filter, PredicatePushdown
+        ]);
+
+        let (honest, missing, _extra) = scan_node.get_capability_honesty_report(&limited_engine);
+
+        // Should detect the honesty gap
+        assert!(missing.contains_capability(&Capability::Filter));
+        assert!(missing.contains_capability(&Capability::PredicatePushdown));
+        assert!(missing.len() >= 2);
     }
 }

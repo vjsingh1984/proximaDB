@@ -400,11 +400,25 @@ impl SstEngine {
                 .await
             } else {
                 // Use SSTable reader for ProximaBlocks format
-                // Choose execution strategy based on flags (TD-041, TD-039)
+                // Choose execution strategy based on flags (TD-041, TD-039, TD-031)
                 let use_parallel_morsels = ctx.search_params.enable_parallel_morsels.unwrap_or(false);
                 let use_vectorized = ctx.search_params.enable_vectorized_execution.unwrap_or(false);
+                let use_pipeline = ctx.search_params.enable_pipeline_execution.unwrap_or(false);
 
-                if use_parallel_morsels {
+                if use_pipeline {
+                    trace!("SST: Using pipeline-based execution path (TD-031)");
+                    self.sstable_reader()
+                        .search_with_pipeline_execution(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k
+                            distance_metric,
+                            Some(&*ctx.collection),
+                            block_prune,
+                        )
+                        .await
+                } else if use_parallel_morsels {
                     trace!("SST: Using parallel morsel execution path (TD-039)");
                     self.sstable_reader()
                         .search_with_filter_parallel_morsels(

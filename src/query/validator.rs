@@ -49,8 +49,7 @@ use anyhow::{Result};
 use tracing::{debug, info, warn, instrument};
 
 use crate::query::capability::{Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet};
-use crate::query::federated::optimizer::{PlanNode, PlanNodeType};
-use crate::storage::multimodel::ModelType;
+use crate::query::federated::optimizer::PlanNode;
 
 /// Validation result with detailed information
 #[derive(Debug, Clone)]

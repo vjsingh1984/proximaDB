@@ -14,14 +14,55 @@
  * limitations under the License.
  */
 
-//! # PULSAR Graph Engine - EXPERIMENTAL (Distributed)
+//! # PULSAR Graph Engine - ⚠️ EXPERIMENTAL (75% Complete)
 //!
-//! **WARNING**: PULSAR is experimental and not production-ready.
+//! **WARNING**: PULSAR is EXPERIMENTAL and NOT PRODUCTION-READY.
 //!
-//! PULSAR provides distributed graph capabilities via sharding but has incomplete
-//! implementations for cross-shard queries and distributed transactions.
+//! ## Current Status (2026-04-03)
 //!
-//! **For production use, use ORION with application-level sharding.**
+//! **Completion**: ~75% - Core functionality implemented, distributed features incomplete
+//!
+//! **Production Ready**: ❌ No - Missing distributed transactions, automatic failover
+//!
+//! **Recommended Alternative**: Use ORION with application-level sharding
+//!
+//! ## Implemented Features ✅
+//!
+//! - **Consistent Hashing**: SHA-256 based node distribution across shards
+//! - **Single-Shard Operations**: Full CRUD with proper routing
+//! - **Basic Replication**: Async replication (1-3x factor)
+//! - **WAL Persistence**: Per-shard durability via ORION
+//! - **Cross-Shard Traversal**: BFS/DFS with coordinator
+//! - **Bulk Operations**: Optimized batch processing
+//!
+//! ## Incomplete Features ❌
+//!
+//! - **Distributed Transactions**: No 2PC, no cross-shard ACID
+//! - **Automatic Failover**: Manual intervention required
+//! - **Query Optimization**: Basic cross-shard queries only
+//! - **Shard Management**: Manual rebalancing only
+//!
+//! ## Known Limitations
+//!
+//! 1. **No Distributed ACID**: Concurrent updates may cause inconsistencies
+//! 2. **Eventual Consistency**: Replication lag can cause stale reads
+//! 3. **Poor Cross-Shard Performance**: 50-500ms latency for multi-shard queries
+//! 4. **Data Loss Risk**: No distributed WAL, shard failures lose data
+//!
+//! ## When to Consider PULSAR
+//!
+//! - **Research & Development**: Testing distributed algorithms
+//! - **Large Graph Prototypes**: 100M+ nodes with natural partitioning
+//! - **Experimental Workloads**: When you can tolerate data loss
+//!
+//! ## When NOT to Use PULSAR
+//!
+//! - **Production Systems**: Need ACID guarantees
+//! - **Low Latency**: <10ms requirements
+//! - **Strong Consistency**: Real-time applications
+//! - **Small Graphs**: <10M nodes (use ORION instead)
+//!
+//! **Documentation**: See `/docs/graph/PULSAR_STATUS.md` for complete details
 //!
 //! ## Status
 //!
@@ -181,7 +222,24 @@ impl Default for PulsarConfig {
 
 impl PulsarGraphEngine {
     /// Create a new PULSAR distributed graph engine (in-memory, no persistence)
+    ///
+    /// # ⚠️ EXPERIMENTAL WARNING
+    ///
+    /// PULSAR is experimental and not production-ready. Missing:
+    /// - Distributed transactions (no 2PC)
+    /// - Automatic failover (manual intervention required)
+    /// - Strong consistency (eventual consistency only)
+    ///
+    /// **Alternative**: Use ORION with application-level sharding for production.
+    /// **Documentation**: See `/docs/graph/PULSAR_STATUS.md` for complete details.
+    #[deprecated(since = "0.2.0", note = "PULSAR is experimental. Use ORION with application-level sharding for production.")]
     pub fn new(config: PulsarConfig) -> Result<Self> {
+        tracing::warn!(
+            "⚠️  PULSAR EXPERIMENTAL WARNING ⚠️ \
+             PULSAR is missing distributed transactions, automatic failover, and strong consistency. \
+             Use ORION with application-level sharding for production. \
+             See /docs/graph/PULSAR_STATUS.md for details."
+        );
         // Shared memory pool for PULSAR-level operations (e.g., cross-shard queries)
         let memory_pool = Arc::new(GraphMemoryPool::new());
 
@@ -202,6 +260,11 @@ impl PulsarGraphEngine {
     ///
     /// Each shard will have its own WAL file for durability.
     ///
+    /// # ⚠️ EXPERIMENTAL WARNING
+    ///
+    /// PULSAR is experimental and not production-ready. The distributed WAL is incomplete
+    /// and shard failures may cause data loss.
+    ///
     /// # Arguments
     /// * `config` - PULSAR configuration
     /// * `graph_id` - Unique identifier for this graph (used in WAL paths)
@@ -215,6 +278,7 @@ impl PulsarGraphEngine {
     ///     "file:///tmp/proximadb".to_string(),
     /// ).await?;
     /// ```
+    #[deprecated(since = "0.2.0", note = "PULSAR persistence is experimental. Use ORION with application-level sharding for production.")]
     pub async fn with_persistence(
         config: PulsarConfig,
         graph_id: String,

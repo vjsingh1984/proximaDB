@@ -745,6 +745,19 @@ impl ObservabilityQueryEngine {
                 Self::collect_metric_names(rhs, names);
             }
             promql::PromQLExpr::Scalar(_) => {}
+            promql::PromQLExpr::Function { name: _, args, .. } => {
+                // Functions like abs(), sqrt(), etc. don't directly reference metrics
+                // But we should still check their arguments
+                for arg in args {
+                    Self::collect_metric_names(arg, names);
+                }
+            }
+            promql::PromQLExpr::Paren(inner) => {
+                Self::collect_metric_names(inner, names);
+            }
+            promql::PromQLExpr::Unary { expr, .. } => {
+                Self::collect_metric_names(expr, names);
+            }
         }
     }
 }

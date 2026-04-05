@@ -341,19 +341,44 @@ impl UnifiedWALWriter {
         let fs = filesystem.get_filesystem(&base_url)?;
         fs.create_dir_all(&base_url).await?;
 
-        // TODO: Discover existing WAL files and resume from max sequence number
-        // For now, we start fresh each time to avoid complexity
-        // This is acceptable for the current TDD test which uses separate directories
-        tracing::debug!("WAL writer initialized for path: {}", base_path);
+        // Discover existing WAL files to resume from max sequence number
+        let mut max_seq: u64 = 0;
+        let mut segment_count: u64 = 0;
+        if let Ok(files) = fs.list(&base_url).await {
+            for file_info in &files {
+                // WAL filenames: wal_YYYYMMDD_HHMMSS_{min_seq}_{max_seq}_{uuid}.{ext}
+                if let Some(name) = file_info.name.split('/').last() {
+                    if name.starts_with("wal_") {
+                        segment_count += 1;
+                        // Extract max sequence from filename (field 3, 0-indexed)
+                        let parts: Vec<&str> = name.split('_').collect();
+                        if parts.len() >= 4 {
+                            if let Ok(seq) = parts[3].parse::<u64>() {
+                                max_seq = max_seq.max(seq);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if max_seq > 0 {
+            tracing::info!(
+                "WAL recovery: found {} segments, resuming from sequence {}",
+                segment_count, max_seq
+            );
+        } else {
+            tracing::debug!("WAL writer initialized fresh for path: {}", base_path);
+        }
 
         Ok(Self {
             base_path,
-            sequence_number: std::sync::atomic::AtomicU64::new(0),
+            sequence_number: std::sync::atomic::AtomicU64::new(max_seq),
             filesystem,
             current_segment_path: None,
             current_segment_data: Vec::new(),
             max_segment_size: 64 * 1024 * 1024, // 64MB segments
-            segment_counter: 0,
+            segment_counter: segment_count as u32,
         })
     }
 

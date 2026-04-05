@@ -287,3 +287,41 @@ pub mod serde_impls;
 
 // Proto defaults module for applying smart defaults to optional fields
 pub mod defaults;
+
+// Explain proto definitions for query plan explanation across all APIs
+// This provides a unified explain format for REST, gRPC, SQL, and unified APIs
+pub mod explain {
+    //! Explain proto module for unified query plan explanation
+    //!
+    //! The explain proto provides:
+    //! - Consistent explain output format across all protocols
+    //! - Detailed plan node information with cost estimates
+    //! - Performance statistics after query execution
+    //! - Warnings and suggestions for query optimization
+    //!
+    //! ## Usage Example
+    //!
+    //! ```rust,ignore
+    //! use proximadb::proto::explain::v1::{ExplainPlan, ExplainPlanRequest};
+    //!
+    //! let request = ExplainPlanRequest {
+    //!     query: "SELECT * FROM users WHERE age > 25".to_string(),
+    //!     query_type: QueryType::QueryTypeSql,
+    //!     format: ExplainFormat::ExplainFormatJson,
+    //!     ..Default::default()
+    //! };
+    //!
+    //! let plan = explain_query(request).await?;
+    //! println!("Plan: {}", plan.formatted_output);
+    //! ```
+    pub mod v1 {
+        //! Generated explain v1 proto types
+        include!("../proto/proximadb.explain.v1.rs");
+    }
+}
+
+// Re-export explain types at the expected location (for convenience)
+pub mod proximadb_explain_v1 {
+    //! Re-export of explain proto types
+    pub use super::explain::v1::*;
+}

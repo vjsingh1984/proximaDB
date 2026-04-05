@@ -174,6 +174,14 @@ pub enum StorageEngineStrategy {
     /// Hybrid: Uses VIPER for vectors, LSM for metadata (Future)
     /// Best for: Complex workloads with different access patterns
     Hybrid,
+
+    /// CEDAR: Columnar Extensible Document Archive
+    /// Best for: JSON document CRUD, secondary indexes, document versioning
+    Cedar,
+
+    /// CHRONO: Chronological Hierarchical Record and Observation store
+    /// Best for: Metrics, logs, traces with label indexing and time-range queries
+    Chrono,
 }
 
 
@@ -679,6 +687,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Nova => StorageEngineType::NOVA,
             StorageEngineStrategy::Swift => StorageEngineType::SWIFT,
             StorageEngineStrategy::Raptor => StorageEngineType::RAPTOR,
+            StorageEngineStrategy::Cedar => StorageEngineType::SST, // CEDAR uses SST-like indexing
+            StorageEngineStrategy::Chrono => StorageEngineType::SST, // CHRONO uses SST-like indexing
             // Default to SST for any unknown engines
             _ => StorageEngineType::SST,
         }
@@ -950,28 +960,37 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 Capability::Aggregate,
             ]),
             StorageEngineStrategy::Hybrid => CapabilitySet::from_capabilities(&[
-                // Hybrid operations (combines VIPER + SST)
                 Capability::Scan,
                 Capability::Filter,
                 Capability::Project,
                 Capability::PredicatePushdown,
-                // Vector operations
                 Capability::VectorSearch,
                 Capability::CosineDistance,
                 Capability::EuclideanDistance,
                 Capability::DotProduct,
                 Capability::HybridSearch,
                 Capability::Quantization,
-                // Features
                 Capability::ColumnarAnalytics,
                 Capability::RowGroupPruning,
                 Capability::WALRecovery,
                 Capability::BloomFilter,
-                // Index types
                 Capability::HNSWIndex,
                 Capability::IVFIndex,
                 Capability::AnnoyIndex,
                 Capability::LSHIndex,
+            ]),
+            StorageEngineStrategy::Cedar => CapabilitySet::from_capabilities(&[
+                Capability::Scan,
+                Capability::Filter,
+                Capability::WALRecovery,
+                Capability::BloomFilter,
+            ]),
+            StorageEngineStrategy::Chrono => CapabilitySet::from_capabilities(&[
+                Capability::Scan,
+                Capability::Filter,
+                Capability::TimeSeriesQuery,
+                Capability::Aggregate,
+                Capability::WALRecovery,
             ]),
         }
     }
@@ -1335,6 +1354,16 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
             }
+            StorageEngineStrategy::Cedar => {
+                // CEDAR: document memtable size threshold
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 256 * 1024 * 1024) // 256MB default
+            }
+            StorageEngineStrategy::Chrono => {
+                // CHRONO: observability data flush threshold
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 128 * 1024 * 1024) // 128MB default
+            }
         }
     }
 
@@ -1414,6 +1443,26 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0)
                     > 100)
+            }
+            StorageEngineStrategy::Cedar => {
+                // CEDAR: compact when too many L0 blocks
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("block_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    > 4)
+            }
+            StorageEngineStrategy::Chrono => {
+                // CHRONO: compact based on time-window file count
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("partition_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    > 24) // More than 24 hourly partitions
             }
         }
     }
@@ -2511,17 +2560,8 @@ pub trait MultiModelStorage:
     }
 }
 
-/// Supported data models
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DataModel {
-    Vector,
-    Document,
-    Graph,
-    Observability,
-    Relational,
-    TimeSeries,
-    Event,
-}
+/// Supported data models — re-exported from the canonical definition
+pub use crate::query::multimodel_router::StoreType as DataModel;
 
 /// Unified statistics across all data models
 #[derive(Debug, Clone, Default)]
