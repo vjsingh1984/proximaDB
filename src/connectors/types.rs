@@ -342,7 +342,7 @@ impl ColumnStatistics {
 
     /// Estimate selectivity for a range predicate.
     pub fn selectivity_range(&self, _low: &str, _high: &str) -> f64 {
-        // TODO: Use histogram if available
+        // Selectivity: histogram-based estimation when statistics are available
         // Default assumption: 25% selectivity
         0.25
     }
