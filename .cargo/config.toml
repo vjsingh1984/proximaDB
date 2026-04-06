@@ -1,14 +1,13 @@
 # ProximaDB Cargo Build Configuration
-# Optimized for parallel compilation on multi-core systems
+# Tuned to avoid memory pressure on 64GB / 10-core machines
 
 [build]
-# Use 60% of CPU cores for compilation (6 of 10 cores)
-# Leaves headroom for other tasks and reduces thermal throttling
-jobs = 6
+# Use 3 of 10 cores — each rustc instance can use 2-6GB on this codebase
+# Prevents OOM-triggered kernel panics / forced reboots
+jobs = 3
 
-# Enable parallel code generation within each crate
-# This splits crates into multiple codegen units for parallel LLVM processing
-rustflags = ["-C", "codegen-units=10"]
+# Fewer codegen units = lower peak memory per crate (at slight compile speed cost)
+rustflags = ["-C", "codegen-units=4"]
 
 [env]
 # Run tests sequentially for integration tests that share resources
@@ -34,18 +33,18 @@ test-batch = "test unit_tests::storage::write_buffer -- --nocapture"
 
 # Coverage testing
 test-coverage = "tarpaulin --config tarpaulin.toml"
-test-coverage-safe = "tarpaulin --skip-clean --timeout 600 --avoid-cfg-tarpaulin --engine llvm --lib --jobs 20 --release"
+test-coverage-safe = "tarpaulin --skip-clean --timeout 600 --avoid-cfg-tarpaulin --engine llvm --lib --jobs 3 --release"
 
 # Fast check (syntax only, no codegen)
-check-fast = "check --all-targets --jobs 6"
+check-fast = "check --all-targets --jobs 3"
 
 # Parallel test run (for unit tests that don't share state)
-test-parallel = "test --lib --jobs 6 -- --test-threads=3"
+test-parallel = "test --lib --jobs 3 -- --test-threads=3"
 
 [target.aarch64-apple-darwin]
 # Apple Silicon specific optimizations
 rustflags = [
-    "-C", "codegen-units=10",
+    "-C", "codegen-units=4",
     "-C", "target-cpu=native",
 ]
 
@@ -53,4 +52,4 @@ rustflags = [
 # Linux x86_64 optimizations - use mold linker if available
 # Uncomment if mold is installed: linker = "clang"
 # rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-rustflags = ["-C", "codegen-units=10"]
+rustflags = ["-C", "codegen-units=4"]

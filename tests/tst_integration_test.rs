@@ -78,7 +78,7 @@ async fn test_tst_stats() {
     // Stats should be accessible
     let stats = engine.stats();
     // Initial state may have 0 records
-    assert!(stats.total_partitions >= 0);
+    let _ = stats.total_partitions; // usize: always >= 0
 }
 
 #[tokio::test]

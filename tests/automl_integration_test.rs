@@ -433,7 +433,7 @@ async fn test_optimization_history() {
     for run in history {
         assert!(run.improvement >= 0.0);
         // Duration can be 0 for very fast optimizations (< 1ms)
-        assert!(run.duration_ms >= 0, "Duration should be non-negative");
+        let _ = run.duration_ms; // u64: always >= 0
     }
 
     pipeline.stop().await.unwrap();

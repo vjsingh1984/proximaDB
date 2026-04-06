@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 #[tokio::main]
+#[allow(unreachable_code)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== PULSAR Distributed Graph Engine Example ===");
     println!();

@@ -240,6 +240,7 @@ pub mod test_utils {
     use crate::utils::uuid::Uuid;
     use std::collections::HashMap;
 
+    /// Create a test candidate vector with synthetic data
     pub fn create_test_candidate_vector(id: Uuid, dimension: usize) -> CandidateVector {
         let data: Vec<u8> = (0..dimension * 4).map(|i| (i % 256) as u8).collect();
 
@@ -252,6 +253,7 @@ pub mod test_utils {
         }
     }
 
+    /// Create a test distance computation request with synthetic data
     pub fn create_test_distance_request(
         query_dimension: usize,
         candidate_count: usize,
