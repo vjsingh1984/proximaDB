@@ -7,10 +7,21 @@
 # - dev: Development environment (auto-deploy on push to main)
 # - staging: Staging environment (manual approval required)
 # - production: Production environment (manual approval required)
+#
+# NOTE: This workflow is DISABLED for v0.2.0 release
+# Terraform and Helm infrastructure deployment is not needed for Rust library release
+# Re-enable this workflow when infrastructure deployment is required
 
-name: Infrastructure Deploy
+name: Infrastructure Deploy (DISABLED)
 
 on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      enable_infrastructure_deploy:
+        description: 'Enable infrastructure deployment (not needed for library release)'
+        required: true
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -51,9 +62,14 @@ env:
 
 jobs:
   # ============================================================================
+  # NOTE: All infrastructure deployment jobs are DISABLED for v0.2.0 release
+  # Terraform and Helm deployment is not needed for Rust library release
+  # ============================================================================
+  # ============================================================================
   # Terraform Validation
   # ============================================================================
   terraform-validate:
+    if: false  # DISABLED - not needed for library release
     name: Terraform Validate
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -107,6 +123,7 @@ jobs:
   # Helm Chart Validation
   # ============================================================================
   helm-validate:
+    if: false  # DISABLED - not needed for library release
     name: Helm Validate
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -139,6 +156,7 @@ jobs:
   # Terraform Plan (Dev)
   # ============================================================================
   terraform-plan-dev:
+    if: false  # DISABLED - not needed for library release
     name: Terraform Plan (Dev)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -212,6 +230,7 @@ jobs:
   # Terraform Apply (Dev)
   # ============================================================================
   terraform-apply-dev:
+    if: false  # DISABLED - not needed for library release
     name: Terraform Apply (Dev)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -284,6 +303,7 @@ jobs:
   # Terraform Plan (Staging)
   # ============================================================================
   terraform-plan-staging:
+    if: false  # DISABLED - not needed for library release
     name: Terraform Plan (Staging)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -335,6 +355,7 @@ jobs:
   # Terraform Apply (Staging)
   # ============================================================================
   terraform-apply-staging:
+    if: false  # DISABLED - not needed for library release
     name: Terraform Apply (Staging)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -394,6 +415,7 @@ jobs:
   # Terraform Plan (Production)
   # ============================================================================
   terraform-plan-production:
+    if: false  # DISABLED - not needed for library release
     name: Terraform Plan (Production)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -445,6 +467,7 @@ jobs:
   # Terraform Apply (Production)
   # ============================================================================
   terraform-apply-production:
+    if: false  # DISABLED - not needed for library release
     name: Terraform Apply (Production)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -522,6 +545,7 @@ jobs:
   # Post-Deploy Monitoring
   # ============================================================================
   post-deploy-monitoring:
+    if: false  # DISABLED - not needed for library release
     name: Post-Deploy Monitoring
     runs-on: ubuntu-latest
     timeout-minutes: 10
