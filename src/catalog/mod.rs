@@ -1229,11 +1229,15 @@ mod tests {
                 "id",
                 types::CatalogDataType::String,
             ).nullable(false))
-            .with_column(types::CatalogColumn::new(
-                2,
-                "embedding",
-                types::CatalogDataType::Vector,
-            ))
+            .with_column({
+                let mut col = types::CatalogColumn::new(
+                    2,
+                    "embedding",
+                    types::CatalogDataType::Vector,
+                );
+                col.properties.insert("dimension".to_string(), "768".to_string());
+                col
+            })
             .with_column(types::CatalogColumn::new(
                 3,
                 "category",
@@ -1321,9 +1325,11 @@ mod tests {
             .with_column(
                 types::CatalogColumn::new(4, "created_at", types::CatalogDataType::TimestampTz),
             )
-            .with_column(
-                types::CatalogColumn::new(5, "embedding", types::CatalogDataType::Vector),
-            )
+            .with_column({
+                let mut col = types::CatalogColumn::new(5, "embedding", types::CatalogDataType::Vector);
+                col.properties.insert("dimension".to_string(), "768".to_string());
+                col
+            })
             .with_primary_key(vec!["product_id".to_string()])
             .with_index(types::CatalogIndex::new(
                 "idx_name",
