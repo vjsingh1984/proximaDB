@@ -50,7 +50,6 @@
 //! - **Zero-copy**: Use Arrow arrays directly without intermediate copies
 
 use anyhow::Result;
-use arrow::array::Float32Array;
 use arrow::compute::{sort_to_indices, take};
 use arrow::compute::SortOptions;
 use arrow::record_batch::RecordBatch;
@@ -642,7 +641,7 @@ impl PipelineExecutor {
             .downcast_ref::<StringArray>()
             .ok_or_else(|| anyhow::anyhow!("Failed to downcast 'id' to StringArray"))?;
 
-        let vector_array = batch
+        let _vector_array = batch
             .column_by_name("vector")
             .ok_or_else(|| anyhow::anyhow!("Missing 'vector' column"))?
             .as_any()

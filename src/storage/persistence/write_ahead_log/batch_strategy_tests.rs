@@ -17,7 +17,7 @@ mod write_ahead_log_batch_strategy_tests {
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::write_ahead_log::BatchId;
-    use crate::storage::persistence::write_ahead_log::{WALConfig, WALOperation, WALStats};
+    use crate::storage::persistence::write_ahead_log::{WALConfig, WALStats};
     use anyhow::Result;
     use async_trait::async_trait;
     use std::collections::HashMap;
@@ -59,6 +59,7 @@ mod write_ahead_log_batch_strategy_tests {
             Ok(collections.get(collection_id).cloned().unwrap_or_default())
         }
 
+        #[allow(dead_code)]
         async fn clear_flushed(&self, collection_id: &str) -> Result<usize> {
             let mut collections = self.collections.write().await;
             let count = collections.get(collection_id).map(|v| v.len()).unwrap_or(0);

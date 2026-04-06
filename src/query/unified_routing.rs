@@ -42,15 +42,14 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tracing::{debug, info, trace};
 
 use crate::compute::pipeline_executor::PipelineExecutor;
 use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::StorageEngineType;
-use crate::proto::proximadb_v1::{Collection, VectorRecord};
-use crate::query::multimodal::plan::{MultiModelPlan, Operator, PlanContext, PlanStats};
-use crate::query::unified::lower::{lower_uql_to_plan, UQLLowerer};
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::query::multimodal::plan::{MultiModelPlan, PlanContext, PlanStats};
+use crate::query::unified::lower::lower_uql_to_plan;
 use crate::query::unified::uql::UQLStatement;
 
 /// Unified query result
@@ -89,6 +88,7 @@ pub struct ExecutionStats {
 }
 
 /// Unified query router
+#[allow(dead_code)]
 pub struct UnifiedQueryRouter {
     /// Default plan context for queries
     default_context: PlanContext,
@@ -219,7 +219,7 @@ impl UnifiedQueryRouter {
         let compute_operators = plan.to_compute_operators();
 
         // Create pipeline executor
-        let executor = PipelineExecutor::new(compute_operators.clone());
+        let _executor = PipelineExecutor::new(compute_operators.clone());
 
         // For now, return empty result as placeholder
         // In production, you would:

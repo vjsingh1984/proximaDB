@@ -225,7 +225,7 @@ impl HybridQuery {
     /// Execute vector-first strategy
     async fn execute_vector_first(
         &self,
-        metadata_lookup: &dyn MetadataLookup,
+        _metadata_lookup: &dyn MetadataLookup,
     ) -> Result<HybridQueryResult> {
         trace!("Executing vector-first strategy");
 
@@ -252,7 +252,7 @@ impl HybridQuery {
     /// Execute parallel strategy
     async fn execute_parallel(
         &self,
-        metadata_lookup: &dyn MetadataLookup,
+        _metadata_lookup: &dyn MetadataLookup,
     ) -> Result<HybridQueryResult> {
         trace!("Executing parallel strategy");
 
@@ -277,8 +277,8 @@ impl HybridQuery {
     /// Generate candidate set from filter
     fn generate_candidates_from_filter(
         &self,
-        filter: &dyn FilterContract,
-        metadata_lookup: &dyn MetadataLookup,
+        _filter: &dyn FilterContract,
+        _metadata_lookup: &dyn MetadataLookup,
     ) -> Result<Box<dyn CandidateSet>> {
         // For now, this is a placeholder
         // In production, you would:
@@ -488,7 +488,6 @@ impl From<HybridQuery> for AxisHybridQuery {
 mod tests {
     use super::*;
     use crate::core::search::ComparisonOperator;
-    use crate::core::search::filter_contract::normalize_filter;
 
     #[test]
     fn test_strategy_selection_from_selectivity() {

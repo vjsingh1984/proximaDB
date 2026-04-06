@@ -55,6 +55,7 @@ fn create_admin_user() -> UnifiedUserContext {
 }
 
 /// Helper function to create restricted user with limited permissions
+#[allow(dead_code)]
 fn create_restricted_user() -> UnifiedUserContext {
     // Note: Permissions are granted through RBAC manager in create_test_rbac_manager
     create_test_user("restricted_user", Some("tenant1"))

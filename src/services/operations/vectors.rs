@@ -3464,11 +3464,13 @@ mod migration_example {
     use super::*;
 
     /// OLD WAY - Using separate optimizers
+    #[allow(dead_code)]
     struct OldVectorOperationsService {
         search_optimizer: crate::query::unified_query_optimizer::UnifiedQueryOptimizer,
         filter_optimizer: String, // Placeholder for migration example
     }
 
+    #[allow(dead_code)]
     impl OldVectorOperationsService {
         async fn old_search_with_filters(&self) -> Result<Vec<VectorRecord>> {
             // Problem 1: Two separate optimization calls

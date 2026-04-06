@@ -1286,7 +1286,7 @@ impl CrossCacheOrchestrator {
         // Route to appropriate cache based on type
         match cache_type {
             CacheType::QueryResult => {
-                if let Some(cache) = &self.query_cache {
+                if let Some(_cache) = &self.query_cache {
                     // QueryCache uses typed QueryKey; generic string key lookup requires
                     // constructing a QueryKey from the string hash. For the generic byte
                     // interface, we use the metadata cache as fallback storage.

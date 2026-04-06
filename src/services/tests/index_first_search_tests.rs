@@ -28,6 +28,7 @@ mod tests {
     use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
     /// Create test environment for VectorOperationsService (similar to vectors_test.rs)
+    #[allow(dead_code)]
     async fn create_test_service() -> Result<(Arc<VectorOperationsService>, TempDir)> {
         let temp_dir = TempDir::new()?;
 
@@ -118,6 +119,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     impl MockCollectionService {
         async fn get_collection(&self, id: &str) -> Result<Collection> {
             let collections = self.collections.read().await;

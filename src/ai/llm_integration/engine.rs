@@ -9,7 +9,7 @@ use super::providers::{
     LLMClient, OllamaClient, OpenAIClient, VLLMClient,
 };
 use super::types::{
-    LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, TokenUsage,
+    LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -407,7 +407,7 @@ impl std::fmt::Display for LLMProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::llm_integration::types::FinishReason;
+    use crate::ai::llm_integration::types::{FinishReason, TokenUsage};
     use chrono::Utc;
 
     #[test]

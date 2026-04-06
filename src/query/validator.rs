@@ -359,7 +359,6 @@ mod tests {
     use super::*;
     use crate::query::capability::{Capability, CapabilitySet};
     use crate::query::federated::optimizer::{PlanNode, PlanNodeType};
-    use crate::storage::multimodel::ModelType;
     use std::sync::Arc;
 
     fn create_test_registry() -> Arc<CapabilityRegistry> {

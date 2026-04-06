@@ -12,6 +12,7 @@ struct TestKey(String);
 
 impl CacheKey for TestKey {}
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct TestValue {
     data: Vec<u8>,

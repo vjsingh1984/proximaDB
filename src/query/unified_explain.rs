@@ -35,12 +35,12 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::proto::explain::v1::{
-    ExplainPlan, ExplainPlanRequest, ExplainPlanResponse, ExplainFormat, ExplainOptions,
-    PlanNode, PlanMetadata, ExecutionStats, QueryType, NodeType,
-    NodeDetails, NodeStats, ExplainWarning,
+    ExplainPlan, ExplainPlanRequest, ExplainPlanResponse, ExplainFormat,
+    PlanNode, PlanMetadata, ExecutionStats, NodeType,
+    NodeDetails, ExplainWarning,
 };
 
 /// Plan context for explain operations
@@ -53,6 +53,7 @@ pub struct PlanContext {
 }
 
 /// ExplainPlanBuilder converts internal query plans into unified ExplainPlan format
+#[allow(dead_code)]
 pub struct ExplainPlanBuilder {
     /// Request parameters
     request: ExplainPlanRequest,
@@ -363,6 +364,7 @@ fn format_explain_plan_graphviz(plan: &ExplainPlan) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::explain::v1::QueryType;
 
     #[tokio::test]
     async fn test_unified_explain_query() {

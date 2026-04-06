@@ -28,6 +28,7 @@ mod tests {
     use tracing::{debug, info};
 
     /// Mock storage engine for integration testing
+    #[allow(dead_code)]
     #[derive(Debug, Clone)]
     struct MockStorageEngineWithMetrics {
         engine_name: String,

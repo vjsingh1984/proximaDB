@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{
-    AggregationStage, DocumentUpdate, IndexDefinition, SqlObject, VectorRecord,
+    AggregationStage, DocumentUpdate, IndexDefinition, VectorRecord,
 };
 use crate::storage::document::{
     AggregateResult, DocumentQueryParams, DocumentQueryResult, DocumentRecord,
@@ -325,6 +325,7 @@ impl UnifiedStorageEngine for CedarEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::SqlObject;
 
     fn make_doc(id: &str, collection: &str) -> DocumentRecord {
         DocumentRecord::new(id.to_string(), SqlObject::default(), collection.to_string())

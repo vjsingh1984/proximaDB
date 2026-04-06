@@ -37,7 +37,7 @@
 use anyhow::Result;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::core::search::filter_contract::{FilterContract, MetadataLookup};
 

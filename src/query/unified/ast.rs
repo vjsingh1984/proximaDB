@@ -3,7 +3,6 @@
 //! Defines the abstract syntax tree for cross-model queries that combine
 //! vector search, document queries, and graph traversal.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::fusion::FusionStrategy;

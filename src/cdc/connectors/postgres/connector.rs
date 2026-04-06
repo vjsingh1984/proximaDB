@@ -365,7 +365,7 @@ impl CdcSource for PostgresConnector {
 
     async fn start(
         &mut self,
-        event_tx: mpsc::Sender<ChangeEvent>,
+        _event_tx: mpsc::Sender<ChangeEvent>,
         offset_store: Arc<dyn OffsetStore>,
     ) -> CdcResult<SourceHandle> {
         let _shutdown_rx = self.base.init_shutdown();
@@ -377,7 +377,7 @@ impl CdcSource for PostgresConnector {
         );
 
         // Load last known offset
-        let start_lsn = if let Ok(Some(offset)) = offset_store.get(&self.pg_config.slot_name).await {
+        let _start_lsn = if let Ok(Some(offset)) = offset_store.get(&self.pg_config.slot_name).await {
             *self.current_lsn.write().await = offset.lsn;
             offset.lsn
         } else {

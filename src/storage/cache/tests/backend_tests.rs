@@ -2,6 +2,7 @@ use crate::storage::cache::backend::{CacheTier, MemoryBackend, StorageBackend};
 
 // Helper wrapper for Vec<u8> that properly estimates size
 // We make this a large array to trigger size checks
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct TestBytes {
     // Use boxed slice to avoid stack overflow during allocation

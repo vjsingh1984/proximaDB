@@ -30,10 +30,7 @@
 //! - **MultiModal queries** → Union operators with fusion strategies
 
 use anyhow::Result;
-use std::collections::HashMap;
 use tracing::{debug, trace, warn};
-
-use anyhow::anyhow;
 use crate::query::unified::fusion::FusionStrategy;
 use crate::query::multimodal::plan::{
     JoinCondition, JoinType, MultiModelPlan, Operator,

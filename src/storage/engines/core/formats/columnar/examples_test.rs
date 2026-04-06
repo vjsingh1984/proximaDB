@@ -578,6 +578,7 @@ pub async fn performance_comparison_example() -> Result<()> {
 }
 
 /// Run all examples to demonstrate the optimizations
+#[allow(dead_code)]
 pub async fn run_all_examples() -> Result<()> {
     eprintln!("🚀 Columnar Infrastructure Optimization Examples");
     eprintln!("{}", "=".repeat(60));

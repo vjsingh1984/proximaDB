@@ -5,6 +5,7 @@ use super::super::specialized::index_node_cache::IndexNode;
 use super::super::specialized::*;
 
 // Test helper types
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct QueryResult {
     query_id: String,

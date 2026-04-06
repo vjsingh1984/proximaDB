@@ -41,16 +41,13 @@
 //! - **Adaptive**: Choose optimal strategy based on filter selectivity
 
 use anyhow::Result;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
 use crate::core::search::filter_contract::{
     CandidateSet, FilterContract, MemoryCandidateSet, MetadataLookup, StorageEngineType,
 };
 use crate::core::search::hybrid::{
-    HybridExecutionStrategy, HybridQuery, HybridQueryBuilder, HybridQueryResult,
+    HybridExecutionStrategy, HybridQuery,
 };
 use crate::index::axis::management::manager::AxisManager;
 use crate::proto::proximadb_v1::VectorRecord;
@@ -205,7 +202,7 @@ impl AxisManager {
     async fn generate_candidates_with_pushdown(
         &self,
         collection_id: &str,
-        filter: &dyn FilterContract,
+        _filter: &dyn FilterContract,
     ) -> Result<Box<dyn CandidateSet>> {
         trace!("Generating candidates with pushdown for {}", collection_id);
 
@@ -220,7 +217,7 @@ impl AxisManager {
     async fn generate_candidates_by_scan(
         &self,
         collection_id: &str,
-        filter: &dyn FilterContract,
+        _filter: &dyn FilterContract,
     ) -> Result<Box<dyn CandidateSet>> {
         trace!("Generating candidates by scan for {}", collection_id);
 
@@ -317,7 +314,7 @@ impl AxisManager {
     async fn execute_hnsw_unfiltered_search(
         &self,
         collection_id: &str,
-        query_vector: &[f32],
+        _query_vector: &[f32],
         top_k: usize,
     ) -> Result<Vec<VectorRecord>> {
         trace!(
@@ -336,7 +333,7 @@ impl AxisManager {
     async fn execute_ivf_unfiltered_search(
         &self,
         collection_id: &str,
-        query_vector: &[f32],
+        _query_vector: &[f32],
         top_k: usize,
     ) -> Result<Vec<VectorRecord>> {
         trace!(
@@ -406,7 +403,7 @@ impl AxisManager {
     }
 
     /// Get the vector count for a collection (helper method)
-    async fn get_collection_vector_count(&self, collection_id: &str) -> Result<usize> {
+    async fn get_collection_vector_count(&self, _collection_id: &str) -> Result<usize> {
         // Placeholder - in production, you would query the actual collection size
         Ok(1000) // Default placeholder
     }
@@ -416,7 +413,6 @@ impl AxisManager {
 mod tests {
     use super::*;
     use crate::core::search::ComparisonOperator;
-    use crate::core::search::filter_contract::normalize_filter;
     use crate::core::search::hybrid::HybridQueryBuilder;
 
     #[test]

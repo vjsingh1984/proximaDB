@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 use anyhow::{Result, anyhow};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::hardware_capabilities::HardwareCapabilities;
 

@@ -325,7 +325,7 @@ impl FilteredIVFIndex {
         &self,
         inverted_list: &IVFInvertedList,
         params: &IVFFilteredSearchParams,
-        metadata_lookup: &dyn MetadataLookup,
+        _metadata_lookup: &dyn MetadataLookup,
     ) -> Result<(Vec<IVFVector>, usize)> {
         let mut filtered_vectors = Vec::new();
 

@@ -587,6 +587,7 @@ impl MemoryTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(dead_code)]
     fn test_streaming_config_defaults() {
         let config = StreamingConfig::default();
         assert_eq!(config.max_memory_bytes, 512 * 1024 * 1024);

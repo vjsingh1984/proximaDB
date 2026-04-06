@@ -142,7 +142,7 @@ impl PatternMatcher {
         context: &QueryContext,
     ) -> QueryResult<Vec<MatchResult>> {
         // Parse using the full Cypher parser (default)
-        let statement = super::unified_parser::parse_cypher(query)?;
+        let _statement = super::unified_parser::parse_cypher(query)?;
 
         // Convert CypherStatement to CompiledPattern
         let compiled = self.compiler.compile(query)?;

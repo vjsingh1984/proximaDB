@@ -47,7 +47,6 @@
 //! 5. **Serializable**: Plans can be serialized for distributed execution
 
 use anyhow::Result;
-use arrow::record_batch::RecordBatch;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -57,7 +56,6 @@ use crate::compute::pipeline_executor::PipelineOperator as ComputeOperator;
 use crate::core::search::{FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::Collection;
 use crate::query::unified::ast::DataModel;
-use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::DataChunk;
 
 /// MultiModelPlan v1 - Unified query execution plan
 ///
@@ -253,7 +251,7 @@ impl MultiModelPlan {
     /// - Operator reordering for efficiency
     pub fn optimize(&mut self) -> Result<PlanOptimizationResult> {
         let mut optimizations_applied = Vec::new();
-        let mut original_stats = self.stats();
+        let original_stats = self.stats();
 
         // Optimization 1: Filter pushdown
         let filters_pushed = self.pushdown_filters();
@@ -284,7 +282,7 @@ impl MultiModelPlan {
 
     /// Push down filters to storage engines
     fn pushdown_filters(&mut self) -> usize {
-        let mut pushdown_count = 0;
+        let pushdown_count = 0;
 
         // For now, this is a placeholder. In production, you would:
         // 1. Identify filters that can be pushed to Scan operators
@@ -298,7 +296,7 @@ impl MultiModelPlan {
 
     /// Push down projections to reduce data transfer
     fn pushdown_projections(&mut self) -> usize {
-        let mut pushdown_count = 0;
+        let pushdown_count = 0;
 
         // For now, this is a placeholder. In production, you would:
         // 1. Identify which columns are needed for the final result
@@ -312,7 +310,7 @@ impl MultiModelPlan {
 
     /// Reorder operators for better performance
     fn reorder_operators(&mut self) -> Result<bool> {
-        let mut reordered = false;
+        let reordered = false;
 
         // For now, this is a placeholder. In production, you would:
         // 1. Analyze operator costs and selectivities

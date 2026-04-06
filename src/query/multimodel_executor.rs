@@ -25,9 +25,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use tracing::{debug, info};
-
-use crate::query::multimodel_router::{MultiModelResult, ObservabilityResult, StoreType};
+use crate::query::multimodel_router::{MultiModelResult, StoreType};
 
 /// Multi-model SQL execution context.
 ///

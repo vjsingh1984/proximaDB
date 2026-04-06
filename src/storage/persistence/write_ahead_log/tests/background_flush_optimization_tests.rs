@@ -24,6 +24,7 @@ mod tests {
     };
 
     /// Mock storage engine for testing
+    #[allow(dead_code)]
     #[derive(Debug, Clone)]
     struct MockStorageEngine {
         engine_name: String,
