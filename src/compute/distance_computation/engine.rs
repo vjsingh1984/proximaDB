@@ -2349,4 +2349,217 @@ mod tests {
             );
         }
     }
+
+    // ======================================================================
+    // Infrastructure tests for core distance computation
+    // ======================================================================
+
+    #[test]
+    fn test_cosine_distance_known_vectors() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+
+        // Parallel vectors (same direction) should have distance ~0
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![2.0, 4.0, 6.0]; // Scalar multiple of a
+        let distance = compute.distance_with_metric(&a, &b, &DistanceMetric::Cosine);
+        assert!(
+            distance.abs() < 1e-5,
+            "Parallel vectors should have cosine distance ~0, got {}",
+            distance
+        );
+
+        // Orthogonal vectors should have distance ~1
+        let c = vec![1.0, 0.0];
+        let d = vec![0.0, 1.0];
+        let distance = compute.distance_with_metric(&c, &d, &DistanceMetric::Cosine);
+        assert!(
+            (distance - 1.0).abs() < 1e-5,
+            "Orthogonal vectors should have cosine distance ~1.0, got {}",
+            distance
+        );
+
+        // Anti-parallel vectors should have distance ~2
+        let e = vec![1.0, 0.0, 0.0];
+        let f = vec![-1.0, 0.0, 0.0];
+        let distance = compute.distance_with_metric(&e, &f, &DistanceMetric::Cosine);
+        assert!(
+            (distance - 2.0).abs() < 1e-5,
+            "Anti-parallel vectors should have cosine distance ~2.0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_euclidean_distance_known_vectors() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+
+        // 3-4-5 right triangle
+        let a = vec![0.0, 0.0];
+        let b = vec![3.0, 4.0];
+        let distance = compute.distance_with_metric(&a, &b, &DistanceMetric::Euclidean);
+        assert!(
+            (distance - 5.0).abs() < 1e-5,
+            "Expected 5.0 for 3-4-5 triangle, got {}",
+            distance
+        );
+
+        // Unit distance along single axis
+        let c = vec![0.0, 0.0, 0.0];
+        let d = vec![1.0, 0.0, 0.0];
+        let distance = compute.distance_with_metric(&c, &d, &DistanceMetric::Euclidean);
+        assert!(
+            (distance - 1.0).abs() < 1e-5,
+            "Expected 1.0 for unit axis distance, got {}",
+            distance
+        );
+
+        // 3D diagonal: sqrt(1^2 + 2^2 + 2^2) = sqrt(9) = 3
+        let e = vec![0.0, 0.0, 0.0];
+        let f = vec![1.0, 2.0, 2.0];
+        let distance = compute.distance_with_metric(&e, &f, &DistanceMetric::Euclidean);
+        assert!(
+            (distance - 3.0).abs() < 1e-5,
+            "Expected 3.0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_dot_product_known_vectors() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::DotProduct);
+
+        // Known dot product: 1*4 + 2*5 + 3*6 = 32
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, 5.0, 6.0];
+        let distance = compute.distance_with_metric(&a, &b, &DistanceMetric::DotProduct);
+        assert!(
+            (distance - 32.0).abs() < 1e-5,
+            "Expected dot product 32.0, got {}",
+            distance
+        );
+
+        // Orthogonal vectors: dot product = 0
+        let c = vec![1.0, 0.0];
+        let d = vec![0.0, 1.0];
+        let distance = compute.distance_with_metric(&c, &d, &DistanceMetric::DotProduct);
+        assert!(
+            distance.abs() < 1e-5,
+            "Orthogonal vectors should have dot product 0, got {}",
+            distance
+        );
+
+        // Negative dot product for opposing vectors
+        let e = vec![1.0, 0.0];
+        let f = vec![-1.0, 0.0];
+        let distance = compute.distance_with_metric(&e, &f, &DistanceMetric::DotProduct);
+        assert!(
+            (distance - (-1.0)).abs() < 1e-5,
+            "Opposing unit vectors should have dot product -1.0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_distance_metric_variants() {
+        // Verify all DistanceMetric enum variants exist and can be used
+        let metrics = vec![
+            DistanceMetric::Unspecified,
+            DistanceMetric::Cosine,
+            DistanceMetric::Euclidean,
+            DistanceMetric::DotProduct,
+            DistanceMetric::Hamming,
+            DistanceMetric::Manhattan,
+            DistanceMetric::Jaccard,
+            DistanceMetric::Angular,
+            DistanceMetric::Chebyshev,
+            DistanceMetric::Canberra,
+            DistanceMetric::Minkowski,
+            DistanceMetric::BrayCurtis,
+            DistanceMetric::Hellinger,
+            DistanceMetric::Custom,
+        ];
+        assert_eq!(metrics.len(), 14, "Expected 14 distance metric variants");
+
+        // Verify each has a string name via proto
+        for metric in &metrics {
+            let name = metric.as_str_name();
+            assert!(!name.is_empty(), "Metric {:?} should have a non-empty name", metric);
+        }
+
+        // Verify the is_similarity extension trait
+        assert!(DistanceMetric::DotProduct.is_similarity());
+        assert!(!DistanceMetric::Cosine.is_similarity());
+        assert!(!DistanceMetric::Euclidean.is_similarity());
+        assert!(!DistanceMetric::Manhattan.is_similarity());
+    }
+
+    #[test]
+    fn test_zero_vector_distance() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+
+        let zero = vec![0.0, 0.0, 0.0];
+        let nonzero = vec![3.0, 4.0, 0.0];
+
+        // Euclidean distance from zero to (3,4,0) = 5
+        let distance = compute.distance_with_metric(&zero, &nonzero, &DistanceMetric::Euclidean);
+        assert!(
+            (distance - 5.0).abs() < 1e-5,
+            "Euclidean from zero to (3,4,0) should be 5.0, got {}",
+            distance
+        );
+
+        // Dot product with zero vector = 0
+        let distance = compute.distance_with_metric(&zero, &nonzero, &DistanceMetric::DotProduct);
+        assert!(
+            distance.abs() < 1e-5,
+            "Dot product with zero vector should be 0, got {}",
+            distance
+        );
+
+        // Manhattan distance from zero to (3,4,0) = 7
+        let distance = compute.distance_with_metric(&zero, &nonzero, &DistanceMetric::Manhattan);
+        assert!(
+            (distance - 7.0).abs() < 1e-5,
+            "Manhattan from zero to (3,4,0) should be 7.0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_identical_vector_distance() {
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+        let v = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+
+        // Euclidean distance between identical vectors = 0
+        let distance = compute.distance_with_metric(&v, &v, &DistanceMetric::Euclidean);
+        assert!(
+            distance.abs() < 1e-5,
+            "Euclidean distance of identical vectors should be 0, got {}",
+            distance
+        );
+
+        // Cosine distance between identical vectors = 0
+        let distance = compute.distance_with_metric(&v, &v, &DistanceMetric::Cosine);
+        assert!(
+            distance.abs() < 1e-5,
+            "Cosine distance of identical vectors should be 0, got {}",
+            distance
+        );
+
+        // Manhattan distance between identical vectors = 0
+        let distance = compute.distance_with_metric(&v, &v, &DistanceMetric::Manhattan);
+        assert!(
+            distance.abs() < 1e-5,
+            "Manhattan distance of identical vectors should be 0, got {}",
+            distance
+        );
+
+        // Dot product of identical vectors = sum of squares = 1+4+9+16+25 = 55
+        let distance = compute.distance_with_metric(&v, &v, &DistanceMetric::DotProduct);
+        assert!(
+            (distance - 55.0).abs() < 1e-4,
+            "Dot product of identical [1,2,3,4,5] should be 55, got {}",
+            distance
+        );
+    }
 }

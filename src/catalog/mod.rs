@@ -1096,4 +1096,291 @@ mod tests {
         // Clean up
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
+
+    // ========================
+    // CatalogManager Creation Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_catalog_manager_creation() {
+        // Default construction
+        let manager = CatalogManager::new();
+        assert!(manager.list_catalogs().await.is_empty());
+
+        // No default catalog should be set
+        let default_result = manager.default_catalog().await;
+        assert!(default_result.is_err());
+
+        // With custom cache settings
+        let manager_custom = CatalogManager::with_cache(50000, 600);
+        assert!(manager_custom.list_catalogs().await.is_empty());
+
+        // Default trait implementation
+        let manager_default = CatalogManager::default();
+        assert!(manager_default.list_catalogs().await.is_empty());
+
+        // Cache should always be accessible
+        let cache = manager.cache();
+        assert!(std::sync::Arc::strong_count(&cache) >= 1);
+    }
+
+    // ========================
+    // Catalog Namespace Operations Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_catalog_namespace_operations() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_ns_ops");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        // Create a native catalog so we have something to operate against
+        let catalog = manager
+            .create_native_catalog("test_ns", &format!("file://{}", temp_dir.display()))
+            .await
+            .expect("Expected native catalog creation to succeed");
+
+        // Catalog should be registered
+        let catalogs = manager.list_catalogs().await;
+        assert!(catalogs.contains(&"test_ns".to_string()));
+
+        // It should be the default (first registered)
+        let default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog");
+        assert_eq!(default.name(), "test_ns");
+        assert_eq!(default.catalog_type(), "native");
+
+        // Create a namespace via the catalog trait
+        let ns = catalog
+            .create_namespace(
+                &["analytics".to_string()],
+                {
+                    let mut props = std::collections::HashMap::new();
+                    props.insert("owner".to_string(), "data_team".to_string());
+                    props
+                },
+            )
+            .await
+            .expect("Expected namespace creation to succeed");
+
+        assert_eq!(ns.levels, vec!["analytics"]);
+        assert_eq!(
+            ns.properties.get("owner"),
+            Some(&"data_team".to_string())
+        );
+
+        // Check namespace exists
+        let exists = catalog
+            .namespace_exists(&["analytics".to_string()])
+            .await
+            .expect("Expected namespace_exists to succeed");
+        assert!(exists);
+
+        // List namespaces
+        let namespaces = catalog
+            .list_namespaces(None)
+            .await
+            .expect("Expected list_namespaces to succeed");
+        assert!(!namespaces.is_empty());
+
+        // Drop namespace
+        let dropped = catalog
+            .drop_namespace(&["analytics".to_string()], false)
+            .await
+            .expect("Expected drop_namespace to succeed");
+        assert!(dropped);
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    // ========================
+    // Catalog Table Registration Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_catalog_table_registration() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_table_reg");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        let catalog = manager
+            .create_native_catalog("test_tbl", &format!("file://{}", temp_dir.display()))
+            .await
+            .expect("Expected native catalog creation to succeed");
+
+        // Create namespace first
+        catalog
+            .create_namespace(
+                &["default".to_string()],
+                std::collections::HashMap::new(),
+            )
+            .await
+            .expect("Expected namespace creation to succeed");
+
+        // Create a table with schema
+        let table_id = TableIdentifier::new(vec!["default".to_string()], "vectors".to_string());
+
+        let schema = types::CatalogTableSchema::new("vectors")
+            .with_column(types::CatalogColumn::new(
+                1,
+                "id",
+                types::CatalogDataType::String,
+            ).nullable(false))
+            .with_column(types::CatalogColumn::new(
+                2,
+                "embedding",
+                types::CatalogDataType::Vector,
+            ))
+            .with_column(types::CatalogColumn::new(
+                3,
+                "category",
+                types::CatalogDataType::String,
+            ))
+            .with_primary_key(vec!["id".to_string()]);
+
+        let created_schema = catalog
+            .create_table(&table_id, schema)
+            .await
+            .expect("Expected table creation to succeed");
+
+        assert_eq!(created_schema.name, "vectors");
+        assert_eq!(created_schema.columns.len(), 3);
+        assert_eq!(created_schema.primary_key, vec!["id"]);
+
+        // Verify table exists
+        let exists = catalog
+            .table_exists(&table_id)
+            .await
+            .expect("Expected table_exists to succeed");
+        assert!(exists);
+
+        // List tables in namespace
+        let tables = catalog
+            .list_tables(&["default".to_string()])
+            .await
+            .expect("Expected list_tables to succeed");
+        assert!(!tables.is_empty());
+        assert!(tables.iter().any(|t| t.name == "vectors"));
+
+        // Resolve the table through the manager
+        let (resolved_catalog, resolved_id) = manager
+            .resolve_table("test_tbl.default.vectors")
+            .await
+            .expect("Expected resolve_table to succeed");
+        assert_eq!(resolved_catalog.name(), "test_tbl");
+        assert_eq!(resolved_id.name, "vectors");
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    // ========================
+    // Catalog Schema Introspection Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_catalog_schema_introspection() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_schema_intro");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        let catalog = manager
+            .create_native_catalog("test_intro", &format!("file://{}", temp_dir.display()))
+            .await
+            .expect("Expected native catalog creation to succeed");
+
+        // Create namespace
+        catalog
+            .create_namespace(
+                &["mydb".to_string()],
+                std::collections::HashMap::new(),
+            )
+            .await
+            .expect("Expected namespace creation to succeed");
+
+        // Create a table with a rich schema
+        let table_id = TableIdentifier::new(vec!["mydb".to_string()], "products".to_string());
+
+        let schema = types::CatalogTableSchema::new("products")
+            .with_column(
+                types::CatalogColumn::new(1, "product_id", types::CatalogDataType::Uuid)
+                    .nullable(false)
+                    .with_comment("Primary key UUID"),
+            )
+            .with_column(
+                types::CatalogColumn::new(2, "name", types::CatalogDataType::String)
+                    .nullable(false),
+            )
+            .with_column(
+                types::CatalogColumn::new(3, "price", types::CatalogDataType::Float64)
+                    .with_default("0.0"),
+            )
+            .with_column(
+                types::CatalogColumn::new(4, "created_at", types::CatalogDataType::TimestampTz),
+            )
+            .with_column(
+                types::CatalogColumn::new(5, "embedding", types::CatalogDataType::Vector),
+            )
+            .with_primary_key(vec!["product_id".to_string()])
+            .with_index(types::CatalogIndex::new(
+                "idx_name",
+                vec!["name".to_string()],
+                types::CatalogIndexType::BTree,
+            ));
+
+        catalog
+            .create_table(&table_id, schema)
+            .await
+            .expect("Expected table creation to succeed");
+
+        // Retrieve the schema and introspect it
+        let retrieved = catalog
+            .get_table(&table_id)
+            .await
+            .expect("Expected get_table to succeed");
+
+        assert_eq!(retrieved.name, "products");
+        assert_eq!(retrieved.columns.len(), 5);
+        assert_eq!(retrieved.schema_version, 1);
+
+        // Verify individual columns
+        let id_col = retrieved.columns.iter().find(|c| c.name == "product_id")
+            .expect("product_id column should exist");
+        assert!(!id_col.nullable);
+        assert_eq!(id_col.data_type, types::CatalogDataType::Uuid);
+        assert_eq!(id_col.comment.as_deref(), Some("Primary key UUID"));
+
+        let price_col = retrieved.columns.iter().find(|c| c.name == "price")
+            .expect("price column should exist");
+        assert_eq!(price_col.data_type, types::CatalogDataType::Float64);
+        assert_eq!(price_col.default_value.as_deref(), Some("0.0"));
+        assert!(price_col.nullable); // Default is true
+
+        let embed_col = retrieved.columns.iter().find(|c| c.name == "embedding")
+            .expect("embedding column should exist");
+        assert_eq!(embed_col.data_type, types::CatalogDataType::Vector);
+
+        // Verify primary key
+        assert_eq!(retrieved.primary_key, vec!["product_id"]);
+
+        // Verify index
+        assert!(!retrieved.indexes.is_empty());
+        let idx = &retrieved.indexes[0];
+        assert_eq!(idx.name, "idx_name");
+        assert_eq!(idx.columns, vec!["name"]);
+        assert_eq!(idx.index_type, types::CatalogIndexType::BTree);
+
+        // Check schema version
+        let version = catalog
+            .get_schema_version(&table_id)
+            .await
+            .expect("Expected get_schema_version to succeed");
+        assert_eq!(version, 1);
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
 }

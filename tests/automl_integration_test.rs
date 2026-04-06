@@ -479,6 +479,7 @@ mod test_utils {
     use super::*;
 
     /// Helper to create sample workload data
+    #[allow(dead_code)]
     pub async fn create_sample_workload(
         analyzer: &WorkloadAnalyzer,
         collection_id: &str,

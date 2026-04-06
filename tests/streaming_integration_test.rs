@@ -587,7 +587,7 @@ async fn test_subscription_pause_resume() {
 
 #[test]
 fn test_query_evaluator_creation() {
-    let evaluator = QueryEvaluator::new();
+    let _evaluator = QueryEvaluator::new();
     // Evaluator should be created without panic
     assert!(true);
 }

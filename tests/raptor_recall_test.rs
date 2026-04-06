@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! RAPTOR Recall Test - Verify 100% recall after close/reopen
 //!
 //! This test verifies that RAPTOR maintains high recall when:

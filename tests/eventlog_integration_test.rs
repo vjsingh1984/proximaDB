@@ -21,8 +21,7 @@
 
 use chrono::Utc;
 use proximadb::storage::engines::impls::eventlog::{
-    Event, EventLogConfig, EventLogEngine, index::EventIndex, snapshot::SnapshotManager,
-    temporal::TemporalQueryEngine,
+    Event, EventLogConfig, EventLogEngine,
 };
 use proximadb::storage::persistence::filesystem::{
     UnifiedCachingFilesystem, local::LocalFileSystem,
@@ -313,7 +312,7 @@ async fn test_eventlog_temporal_queries() {
         metadata: HashMap::new(),
     };
 
-    let appended1 = engine
+    let _appended1 = engine
         .append_event(event1)
         .await
         .expect("Failed to append event1");
@@ -321,7 +320,7 @@ async fn test_eventlog_temporal_queries() {
         .append_event(event2)
         .await
         .expect("Failed to append event2");
-    let appended3 = engine
+    let _appended3 = engine
         .append_event(event3)
         .await
         .expect("Failed to append event3");

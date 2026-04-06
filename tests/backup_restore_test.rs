@@ -1,7 +1,6 @@
 // Integration tests for backup/restore system
 
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
 
 use proximadb::{
     storage::persistence::filesystem::FilesystemFactory,
@@ -11,7 +10,7 @@ use proximadb::{
 // Import from operations module
 use proximadb::operations::{
     backup::{BackupConfig, BackupManager, BackupTarget},
-    restore::{RestoreConfig, RestoreManager, ValidationResult},
+    restore::{RestoreConfig, RestoreManager},
 };
 
 /// Test helper to create a test database with sample data

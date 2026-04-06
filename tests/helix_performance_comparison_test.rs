@@ -20,7 +20,7 @@ mod performance_comparison_tests {
     use proximadb::storage::traits::{
         CompactionParameters, FlushParameters, StorageQueryContext, UnifiedStorageEngine,
     };
-    use rand::{Rng, SeedableRng};
+    
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -355,7 +355,7 @@ mod performance_comparison_tests {
 
         // Create engines
         let temp_dir = TempDir::new().unwrap();
-        let base_path = temp_dir.path();
+        let _base_path = temp_dir.path();
 
         let helix_engine = {
             let _config = HelixConfig::default();

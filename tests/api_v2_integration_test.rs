@@ -288,7 +288,7 @@ fn generate_test_records(count: usize, dimension: usize) -> Vec<JsonValue> {
     (0..count)
         .map(|i| {
             let vector: Vec<f32> = (0..dimension)
-                .map(|j| ((i * dimension + j) as f32 / (count * dimension) as f32))
+                .map(|j| (i * dimension + j) as f32 / (count * dimension) as f32)
                 .collect();
 
             json!({
@@ -314,7 +314,7 @@ fn generate_test_records_with_text(count: usize, dimension: usize) -> Vec<JsonVa
     (0..count)
         .map(|i| {
             let vector: Vec<f32> = (0..dimension)
-                .map(|j| ((i * dimension + j) as f32 / (count * dimension) as f32))
+                .map(|j| (i * dimension + j) as f32 / (count * dimension) as f32)
                 .collect();
 
             json!({

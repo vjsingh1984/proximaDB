@@ -447,7 +447,7 @@ mod integration_tests {
         // Test: Backup and restore functionality
         // This would require actual backup infrastructure
         // For now, we just check S3 bucket exists
-        let result = run_command("aws", &["s3", "ls", "s3://proximadb-wal-archive-dev"]);
+        let _result = run_command("aws", &["s3", "ls", "s3://proximadb-wal-archive-dev"]);
 
         // This might fail if bucket doesn't exist yet
         // assert!(result.is_ok() || result.unwrap_err().contains("NoSuchBucket"), "S3 bucket should exist or not exist");

@@ -73,7 +73,7 @@ fn generate_random_vectors(num_vectors: usize, dimension: usize) -> Vec<VectorRe
     (0..num_vectors)
         .map(|i| {
             let vector: Vec<f32> = (0..dimension)
-                .map(|d| {
+                .map(|_d| {
                     rng_seed = rng_seed.wrapping_mul(1103515245).wrapping_add(12345);
                     (rng_seed % 1000) as f32 / 1000.0
                 })

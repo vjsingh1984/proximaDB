@@ -5396,4 +5396,248 @@ mod tests {
         assert_eq!(cloned.entries, snapshot.entries);
         assert_eq!(cloned.memory_bytes, snapshot.memory_bytes);
     }
+
+    // ========================================================================
+    // Embedded Config Defaults Tests
+    // ========================================================================
+
+    #[test]
+    fn test_embedded_config_defaults() {
+        let config = EmbeddedConfig::default();
+
+        // Core defaults
+        assert_eq!(config.metadata_path, "./data/metadata");
+        assert_eq!(config.cache_size_mb, 512);
+        assert_eq!(config.default_engine, "sst");
+        assert!(config.enable_wal);
+        assert_eq!(config.wal_sync_mode, "batch");
+
+        // Block pruning defaults
+        assert_eq!(config.block_prune_mode, "sqrt");
+        assert!((config.block_prune_ratio - 0.2).abs() < f32::EPSILON);
+        assert_eq!(config.block_prune_min_keep, 1);
+        assert_eq!(config.block_prune_max_keep, 0); // No cap
+
+        // RL planner defaults
+        assert!(config.enable_rl_planner);
+        assert!(config.rl_policy_path.is_none());
+
+        // Multi-process coordination defaults
+        assert_eq!(config.access_mode, AccessMode::Exclusive);
+        assert!(config.node_id.is_none());
+
+        // Storage locations default
+        assert_eq!(config.storage_locations.len(), 1);
+        assert_eq!(config.storage_locations[0].path, "./data");
+        assert_eq!(config.storage_locations[0].weight, 1);
+        assert!(config.storage_locations[0].tags.is_empty());
+    }
+
+    // ========================================================================
+    // Embedded Config Builder Tests
+    // ========================================================================
+
+    #[test]
+    fn test_embedded_config_builder() {
+        let config = EmbeddedConfig {
+            storage_locations: vec![
+                StorageLocationConfig::new("/nvme/data").with_weight(3).with_tag("hot"),
+                StorageLocationConfig::new("/hdd/data").with_weight(1).with_tag("cold"),
+            ],
+            metadata_path: "/nvme/metadata".to_string(),
+            cache_size_mb: 2048,
+            default_engine: "viper".to_string(),
+            enable_wal: false,
+            wal_sync_mode: "immediate".to_string(),
+            block_prune_mode: "ratio".to_string(),
+            block_prune_ratio: 0.5,
+            block_prune_min_keep: 2,
+            block_prune_max_keep: 100,
+            enable_rl_planner: false,
+            rl_policy_path: Some("/custom/rl_policy.json".to_string()),
+            access_mode: AccessMode::SharedRead,
+            node_id: Some("node-42".to_string()),
+        };
+
+        assert_eq!(config.storage_locations.len(), 2);
+        assert_eq!(config.storage_locations[0].weight, 3);
+        assert!(config.storage_locations[0].tags.contains(&"hot".to_string()));
+        assert_eq!(config.storage_locations[1].weight, 1);
+        assert!(config.storage_locations[1].tags.contains(&"cold".to_string()));
+        assert_eq!(config.metadata_path, "/nvme/metadata");
+        assert_eq!(config.cache_size_mb, 2048);
+        assert_eq!(config.default_engine, "viper");
+        assert!(!config.enable_wal);
+        assert_eq!(config.wal_sync_mode, "immediate");
+        assert_eq!(config.block_prune_mode, "ratio");
+        assert!((config.block_prune_ratio - 0.5).abs() < f32::EPSILON);
+        assert_eq!(config.block_prune_min_keep, 2);
+        assert_eq!(config.block_prune_max_keep, 100);
+        assert!(!config.enable_rl_planner);
+        assert_eq!(
+            config.rl_policy_path,
+            Some("/custom/rl_policy.json".to_string())
+        );
+        assert_eq!(config.access_mode, AccessMode::SharedRead);
+        assert_eq!(config.node_id, Some("node-42".to_string()));
+
+        // Test chained builder methods
+        let config2 = EmbeddedConfig::default()
+            .with_access_mode(AccessMode::LeaderFollower)
+            .with_node_id("leader-1");
+        assert_eq!(config2.access_mode, AccessMode::LeaderFollower);
+        assert_eq!(config2.node_id, Some("leader-1".to_string()));
+    }
+
+    // ========================================================================
+    // CollectionInfo Config Creation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_collection_config_creation() {
+        let info = CollectionInfo {
+            name: "embeddings".to_string(),
+            dimension: 768,
+            vector_count: 50000,
+            engine: "sst".to_string(),
+            disk_usage_bytes: 1024 * 1024 * 100, // 100 MB
+        };
+
+        assert_eq!(info.name, "embeddings");
+        assert_eq!(info.dimension, 768);
+        assert_eq!(info.vector_count, 50000);
+        assert_eq!(info.engine, "sst");
+        assert_eq!(info.disk_usage_bytes, 104857600);
+
+        // Verify Clone works
+        let cloned = info.clone();
+        assert_eq!(cloned.name, info.name);
+        assert_eq!(cloned.dimension, info.dimension);
+        assert_eq!(cloned.vector_count, info.vector_count);
+    }
+
+    // ========================================================================
+    // SearchResult Defaults Tests
+    // ========================================================================
+
+    #[test]
+    fn test_search_params_defaults() {
+        // Verify SearchResult construction with default-like values
+        let result = SearchResult {
+            id: "vec_001".to_string(),
+            score: 0.0,
+            metadata: HashMap::new(),
+        };
+        assert_eq!(result.id, "vec_001");
+        assert!((result.score - 0.0).abs() < f32::EPSILON);
+        assert!(result.metadata.is_empty());
+
+        // Verify with populated metadata
+        let mut meta = HashMap::new();
+        meta.insert("category".to_string(), "test".to_string());
+        meta.insert("source".to_string(), "unit_test".to_string());
+
+        let result_with_meta = SearchResult {
+            id: "vec_002".to_string(),
+            score: 0.95,
+            metadata: meta,
+        };
+        assert_eq!(result_with_meta.metadata.len(), 2);
+        assert_eq!(
+            result_with_meta.metadata.get("category"),
+            Some(&"test".to_string())
+        );
+    }
+
+    // ========================================================================
+    // Embedded Metrics Creation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_embedded_metrics_creation() {
+        let collector = EmbeddedMetricsCollector::new();
+
+        // Take a snapshot with default window
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+
+        // All counters should be zero
+        assert_eq!(metrics.total_searches, 0);
+        assert_eq!(metrics.total_inserts, 0);
+        assert_eq!(metrics.total_deletes, 0);
+        assert_eq!(metrics.total_flushes, 0);
+        assert_eq!(metrics.total_gets, 0);
+        assert_eq!(metrics.total_upserts, 0);
+        assert_eq!(metrics.total_vectors_inserted, 0);
+        assert_eq!(metrics.total_vectors_deleted, 0);
+        assert_eq!(metrics.total_bytes_written, 0);
+        assert_eq!(metrics.total_bytes_read, 0);
+        assert_eq!(metrics.total_errors, 0);
+
+        // Cache stats should be zero
+        assert_eq!(metrics.cache_hits, 0);
+        assert_eq!(metrics.cache_misses, 0);
+        assert_eq!(metrics.cache_entries, 0);
+        assert_eq!(metrics.cache_memory_bytes, 0);
+        assert_eq!(metrics.cache_evictions, 0);
+
+        // WAL stats should be zero
+        assert_eq!(metrics.wal_pending_bytes, 0);
+        assert_eq!(metrics.wal_segments_count, 0);
+
+        // Latency stats should have zero count
+        assert_eq!(metrics.search_latency.count, 0);
+        assert_eq!(metrics.insert_latency.count, 0);
+        assert_eq!(metrics.delete_latency.count, 0);
+
+        // Record some operations and verify counters update
+        collector.record_search_us(500);
+        collector.record_insert_us(200, 10);
+        collector.record_error();
+
+        let updated = collector.snapshot(RollingWindow::AllTime);
+        assert_eq!(updated.total_searches, 1);
+        assert_eq!(updated.total_inserts, 1);
+        assert_eq!(updated.total_vectors_inserted, 10);
+        assert_eq!(updated.total_errors, 1);
+    }
+
+    // ========================================================================
+    // Embedded Version Info Tests
+    // ========================================================================
+
+    #[test]
+    fn test_embedded_version_info() {
+        // The crate version is available via env! macro at compile time
+        let version = env!("CARGO_PKG_VERSION");
+
+        // Version should be non-empty and follow semver format
+        assert!(!version.is_empty());
+
+        let parts: Vec<&str> = version.split('.').collect();
+        assert!(
+            parts.len() >= 2,
+            "Version '{}' should have at least major.minor components",
+            version
+        );
+
+        // Major version should be parseable as a number
+        let major: u32 = parts[0]
+            .parse()
+            .unwrap_or_else(|_| panic!("Major version '{}' should be numeric", parts[0]));
+        // Minor version should be parseable as a number
+        let _minor: u32 = parts[1]
+            .parse()
+            .unwrap_or_else(|_| panic!("Minor version '{}' should be numeric", parts[1]));
+
+        // ProximaDB should be at least v0.x
+        assert!(
+            major < 100,
+            "Major version {} seems unreasonably large",
+            major
+        );
+
+        // Verify the crate name
+        let crate_name = env!("CARGO_PKG_NAME");
+        assert_eq!(crate_name, "proximadb");
+    }
 }

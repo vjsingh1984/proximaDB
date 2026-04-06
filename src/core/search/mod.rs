@@ -1232,3 +1232,269 @@ pub mod filter_extraction {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_search_params_default() {
+        let params = SearchParams::default();
+
+        // Core defaults
+        assert!(params.query_vectors.is_none());
+        assert!(params.vector.is_none());
+        assert_eq!(params.top_k, Some(10));
+        assert_eq!(
+            params.distance_metric,
+            Some(crate::compute::distance_computation::DistanceMetric::Cosine)
+        );
+        assert!(params.filter_expression.is_none());
+        assert!(params.filters.is_none());
+        assert_eq!(params.accuracy_threshold, Some(0.95));
+        assert_eq!(params.include_expired, Some(false));
+        assert_eq!(params.timeout_ms, Some(5000));
+        assert_eq!(params.enable_two_stage, Some(true));
+
+        // Execution pipeline defaults (disabled by default)
+        assert_eq!(params.enable_vectorized_execution, Some(false));
+        assert_eq!(params.enable_parallel_morsels, Some(false));
+        assert_eq!(params.enable_pipeline_execution, Some(false));
+
+        // Optimization defaults
+        assert_eq!(params.enable_clustering_hint, Some(true));
+        assert_eq!(params.enable_metadata_filtering_hint, Some(true));
+
+        // Search mode defaults to Exact
+        assert_eq!(params.search_mode, SearchMode::Exact);
+        // Hybrid mode defaults to VectorOnly
+        assert_eq!(params.hybrid_mode, HybridSearchMode::VectorOnly);
+    }
+
+    #[test]
+    fn test_search_params_with_filters() {
+        let mut filters = HashMap::new();
+        filters.insert(
+            "category".to_string(),
+            serde_json::json!("electronics"),
+        );
+        filters.insert("price".to_string(), serde_json::json!(99.99));
+
+        let params = SearchParams::default().with_simple_filters(filters);
+
+        // Filter expression should be set
+        assert!(params.filter_expression.is_some());
+
+        // With 2 filters, the expression should be an And with 2 Comparison children
+        match params.filter_expression.as_ref() {
+            Some(FilterExpression::And(conditions)) => {
+                assert_eq!(conditions.len(), 2);
+                // Each child should be a Comparison with Equals operator
+                for cond in conditions {
+                    match cond {
+                        FilterExpression::Comparison { operator, .. } => {
+                            assert_eq!(*operator, ComparisonOperator::Equals);
+                        }
+                        _ => panic!("Expected Comparison inside And"),
+                    }
+                }
+            }
+            _ => panic!("Expected And expression with 2 conditions"),
+        }
+
+        // Empty filters should not set filter_expression
+        let params_empty = SearchParams::default().with_simple_filters(HashMap::new());
+        assert!(params_empty.filter_expression.is_none());
+    }
+
+    #[test]
+    fn test_search_mode_variants() {
+        // Default is Exact
+        let default = SearchMode::default();
+        assert_eq!(default, SearchMode::Exact);
+        assert!(default.is_exact());
+
+        // Approximate with auto nprobe
+        let approx = SearchMode::approximate();
+        assert_eq!(approx, SearchMode::Approximate { nprobe: None });
+        assert!(!approx.is_exact());
+
+        // Approximate with explicit nprobe
+        let approx_np = SearchMode::approximate_with_nprobe(16);
+        assert_eq!(approx_np, SearchMode::Approximate { nprobe: Some(16) });
+        assert!(!approx_np.is_exact());
+
+        // Adaptive with default threshold
+        let adaptive = SearchMode::adaptive();
+        assert_eq!(
+            adaptive,
+            SearchMode::Adaptive { threshold: 10_000 }
+        );
+        assert!(!adaptive.is_exact());
+
+        // effective_nprobe: Exact searches all partitions
+        assert_eq!(SearchMode::Exact.effective_nprobe(100, 50_000), 100);
+
+        // effective_nprobe: Approximate with explicit nprobe
+        assert_eq!(
+            SearchMode::Approximate { nprobe: Some(8) }.effective_nprobe(100, 50_000),
+            8
+        );
+
+        // effective_nprobe: Approximate auto = sqrt(num_partitions), at least 3
+        let auto_nprobe = SearchMode::Approximate { nprobe: None }.effective_nprobe(100, 50_000);
+        assert_eq!(auto_nprobe, 10); // sqrt(100) = 10
+
+        // effective_nprobe: Adaptive below threshold uses exact
+        assert_eq!(
+            SearchMode::Adaptive { threshold: 10_000 }.effective_nprobe(100, 5_000),
+            100
+        );
+
+        // effective_nprobe: Adaptive above threshold uses approximate
+        let adaptive_above = SearchMode::Adaptive { threshold: 10_000 }.effective_nprobe(100, 50_000);
+        assert_eq!(adaptive_above, 10); // sqrt(100) = 10
+    }
+
+    #[test]
+    fn test_hybrid_search_mode_variants() {
+        // Default is VectorOnly
+        let default = HybridSearchMode::default();
+        assert_eq!(default, HybridSearchMode::VectorOnly);
+
+        // All variants can be constructed
+        let vector_only = HybridSearchMode::VectorOnly;
+        let keyword_only = HybridSearchMode::KeywordOnly;
+        let hybrid = HybridSearchMode::Hybrid;
+        let hybrid_custom = HybridSearchMode::HybridCustom { rrf_k: 120 };
+
+        // Verify they are distinct
+        assert_ne!(vector_only, keyword_only);
+        assert_ne!(keyword_only, hybrid);
+        assert_ne!(hybrid, hybrid_custom);
+
+        // Verify custom parameter is stored
+        match hybrid_custom {
+            HybridSearchMode::HybridCustom { rrf_k } => assert_eq!(rrf_k, 120),
+            _ => panic!("Expected HybridCustom variant"),
+        }
+    }
+
+    #[test]
+    fn test_block_prune_config_default() {
+        let config = BlockPruneConfig::default();
+
+        assert!(!config.force_exact);
+        assert!(matches!(config.mode, BlockPruneMode::Sqrt));
+        assert!((config.ratio - 0.2).abs() < f32::EPSILON);
+        assert_eq!(config.min_keep, 1);
+        assert_eq!(config.max_keep, 0);
+        assert!(config.min_blocks_override.is_none());
+
+        // Verify other modes can be constructed
+        let ratio_mode = BlockPruneMode::Ratio;
+        let fixed_mode = BlockPruneMode::Fixed(50);
+        assert!(matches!(ratio_mode, BlockPruneMode::Ratio));
+        match fixed_mode {
+            BlockPruneMode::Fixed(n) => assert_eq!(n, 50),
+            _ => panic!("Expected Fixed variant"),
+        }
+    }
+
+    #[test]
+    fn test_filter_expression_construction() {
+        // Comparison expression
+        let comparison = FilterExpression::Comparison {
+            field: "status".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!("active"),
+        };
+        match &comparison {
+            FilterExpression::Comparison {
+                field, operator, value,
+            } => {
+                assert_eq!(field, "status");
+                assert_eq!(*operator, ComparisonOperator::Equals);
+                assert_eq!(*value, serde_json::json!("active"));
+            }
+            _ => panic!("Expected Comparison"),
+        }
+
+        // AND expression
+        let and_expr = FilterExpression::And(vec![
+            FilterExpression::Comparison {
+                field: "age".to_string(),
+                operator: ComparisonOperator::GreaterThan,
+                value: serde_json::json!(18),
+            },
+            FilterExpression::Comparison {
+                field: "age".to_string(),
+                operator: ComparisonOperator::LessThan,
+                value: serde_json::json!(65),
+            },
+        ]);
+        match &and_expr {
+            FilterExpression::And(exprs) => assert_eq!(exprs.len(), 2),
+            _ => panic!("Expected And"),
+        }
+
+        // OR expression
+        let or_expr = FilterExpression::Or(vec![
+            FilterExpression::Comparison {
+                field: "category".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("A"),
+            },
+            FilterExpression::Comparison {
+                field: "category".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("B"),
+            },
+        ]);
+        match &or_expr {
+            FilterExpression::Or(exprs) => assert_eq!(exprs.len(), 2),
+            _ => panic!("Expected Or"),
+        }
+
+        // NOT expression
+        let not_expr = FilterExpression::Not(Box::new(FilterExpression::Comparison {
+            field: "deleted".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(true),
+        }));
+        assert!(matches!(not_expr, FilterExpression::Not(_)));
+
+        // Verify all comparison operators
+        let operators = vec![
+            ComparisonOperator::Equals,
+            ComparisonOperator::NotEquals,
+            ComparisonOperator::GreaterThan,
+            ComparisonOperator::GreaterThanOrEqual,
+            ComparisonOperator::LessThan,
+            ComparisonOperator::LessThanOrEqual,
+            ComparisonOperator::In,
+            ComparisonOperator::NotIn,
+            ComparisonOperator::Contains,
+            ComparisonOperator::StartsWith,
+            ComparisonOperator::EndsWith,
+            ComparisonOperator::Between,
+            ComparisonOperator::IsNull,
+            ComparisonOperator::IsNotNull,
+            ComparisonOperator::Like,
+        ];
+        assert_eq!(operators.len(), 15, "Expected 15 comparison operators");
+
+        // Verify PartialEq works for filter expressions
+        let expr1 = FilterExpression::Comparison {
+            field: "x".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(1),
+        };
+        let expr2 = FilterExpression::Comparison {
+            field: "x".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(1),
+        };
+        assert_eq!(expr1, expr2);
+    }
+}

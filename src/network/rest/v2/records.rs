@@ -1929,4 +1929,350 @@ mod tests {
         let val = json_to_filter_clause_value(&serde_json::Value::Null);
         assert!(val.is_none());
     }
+
+    // ============================================================
+    // V2 Record Request Parsing
+    // ============================================================
+
+    #[test]
+    fn test_v2_record_request_parsing() {
+        let json = r#"{
+            "records": [
+                {
+                    "id": "rec_001",
+                    "vector": [0.1, 0.2, 0.3, 0.4],
+                    "typed_fields": {
+                        "name": "Widget",
+                        "price": 29.99,
+                        "in_stock": true,
+                        "quantity": 42
+                    },
+                    "text_fields": [
+                        {
+                            "name": "description",
+                            "content": "A high-quality widget for all purposes",
+                            "storage_hint": "adaptive"
+                        }
+                    ],
+                    "metadata": {
+                        "source": "api_test"
+                    }
+                },
+                {
+                    "vector": [0.5, 0.6, 0.7, 0.8],
+                    "typed_fields": {
+                        "name": "Gadget"
+                    }
+                }
+            ],
+            "validate_schema": false
+        }"#;
+
+        let request: InsertRecordsRequest =
+            serde_json::from_str(json).expect("Failed to parse V2 record request");
+
+        assert_eq!(request.records.len(), 2);
+        assert_eq!(request.validate_schema, Some(false));
+
+        // First record has all fields
+        let rec0 = &request.records[0];
+        assert_eq!(rec0.id, Some("rec_001".to_string()));
+        assert_eq!(rec0.vector.len(), 4);
+        assert!(rec0.typed_fields.is_some());
+        let typed = rec0.typed_fields.as_ref().expect("typed_fields should be Some");
+        assert_eq!(typed.get("name"), Some(&serde_json::json!("Widget")));
+        assert_eq!(typed.get("price"), Some(&serde_json::json!(29.99)));
+        assert_eq!(typed.get("in_stock"), Some(&serde_json::json!(true)));
+        assert_eq!(typed.get("quantity"), Some(&serde_json::json!(42)));
+
+        let text_fields = rec0.text_fields.as_ref().expect("text_fields should be Some");
+        assert_eq!(text_fields.len(), 1);
+        assert_eq!(text_fields[0].name, "description");
+        assert_eq!(text_fields[0].storage_hint, Some("adaptive".to_string()));
+
+        let metadata = rec0.metadata.as_ref().expect("metadata should be Some");
+        assert_eq!(metadata.get("source"), Some(&serde_json::json!("api_test")));
+
+        // Second record has auto-generated ID (None)
+        let rec1 = &request.records[1];
+        assert!(rec1.id.is_none());
+        assert_eq!(rec1.vector.len(), 4);
+        assert!(rec1.text_fields.is_none());
+        assert!(rec1.metadata.is_none());
+    }
+
+    // ============================================================
+    // V2 Record Response Serialization
+    // ============================================================
+
+    #[test]
+    fn test_v2_record_response_serialization() {
+        let response = InsertRecordsResponse {
+            inserted_count: 3,
+            failed_count: 1,
+            errors: vec![InsertError {
+                index: 2,
+                id: Some("bad_rec".to_string()),
+                error: "Vector cannot be empty".to_string(),
+            }],
+            inserted_ids: vec![
+                "id_1".to_string(),
+                "id_2".to_string(),
+                "id_3".to_string(),
+            ],
+        };
+
+        let json_str = serde_json::to_string(&response)
+            .expect("Failed to serialize InsertRecordsResponse");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("Failed to parse serialized response");
+
+        assert_eq!(parsed["inserted_count"], 3);
+        assert_eq!(parsed["failed_count"], 1);
+        assert_eq!(parsed["inserted_ids"].as_array().expect("Expected array").len(), 3);
+
+        let errors = parsed["errors"].as_array().expect("Expected errors array");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["index"], 2);
+        assert_eq!(errors[0]["id"], "bad_rec");
+        assert_eq!(errors[0]["error"], "Vector cannot be empty");
+    }
+
+    // ============================================================
+    // V2 Batch Request Parsing
+    // ============================================================
+
+    #[test]
+    fn test_v2_batch_request_parsing() {
+        // A batch with multiple records of varying completeness
+        let json = r#"{
+            "records": [
+                {"vector": [0.1, 0.2], "typed_fields": {"a": 1}},
+                {"vector": [0.3, 0.4], "typed_fields": {"b": 2}},
+                {"vector": [0.5, 0.6], "typed_fields": {"c": 3}},
+                {"vector": [0.7, 0.8]}
+            ]
+        }"#;
+
+        let request: InsertRecordsRequest =
+            serde_json::from_str(json).expect("Failed to parse batch request");
+
+        assert_eq!(request.records.len(), 4);
+        // validate_schema defaults to None when omitted
+        assert!(request.validate_schema.is_none());
+
+        // All records should have valid vectors
+        for rec in &request.records {
+            assert_eq!(rec.vector.len(), 2);
+        }
+
+        // Only first three have typed_fields
+        assert!(request.records[0].typed_fields.is_some());
+        assert!(request.records[1].typed_fields.is_some());
+        assert!(request.records[2].typed_fields.is_some());
+        assert!(request.records[3].typed_fields.is_none());
+    }
+
+    // ============================================================
+    // V2 Search Request Parsing
+    // ============================================================
+
+    #[test]
+    fn test_v2_search_request_parsing() {
+        let json = r#"{
+            "vector": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "top_k": 25,
+            "filters": [
+                {"field": "category", "op": "eq", "value": "electronics"},
+                {"field": "price", "op": "gte", "value": 10.0},
+                {"field": "price", "op": "lte", "value": 1000.0},
+                {"field": "brand", "op": "in", "value": ["Apple", "Samsung"]},
+                {"field": "description", "op": "contains", "value": "wireless"}
+            ],
+            "include_text": true,
+            "include_vector": false
+        }"#;
+
+        let request: TypedSearchRequest =
+            serde_json::from_str(json).expect("Failed to parse V2 search request");
+
+        assert_eq!(request.vector.len(), 5);
+        assert_eq!(request.top_k, 25);
+        assert_eq!(request.include_text, Some(true));
+        assert_eq!(request.include_vector, Some(false));
+
+        let filters = request.filters.as_ref().expect("filters should be Some");
+        assert_eq!(filters.len(), 5);
+
+        // Verify filter field names and operators
+        assert_eq!(filters[0].field, "category");
+        assert_eq!(filters[0].op, "eq");
+        assert_eq!(filters[1].field, "price");
+        assert_eq!(filters[1].op, "gte");
+        assert_eq!(filters[2].field, "price");
+        assert_eq!(filters[2].op, "lte");
+        assert_eq!(filters[3].field, "brand");
+        assert_eq!(filters[3].op, "in");
+        assert!(filters[3].value.is_array());
+        assert_eq!(filters[4].field, "description");
+        assert_eq!(filters[4].op, "contains");
+
+        // Verify no filters have value_upper unless between
+        for filter in filters {
+            assert!(filter.value_upper.is_none());
+        }
+    }
+
+    // ============================================================
+    // V2 Schema Request Parsing
+    // ============================================================
+
+    #[test]
+    fn test_v2_schema_request_parsing() {
+        // Test that UpdateSchemaRequest deserializes correctly
+        // UpdateSchemaRequest uses #[serde(flatten)] on SchemaDefinition
+        let json = r#"{
+            "columns": [
+                {
+                    "name": "category",
+                    "data_type": "text",
+                    "nullable": true,
+                    "indexed": true,
+                    "filterable": true
+                },
+                {
+                    "name": "price",
+                    "data_type": "float",
+                    "nullable": false,
+                    "filterable": true
+                },
+                {
+                    "name": "embedding",
+                    "data_type": "vector",
+                    "vector_dimension": 768
+                }
+            ],
+            "enforcement": "hybrid",
+            "allow_additional_fields": true,
+            "force": false
+        }"#;
+
+        let request: super::super::schema::UpdateSchemaRequest =
+            serde_json::from_str(json).expect("Failed to parse schema update request");
+
+        assert_eq!(request.schema.columns.len(), 3);
+        assert_eq!(request.schema.enforcement, Some("hybrid".to_string()));
+        assert_eq!(request.schema.allow_additional_fields, Some(true));
+        assert_eq!(request.force, Some(false));
+
+        // Verify column details
+        let col0 = &request.schema.columns[0];
+        assert_eq!(col0.name, "category");
+        assert_eq!(col0.data_type, "text");
+        assert_eq!(col0.nullable, Some(true));
+        assert_eq!(col0.indexed, Some(true));
+
+        let col1 = &request.schema.columns[1];
+        assert_eq!(col1.name, "price");
+        assert_eq!(col1.data_type, "float");
+        assert_eq!(col1.nullable, Some(false));
+
+        let col2 = &request.schema.columns[2];
+        assert_eq!(col2.name, "embedding");
+        assert_eq!(col2.data_type, "vector");
+        assert_eq!(col2.vector_dimension, Some(768));
+    }
+
+    // ============================================================
+    // V2 Error Response Format
+    // ============================================================
+
+    #[test]
+    fn test_v2_error_response_format() {
+        // Verify InsertError and InsertRecordsResponse serialization
+        // when all records fail
+        let response = InsertRecordsResponse {
+            inserted_count: 0,
+            failed_count: 2,
+            errors: vec![
+                InsertError {
+                    index: 0,
+                    id: Some("rec_a".to_string()),
+                    error: "Vector cannot be empty".to_string(),
+                },
+                InsertError {
+                    index: 1,
+                    id: None,
+                    error: "Dimension mismatch: expected 768, got 128".to_string(),
+                },
+            ],
+            inserted_ids: vec![],
+        };
+
+        let json_str = serde_json::to_string(&response)
+            .expect("Failed to serialize error response");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("Failed to parse serialized error response");
+
+        assert_eq!(parsed["inserted_count"], 0);
+        assert_eq!(parsed["failed_count"], 2);
+        assert!(parsed["inserted_ids"]
+            .as_array()
+            .expect("Expected array")
+            .is_empty());
+
+        let errors = parsed["errors"].as_array().expect("Expected errors array");
+        assert_eq!(errors.len(), 2);
+
+        // First error has an id
+        assert_eq!(errors[0]["index"], 0);
+        assert_eq!(errors[0]["id"], "rec_a");
+        assert!(errors[0]["error"]
+            .as_str()
+            .expect("Expected string")
+            .contains("empty"));
+
+        // Second error has null id
+        assert_eq!(errors[1]["index"], 1);
+        assert!(errors[1]["id"].is_null());
+        assert!(errors[1]["error"]
+            .as_str()
+            .expect("Expected string")
+            .contains("Dimension mismatch"));
+
+        // Also verify the search response serializes correctly
+        let search_resp = TypedSearchResponse {
+            results: vec![TypedSearchResult {
+                id: "doc_1".to_string(),
+                score: 0.95,
+                vector: None,
+                typed_fields: {
+                    let mut m = HashMap::new();
+                    m.insert("category".to_string(), serde_json::json!("test"));
+                    m
+                },
+                text_fields: None,
+                metadata: None,
+            }],
+            total_matches: Some(100),
+            latency_ms: 5,
+            request_id: "req-123".to_string(),
+        };
+
+        let search_json = serde_json::to_string(&search_resp)
+            .expect("Failed to serialize search response");
+        let search_parsed: serde_json::Value =
+            serde_json::from_str(&search_json).expect("Failed to parse serialized search response");
+
+        assert_eq!(
+            search_parsed["results"]
+                .as_array()
+                .expect("Expected array")
+                .len(),
+            1
+        );
+        assert_eq!(search_parsed["total_matches"], 100);
+        assert_eq!(search_parsed["latency_ms"], 5);
+        assert_eq!(search_parsed["request_id"], "req-123");
+    }
 }

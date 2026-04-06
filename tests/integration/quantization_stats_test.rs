@@ -465,6 +465,7 @@ fn print_summary_statistics(results: &[TestResult]) {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct TestResult {
     config_name: String,
     sparsity: usize,

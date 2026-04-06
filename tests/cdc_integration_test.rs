@@ -20,7 +20,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use proximadb::cdc::event::{ChangeEvent, Operation, RecordState, SourceInfo, TransactionInfo};
 use proximadb::cdc::outbound::{
@@ -158,7 +157,7 @@ fn test_deduplication_by_event_id() {
 fn test_deduplication_by_lsn() {
     let cache = DeduplicationCache::new(100).with_strategy(DeduplicationStrategy::ByLsn);
 
-    let mut event1 = create_insert_event("products", "p1", 100);
+    let event1 = create_insert_event("products", "p1", 100);
     let mut event2 = create_insert_event("products", "p2", 100); // Same LSN
 
     cache.mark_seen(&event1);

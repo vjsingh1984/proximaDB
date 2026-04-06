@@ -20,7 +20,6 @@
 
 use proximadb::transaction::{
     TransactionConfig, coordinator::CrossModelTransactionCoordinator, participants::*,
-    two_phase_commit::TransactionId,
 };
 use std::path::PathBuf;
 
@@ -329,7 +328,7 @@ async fn test_concurrent_transactions() {
 
     // Spawn multiple concurrent transactions
     let mut handles = Vec::new();
-    for i in 0..10 {
+    for _i in 0..10 {
         let coord_clone = coordinator.clone();
         let handle = tokio::spawn(async move {
             let tx_id = coord_clone.begin_transaction().await.unwrap();

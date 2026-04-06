@@ -19,12 +19,11 @@
 //! Tests the distributed query functionality integrated into the service layer,
 //! including the REST endpoint and QueryFacadeAdapter integration.
 
-use std::sync::Arc;
 
 use proximadb::query::facade::strategies::distributed::{
     DistributedQueryStrategy, DistributedStrategyConfig,
 };
-use proximadb::query::facade::{QueryRequest, QueryResult, QueryResultData};
+use proximadb::query::facade::QueryRequest;
 
 #[test]
 fn test_distributed_strategy_config_default() {
@@ -104,6 +103,7 @@ fn test_distributed_strategy_e2e_mock() {
 }
 
 // Helper trait for accessing strategy internals in tests
+#[allow(dead_code)]
 trait DistributedQueryStrategyTest {
     fn local_node_id(&self) -> String;
 }

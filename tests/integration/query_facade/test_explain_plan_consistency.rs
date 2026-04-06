@@ -387,6 +387,7 @@ impl QueryStrategy for MockGraphStrategyWithExplain {
 // ================================================================================
 
 /// Trait extension for strategies that support explain
+#[allow(dead_code)]
 trait ExplainableStrategy: QueryStrategy {
     fn explain(&self, request: &QueryRequest) -> ExplainPlanResponse;
 }

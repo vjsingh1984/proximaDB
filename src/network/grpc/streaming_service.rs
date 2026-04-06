@@ -773,6 +773,167 @@ mod tests {
         assert_eq!(status.state, ProtoSessionState::Active as i32);
     }
 
+    #[test]
+    fn test_streaming_config_defaults() {
+        // Verify default StreamConfig values
+        let config = StreamConfig::default();
+        assert_eq!(config.max_streams, 1000);
+        assert_eq!(config.default_buffer_size, 10_000);
+        assert_eq!(config.global_rate_limit, 1_000_000);
+        assert_eq!(config.flush_interval, Duration::from_millis(100));
+        assert_eq!(config.session_timeout, Duration::from_secs(300));
+
+        // Verify default BackpressureConfig values
+        let bp = &config.backpressure;
+        assert!((bp.low_watermark - 0.25).abs() < f32::EPSILON);
+        assert!((bp.high_watermark - 0.75).abs() < f32::EPSILON);
+        assert!((bp.critical_watermark - 0.90).abs() < f32::EPSILON);
+        assert_eq!(bp.min_delay_ms, 10);
+        assert_eq!(bp.max_delay_ms, 1000);
+        assert!((bp.backoff_multiplier - 2.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_streaming_message_serialization() {
+        // Verify proto StreamInsertRequest round-trips through prost encoding
+        use prost::Message;
+
+        let request = StreamInsertRequest {
+            collection: "my_collection".to_string(),
+            vectors: vec![],
+            sequence: 42,
+            partition_key: "pk_1".to_string(),
+            session_id: "sess_abc".to_string(),
+        };
+
+        // Encode to bytes
+        let mut buf = Vec::new();
+        request.encode(&mut buf).expect("Failed to encode");
+        assert!(!buf.is_empty());
+
+        // Decode back
+        let decoded = StreamInsertRequest::decode(buf.as_slice()).expect("Failed to decode");
+        assert_eq!(decoded.collection, "my_collection");
+        assert_eq!(decoded.sequence, 42);
+        assert_eq!(decoded.partition_key, "pk_1");
+        assert_eq!(decoded.session_id, "sess_abc");
+        assert!(decoded.vectors.is_empty());
+
+        // Verify BackpressureSignal serialization
+        let signal = BackpressureSignal {
+            level: ProtoBackpressureLevel::Medium as i32,
+            suggested_delay_ms: 100,
+            buffer_percent: 75,
+            drain_time_ms: 500,
+        };
+
+        let mut buf2 = Vec::new();
+        signal.encode(&mut buf2).expect("Failed to encode signal");
+        let decoded_signal =
+            BackpressureSignal::decode(buf2.as_slice()).expect("Failed to decode signal");
+        assert_eq!(decoded_signal.level, ProtoBackpressureLevel::Medium as i32);
+        assert_eq!(decoded_signal.suggested_delay_ms, 100);
+        assert_eq!(decoded_signal.buffer_percent, 75);
+        assert_eq!(decoded_signal.drain_time_ms, 500);
+    }
+
+    #[test]
+    fn test_subscription_creation() {
+        // Verify SubscriptionConfig construction and defaults
+        use crate::streaming::subscriptions::SubscriptionConfig;
+
+        let default_config = SubscriptionConfig::default();
+        assert_eq!(default_config.top_k, 10);
+        assert!((default_config.score_threshold - 0.0).abs() < f32::EPSILON);
+        assert!(default_config.include_initial);
+        assert_eq!(default_config.debounce_ms, 50);
+        assert_eq!(default_config.max_delay_ms, 200);
+        assert!(default_config.track_positions);
+
+        // Verify custom config
+        let custom_config = SubscriptionConfig {
+            top_k: 50,
+            score_threshold: 0.8,
+            include_initial: false,
+            debounce_ms: 100,
+            max_delay_ms: 500,
+            track_positions: false,
+        };
+        assert_eq!(custom_config.top_k, 50);
+        assert!((custom_config.score_threshold - 0.8).abs() < f32::EPSILON);
+        assert!(!custom_config.include_initial);
+        assert_eq!(custom_config.debounce_ms, 100);
+        assert_eq!(custom_config.max_delay_ms, 500);
+        assert!(!custom_config.track_positions);
+    }
+
+    #[test]
+    fn test_backpressure_config() {
+        // Verify backpressure level to proto conversion
+        assert_eq!(
+            backpressure_to_proto(BackpressureLevel::None),
+            ProtoBackpressureLevel::None as i32
+        );
+        assert_eq!(
+            backpressure_to_proto(BackpressureLevel::Low),
+            ProtoBackpressureLevel::Low as i32
+        );
+        assert_eq!(
+            backpressure_to_proto(BackpressureLevel::Medium),
+            ProtoBackpressureLevel::Medium as i32
+        );
+        assert_eq!(
+            backpressure_to_proto(BackpressureLevel::High),
+            ProtoBackpressureLevel::High as i32
+        );
+        assert_eq!(
+            backpressure_to_proto(BackpressureLevel::Critical),
+            ProtoBackpressureLevel::Critical as i32
+        );
+
+        // Verify session state to proto conversion
+        assert_eq!(
+            session_state_to_proto(SessionState::Active),
+            ProtoSessionState::Active as i32
+        );
+        assert_eq!(
+            session_state_to_proto(SessionState::Paused),
+            ProtoSessionState::Paused as i32
+        );
+        assert_eq!(
+            session_state_to_proto(SessionState::Draining),
+            ProtoSessionState::Draining as i32
+        );
+        assert_eq!(
+            session_state_to_proto(SessionState::Closed),
+            ProtoSessionState::Closed as i32
+        );
+        assert_eq!(
+            session_state_to_proto(SessionState::Error),
+            ProtoSessionState::Error as i32
+        );
+
+        // Verify proto_to_session_config with None input yields defaults
+        let default_session = proto_to_session_config(None);
+        assert!(default_session.buffer_size.is_none());
+        assert!(default_session.rate_limit.is_none());
+        assert!(default_session.flush_interval.is_none());
+
+        // Verify proto_to_session_config with custom values
+        let proto_config = ProtoSessionConfig {
+            buffer_size: 5000,
+            rate_limit: 100_000,
+            ordering: 0,
+            delivery: 0,
+            flush_interval_ms: 200,
+            timeout_seconds: 0,
+        };
+        let session = proto_to_session_config(Some(proto_config));
+        assert_eq!(session.buffer_size, Some(5000));
+        assert_eq!(session.rate_limit, Some(100_000));
+        assert_eq!(session.flush_interval, Some(Duration::from_millis(200)));
+    }
+
     #[tokio::test]
     async fn test_close_session() {
         let service = StreamingServiceImpl::new();

@@ -734,6 +734,274 @@ mod tests {
     }
 
     #[test]
+    fn test_flight_ticket_serialization() {
+        // Create a VectorSearchRequest and serialize it into a Ticket
+        let search_request = VectorSearchRequest {
+            collection_id: "test_collection".to_string(),
+            top_k: 10,
+            ..Default::default()
+        };
+
+        let ticket_bytes =
+            serde_json::to_vec(&search_request).expect("Failed to serialize search request");
+        let ticket = Ticket {
+            ticket: ticket_bytes.into(),
+        };
+
+        // Deserialize back
+        let parsed = ArrowProtoCodec::ticket_to_search_request(&ticket)
+            .expect("Failed to parse ticket back to search request");
+        assert_eq!(parsed.collection_id, "test_collection");
+        assert_eq!(parsed.top_k, 10);
+    }
+
+    #[test]
+    fn test_flight_descriptor_creation() {
+        // Create a FlightDescriptor with a collection path and parse it
+        let descriptor = FlightDescriptor {
+            r#type: 0,
+            path: vec!["my_collection".to_string()],
+            cmd: Default::default(),
+        };
+
+        let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
+            .expect("Failed to parse descriptor");
+        assert_eq!(metadata.collection_id, "my_collection");
+        assert_eq!(metadata.write_mode, WriteMode::WAL);
+        assert!(!metadata.trigger_compaction);
+    }
+
+    #[test]
+    fn test_arrow_batch_to_vector_records() {
+        // Create a test batch with known data and convert to VectorRecords
+        let batch = create_test_batch(3, 4);
+
+        let records = ArrowProtoCodec::batch_to_vector_records(&batch)
+            .expect("Failed to convert batch to records");
+
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].id, "id_0");
+        assert_eq!(records[1].id, "id_1");
+        assert_eq!(records[2].id, "id_2");
+
+        // Verify vector dimensions
+        assert_eq!(records[0].vector.len(), 4);
+        assert_eq!(records[1].vector.len(), 4);
+
+        // Verify timestamps
+        assert_eq!(records[0].timestamp, Some(0));
+        assert_eq!(records[1].timestamp, Some(1000));
+        assert_eq!(records[2].timestamp, Some(2000));
+    }
+
+    #[test]
+    fn test_vector_records_to_arrow_batch() {
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+
+        let mut meta_a = HashMap::new();
+        meta_a.insert(
+            "color".to_string(),
+            SqlValue {
+                value: Some(SqlVal::StringValue("red".to_string())),
+            },
+        );
+        let mut meta_b = HashMap::new();
+        meta_b.insert(
+            "color".to_string(),
+            SqlValue {
+                value: Some(SqlVal::StringValue("blue".to_string())),
+            },
+        );
+
+        let records = vec![
+            VectorRecord {
+                id: "vec_a".to_string(),
+                vector: vec![1.0, 2.0, 3.0],
+                metadata: meta_a,
+                timestamp: Some(100),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            },
+            VectorRecord {
+                id: "vec_b".to_string(),
+                vector: vec![4.0, 5.0, 6.0],
+                metadata: meta_b,
+                timestamp: Some(200),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            },
+        ];
+
+        let batch = ArrowProtoCodec::vector_records_to_batch(records, 3)
+            .expect("Failed to convert records to batch");
+
+        assert_eq!(batch.num_rows(), 2);
+        assert_eq!(batch.num_columns(), 5); // id, vector, metadata, timestamp, score
+
+        // Verify id column
+        let id_col = batch
+            .column_by_name("id")
+            .expect("Missing id column")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("id is not StringArray");
+        assert_eq!(id_col.value(0), "vec_a");
+        assert_eq!(id_col.value(1), "vec_b");
+    }
+
+    #[test]
+    fn test_multimodel_codec_vector() {
+        // Test round-trip: VectorRecords -> RecordBatch -> VectorRecords
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+
+        let mut meta_1 = HashMap::new();
+        meta_1.insert(
+            "tag".to_string(),
+            SqlValue {
+                value: Some(SqlVal::StringValue("alpha".to_string())),
+            },
+        );
+        let mut meta_2 = HashMap::new();
+        meta_2.insert(
+            "tag".to_string(),
+            SqlValue {
+                value: Some(SqlVal::StringValue("beta".to_string())),
+            },
+        );
+
+        let original_records = vec![
+            VectorRecord {
+                id: "rt_1".to_string(),
+                vector: vec![0.5, 1.5, 2.5, 3.5],
+                metadata: meta_1,
+                timestamp: Some(1000),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            },
+            VectorRecord {
+                id: "rt_2".to_string(),
+                vector: vec![4.5, 5.5, 6.5, 7.5],
+                metadata: meta_2,
+                timestamp: Some(2000),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            },
+        ];
+
+        // Encode to batch
+        let batch = ArrowProtoCodec::vector_records_to_batch(original_records.clone(), 4)
+            .expect("Failed to encode to batch");
+
+        // Decode back
+        let decoded = ArrowProtoCodec::batch_to_vector_records(&batch)
+            .expect("Failed to decode from batch");
+
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].id, "rt_1");
+        assert_eq!(decoded[1].id, "rt_2");
+        assert_eq!(decoded[0].vector, vec![0.5, 1.5, 2.5, 3.5]);
+        assert_eq!(decoded[1].vector, vec![4.5, 5.5, 6.5, 7.5]);
+    }
+
+    #[test]
+    fn test_multimodel_codec_document() {
+        // Test document schema from multimodel_codec and verify field types
+        use crate::network::arrow_ipc::multimodel_codec::document_schema;
+
+        let schema = document_schema();
+        assert_eq!(schema.fields().len(), 5);
+
+        // Verify round-trip: build a RecordBatch from document schema, read it back
+        let id_array = StringArray::from(vec!["doc_1", "doc_2"]);
+        let doc_array = StringArray::from(vec![
+            r#"{"title":"Hello"}"#,
+            r#"{"title":"World"}"#,
+        ]);
+        let version_array = Int64Array::from(vec![1i64, 2]);
+        let collection_array = StringArray::from(vec!["col_a", "col_a"]);
+        let updated_array = Int64Array::from(vec![1000i64, 2000]);
+
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(id_array) as ArrayRef,
+                Arc::new(doc_array) as ArrayRef,
+                Arc::new(version_array) as ArrayRef,
+                Arc::new(collection_array) as ArrayRef,
+                Arc::new(updated_array) as ArrayRef,
+            ],
+        )
+        .expect("Failed to create document batch");
+
+        assert_eq!(batch.num_rows(), 2);
+
+        let ids = batch
+            .column_by_name("id")
+            .expect("Missing id")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("id not StringArray");
+        assert_eq!(ids.value(0), "doc_1");
+        assert_eq!(ids.value(1), "doc_2");
+    }
+
+    #[test]
+    fn test_flight_info_metadata() {
+        // Verify that FlightDescriptor with command metadata is parsed correctly
+        let cmd = serde_json::json!({
+            "write_mode": "direct",
+            "trigger_compaction": "true"
+        });
+
+        let descriptor = FlightDescriptor {
+            r#type: 0,
+            path: vec!["high_perf_collection".to_string()],
+            cmd: serde_json::to_vec(&cmd)
+                .expect("Failed to serialize cmd")
+                .into(),
+        };
+
+        let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
+            .expect("Failed to parse descriptor with metadata");
+        assert_eq!(metadata.collection_id, "high_perf_collection");
+        assert_eq!(metadata.write_mode, WriteMode::Direct);
+        assert!(metadata.trigger_compaction);
+    }
+
+    #[test]
+    fn test_empty_batch_handling() {
+        // Verify empty records produce an error (not a panic)
+        let result = ArrowProtoCodec::vector_records_to_batch(vec![], 128);
+        assert!(result.is_err(), "Empty records should return an error");
+
+        // Verify empty batch list conversion works without panic
+        let result = ArrowProtoCodec::batches_to_vector_records(vec![]);
+        assert!(result.is_ok());
+        assert!(
+            result
+                .expect("Should succeed for empty batches")
+                .is_empty()
+        );
+
+        // Verify empty batch list to flight data doesn't panic
+        let result = ArrowProtoCodec::batches_to_flight_data_with_compression(&[], None);
+        assert!(result.is_ok());
+        assert!(
+            result
+                .expect("Should succeed for empty flight data")
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn test_compression_reduces_size() {
         // Create a batch with repetitive data that compresses well
         let num_rows = 1000;
