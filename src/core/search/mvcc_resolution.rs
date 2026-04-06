@@ -549,4 +549,291 @@ mod tests {
         // All records should be excluded due to expiry
         assert_eq!(resolved.len(), 0);
     }
+
+    // ========================================================================
+    // Tests inlined from tests/unit/storage/mvcc_resolution_tests.rs
+    // ========================================================================
+
+    use crate::proto::proximadb_v1::SearchVectorRecord;
+
+    /// Test helper to create a SearchVectorRecord with specific ID, version, and timestamp
+    fn create_search_result(
+        id: &str,
+        version: u32,
+        timestamp: u32,
+        score: f32,
+    ) -> SearchVectorRecord {
+        SearchVectorRecord {
+            id: id.to_string(),
+            score: score as f64,
+            vector: vec![0.1; 128],
+            metadata: std::collections::HashMap::new(),
+            version: Some(version),
+            similarity: Some(score),
+            timestamp: Some(timestamp as i64),
+            source: None,
+            expanded_context: vec![],
+            semantic_similarity: None,
+            quantization_info: None,
+            engine_stats: std::collections::HashMap::new(),
+            index_path: None,
+        }
+    }
+
+    /// MVCC deduplication logic (extracted from standalone test)
+    fn apply_mvcc_logic(results: Vec<SearchVectorRecord>) -> Vec<SearchVectorRecord> {
+        use std::collections::HashMap;
+
+        let mut id_groups: HashMap<String, Vec<SearchVectorRecord>> = HashMap::new();
+        let mut results_without_id = Vec::new();
+
+        for result in results {
+            if result.id.is_empty() {
+                results_without_id.push(result);
+            } else {
+                id_groups
+                    .entry(result.id.clone())
+                    .or_insert_with(Vec::new)
+                    .push(result);
+            }
+        }
+
+        let mut deduplicated = Vec::new();
+
+        for (_id, mut versions) in id_groups {
+            versions.sort_by(|a, b| {
+                let version_a = a.version.unwrap_or(1) as u32;
+                let version_b = b.version.unwrap_or(1) as u32;
+
+                version_a.cmp(&version_b).then_with(|| {
+                    let ts_a = a.timestamp.unwrap_or(i64::MAX) as u32;
+                    let ts_b = b.timestamp.unwrap_or(i64::MAX) as u32;
+                    ts_a.cmp(&ts_b)
+                })
+            });
+
+            let mut expected_version = 1;
+            let mut last_valid: Option<SearchVectorRecord> = None;
+
+            for result in versions {
+                let version = result.version.unwrap_or(1) as u32;
+
+                if version == expected_version {
+                    if let Some(ref existing) = last_valid {
+                        if existing.version.unwrap_or(1) == result.version.unwrap_or(1) {
+                            let existing_ts = existing.timestamp.unwrap_or(i64::MAX) as u32;
+                            let current_ts = result.timestamp.unwrap_or(i64::MAX) as u32;
+                            if current_ts < existing_ts {
+                                last_valid = Some(result);
+                            }
+                            continue;
+                        }
+                    }
+                    last_valid = Some(result);
+                    expected_version += 1;
+                } else if version > expected_version {
+                    break;
+                }
+            }
+
+            if let Some(result) = last_valid {
+                deduplicated.push(result);
+            }
+        }
+
+        deduplicated.extend(results_without_id);
+        deduplicated.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        deduplicated
+    }
+
+    /// Helper to check if versions are continuous starting from 1
+    fn is_version_continuous(versions: &[u32]) -> bool {
+        if versions.is_empty() {
+            return true;
+        }
+
+        let mut sorted = versions.to_vec();
+        sorted.sort();
+
+        if sorted[0] != 1 {
+            return false;
+        }
+
+        for i in 1..sorted.len() {
+            if sorted[i] != sorted[i - 1] + 1 {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    #[test]
+    fn test_apply_mvcc_deduplication() {
+        // Test case 1: Normal version progression
+        let results = vec![
+            create_search_result("doc1", 1, 100, 0.9),
+            create_search_result("doc1", 2, 200, 0.8),
+            create_search_result("doc1", 3, 300, 0.7),
+        ];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 1);
+        assert_eq!(deduplicated[0].id, "doc1");
+        assert_eq!(deduplicated[0].version, Some(3));
+
+        // Test case 2: Version gap
+        let results = vec![
+            create_search_result("doc2", 1, 100, 0.9),
+            create_search_result("doc2", 2, 200, 0.8),
+            create_search_result("doc2", 4, 400, 0.6),
+        ];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 1);
+        assert_eq!(deduplicated[0].id, "doc2");
+        assert_eq!(deduplicated[0].version, Some(2));
+
+        // Test case 3: Duplicate versions (earliest timestamp wins)
+        let results = vec![
+            create_search_result("doc3", 1, 300, 0.7),
+            create_search_result("doc3", 1, 100, 0.9),
+            create_search_result("doc3", 1, 200, 0.8),
+        ];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 1);
+        assert_eq!(deduplicated[0].id, "doc3");
+        assert_eq!(deduplicated[0].version, Some(1));
+        assert_eq!(deduplicated[0].timestamp, Some(100));
+
+        // Test case 4: Multiple documents
+        let results = vec![
+            create_search_result("doc4", 1, 100, 0.95),
+            create_search_result("doc4", 2, 200, 0.94),
+            create_search_result("doc5", 1, 150, 0.85),
+            create_search_result("doc5", 2, 250, 0.84),
+            create_search_result("doc5", 3, 350, 0.83),
+        ];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 2);
+        let doc4 = deduplicated.iter().find(|r| r.id == "doc4").unwrap();
+        assert_eq!(doc4.version, Some(2));
+        let doc5 = deduplicated.iter().find(|r| r.id == "doc5").unwrap();
+        assert_eq!(doc5.version, Some(3));
+
+        // Test case 5: Append-only vectors (no ID)
+        let results = vec![
+            create_search_result("", 1, 100, 0.9),
+            create_search_result("", 1, 200, 0.8),
+            create_search_result("", 1, 300, 0.7),
+        ];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 3);
+    }
+
+    #[test]
+    fn test_version_continuity_validation() {
+        let continuous = vec![1, 2, 3, 4, 5];
+        assert!(is_version_continuous(&continuous));
+
+        let with_gap = vec![1, 2, 4, 5];
+        assert!(!is_version_continuous(&with_gap));
+
+        let single = vec![1];
+        assert!(is_version_continuous(&single));
+
+        let empty: Vec<u32> = vec![];
+        assert!(is_version_continuous(&empty));
+
+        let non_one_start = vec![2, 3, 4];
+        assert!(!is_version_continuous(&non_one_start));
+    }
+
+    #[test]
+    fn test_mvcc_edge_cases_standalone() {
+        let mut result = create_search_result("doc1", 1, 100, 0.9);
+        result.version = None;
+        let results = vec![result];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 1);
+        assert_eq!(deduplicated[0].version, None);
+
+        let mut result = create_search_result("doc2", 1, 100, 0.9);
+        result.timestamp = None;
+        let results = vec![result, create_search_result("doc2", 1, 200, 0.8)];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 1);
+        assert_eq!(deduplicated[0].timestamp, Some(200));
+
+        let results = vec![
+            create_search_result("doc3", 1, 100, 0.95),
+            create_search_result("doc3", 2, 200, 0.94),
+            create_search_result("", 1, 150, 0.85),
+            create_search_result("", 1, 250, 0.84),
+        ];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 3);
+        let with_id = deduplicated.iter().filter(|r| !r.id.is_empty()).count();
+        let without_id = deduplicated.iter().filter(|r| r.id.is_empty()).count();
+        assert_eq!(with_id, 1);
+        assert_eq!(without_id, 2);
+    }
+
+    #[test]
+    fn test_mvcc_result_sorting() {
+        let results = vec![
+            create_search_result("doc1", 1, 100, 0.5),
+            create_search_result("doc2", 1, 100, 0.9),
+            create_search_result("doc3", 1, 100, 0.7),
+            create_search_result("doc4", 1, 100, 0.3),
+        ];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 4);
+        assert!(
+            (deduplicated[0].score - 0.9).abs() < 1e-6,
+            "Expected ~0.9, got {}",
+            deduplicated[0].score
+        );
+        assert!(
+            (deduplicated[1].score - 0.7).abs() < 1e-6,
+            "Expected ~0.7, got {}",
+            deduplicated[1].score
+        );
+        assert!(
+            (deduplicated[2].score - 0.5).abs() < 1e-6,
+            "Expected ~0.5, got {}",
+            deduplicated[2].score
+        );
+        assert!(
+            (deduplicated[3].score - 0.3).abs() < 1e-6,
+            "Expected ~0.3, got {}",
+            deduplicated[3].score
+        );
+    }
+
+    #[test]
+    fn test_mvcc_complex_scenario() {
+        let results = vec![
+            create_search_result("docA", 1, 100, 0.9),
+            create_search_result("docA", 2, 200, 0.9),
+            create_search_result("docA", 3, 300, 0.9),
+            create_search_result("docB", 1, 100, 0.8),
+            create_search_result("docB", 2, 200, 0.8),
+            create_search_result("docB", 4, 400, 0.8),
+            create_search_result("docC", 1, 300, 0.7),
+            create_search_result("docC", 1, 100, 0.7),
+            create_search_result("docC", 1, 200, 0.7),
+            create_search_result("docC", 2, 400, 0.7),
+            create_search_result("", 1, 500, 0.6),
+            create_search_result("", 1, 600, 0.5),
+        ];
+        let deduplicated = apply_mvcc_logic(results);
+        assert_eq!(deduplicated.len(), 5);
+        let doc_a = deduplicated.iter().find(|r| r.id == "docA").unwrap();
+        assert_eq!(doc_a.version, Some(3));
+        let doc_b = deduplicated.iter().find(|r| r.id == "docB").unwrap();
+        assert_eq!(doc_b.version, Some(2));
+        let doc_c = deduplicated.iter().find(|r| r.id == "docC").unwrap();
+        assert_eq!(doc_c.version, Some(2));
+        let no_id_count = deduplicated.iter().filter(|r| r.id.is_empty()).count();
+        assert_eq!(no_id_count, 2);
+    }
 }

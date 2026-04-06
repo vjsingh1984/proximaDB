@@ -17,16 +17,16 @@
 //! Storage module unit tests
 
 pub mod metadata_backend_tests;
-pub mod metadata_indexes_tests;
-pub mod single_index_tests;
-pub mod unified_index_tests;
+// metadata_indexes_tests inlined into src/storage/metadata/indexes.rs
+// single_index_tests inlined into src/storage/metadata/single_index.rs
+// unified_index_tests inlined into src/storage/metadata/unified_index.rs
 // pub mod test_wal_config_simple; // File doesn't exist
 // pub mod viper_flush_compaction_tests; // Removed - obsolete API
 // SST tests - now using unified test utilities
-pub mod sst_atomic_operations_test;
+// sst_atomic_operations_test inlined/removed - tests covered by integration tests
 // pub mod sst_bplustree_integration_test; // Commented: Uses deprecated SstableWriter/SstQueryEngine APIs
-pub mod sst_bplustree_tests; // B+ tree index tests - fixed for new API
-pub mod sst_sstable_format_test;
+// sst_bplustree_tests inlined into src/storage/engines/impls/sst/mod.rs
+// sst_sstable_format_test inlined into src/storage/engines/impls/sst/writer.rs
 // pub mod sst_flush_test; // Removed - duplicate of integration tests
 
 // Phase 1 optimization tests
@@ -46,8 +46,7 @@ pub mod test_threshold_triggers;
 // SST mmap tests
 // pub mod sst_mmap_tests;
 
-// MVCC resolution tests
-pub mod mvcc_resolution_tests;
+// mvcc_resolution_tests inlined into src/core/search/mvcc_resolution.rs
 
 // SST flush and recovery TDD tests - moved to src/storage/engines/impls/sst/tests/
 // pub mod sst_flush_recovery_tdd_test;
@@ -55,8 +54,7 @@ pub mod mvcc_resolution_tests;
 // Assignment service recovery tests
 // pub mod assignment_service_recovery_test; // File not found - commented for now
 
-// CentroidTree and pruning strategies tests (WS-1: Enhanced ProximaHeaderCache)
-pub mod centroid_tree_test;
+// centroid_tree_test inlined into src/storage/schema/centroid_tree.rs
 
 // DataFusion TableProvider integration tests (WS-4: DataFusion TableProvider)
 pub mod table_provider_test;

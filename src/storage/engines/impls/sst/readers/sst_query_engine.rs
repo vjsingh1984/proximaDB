@@ -6620,6 +6620,343 @@ mod centroid_tests {
             );
         }
     }
+
+    // ========================================================================
+    // Tests inlined from tests/unit/storage/block_pruning_tests.rs
+    // ========================================================================
+
+    /// Helper to create a test IndexEntry with a given centroid
+    fn create_block_pruning_test_entry(id: usize, centroid: Vec<f32>) -> IndexEntry {
+        IndexEntry {
+            key: format!("block_{}", id),
+            last_key: None,
+            offset: 0,
+            size: 0,
+            block_id: id as u32,
+            block_offset: 0,
+            compressed: false,
+            block_centroid: centroid,
+            block_centroid_fp16: None,
+            metadata_min_values: HashMap::new(),
+            metadata_max_values: HashMap::new(),
+            metadata_null_counts: HashMap::new(),
+            block_key_bloom: None,
+            block_metadata_bloom: None,
+            vector_format: VectorFormat::Variable,
+            zorder_code: None,
+        }
+    }
+
+    #[test]
+    fn test_block_prune_none_mode_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            create_block_pruning_test_entry(0, vec![0.1, 0.1]),
+            create_block_pruning_test_entry(1, vec![2.0, 2.0]),
+            create_block_pruning_test_entry(2, vec![5.0, 5.0]),
+            create_block_pruning_test_entry(3, vec![10.0, 10.0]),
+        ];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: true,
+            mode: crate::core::search::BlockPruneMode::Sqrt,
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        assert_eq!(selected.len(), 4, "None mode should return all 4 blocks");
+        assert_eq!(selected, vec![0, 1, 2, 3], "Should return all block indices");
+    }
+
+    #[test]
+    fn test_block_prune_sqrt_mode_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            create_block_pruning_test_entry(0, vec![0.1, 0.1]),
+            create_block_pruning_test_entry(1, vec![0.5, 0.5]),
+            create_block_pruning_test_entry(2, vec![2.0, 2.0]),
+            create_block_pruning_test_entry(3, vec![5.0, 5.0]),
+        ];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Sqrt,
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        assert_eq!(selected.len(), 2, "SQRT mode should return sqrt(4)=2 blocks");
+        assert_eq!(selected, vec![0, 1], "Should return 2 closest blocks");
+    }
+
+    #[test]
+    fn test_block_prune_ratio_mode_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            create_block_pruning_test_entry(0, vec![0.1, 0.1]),
+            create_block_pruning_test_entry(1, vec![0.5, 0.5]),
+            create_block_pruning_test_entry(2, vec![1.0, 1.0]),
+            create_block_pruning_test_entry(3, vec![2.0, 2.0]),
+            create_block_pruning_test_entry(4, vec![5.0, 5.0]),
+        ];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Ratio,
+            ratio: 0.4,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        assert_eq!(selected.len(), 2, "Ratio mode should return ratio*n=2 blocks");
+        assert_eq!(selected, vec![0, 1], "Should return 2 closest blocks");
+    }
+
+    #[test]
+    fn test_block_prune_fixed_mode_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            create_block_pruning_test_entry(0, vec![0.1, 0.1]),
+            create_block_pruning_test_entry(1, vec![0.5, 0.5]),
+            create_block_pruning_test_entry(2, vec![1.0, 1.0]),
+            create_block_pruning_test_entry(3, vec![2.0, 2.0]),
+            create_block_pruning_test_entry(4, vec![5.0, 5.0]),
+        ];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Fixed(3),
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        assert_eq!(selected.len(), 3, "Fixed mode should return exactly 3 blocks");
+        assert_eq!(selected, vec![0, 1, 2], "Should return 3 closest blocks");
+    }
+
+    #[test]
+    fn test_block_prune_min_keep_constraint_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            create_block_pruning_test_entry(0, vec![0.1, 0.1]),
+            create_block_pruning_test_entry(1, vec![0.5, 0.5]),
+            create_block_pruning_test_entry(2, vec![1.0, 1.0]),
+        ];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Fixed(1),
+            ratio: 0.2,
+            min_keep: 3,
+            max_keep: 0,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        assert_eq!(
+            selected.len(),
+            3,
+            "min_keep=3 should override Fixed(1), returning all 3 blocks"
+        );
+        assert_eq!(selected, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_block_prune_max_keep_constraint_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            create_block_pruning_test_entry(0, vec![0.1, 0.1]),
+            create_block_pruning_test_entry(1, vec![0.5, 0.5]),
+            create_block_pruning_test_entry(2, vec![1.0, 1.0]),
+            create_block_pruning_test_entry(3, vec![2.0, 2.0]),
+            create_block_pruning_test_entry(4, vec![5.0, 5.0]),
+        ];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Ratio,
+            ratio: 0.8,
+            min_keep: 1,
+            max_keep: 2,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        assert_eq!(
+            selected.len(),
+            2,
+            "max_keep=2 should override Ratio(0.8), returning only 2 blocks"
+        );
+        assert_eq!(selected, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_block_prune_min_max_conflict_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            create_block_pruning_test_entry(0, vec![0.1, 0.1]),
+            create_block_pruning_test_entry(1, vec![0.5, 0.5]),
+            create_block_pruning_test_entry(2, vec![1.0, 1.0]),
+            create_block_pruning_test_entry(3, vec![2.0, 2.0]),
+            create_block_pruning_test_entry(4, vec![5.0, 5.0]),
+        ];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Fixed(1),
+            ratio: 0.2,
+            min_keep: 5,
+            max_keep: 3,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        // Order: Fixed(1) -> max(1,5)=5 -> min(5,3)=3 -> clamp(3,1,5)=3
+        assert_eq!(
+            selected.len(),
+            3,
+            "max_keep=3 should override min_keep=5 when they conflict"
+        );
+        assert_eq!(selected, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_block_prune_empty_blocks_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries: Vec<IndexEntry> = vec![];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Sqrt,
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        assert_eq!(selected.len(), 0, "Empty blocks should return empty selection");
+    }
+
+    #[test]
+    fn test_block_prune_single_block_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![create_block_pruning_test_entry(0, vec![0.1, 0.1])];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Sqrt,
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        assert_eq!(
+            selected.len(),
+            1,
+            "Single block should always be selected"
+        );
+        assert_eq!(selected, vec![0]);
+    }
+
+    #[test]
+    fn test_block_prune_ratio_clamp_standalone() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            create_block_pruning_test_entry(0, vec![0.1, 0.1]),
+            create_block_pruning_test_entry(1, vec![0.5, 0.5]),
+            create_block_pruning_test_entry(2, vec![1.0, 1.0]),
+        ];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Ratio,
+            ratio: 2.5,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+        assert_eq!(
+            selected.len(),
+            3,
+            "Ratio 2.5 should be clamped to 1.0, returning all 3 blocks"
+        );
+    }
+
+    #[test]
+    fn test_block_prune_cosine_metric_standalone() {
+        let query = vec![1.0f32, 0.0];
+        let entries = vec![
+            create_block_pruning_test_entry(0, vec![1.0, 0.0]),
+            create_block_pruning_test_entry(1, vec![0.0, 1.0]),
+            create_block_pruning_test_entry(2, vec![-1.0, 0.0]),
+        ];
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Fixed(1),
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0),
+        };
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Cosine,
+            &prune_config,
+        );
+        assert_eq!(selected.len(), 1, "Fixed(1) should return 1 block");
+        assert_eq!(
+            selected,
+            vec![0],
+            "Should select block with identical direction"
+        );
+    }
 }
 
 impl ReadingStrategySelector {
