@@ -34,4 +34,3 @@ pub mod services;
 pub mod sst_optimization_tests;
 pub mod storage;
 pub mod write_buffer_recovery_stress_tests;
-pub mod write_buffer_write_optimization_tests;
