@@ -1,8 +1,9 @@
 //! Search services
 //!
-//! Various search implementations including streaming and batch search
+//! Various search implementations including streaming, EDR, and batch search
 
 pub mod streaming;
+pub mod edr_service;
 
 #[cfg(test)]
 pub mod comprehensive_test;
@@ -11,4 +12,9 @@ pub use streaming::{
     SearchMetadata as Metadata, SearchResultBatch as ResultBatch,
     SearchResultStream as ResultStream, StreamingSearchConfig as StreamConfig,
     StreamingSearchService as StreamingSearch, StreamingSearchStats as StreamStats,
+};
+
+pub use edr_service::{
+    EdrSearchExecution, EdrSearchExecutionRequest, EdrSearchResult,
+    execute_edr_search, validate_edr_search_request,
 };
