@@ -745,7 +745,7 @@ async fn test_performance_comparison_legacy_vs_graph_first() {
     // performance regressions.
     //
     // Minimum: 10,000 entities/sec (conservative for CI environments)
-    let min_throughput = 5_000.0;  // Reduced for CI environment variability (was 10_000)
+    let min_throughput = 5_000.0; // Reduced for CI environment variability (was 10_000)
     assert!(
         graph_first_throughput >= min_throughput,
         "Graph-first throughput ({:.2} entities/sec) should exceed {:.2} entities/sec (with WAL durability)",
