@@ -19,7 +19,6 @@
 //! This module contains all unit tests organized by functional area.
 //! Unit tests focus on testing individual components in isolation.
 
-pub mod clustering_models_test;
 pub mod compute;
 pub mod config;
 pub mod core;

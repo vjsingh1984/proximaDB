@@ -218,4 +218,61 @@ mod tests {
         assert_eq!(wal_config.write_buffer_directory, "/tmp/wal");
         assert!(!wal_config.enable_wal);
     }
+
+    // --- Tests inlined from tests/unit/core/config_tests.rs ---
+
+    #[test]
+    fn test_default_config() {
+        use crate::core::config::Config;
+
+        let config = Config::default();
+
+        // Test default server config
+        assert_eq!(config.server.node_id, "node-1");
+        assert_eq!(config.server.bind_address, "127.0.0.1");
+        assert_eq!(config.server.port, 5678);
+
+        // Test default storage config
+        assert!(!config.storage.storage_locations.is_empty());
+        assert!(config.storage.metadata_url.contains("metadata"));
+        assert_eq!(config.storage.cache_size_mb, 512);
+        assert!(config.storage.mmap_enabled);
+
+        // Test default SST config - sst_config is Option<SstConfig>
+        if let Some(ref sst_config) = config.storage.sst_config {
+            assert_eq!(sst_config.level_count, 7);
+            assert_eq!(sst_config.compaction_threshold, 5); // Default is 5, not 3
+        }
+
+        // Test default API config
+        assert_eq!(config.api.rest_port, 5678);
+        assert_eq!(config.api.grpc_port, 5679);
+        assert_eq!(config.api.max_request_size_mb, 100);
+        assert_eq!(config.api.timeout_seconds, 60); // Default is 60 seconds
+    }
+
+    #[test]
+    fn test_config_serialization_roundtrip() {
+        use crate::core::config::Config;
+
+        // Test that default config can be serialized and deserialized
+        let original = Config::default();
+
+        // Serialize to TOML
+        let toml_str = toml::to_string(&original).expect("Failed to serialize config");
+
+        // Deserialize back
+        let recovered: Config = toml::from_str(&toml_str).expect("Failed to deserialize config");
+
+        // Verify key values match
+        assert_eq!(original.server.node_id, recovered.server.node_id);
+        assert_eq!(original.server.bind_address, recovered.server.bind_address);
+        assert_eq!(original.server.port, recovered.server.port);
+        assert_eq!(original.api.rest_port, recovered.api.rest_port);
+        assert_eq!(original.api.grpc_port, recovered.api.grpc_port);
+        assert_eq!(
+            original.storage.cache_size_mb,
+            recovered.storage.cache_size_mb
+        );
+    }
 }

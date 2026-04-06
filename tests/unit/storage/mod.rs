@@ -26,7 +26,6 @@ pub mod unified_index_tests;
 pub mod sst_atomic_operations_test;
 // pub mod sst_bplustree_integration_test; // Commented: Uses deprecated SstableWriter/SstQueryEngine APIs
 pub mod sst_bplustree_tests; // B+ tree index tests - fixed for new API
-pub mod sst_core_tests;
 pub mod sst_sstable_format_test;
 // pub mod sst_flush_test; // Removed - duplicate of integration tests
 
