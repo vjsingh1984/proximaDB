@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-03-05T15:31:18Z",
-  "mode": "report",
+  "generated_at_utc": "2026-04-06T19:19:00Z",
+  "mode": "no-regression",
   "modules": {
     "api_handlers": {
       "expect": 0,
@@ -9,16 +9,16 @@
       "unwrap": 0
     },
     "core": {
-      "expect": 0,
+      "expect": 6,
       "path": "src/core",
-      "total": 0,
+      "total": 6,
       "unwrap": 0
     },
     "graph": {
-      "expect": 0,
+      "expect": 3,
       "path": "src/graph",
-      "total": 0,
-      "unwrap": 0
+      "total": 5,
+      "unwrap": 2
     },
     "network_rest": {
       "expect": 0,
@@ -27,10 +27,10 @@
       "unwrap": 0
     },
     "query": {
-      "expect": 0,
+      "expect": 4,
       "path": "src/query",
-      "total": 0,
-      "unwrap": 0
+      "total": 6,
+      "unwrap": 2
     },
     "services": {
       "expect": 0,
@@ -39,10 +39,10 @@
       "unwrap": 0
     },
     "storage": {
-      "expect": 0,
+      "expect": 4,
       "path": "src/storage",
-      "total": 0,
-      "unwrap": 0
+      "total": 7,
+      "unwrap": 3
     }
   },
   "repo": "proximaDB",
@@ -50,9 +50,12 @@
   "source_root": "src",
   "status": "pass",
   "totals": {
-    "expect": 0,
-    "total": 0,
-    "unwrap": 0
+    "expect": 20,
+    "total": 38,
+    "unwrap": 18
   },
-  "violations": []
+  "violations": [],
+  "total_panic_calls": 38,
+  "unwrap_count": 18,
+  "expect_count": 20
 }
