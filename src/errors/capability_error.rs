@@ -145,7 +145,7 @@ impl CapabilityError {
     pub fn to_rest_response(&self) -> serde_json::Value {
         let mut response = serde_json::json!({
             "error": {
-                "type": self.error_type_to_string(),
+                "error_type": self.error_type_to_string(),
                 "message": self.message,
                 "missing_capability": self.capability,
             }

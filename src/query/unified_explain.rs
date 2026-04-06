@@ -341,7 +341,9 @@ fn format_explain_plan_text(plan: &ExplainPlan) -> String {
 fn format_explain_plan_graphviz(plan: &ExplainPlan) -> String {
     let mut output = String::from("digraph QueryPlan {\n");
     output.push_str("  rankdir=TB;\n");
-    output.push_str("  node [shape=box, style=rounded];\n\n");
+    output.push_str("  node [shape=box, style=rounded];\n");
+    output.push_str(&format!("  label=\"Plan: {}\";\n", plan.plan_id));
+    output.push_str("\n");
 
     for node in &plan.plan_nodes {
         let label = format!("{}\\nCost: {:.2}\\nRows: {}",

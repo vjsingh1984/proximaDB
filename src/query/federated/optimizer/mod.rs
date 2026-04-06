@@ -633,8 +633,13 @@ impl PlanNode {
         &self,
         actual_engine_capabilities: &CapabilitySet,
     ) -> (CapabilitySet, CapabilitySet, CapabilitySet) {
-        let honest_capabilities = self.get_honest_capabilities(actual_engine_capabilities);
-        let missing_capabilities = self.required_capabilities.difference(&honest_capabilities);
+        let required = if self.required_capabilities.is_empty() {
+            self.infer_capabilities()
+        } else {
+            self.required_capabilities.clone()
+        };
+        let honest_capabilities = required.intersection(actual_engine_capabilities);
+        let missing_capabilities = required.difference(&honest_capabilities);
         let extra_capabilities = actual_engine_capabilities.difference(&honest_capabilities);
 
         (honest_capabilities, missing_capabilities, extra_capabilities)

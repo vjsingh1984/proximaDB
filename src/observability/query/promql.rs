@@ -56,26 +56,28 @@ impl PromQLParser {
             }
         }
 
-        // Check for function calls (math functions, etc.)
-        if let Some(func_expr) = Self::parse_function_call(query)? {
-            return Ok(func_expr);
+        // Check for binary operations first (top-level splits at operators
+        // outside parentheses must be detected before descending into
+        // function-call or aggregation parsing).
+        if let Some(binary_expr) = Self::parse_binary_operation(query)? {
+            return Ok(binary_expr);
         }
 
-        // Check for aggregation functions first
+        // Check for aggregation functions
         if let Some(agg_expr) = Self::parse_aggregation(query)? {
             return Ok(agg_expr);
         }
 
-        // Check for binary operations
-        if let Some(binary_expr) = Self::parse_binary_operation(query)? {
-            return Ok(binary_expr);
+        // Check for function calls (math functions, etc.)
+        if let Some(func_expr) = Self::parse_function_call(query)? {
+            return Ok(func_expr);
         }
 
         // Parse as vector selector (instant or range)
         let mut selector = Self::parse_vector_selector(query)?;
 
         // Check for offset modifier @
-        let remaining = &query[Self::get_selector_length(&selector)..];
+        let remaining = &query[Self::get_selector_length_in(query, &selector)..];
         if let Some(offset_duration) = Self::parse_offset_modifier(remaining)? {
             if let PromQLExpr::VectorSelector { name, matchers, range, .. } = selector {
                 selector = PromQLExpr::VectorSelector {
@@ -429,31 +431,47 @@ impl PromQLParser {
         Ok(None)
     }
 
-    /// Get the length of a selector in the original query string
-    fn get_selector_length(expr: &PromQLExpr) -> usize {
+    /// Get the length of a selector in the original query string.
+    /// Instead of reconstructing the length from parsed components (which is
+    /// fragile with variable-width operators and whitespace), we find the
+    /// actual end position of the selector in the original query.
+    fn get_selector_length_in(query: &str, expr: &PromQLExpr) -> usize {
         match expr {
-            PromQLExpr::VectorSelector { name, matchers, range, offset } => {
-                let mut len = name.len();
-                if !matchers.is_empty() {
-                    len += 2; // {}
-                    for matcher in matchers {
-                        len += matcher.name.len() + matcher.value.len() + 3; // name="value"
-                        if let Some(op_str) = Self::match_op_string(&matcher.op) {
-                            len += op_str.len();
+            PromQLExpr::VectorSelector { range, .. } => {
+                // A vector selector in the source is:
+                //   metric_name                          (no braces, no range)
+                //   metric_name{label="val", ...}        (braces)
+                //   metric_name{label="val"}[5m]         (braces + range)
+                //   metric_name[5m]                      (no braces, range)
+                //
+                // Find the end of braces first, then the end of range brackets.
+                let trimmed = query.trim_start();
+                let leading_ws = query.len() - trimmed.len();
+
+                // Find closing brace if present
+                let after_braces = if let Some(brace_pos) = trimmed.find('{') {
+                    // Find the matching closing brace
+                    if let Some(close_pos) = trimmed[brace_pos..].find('}') {
+                        leading_ws + brace_pos + close_pos + 1
+                    } else {
+                        // No closing brace found; fall back to metric name length
+                        leading_ws + trimmed.find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':').unwrap_or(trimmed.len())
+                    }
+                } else {
+                    // No braces — end is the metric name
+                    leading_ws + trimmed.find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':').unwrap_or(trimmed.len())
+                };
+
+                // If there's a range, find the closing bracket after the braces
+                if range.is_some() {
+                    if let Some(bracket_pos) = query[after_braces..].find('[') {
+                        if let Some(close_pos) = query[after_braces + bracket_pos..].find(']') {
+                            return after_braces + bracket_pos + close_pos + 1;
                         }
                     }
-                    len += matchers.len() - 1; // commas between matchers
                 }
-                if let Some(range) = range {
-                    len += 2; // []
-                    len += Self::format_duration(range).len();
-                }
-                if let Some(offset) = offset {
-                    len += 2; // @
-                    len += 2; // []
-                    len += Self::format_duration(offset).len();
-                }
-                len
+
+                after_braces
             }
             _ => 0,
         }
@@ -874,38 +892,16 @@ impl PromQLExecutor {
             })
             .collect();
 
-        // For range vectors, we return all samples; for instant vectors, we return the latest per series
-        if range.is_some() {
-            // Range vector - return all samples
-            Ok(filtered
-                .into_iter()
-                .map(|s| MetricResult {
-                    timestamp_ns: s.timestamp_ns,
-                    value: s.value,
-                    labels: s.labels,
-                })
-                .collect())
-        } else {
-            // Instant vector - return latest sample per label set
-            let mut latest: HashMap<String, MetricResult> = HashMap::new();
-            for s in filtered {
-                let key = Self::labels_to_key(&s.labels);
-                let result = MetricResult {
-                    timestamp_ns: s.timestamp_ns,
-                    value: s.value,
-                    labels: s.labels,
-                };
-                latest
-                    .entry(key)
-                    .and_modify(|existing| {
-                        if result.timestamp_ns > existing.timestamp_ns {
-                            *existing = result.clone();
-                        }
-                    })
-                    .or_insert(result);
-            }
-            Ok(latest.into_values().collect())
-        }
+        // Return all matching samples as a flat list.
+        // Aggregation operators (sum, avg, etc.) handle grouping separately.
+        Ok(filtered
+            .into_iter()
+            .map(|s| MetricResult {
+                timestamp_ns: s.timestamp_ns,
+                value: s.value,
+                labels: s.labels,
+            })
+            .collect())
     }
 
     /// Execute aggregation operation

@@ -139,9 +139,9 @@ impl MorselScheduler {
         let mut morsel_id = 0;
         let mut start_row = 0;
 
-        while start_row < total_rows {
-            let remaining = total_rows - start_row;
-            let row_count = remaining.min(MORSEL_SIZE);
+        loop {
+            let remaining = total_rows.saturating_sub(start_row);
+            let row_count = if remaining == 0 { 0 } else { remaining.min(MORSEL_SIZE) };
 
             morsels.push(Morsel::new(
                 morsel_id,
@@ -150,8 +150,12 @@ impl MorselScheduler {
                 row_group_idx,
             ));
 
-            start_row += row_count;
+            start_row += if row_count == 0 { 1 } else { row_count };
             morsel_id += 1;
+
+            if start_row >= total_rows {
+                break;
+            }
         }
 
         debug!(

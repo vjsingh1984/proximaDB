@@ -165,7 +165,7 @@ mod tests {
         assert!(result.is_ok());
 
         let stmt = result.unwrap();
-        assert_eq!(stmt.clauses.len(), 4); // Match, Where, OrderBy, Limit
+        assert_eq!(stmt.clauses.len(), 5); // Match, Where, Return, OrderBy, Limit
     }
 
     #[test]

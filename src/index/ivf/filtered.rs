@@ -393,7 +393,7 @@ impl FilteredIVFIndex {
 
             // For highly selective filters, we can use smaller nprobe
             // because many vectors will be filtered out anyway
-            if selectivity < 0.1 {
+            if selectivity <= 0.1 {
                 Ok((params.nprobe as f64 * 0.7) as usize) // Reduce nprobe by 30%
             } else if selectivity > 0.5 {
                 // For low selectivity filters, increase nprobe to maintain recall
@@ -530,7 +530,7 @@ mod tests {
 
         let distance = index.calculate_distance(&a, &b);
 
-        assert_eq!(distance, (1.0_f32).sqrt()); // sqrt(1^2 + 1^2) = sqrt(2)
+        assert_eq!(distance, (2.0_f32).sqrt()); // sqrt(1^2 + 1^2) = sqrt(2)
     }
 
     #[test]

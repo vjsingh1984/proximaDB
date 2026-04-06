@@ -702,6 +702,7 @@ mod tests {
         let before = scheduler.next_refresh_time("test_view");
         assert!(before.is_some());
 
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         scheduler.update_after_refresh("test_view");
 
         let after = scheduler.next_refresh_time("test_view");

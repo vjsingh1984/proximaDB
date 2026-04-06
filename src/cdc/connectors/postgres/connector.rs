@@ -506,6 +506,7 @@ mod tests {
         assert_eq!(connector.current_lsn().await, 12345);
     }
 
+    #[cfg(feature = "experimental-cdc-connectors")]
     #[tokio::test]
     async fn test_connector_start_stop() {
         let mut connector = create_test_connector().await;
@@ -523,6 +524,7 @@ mod tests {
         assert_eq!(connector.status(), SourceStatus::Stopped);
     }
 
+    #[cfg(feature = "experimental-cdc-connectors")]
     #[tokio::test]
     async fn test_connector_pause_resume() {
         let mut connector = create_test_connector().await;

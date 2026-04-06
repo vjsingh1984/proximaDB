@@ -398,7 +398,12 @@ mod tests {
             estimated_cost: 1.0,
             estimated_rows: 10,
             output_columns: vec!["id".to_string(), "score".to_string()],
-            required_capabilities: CapabilitySet::new(),
+            required_capabilities: {
+                let mut caps = CapabilitySet::new();
+                caps.add(Capability::VectorSearch);
+                caps.add(Capability::Scan);
+                caps
+            },
         }
     }
 
@@ -412,7 +417,12 @@ mod tests {
             estimated_cost: 2.0,
             estimated_rows: 100,
             output_columns: vec!["n".to_string()],
-            required_capabilities: CapabilitySet::new(),
+            required_capabilities: {
+                let mut caps = CapabilitySet::new();
+                caps.add(Capability::GraphQuery);
+                caps.add(Capability::GraphTraversal);
+                caps
+            },
         }
     }
 

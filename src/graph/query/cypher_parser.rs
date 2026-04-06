@@ -1120,6 +1120,12 @@ impl CypherParser {
                 Ok(expr)
             }
 
+            TokenKind::Reduce => {
+                self.advance();
+                self.expect(&TokenKind::LParen)?;
+                return self.parse_reduce_expression();
+            }
+
             TokenKind::Ident(name) => {
                 self.advance();
                 // Check for function call
@@ -1812,7 +1818,7 @@ mod tests {
     #[test]
     fn test_parse_reduce_complex() {
         let stmt = CypherParser::parse(
-            "RETURN REDUCE(sum = 0, n IN collect(| n.price) | sum + n)"
+            "RETURN REDUCE(sum = 0, n IN collect(n.price) | sum + n)"
         ).unwrap();
 
         match &stmt.clauses[0] {
@@ -1943,6 +1949,6 @@ mod tests {
         let stmt = CypherParser::parse(
             "UNWIND [[1, 2], [3, 4]] AS nested RETURN REDUCE(sum = 0, x IN nested | sum + x)"
         ).unwrap();
-        assert_eq!(stmt.clauses.len(), 3);
+        assert_eq!(stmt.clauses.len(), 2);
     }
 }

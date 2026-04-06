@@ -268,9 +268,9 @@ impl FilteredHNSWIndex {
 
             // For highly selective filters, we can use smaller ef
             // because many nodes will be pruned anyway
-            if selectivity < 0.1 {
+            if selectivity <= 0.1 {
                 Ok((params.ef as f64 * 0.5) as usize) // Reduce ef by 50%
-            } else if selectivity > 0.5 {
+            } else if selectivity >= 0.5 {
                 // For low selectivity filters, increase ef to maintain recall
                 Ok((params.ef as f64 * 1.5) as usize) // Increase ef by 50%
             } else {

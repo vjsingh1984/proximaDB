@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(lsn, 0x16B3748);
 
         let lsn2 = ReplicationStream::parse_lsn("1/ABCDEF0").unwrap();
-        assert_eq!(lsn2, 0x1_ABCDEF0);
+        assert_eq!(lsn2, (1u64 << 32) | 0xABCDEF0);
 
         assert!(ReplicationStream::parse_lsn("invalid").is_err());
     }
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn test_format_lsn() {
         assert_eq!(ReplicationStream::format_lsn(0x16B3748), "0/16B3748");
-        assert_eq!(ReplicationStream::format_lsn(0x1_ABCDEF0), "1/ABCDEF0");
+        assert_eq!(ReplicationStream::format_lsn((1u64 << 32) | 0xABCDEF0), "1/ABCDEF0");
     }
 
     #[test]
