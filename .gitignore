@@ -388,6 +388,7 @@ COPILOT.md
 # AI-generated prompts, summaries, and snapshots
 *prompt*.txt
 *snapshot*
+!src/**/snapshot.rs
 *_PROMPT.md
 *_SNAPSHOT.md
 *_summary.py
