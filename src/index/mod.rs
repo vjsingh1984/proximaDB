@@ -77,6 +77,8 @@
 pub mod axis;
 pub mod config;
 pub mod diskann;
+/// Enhanced Dense Retrieval with late interaction.
+pub mod edr;
 /// Geo-spatial indexing (geohash-based).
 pub mod geo;
 /// HNSW filtered search implementation.

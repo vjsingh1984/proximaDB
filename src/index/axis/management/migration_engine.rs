@@ -789,6 +789,7 @@ impl IndexMigrationEngine {
             IndexAlgorithm::SkipList { .. } => 70.0, // Good for sorted data
             IndexAlgorithm::BloomFilter { .. } => 50.0, // Good for membership testing
             IndexAlgorithm::Annoy { .. } => 80.0, // Good for approximate nearest neighbor
+            IndexAlgorithm::EDR { .. } => 92.0, // Excellent for enhanced dense retrieval with late interaction
             IndexAlgorithm::GlobalId { .. } => 100.0, // Excellent for O(1) vector ID lookup
         }
     }

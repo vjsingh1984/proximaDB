@@ -123,6 +123,20 @@ pub enum IndexAlgorithm {
         max_leaf_size: u32,
     },
 
+    /// Enhanced Dense Retrieval - late interaction with query and document expansion.
+    EDR {
+        /// Number of query vectors for expansion.
+        num_query_expansions: usize,
+        /// Number of document vectors per document.
+        num_document_vectors: usize,
+        /// Maximum number of results to return.
+        top_k: usize,
+        /// Whether to use query expansion.
+        enable_query_expansion: bool,
+        /// Whether to use document expansion.
+        enable_document_expansion: bool,
+    },
+
     /// Global ID Index - for O(1) vector ID to storage location mapping.
     GlobalId {
         /// Maximum number of entries to keep in the LRU cache.
@@ -215,6 +229,7 @@ impl IndexSpecification {
                 | IndexAlgorithm::PQ { .. }
                 | IndexAlgorithm::LSH { .. }
                 | IndexAlgorithm::Annoy { .. }
+                | IndexAlgorithm::EDR { .. }
         )
     }
 
