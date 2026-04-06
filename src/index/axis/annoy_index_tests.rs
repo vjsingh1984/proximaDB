@@ -183,7 +183,7 @@ mod tests {
         // ANNOY index doesn't currently support metadata filtering, so filter doesn't apply
         // The test should pass but might return results regardless of filter
         // For now, just verify we get some results (the exact count depends on implementation)
-        assert!(results.len() >= 0); // Allow 0 or more results since filtering may not be implemented
+        let _ = results.len(); // Allow 0 or more results since filtering may not be implemented
     }
 
     #[tokio::test]

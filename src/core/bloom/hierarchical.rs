@@ -483,7 +483,7 @@ mod tests {
 
         // Should have some memory savings from compression
         let savings = hierarchy.memory_savings_bytes();
-        assert!(savings >= 0);
+        let _ = savings; // usize is always >= 0; just verify it's callable
 
         // Compression ratio should be reasonable
         let ratio = hierarchy.compression_ratio();

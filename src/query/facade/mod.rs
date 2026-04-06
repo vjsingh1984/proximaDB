@@ -848,8 +848,8 @@ mod tests {
         let metrics = result
             .metrics
             .expect("Metrics should be present when with_metrics() is called");
-        // Execution time should be > 0 (even if very small)
+        // Execution time field should exist (u64 is always >= 0)
         // Note: In fast systems this might be 0, but the field should exist
-        assert!(metrics.execution_time_ms >= 0);
+        let _ = metrics.execution_time_ms;
     }
 }

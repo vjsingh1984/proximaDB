@@ -616,8 +616,8 @@ mod tests {
             .await
             .expect("Failed to get statistics");
 
-        // Verify structure
-        assert!(stats.total_events >= 0);
+        // Verify structure (total_events is u64, always >= 0)
+        let _ = stats.total_events;
         assert!(stats.success_rate >= 0.0 && stats.success_rate <= 100.0);
         assert!(stats.period_start == since);
         assert!(stats.period_end >= since);

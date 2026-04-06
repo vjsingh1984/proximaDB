@@ -931,7 +931,7 @@ mod edge_tests {
         for (field, value) in test_values {
             // This would be implemented in the actual bloom filter
             assert!(field.len() > 0 || field.is_empty()); // Check if field is populated
-            assert!(value.len() >= 0);
+            let _ = value.len(); // usize: always >= 0
         }
     }
 
@@ -974,7 +974,7 @@ mod edge_tests {
             };
 
             // Should handle gracefully without panicking
-            assert!(context.file_path.len() >= 0);
+            let _ = &context.file_path; // usize len is always >= 0; just verify construction
         }
     }
 

@@ -1489,7 +1489,7 @@ mod tests {
 
         let metrics = collector.snapshot(RollingWindow::AllTime);
         // Uptime should be at least 0 seconds (could be 0 if < 1 second elapsed)
-        assert!(metrics.uptime_secs >= 0);
+        let _ = metrics.uptime_secs; // always non-negative (u64)
     }
 
     #[test]

@@ -514,7 +514,7 @@ mod tests {
             .expect("failed to push and notify");
         assert_eq!(result.push_result.pushed, 5);
         // Should have notified at least one subscription
-        assert!(result.subscriptions_notified >= 0);
+        // subscriptions_notified is always >= 0 (usize)
 
         // Cleanup
         service

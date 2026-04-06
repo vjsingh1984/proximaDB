@@ -434,7 +434,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_creation() {
         let metrics = CdcMetrics::new();
-        assert!(metrics.uptime().as_millis() >= 0);
+        let _uptime = metrics.uptime(); // Duration is always non-negative
     }
 
     #[tokio::test]

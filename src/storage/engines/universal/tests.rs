@@ -229,6 +229,7 @@ pub use crate::storage::engines::universal::storage_integration::{
 
 // Test utilities
 #[cfg(test)]
+#[allow(missing_docs)]
 pub mod test_utils {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::engines::universal::adapter::{

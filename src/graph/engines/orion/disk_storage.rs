@@ -756,7 +756,7 @@ mod tests {
             .expect("Failed to warm cache");
 
         let stats = storage.cache_stats();
-        assert!(stats.cache_size >= 0);
+        let _ = stats.cache_size; // usize: always >= 0
     }
 
     #[tokio::test]

@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 /// Mock P2Matrix struct for testing
 /// Source: p2_matrix_tests.rs
+#[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct P2Matrix {
     pub num_vectors: usize,

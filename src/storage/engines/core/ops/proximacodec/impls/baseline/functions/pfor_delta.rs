@@ -613,6 +613,6 @@ mod tests {
         let num_patches = u32::from_le_bytes([encoded[5], encoded[6], encoded[7], encoded[8]]);
         // With base=0, deltas for constant 100.0 values fit in small bits
         // Large spikes should create patches
-        assert!(num_patches >= 0, "Patches: {}", num_patches); // Always passes, just for visibility
+        let _ = num_patches; // u32 is always >= 0; large spikes should create patches
     }
 }

@@ -616,7 +616,7 @@ mod write_ahead_log_batch_strategy_tests {
             Ok(batch_urls) => {
                 // Unexpected success - but verify result structure
                 // Verify result is a vector (empty or not)
-                assert!(batch_urls.len() >= 0);
+                // batch_urls.len() is always >= 0 (usize)
             }
             Err(e) => {
                 // Expected failure in test environment

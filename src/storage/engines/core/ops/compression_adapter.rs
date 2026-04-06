@@ -1104,9 +1104,9 @@ mod tests {
         let stats = adapter.get_performance_stats();
         assert_eq!(stats.total_compressions, 5);
         assert_eq!(stats.total_decompressions, 5);
-        // Make timing assertions more lenient - timing may be 0 on fast systems
-        assert!(stats.total_compression_time_ms >= 0);
-        assert!(stats.total_decompression_time_ms >= 0);
+        // Timing fields are u64 (always >= 0); just verify they exist
+        let _ = stats.total_compression_time_ms;
+        let _ = stats.total_decompression_time_ms;
         assert_eq!(
             stats.algorithm_usage.get(&CompressionAlgorithm::Lz4),
             Some(&5)

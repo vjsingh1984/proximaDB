@@ -519,7 +519,7 @@ impl Default for PerformanceMetrics {
 
 /// Execution plan for progressive search
 /// Source: progressive_search.rs
-#[allow(dead_code)]
+#[allow(dead_code, missing_docs)]
 #[derive(Debug, Clone)]
 pub struct ExecutionPlan {
     pub quantization_level: String,

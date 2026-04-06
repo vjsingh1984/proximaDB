@@ -473,6 +473,6 @@ mod tests {
         let stats = integration.get_action_stats().await;
         // Stats may or may not be populated depending on exploration
         // This test just ensures it doesn't crash
-        assert!(stats.len() >= 0);
+        let _ = stats.len();
     }
 }

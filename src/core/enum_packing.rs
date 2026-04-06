@@ -469,10 +469,10 @@ mod tests {
         // Verify it fits in 4 bytes
         assert!(packed <= u32::MAX);
 
-        // Verify each enum value fits in 8 bits
-        assert!(ExtractionMethod::ManualEntry as u8 <= 255);
-        assert!(ProcessingStatus::Deprecated as u8 <= 255);
-        assert!(QualityLevel::Unknown as u8 <= 255);
-        assert!(DataSource::BackupRestore as u8 <= 255);
+        // Verify each enum has a u8 representation (the `as u8` cast itself validates this)
+        let _ = ExtractionMethod::ManualEntry as u8;
+        let _ = ProcessingStatus::Deprecated as u8;
+        let _ = QualityLevel::Unknown as u8;
+        let _ = DataSource::BackupRestore as u8;
     }
 }
