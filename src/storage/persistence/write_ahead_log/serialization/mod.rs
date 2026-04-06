@@ -99,7 +99,7 @@ mod tests {
             SerializationFormat::parse_format("avro").unwrap(),
             SerializationFormat::Avro
         );
-        assert!(SerializationFormat::from_str("unknown").is_err());
+        assert!(SerializationFormat::parse_format("unknown").is_err());
     }
 
     #[test]

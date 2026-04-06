@@ -9,7 +9,7 @@ use super::providers::{
     LLMClient, OllamaClient, OpenAIClient, VLLMClient,
 };
 use super::types::{
-    LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse,
+    LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, TokenUsage,
 };
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -392,7 +392,7 @@ mod tests {
             node_type: PlanNodeType::VectorSearch {
                 collection: "test_collection".to_string(),
                 top_k: 10,
-                query_vector_source: crate::query::federated::optimizer::VectorSource::Direct(
+                query_vector_source: crate::query::federated::optimizer::VectorSource::Literal(
                     vec![0.1, 0.2, 0.3],
                 ),
             },
@@ -529,7 +529,7 @@ mod tests {
         let caps = validator.get_required_capabilities(&plan);
 
         assert!(!caps.is_empty());
-        assert!(caps.contains(&Capability::VectorSearch));
+        assert!(caps.contains_capability(&Capability::VectorSearch));
     }
 
     #[test]

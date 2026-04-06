@@ -1838,7 +1838,7 @@ mod tests {
         match &stmt.clauses[0] {
             CypherClause::Return(rc) => {
                 match &rc.items[0].expression {
-                    Expression::ListComprehension { variable, filter, projection } => {
+                    Expression::ListComprehension { variable, list: _, filter, projection } => {
                         assert_eq!(variable, "x");
                         assert!(filter.is_none());
                         assert!(projection.is_some());
@@ -1857,7 +1857,7 @@ mod tests {
         match &stmt.clauses[0] {
             CypherClause::Return(rc) => {
                 match &rc.items[0].expression {
-                    Expression::ListComprehension { variable, filter, projection } => {
+                    Expression::ListComprehension { variable, list: _, filter, projection } => {
                         assert_eq!(variable, "x");
                         assert!(filter.is_some());
                         assert!(projection.is_some());
@@ -1876,7 +1876,7 @@ mod tests {
         match &stmt.clauses[0] {
             CypherClause::Return(rc) => {
                 match &rc.items[0].expression {
-                    Expression::ListComprehension { variable, filter, projection } => {
+                    Expression::ListComprehension { variable, list: _, filter, projection } => {
                         assert_eq!(variable, "x");
                         assert!(filter.is_some());
                         assert!(projection.is_none());

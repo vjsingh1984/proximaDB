@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn test_chrono_engine_name() {
         let engine = ChronoEngine::new().unwrap();
-        assert_eq!(engine.engine_name(), "chrono");
+        assert_eq!(crate::observability::ObservabilityStorageEngine::engine_name(&engine), "chrono");
     }
 
     #[test]
@@ -432,7 +432,7 @@ mod tests {
         let engine = ChronoEngine::new().unwrap();
         engine
             .ingest_metrics(
-                "default",
+                "default".to_string(),
                 vec![
                     make_metric_with_labels("cpu", 100, 0.5, vec![("host", "a")]),
                     make_metric_with_labels("cpu", 200, 0.6, vec![("host", "b")]),
@@ -450,7 +450,7 @@ mod tests {
         let engine = ChronoEngine::new().unwrap();
         engine
             .ingest_metrics(
-                "default",
+                "default".to_string(),
                 vec![
                     make_metric_with_labels("http", 100, 1.0, vec![("method", "GET")]),
                     make_metric_with_labels("http", 200, 2.0, vec![("method", "POST")]),
@@ -480,7 +480,7 @@ mod tests {
         let engine = ChronoEngine::new().unwrap();
         engine
             .ingest_logs(
-                "default",
+                "default".to_string(),
                 vec![
                     make_log(100, 2, "info message"),
                     make_log(200, 4, "error message"),
@@ -499,7 +499,7 @@ mod tests {
         let engine = ChronoEngine::new().unwrap();
         engine
             .ingest_logs(
-                "default",
+                "default".to_string(),
                 vec![
                     make_log(100, 1, "debug msg"),  // severity 1 = DEBUG
                     make_log(200, 2, "info msg"),   // severity 2 = INFO
@@ -520,7 +520,7 @@ mod tests {
         let engine = ChronoEngine::new().unwrap();
         engine
             .ingest_logs(
-                "default",
+                "default".to_string(),
                 vec![
                     make_log(100, 2, "connection established"),
                     make_log(200, 4, "connection timeout error"),
@@ -544,7 +544,7 @@ mod tests {
         let engine = ChronoEngine::new().unwrap();
         engine
             .ingest_spans(
-                "default",
+                "default".to_string(),
                 vec![
                     make_span("trace1", "span1", "GET /api"),
                     make_span("trace1", "span2", "DB query"),

@@ -1749,7 +1749,7 @@ mod tests {
         let expr = PromQLParser::parse("-http_requests_total").expect("should parse negation");
         match expr {
             PromQLExpr::Unary { op, expr } => {
-                assert_eq!(*op, UnaryOp::Neg);
+                assert_eq!(op, UnaryOp::Neg);
                 match *expr {
                     PromQLExpr::VectorSelector { ref name, .. } => {
                         assert_eq!(name, "http_requests_total");
@@ -1787,7 +1787,7 @@ mod tests {
                 assert_eq!(by, vec!["method"]);
                 match *expr {
                     PromQLExpr::Aggregation { op: inner_op, .. } => {
-                        assert_eq!(*inner_op, AggregationOp::Rate);
+                        assert_eq!(inner_op, AggregationOp::Rate);
                     }
                     _ => panic!("Expected Rate aggregation inside Sum"),
                 }

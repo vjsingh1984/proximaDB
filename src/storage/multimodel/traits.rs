@@ -182,6 +182,7 @@ pub struct MultiModelStorageConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::traits::DataModel;
 
     #[test]
     fn test_model_type_is_data_model() {

@@ -531,7 +531,7 @@ mod tests {
 
         assert_eq!(sparse.nnz(), 2);
         assert_eq!(sparse.dimensionality(), 4);
-        assert_eq!(sparse.norm, (1.0 + 4.0).sqrt());
+        assert_eq!(sparse.norm, (1.0_f32 + 4.0_f32).sqrt());
     }
 
     #[test]

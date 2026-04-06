@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn test_cedar_engine_name() {
         let engine = CedarEngine::new().unwrap();
-        assert_eq!(engine.engine_name(), "cedar");
+        assert_eq!(crate::storage::document::DocumentStorageEngine::engine_name(&engine), "cedar");
     }
 
     #[test]

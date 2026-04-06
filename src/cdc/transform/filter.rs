@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_rule_negation() {
-        let rule = FilterRule::include_collections(vec!["public.users"]).not();
+        let rule = FilterRule::include_collections(vec!["public.users"]).negate();
         let event = create_test_event();
         assert!(!rule.matches(&event));
     }

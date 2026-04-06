@@ -602,7 +602,7 @@ mod tests {
 
     #[test]
     fn test_fixed_serialization_roundtrip() {
-        let serializer = Serializer128::default();
+        let serializer = Serializer128::with_default_config();
 
         let mut data = vec![0.0; 128];
         for i in 0..10 {
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_batch_serialization() {
-        let serializer = Serializer256::default();
+        let serializer = Serializer256::with_default_config();
 
         let vectors = (0..5)
             .map(|i| {
@@ -676,7 +676,7 @@ mod tests {
 
     #[test]
     fn test_performance_characteristics() {
-        let serializer = Serializer768::default();
+        let serializer = Serializer768::with_default_config();
 
         // Dense vector
         let dense_data: Vec<f32> = (0..768).map(|i| i as f32 * 0.001).collect();

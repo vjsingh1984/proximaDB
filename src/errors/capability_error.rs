@@ -303,6 +303,16 @@ impl From<CapabilityCheckError> for CapabilityError {
 
 
 // ============================================================================
+/// Convert CapabilityError into ApiError for HTTP/gRPC responses
+impl From<CapabilityError> for crate::errors::ApiError {
+    fn from(err: CapabilityError) -> Self {
+        crate::errors::ApiError::InvalidArgument(format!(
+            "Capability '{}' not supported: {}",
+            err.capability, err.message
+        ))
+    }
+}
+
 // UNIT TESTS
 // ============================================================================
 

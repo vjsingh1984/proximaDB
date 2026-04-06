@@ -196,10 +196,12 @@ mod write_ahead_log_batch_strategy_tests {
                 entries_flushed: Some(0),
                 bytes_written: Some(0),
                 files_created: Some(0),
+                file_paths: vec![],
                 duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: vec![],
             })
         }
@@ -312,7 +314,7 @@ mod write_ahead_log_batch_strategy_tests {
                     )),
                 }),
             ]),
-            timestamp: now as i64,
+            timestamp: Some(now as i64),
             updated_at: Some(now as i64),
             expires_at: None,
             version: Some(1),
