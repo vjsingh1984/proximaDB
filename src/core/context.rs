@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 /// Process-wide shared context for dependency injection of cross-cutting services
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SharedContext {
     /// Cross-cache orchestrator for coordinated eviction and rebalancing
     pub orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
@@ -21,7 +20,6 @@ pub struct SharedContext {
     /// RBAC enforcer for permission validation
     pub rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 }
-
 
 /// Runtime settings for graph traversal prefetch optimization
 #[derive(Clone, Debug)]

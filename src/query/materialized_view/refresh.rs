@@ -14,8 +14,7 @@ use tracing::{debug, info, warn};
 use super::definition::{MaterializedViewError, MaterializedViewId, MaterializedViewResult};
 
 /// Refresh strategy for materialized views
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RefreshStrategy {
     /// Refresh only when explicitly requested
     #[default]
@@ -58,7 +57,6 @@ where
     let secs = u64::deserialize(deserializer)?;
     Ok(Duration::from_secs(secs))
 }
-
 
 impl RefreshStrategy {
     /// Create a periodic refresh strategy
@@ -396,9 +394,10 @@ impl RefreshScheduler {
         // Find views that depend on this collection
         for entry in &self.scheduled_views {
             if entry.dependencies.contains(&collection.to_string())
-                && let RefreshStrategy::OnChange { debounce } = &entry.strategy {
-                    affected_views.push((entry.view_name.clone(), *debounce));
-                }
+                && let RefreshStrategy::OnChange { debounce } = &entry.strategy
+            {
+                affected_views.push((entry.view_name.clone(), *debounce));
+            }
         }
 
         for (view_name, debounce) in affected_views {
@@ -460,20 +459,21 @@ impl RefreshScheduler {
 
         for entry in &self.scheduled_views {
             if let Some(next_refresh) = entry.next_refresh
-                && now >= next_refresh {
-                    let event = RefreshEvent::scheduled(&entry.view_name);
-                    if let Err(e) = self.event_tx.send(event).await {
-                        warn!(
-                            view = %entry.view_name,
-                            error = %e,
-                            "Failed to send scheduled refresh event"
-                        );
-                    } else {
-                        self.stats
-                            .scheduled_triggers
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
+                && now >= next_refresh
+            {
+                let event = RefreshEvent::scheduled(&entry.view_name);
+                if let Err(e) = self.event_tx.send(event).await {
+                    warn!(
+                        view = %entry.view_name,
+                        error = %e,
+                        "Failed to send scheduled refresh event"
+                    );
+                } else {
+                    self.stats
+                        .scheduled_triggers
+                        .fetch_add(1, Ordering::Relaxed);
                 }
+            }
         }
 
         Ok(())

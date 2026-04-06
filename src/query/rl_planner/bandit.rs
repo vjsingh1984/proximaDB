@@ -218,7 +218,8 @@ impl ContextualBanditPlanner {
                     _ => (4.0, 6.0),
                 };
 
-                self.action_stats.insert(action_id, BetaDistribution::new(alpha, beta));
+                self.action_stats
+                    .insert(action_id, BetaDistribution::new(alpha, beta));
             }
         }
     }
@@ -242,7 +243,11 @@ impl ContextualBanditPlanner {
             self.thompson_sampling_select(state, action_space)
         } else {
             // For ε-greedy: use higher exploration rate for under-explored engines
-            let engine_updates = self.engine_update_counts.get(&engine_name).copied().unwrap_or(0);
+            let engine_updates = self
+                .engine_update_counts
+                .get(&engine_name)
+                .copied()
+                .unwrap_or(0);
             let effective_rate = if engine_updates < 50 {
                 self.base_exploration_rate
             } else {
@@ -446,10 +451,7 @@ impl ContextualBanditPlanner {
             .iter()
             .map(|action| {
                 let action_id = action.to_action_id();
-                let expected = self
-                    .action_stats
-                    .get(&action_id)
-                    .map_or(0.5, |b| b.mean());
+                let expected = self.action_stats.get(&action_id).map_or(0.5, |b| b.mean());
                 let context_bonus = self
                     .context_weights
                     .get(&action_id)

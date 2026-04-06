@@ -25,12 +25,12 @@ use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::network::arrow_ipc::ArrowProtoCodec;
 use crate::observability::ObservabilityService;
+use crate::query::multimodel_router::{self, StoreType};
 use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
 use crate::services::{DdlService, DmlService};
 use crate::storage::StorageEngine;
-use crate::query::multimodel_router::{self, StoreType};
 use crate::storage::document::DocumentService;
 
 /// PostgreSQL protocol handler
@@ -600,13 +600,16 @@ impl PostgresProtocol {
                 // Get name and dimension from config
                 let name = collection
                     .config
-                    .as_ref().map_or_else(|| collection.id.clone(), |c| c.name.clone());
+                    .as_ref()
+                    .map_or_else(|| collection.id.clone(), |c| c.name.clone());
                 let dim = collection
                     .config
-                    .as_ref().map_or_else(|| "0".to_string(), |c| c.dimension.to_string());
+                    .as_ref()
+                    .map_or_else(|| "0".to_string(), |c| c.dimension.to_string());
                 let count = collection
                     .stats
-                    .as_ref().map_or_else(|| "0".to_string(), |s| s.vector_count.to_string());
+                    .as_ref()
+                    .map_or_else(|| "0".to_string(), |s| s.vector_count.to_string());
 
                 self.send_data_row(&[&name, &dim, &count]).await?;
                 self.send_command_complete("SELECT 1").await
@@ -1175,9 +1178,10 @@ impl PostgresProtocol {
             if let Some(eq_pos) = after.find('=') {
                 let value_start = after[eq_pos + 1..].trim();
                 if value_start.starts_with('\'')
-                    && let Some(end) = value_start[1..].find('\'') {
-                        services.push(value_start[1..end + 1].to_string());
-                    }
+                    && let Some(end) = value_start[1..].find('\'')
+                {
+                    services.push(value_start[1..end + 1].to_string());
+                }
             }
         }
 
@@ -1193,9 +1197,10 @@ impl PostgresProtocol {
             if let Some(eq_pos) = after.find('=') {
                 let value_start = after[eq_pos + 1..].trim();
                 if value_start.starts_with('\'')
-                    && let Some(end) = value_start[1..].find('\'') {
-                        return Some(value_start[1..end + 1].to_string());
-                    }
+                    && let Some(end) = value_start[1..].find('\'')
+                {
+                    return Some(value_start[1..end + 1].to_string());
+                }
             }
         }
 
@@ -3300,10 +3305,7 @@ mod tests {
             CopyFormat::Binary
         );
         // Default is Text when no FORMAT clause
-        assert_eq!(
-            detect("COPY my_table FROM STDIN"),
-            CopyFormat::Text
-        );
+        assert_eq!(detect("COPY my_table FROM STDIN"), CopyFormat::Text);
         assert_eq!(
             detect("COPY my_table FROM STDIN WITH (HEADER true)"),
             CopyFormat::Text
@@ -3337,10 +3339,7 @@ mod tests {
         );
 
         // Small dimension
-        assert_eq!(
-            extract("CREATE TABLE tiny (id TEXT, v VECTOR(2))"),
-            Some(2)
-        );
+        assert_eq!(extract("CREATE TABLE tiny (id TEXT, v VECTOR(2))"), Some(2));
 
         // Whitespace around number
         assert_eq!(
@@ -3349,16 +3348,10 @@ mod tests {
         );
 
         // No VECTOR column -> None
-        assert_eq!(
-            extract("CREATE TABLE plain (id INT, name TEXT)"),
-            None
-        );
+        assert_eq!(extract("CREATE TABLE plain (id INT, name TEXT)"), None);
 
         // Malformed (no closing paren) -> None
-        assert_eq!(
-            extract("CREATE TABLE broken (id TEXT, v VECTOR("),
-            None
-        );
+        assert_eq!(extract("CREATE TABLE broken (id TEXT, v VECTOR("), None);
 
         // Non-numeric content -> None
         assert_eq!(

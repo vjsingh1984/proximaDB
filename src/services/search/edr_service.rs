@@ -3,7 +3,7 @@
 //! This module provides high-level EDR search services following the hybrid_search.rs pattern.
 //! It demonstrates EDR integration patterns and provides a foundation for future API integration.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::time::Instant;

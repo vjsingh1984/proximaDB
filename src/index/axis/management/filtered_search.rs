@@ -46,9 +46,7 @@ use tracing::{debug, info, trace};
 use crate::core::search::filter_contract::{
     CandidateSet, FilterContract, MemoryCandidateSet, MetadataLookup, StorageEngineType,
 };
-use crate::core::search::hybrid::{
-    HybridExecutionStrategy, HybridQuery,
-};
+use crate::core::search::hybrid::{HybridExecutionStrategy, HybridQuery};
 use crate::index::axis::management::manager::AxisManager;
 use crate::proto::proximadb_v1::VectorRecord;
 
@@ -80,9 +78,7 @@ pub struct AxisMetadataLookup {
 impl AxisMetadataLookup {
     /// Create a new metadata lookup for a collection
     pub fn new(collection_id: String) -> Self {
-        Self {
-            collection_id,
-        }
+        Self { collection_id }
     }
 }
 
@@ -132,16 +128,13 @@ impl AxisManager {
     ) -> Result<FilteredSearchResult> {
         info!(
             "Executing filtered search for collection {} with strategy: {:?}",
-            collection_id,
-            hybrid_query.strategy
+            collection_id, hybrid_query.strategy
         );
 
         let start = std::time::Instant::now();
 
         // Create metadata lookup
-        let metadata_lookup = AxisMetadataLookup::new(
-            collection_id.to_string(),
-        );
+        let metadata_lookup = AxisMetadataLookup::new(collection_id.to_string());
 
         // Execute the hybrid query
         let query_result = hybrid_query.execute(&metadata_lookup).await?;
@@ -178,12 +171,8 @@ impl AxisManager {
 
         let pushdown_supported = strategy.indexes.iter().any(|spec| {
             filter.can_pushdown(match spec.algorithm {
-                crate::index::axis::types::IndexAlgorithm::HNSW { .. } => {
-                    StorageEngineType::HNSW
-                }
-                crate::index::axis::types::IndexAlgorithm::IVF { .. } => {
-                    StorageEngineType::IVF
-                }
+                crate::index::axis::types::IndexAlgorithm::HNSW { .. } => StorageEngineType::HNSW,
+                crate::index::axis::types::IndexAlgorithm::IVF { .. } => StorageEngineType::IVF,
                 _ => StorageEngineType::BruteForce,
             })
         });
@@ -194,7 +183,8 @@ impl AxisManager {
                 .await
         } else {
             debug!("Filter cannot be pushed down, using candidate scan");
-            self.generate_candidates_by_scan(collection_id, filter).await
+            self.generate_candidates_by_scan(collection_id, filter)
+                .await
         }
     }
 
@@ -238,8 +228,7 @@ impl AxisManager {
     ) -> Result<Vec<VectorRecord>> {
         info!(
             "Executing filtered HNSW search for {} with top_k={}",
-            collection_id,
-            top_k
+            collection_id, top_k
         );
 
         let start = std::time::Instant::now();
@@ -279,8 +268,7 @@ impl AxisManager {
     ) -> Result<Vec<VectorRecord>> {
         info!(
             "Executing filtered IVF search for {} with top_k={}",
-            collection_id,
-            top_k
+            collection_id, top_k
         );
 
         let start = std::time::Instant::now();
@@ -319,8 +307,7 @@ impl AxisManager {
     ) -> Result<Vec<VectorRecord>> {
         trace!(
             "Executing unfiltered HNSW search for {} with top_k={}",
-            collection_id,
-            top_k
+            collection_id, top_k
         );
 
         // Use existing HNSW search implementation
@@ -338,8 +325,7 @@ impl AxisManager {
     ) -> Result<Vec<VectorRecord>> {
         trace!(
             "Executing unfiltered IVF search for {} with top_k={}",
-            collection_id,
-            top_k
+            collection_id, top_k
         );
 
         // Use existing IVF search implementation

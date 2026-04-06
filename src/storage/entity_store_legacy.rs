@@ -446,10 +446,11 @@ impl EntityStore for ProximaEntityStore {
             }
         };
         if opt.is_some()
-            && let Some(orch) = CrossCacheOrchestrator::global() {
-                orch.pattern_tracker()
-                    .track_access_async(header_key.clone(), CacheType::EntityHeader);
-            }
+            && let Some(orch) = CrossCacheOrchestrator::global()
+        {
+            orch.pattern_tracker()
+                .track_access_async(header_key.clone(), CacheType::EntityHeader);
+        }
         let header: EntityHeader = if let Some(bytes) = opt {
             // Deserialize header using serde_json
             match serde_json::from_slice::<(
@@ -737,9 +738,10 @@ impl EntityStore for ProximaEntityStore {
             let mut ids = Vec::new();
             for key in headers.keys() {
                 if key.starts_with(&format!("{}:", collection_id))
-                    && let Some(entity_id) = key.split(':').nth(1) {
-                        ids.push(entity_id.to_string());
-                    }
+                    && let Some(entity_id) = key.split(':').nth(1)
+                {
+                    ids.push(entity_id.to_string());
+                }
             }
             ids
         };
@@ -800,13 +802,14 @@ impl ProximaEntityStore {
         // Second pass: Load entities and apply detailed metadata filtering
         for entity_id in candidate_ids.into_iter().take(limit * 2) {
             if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id, true, true).await
-                && self.entity_matches_metadata_filter(&entity, filter) {
-                    results.push((entity, 0.0f32)); // 0.0 since no similarity scoring
+                && self.entity_matches_metadata_filter(&entity, filter)
+            {
+                results.push((entity, 0.0f32)); // 0.0 since no similarity scoring
 
-                    if results.len() >= limit {
-                        break;
-                    }
+                if results.len() >= limit {
+                    break;
                 }
+            }
         }
 
         Ok(results)
@@ -876,19 +879,21 @@ impl ProximaEntityStore {
 
             // Search in typed metadata
             if let Some(ref typed_metadata) = entity.typed_metadata
-                && let Some(typed_field) = typed_metadata.fields.get(&clause.field) {
-                    field_found = true;
-                    if !self.typed_field_matches(typed_field, clause) {
-                        return false;
-                    }
+                && let Some(typed_field) = typed_metadata.fields.get(&clause.field)
+            {
+                field_found = true;
+                if !self.typed_field_matches(typed_field, clause) {
+                    return false;
                 }
+            }
 
             // If field not found in typed metadata, check flexible metadata
             if !field_found
                 && let Some(flexible_value) = entity.flexible_metadata.get(&clause.field)
-                    && !self.sql_values_match(flexible_value, clause) {
-                        return false;
-                    }
+                && !self.sql_values_match(flexible_value, clause)
+            {
+                return false;
+            }
         }
 
         true
@@ -938,28 +943,29 @@ impl ProximaEntityStore {
             }
 
             if key.starts_with(&format!("{}/entity/", collection_id))
-                && let Some(entity_id) = key.strip_prefix(&format!("{}/entity/", collection_id)) {
-                    // For now, retrieve entity and apply filters (could be optimized)
-                    if let Ok(Some(entity)) = self
-                        .get_entity(collection_id, entity_id, false, false)
-                        .await
-                    {
-                        // If no filters provided, include all entities
-                        // Otherwise check that entity matches all filters
-                        let matches = if filters.is_empty() {
-                            true
-                        } else {
-                            filters
-                                .iter()
-                                .all(|filter| self.entity_matches_metadata_filter(&entity, filter))
-                        };
+                && let Some(entity_id) = key.strip_prefix(&format!("{}/entity/", collection_id))
+            {
+                // For now, retrieve entity and apply filters (could be optimized)
+                if let Ok(Some(entity)) = self
+                    .get_entity(collection_id, entity_id, false, false)
+                    .await
+                {
+                    // If no filters provided, include all entities
+                    // Otherwise check that entity matches all filters
+                    let matches = if filters.is_empty() {
+                        true
+                    } else {
+                        filters
+                            .iter()
+                            .all(|filter| self.entity_matches_metadata_filter(&entity, filter))
+                    };
 
-                        if matches {
-                            results.push(entity);
-                            count += 1;
-                        }
+                    if matches {
+                        results.push(entity);
+                        count += 1;
                     }
                 }
+            }
         }
 
         Ok(results)
@@ -1061,15 +1067,15 @@ impl ProximaEntityStore {
                         let headers = match self.headers.read() {
                             Ok(guard) => guard,
                             Err(e) => {
-                                return Err(anyhow::anyhow!("RwLock for headers is poisoned: {}", e));
+                                return Err(anyhow::anyhow!(
+                                    "RwLock for headers is poisoned: {}",
+                                    e
+                                ));
                             }
                         };
                         // Clone the data we need before dropping the lock
-                        let entity_ids: Vec<String> = headers
-                            .keys()
-                            .skip(start_idx)
-                            .cloned()
-                            .collect();
+                        let entity_ids: Vec<String> =
+                            headers.keys().skip(start_idx).cloned().collect();
                         drop(headers); // Explicitly drop the lock before awaits
                         entity_ids
                     };
@@ -1104,10 +1110,10 @@ impl ProximaEntityStore {
                                 && let Ok(Some(entity)) = self
                                     .get_entity(collection_id, &entity_id, false, false)
                                     .await
-                                {
-                                    results.push(entity);
-                                    count += 1;
-                                }
+                            {
+                                results.push(entity);
+                                count += 1;
+                            }
                         }
                     }
 
@@ -1168,9 +1174,10 @@ impl ProximaEntityStore {
         match LogicalOp::try_from(f.op).unwrap_or(LogicalOp::And) {
             LogicalOp::And => Some(FE::And(terms)),
             LogicalOp::Or => Some(FE::Or(terms)),
-            LogicalOp::Not => {
-                terms.into_iter().next().map(|first| FE::Not(Box::new(first)))
-            }
+            LogicalOp::Not => terms
+                .into_iter()
+                .next()
+                .map(|first| FE::Not(Box::new(first))),
         }
     }
 }

@@ -16,8 +16,8 @@ use tokio;
 use crate::query::unified::{
     ast::{
         DataModel, DistanceMetric, DocumentQueryExpr, GraphTraversalExpr, LogQueryExpr,
-        ModelOperation, MultiModelQuery, QueryComponent, StartNodeSpec,
-        TraversalDirection, VectorSearchExpr, VectorSearchParams,
+        ModelOperation, MultiModelQuery, QueryComponent, StartNodeSpec, TraversalDirection,
+        VectorSearchExpr, VectorSearchParams,
     },
     executor::ParallelExecutor,
 };

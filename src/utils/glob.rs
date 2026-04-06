@@ -433,9 +433,10 @@ impl<'a> GlobMatcher<'a> {
                     while text_idx < text_chars.len() {
                         if elem_idx + 1 < alt.elements.len()
                             && let PatternElement::Literal(ch) = &alt.elements[elem_idx + 1]
-                                && text_chars[text_idx] == *ch {
-                                    break;
-                                }
+                            && text_chars[text_idx] == *ch
+                        {
+                            break;
+                        }
                         consumed += 1;
                         text_idx += 1;
                     }

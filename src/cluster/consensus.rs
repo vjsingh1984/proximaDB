@@ -140,8 +140,7 @@ pub enum Command {
 }
 
 /// Persistent state on all servers
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 struct PersistentState {
     /// Latest term server has seen
     current_term: u64,
@@ -150,7 +149,6 @@ struct PersistentState {
     /// Log entries
     log: Vec<LogEntry>,
 }
-
 
 /// Volatile state on all servers
 #[derive(Debug, Clone, Default)]
@@ -162,15 +160,13 @@ struct VolatileState {
 }
 
 /// Volatile state on leaders (reinitialized after election)
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 struct LeaderState {
     /// For each server, index of next log entry to send
     next_index: HashMap<String, u64>,
     /// For each server, index of highest log entry known to be replicated
     match_index: HashMap<String, u64>,
 }
-
 
 /// Result of applying a command
 #[derive(Debug)]
@@ -821,10 +817,11 @@ impl RaftConsensus {
             if entry.index as usize <= persistent.log.len() {
                 // Entry already exists, check for conflict
                 if let Some(existing) = persistent.log.get(entry.index as usize - 1)
-                    && existing.term != entry.term {
-                        persistent.log.truncate(entry.index as usize - 1);
-                        persistent.log.push(entry);
-                    }
+                    && existing.term != entry.term
+                {
+                    persistent.log.truncate(entry.index as usize - 1);
+                    persistent.log.push(entry);
+                }
             } else {
                 persistent.log.push(entry);
             }
@@ -1046,13 +1043,14 @@ impl RaftConsensus {
                 async move {
                     // Check circuit breaker
                     if let Some(ref cb) = breaker
-                        && !cb.should_allow_request() {
-                            tracing::debug!(
-                                peer = %peer.node_id,
-                                "Circuit breaker open, skipping vote request"
-                            );
-                            return None;
-                        }
+                        && !cb.should_allow_request()
+                    {
+                        tracing::debug!(
+                            peer = %peer.node_id,
+                            "Circuit breaker open, skipping vote request"
+                        );
+                        return None;
+                    }
 
                     match transport.request_vote(&peer, req).await {
                         Ok(response) => {
@@ -1187,12 +1185,13 @@ impl RaftConsensus {
                 async move {
                     // Check circuit breaker
                     if let Some(ref cb) = breaker
-                        && !cb.should_allow_request() {
-                            return (
-                                peer.node_id.clone(),
-                                Err("Circuit breaker open".to_string()),
-                            );
-                        }
+                        && !cb.should_allow_request()
+                    {
+                        return (
+                            peer.node_id.clone(),
+                            Err("Circuit breaker open".to_string()),
+                        );
+                    }
 
                     match transport.append_entries(&peer, request).await {
                         Ok(response) => {
@@ -1312,13 +1311,14 @@ impl RaftConsensus {
         let persistent = self.persistent.read().await;
         if new_commit > 0
             && let Some(entry) = persistent.log.get(new_commit as usize - 1)
-                && entry.term == persistent.current_term {
-                    drop(persistent);
-                    let mut volatile = self.volatile.write().await;
-                    if new_commit > volatile.commit_index {
-                        volatile.commit_index = new_commit;
-                    }
-                }
+            && entry.term == persistent.current_term
+        {
+            drop(persistent);
+            let mut volatile = self.volatile.write().await;
+            if new_commit > volatile.commit_index {
+                volatile.commit_index = new_commit;
+            }
+        }
     }
 
     /// Step down to follower when higher term is discovered

@@ -558,7 +558,10 @@ impl ShortestPathResult {
 
 /// Format Unix timestamp (ms) as ISO 8601 string
 pub fn format_timestamp(ts_ms: i64) -> String {
-    DateTime::from_timestamp_millis(ts_ms).map_or_else(|| "1970-01-01T00:00:00.000Z".to_string(), |dt: DateTime<Utc>| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+    DateTime::from_timestamp_millis(ts_ms).map_or_else(
+        || "1970-01-01T00:00:00.000Z".to_string(),
+        |dt: DateTime<Utc>| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    )
 }
 
 /// Parse ISO 8601 string to Unix timestamp (ms)

@@ -18,8 +18,8 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::observability::ObservabilityStorageEngine;
@@ -170,7 +170,10 @@ impl ObservabilityStorageEngine for ChronoEngine {
 
     async fn ingest_logs(&self, _namespace: String, entries: Vec<LogEntry>) -> Result<u64> {
         let count = entries.len() as u64;
-        let mut logs = self.logs.write().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let mut logs = self
+            .logs
+            .write()
+            .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
         logs.extend(entries);
         self.log_count.fetch_add(count, Ordering::Relaxed);
         Ok(count)
@@ -184,14 +187,19 @@ impl ObservabilityStorageEngine for ChronoEngine {
         severity: Option<i32>,
         text_filter: Option<String>,
     ) -> Result<Vec<LogEntry>> {
-        let logs = self.logs.read().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        let logs = self
+            .logs
+            .read()
+            .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
         let filtered: Vec<LogEntry> = logs
             .iter()
             .filter(|log| {
                 log.timestamp_ns >= start_ns
                     && log.timestamp_ns <= end_ns
                     && severity.map_or(true, |s| log.severity >= s)
-                    && text_filter.as_ref().map_or(true, |t| log.message.contains(t.as_str()))
+                    && text_filter
+                        .as_ref()
+                        .map_or(true, |t| log.message.contains(t.as_str()))
             })
             .cloned()
             .collect();
@@ -250,10 +258,22 @@ impl ObservabilityStorageEngine for ChronoEngine {
     async fn collect_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
         metrics.insert("engine".to_string(), serde_json::json!("chrono"));
-        metrics.insert("series_count".to_string(), serde_json::json!(self.series_keys.len()));
-        metrics.insert("metric_count".to_string(), serde_json::json!(self.metric_count.load(Ordering::Relaxed)));
-        metrics.insert("log_count".to_string(), serde_json::json!(self.log_count.load(Ordering::Relaxed)));
-        metrics.insert("span_count".to_string(), serde_json::json!(self.span_count.load(Ordering::Relaxed)));
+        metrics.insert(
+            "series_count".to_string(),
+            serde_json::json!(self.series_keys.len()),
+        );
+        metrics.insert(
+            "metric_count".to_string(),
+            serde_json::json!(self.metric_count.load(Ordering::Relaxed)),
+        );
+        metrics.insert(
+            "log_count".to_string(),
+            serde_json::json!(self.log_count.load(Ordering::Relaxed)),
+        );
+        metrics.insert(
+            "span_count".to_string(),
+            serde_json::json!(self.span_count.load(Ordering::Relaxed)),
+        );
         Ok(metrics)
     }
 }
@@ -379,7 +399,10 @@ mod tests {
     #[test]
     fn test_chrono_engine_name() {
         let engine = ChronoEngine::new().unwrap();
-        assert_eq!(crate::observability::ObservabilityStorageEngine::engine_name(&engine), "chrono");
+        assert_eq!(
+            crate::observability::ObservabilityStorageEngine::engine_name(&engine),
+            "chrono"
+        );
     }
 
     #[test]
@@ -391,7 +414,9 @@ mod tests {
     #[tokio::test]
     async fn test_chrono_collect_metrics_has_series_count() {
         let engine = ChronoEngine::new().unwrap();
-        let metrics = ObservabilityStorageEngine::collect_metrics(&engine).await.unwrap();
+        let metrics = ObservabilityStorageEngine::collect_metrics(&engine)
+            .await
+            .unwrap();
         assert!(metrics.contains_key("series_count"));
     }
 
@@ -404,12 +429,21 @@ mod tests {
             .map(|i| make_metric("cpu_usage", 100 + i * 100, i as f64))
             .collect();
 
-        let count = engine.ingest_metrics("default".to_string(), samples).await.unwrap();
+        let count = engine
+            .ingest_metrics("default".to_string(), samples)
+            .await
+            .unwrap();
         assert_eq!(count, 5);
 
         // Query range [200, 400] should return 3 samples (ts=200, 300, 400)
         let results = engine
-            .query_metrics("default".to_string(), "cpu_usage".to_string(), vec![], 200, 400)
+            .query_metrics(
+                "default".to_string(),
+                "cpu_usage".to_string(),
+                vec![],
+                200,
+                400,
+            )
             .await
             .unwrap();
         assert_eq!(results.len(), 3);
@@ -423,7 +457,10 @@ mod tests {
             .await
             .unwrap();
 
-        let results = engine.query_metrics("default".to_string(), "cpu".to_string(), vec![], 200, 300).await.unwrap();
+        let results = engine
+            .query_metrics("default".to_string(), "cpu".to_string(), vec![], 200, 300)
+            .await
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -490,7 +527,10 @@ mod tests {
             .await
             .unwrap();
 
-        let results = engine.query_logs("default".to_string(),150, 250, None, None).await.unwrap();
+        let results = engine
+            .query_logs("default".to_string(), 150, 250, None, None)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1); // only ts=200
     }
 
@@ -501,16 +541,19 @@ mod tests {
             .ingest_logs(
                 "default".to_string(),
                 vec![
-                    make_log(100, 1, "debug msg"),  // severity 1 = DEBUG
-                    make_log(200, 2, "info msg"),   // severity 2 = INFO
-                    make_log(300, 4, "error msg"),  // severity 4 = ERROR
+                    make_log(100, 1, "debug msg"), // severity 1 = DEBUG
+                    make_log(200, 2, "info msg"),  // severity 2 = INFO
+                    make_log(300, 4, "error msg"), // severity 4 = ERROR
                 ],
             )
             .await
             .unwrap();
 
         // severity >= 4 (ERROR and above)
-        let errors = engine.query_logs("default".to_string(),0, i64::MAX, Some(4), None).await.unwrap();
+        let errors = engine
+            .query_logs("default".to_string(), 0, i64::MAX, Some(4), None)
+            .await
+            .unwrap();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].message, "error msg");
     }
@@ -531,7 +574,13 @@ mod tests {
             .unwrap();
 
         let timeouts = engine
-            .query_logs("default".to_string(),0, i64::MAX, None, Some("timeout".to_string()))
+            .query_logs(
+                "default".to_string(),
+                0,
+                i64::MAX,
+                None,
+                Some("timeout".to_string()),
+            )
             .await
             .unwrap();
         assert_eq!(timeouts.len(), 1);
@@ -555,13 +604,25 @@ mod tests {
             .unwrap();
 
         let trace1 = engine
-            .query_traces("default".to_string(),Some("trace1".to_string()), None, 0, i64::MAX)
+            .query_traces(
+                "default".to_string(),
+                Some("trace1".to_string()),
+                None,
+                0,
+                i64::MAX,
+            )
             .await
             .unwrap();
         assert_eq!(trace1.len(), 2);
 
         let trace2 = engine
-            .query_traces("default".to_string(),Some("trace2".to_string()), None, 0, i64::MAX)
+            .query_traces(
+                "default".to_string(),
+                Some("trace2".to_string()),
+                None,
+                0,
+                i64::MAX,
+            )
             .await
             .unwrap();
         assert_eq!(trace2.len(), 1);
@@ -571,7 +632,13 @@ mod tests {
     async fn test_chrono_trace_missing() {
         let engine = ChronoEngine::new().unwrap();
         let result = engine
-            .query_traces("default".to_string(),Some("nonexistent".to_string()), None, 0, i64::MAX)
+            .query_traces(
+                "default".to_string(),
+                Some("nonexistent".to_string()),
+                None,
+                0,
+                i64::MAX,
+            )
             .await
             .unwrap();
         assert!(result.is_empty());
@@ -594,7 +661,9 @@ mod tests {
             .await
             .unwrap();
 
-        let metrics = ObservabilityStorageEngine::collect_metrics(&engine).await.unwrap();
+        let metrics = ObservabilityStorageEngine::collect_metrics(&engine)
+            .await
+            .unwrap();
         assert_eq!(metrics["metric_count"], serde_json::json!(1));
         assert_eq!(metrics["log_count"], serde_json::json!(1));
         assert_eq!(metrics["span_count"], serde_json::json!(1));

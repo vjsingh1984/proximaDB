@@ -653,9 +653,10 @@ RECOMMENDATIONS:",
                     rec.description = line.split(':').nth(1).unwrap_or("").trim().to_string();
                 }
             } else if line.starts_with("Expected Impact:")
-                && let Some(ref mut rec) = current_recommendation {
-                    rec.estimated_impact = line.split(':').nth(1).unwrap_or("").trim().to_string();
-                }
+                && let Some(ref mut rec) = current_recommendation
+            {
+                rec.estimated_impact = line.split(':').nth(1).unwrap_or("").trim().to_string();
+            }
         }
 
         // Add final recommendation

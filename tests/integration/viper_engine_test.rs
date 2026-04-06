@@ -11,9 +11,11 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::test;
 
-use proximadb::storage::engines::impls::viper::{ViperEngine, ViperConfig};
-use proximadb::storage::engines::impls::viper::types::{CollectionMetadata, PartitionStrategy, CompressionStats};
-use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+use proximadb::storage::engines::impls::viper::types::{
+    CollectionMetadata, CompressionStats, PartitionStrategy,
+};
+use proximadb::storage::engines::impls::viper::{ViperConfig, ViperEngine};
+use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Test helper to create a temporary directory
 fn create_temp_dir() -> TempDir {
@@ -26,14 +28,14 @@ async fn test_viper_engine_initialization() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .expect("Failed to create filesystem factory")
+            .expect("Failed to create filesystem factory"),
     );
-    
+
     let config = ViperConfig::default();
     let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
-    
+
     // Test that engine is properly initialized
     assert_eq!(engine.get_config().enable_ml_clustering, true);
     assert_eq!(engine.get_config().enable_background_compaction, true);
@@ -45,20 +47,20 @@ async fn test_collection_metadata_management() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .expect("Failed to create filesystem factory")
+            .expect("Failed to create filesystem factory"),
     );
-    
+
     let config = ViperConfig::default();
     let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
-    
+
     let collection_id = "test_collection".to_string();
-    
+
     // Test that initially no metadata exists
     let metadata = engine.get_collection_metadata(&collection_id).await;
     assert!(metadata.is_none());
-    
+
     // Create and update metadata
     let test_metadata = CollectionMetadata {
         collection_id: collection_id.clone(),
@@ -77,9 +79,11 @@ async fn test_collection_metadata_management() {
         schema_version: Some(1),
         flush_size_bytes: Some(32 * 1024 * 1024),
     };
-    
-    engine.update_collection_metadata(collection_id.clone(), test_metadata.clone()).await;
-    
+
+    engine
+        .update_collection_metadata(collection_id.clone(), test_metadata.clone())
+        .await;
+
     // Test that metadata was stored
     let retrieved_metadata = engine.get_collection_metadata(&collection_id).await;
     assert!(retrieved_metadata.is_some());
@@ -97,21 +101,22 @@ async fn test_parquet_file_discovery() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .expect("Failed to create filesystem factory")
+            .expect("Failed to create filesystem factory"),
     );
-    
+
     let config = ViperConfig::default();
     let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
-    
+
     let collection_id = "file_discovery_test".to_string();
-    
+
     // Test Parquet file discovery
-    let parquet_files = engine.get_parquet_files_for_collection(&collection_id)
+    let parquet_files = engine
+        .get_parquet_files_for_collection(&collection_id)
         .await
         .expect("Failed to get Parquet files");
-    
+
     // Should return mock files for now
     assert!(parquet_files.len() > 0);
     for file in &parquet_files {
@@ -126,22 +131,23 @@ async fn test_cluster_prediction() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .expect("Failed to create filesystem factory")
+            .expect("Failed to create filesystem factory"),
     );
-    
+
     let config = ViperConfig::default();
     let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
-    
+
     let collection_id = "cluster_prediction_test".to_string();
     let test_vector = vec![1.0, 2.0, 3.0, 4.0];
-    
+
     // Test cluster prediction
-    let cluster_prediction = engine.predict_cluster(&collection_id, &test_vector)
+    let cluster_prediction = engine
+        .predict_cluster(&collection_id, &test_vector)
         .await
         .expect("Failed to predict cluster");
-    
+
     // Should return None for now (not implemented)
     assert!(cluster_prediction.is_none());
 }
@@ -152,23 +158,24 @@ async fn test_search_vectors_basic() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .expect("Failed to create filesystem factory")
+            .expect("Failed to create filesystem factory"),
     );
-    
+
     let config = ViperConfig::default();
     let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
-    
+
     let collection_id = "search_test_collection";
     let query_vector = vec![1.0, 2.0, 3.0, 4.0];
     let k = 10;
-    
+
     // Test basic search functionality
-    let search_results = engine.search_vectors(collection_id, &query_vector, k)
+    let search_results = engine
+        .search_vectors(collection_id, &query_vector, k)
         .await
         .expect("Failed to search vectors");
-    
+
     // Should return empty results for now (mock implementation)
     assert_eq!(search_results.len(), 0);
 }
@@ -179,29 +186,25 @@ async fn test_search_vectors_in_cluster() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .expect("Failed to create filesystem factory")
+            .expect("Failed to create filesystem factory"),
     );
-    
+
     let config = ViperConfig::default();
     let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
-    
+
     let collection_id = "cluster_search_test";
     let query_vector = vec![1.0, 2.0, 3.0, 4.0];
     let k = 5;
     let cluster_id = "cluster_1";
-    
+
     // Test cluster-specific search
-    let cluster_results = engine.search_vectors_in_cluster(
-        collection_id,
-        &query_vector,
-        k,
-        cluster_id,
-    )
-    .await
-    .expect("Failed to search in cluster");
-    
+    let cluster_results = engine
+        .search_vectors_in_cluster(collection_id, &query_vector, k, cluster_id)
+        .await
+        .expect("Failed to search in cluster");
+
     // Should return empty results for now (mock implementation)
     assert_eq!(cluster_results.len(), 0);
 }
@@ -212,18 +215,18 @@ async fn test_engine_configuration_access() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .expect("Failed to create filesystem factory")
+            .expect("Failed to create filesystem factory"),
     );
-    
+
     let mut config = ViperConfig::default();
     config.enable_ml_clustering = false;
     config.enable_quantization = false;
     config.initial_cluster_count = 5;
-    
+
     let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
-    
+
     // Test configuration access
     let retrieved_config = engine.get_config();
     assert!(!retrieved_config.enable_ml_clustering);
@@ -235,7 +238,7 @@ async fn test_engine_configuration_access() {
 async fn test_engine_default_creation() {
     // Test that the default engine can be created
     let engine = ViperEngine::default();
-    
+
     // Test that default configuration is applied
     let config = engine.get_config();
     assert!(config.enable_ml_clustering);
@@ -249,17 +252,17 @@ async fn test_multiple_collections() {
     let filesystem = Arc::new(
         FilesystemFactory::create(FilesystemConfig::default())
             .await
-            .expect("Failed to create filesystem factory")
+            .expect("Failed to create filesystem factory"),
     );
-    
+
     let config = ViperConfig::default();
     let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
-    
+
     let collection_1 = "collection_1".to_string();
     let collection_2 = "collection_2".to_string();
-    
+
     // Create metadata for both collections
     let metadata_1 = CollectionMetadata {
         collection_id: collection_1.clone(),
@@ -278,7 +281,7 @@ async fn test_multiple_collections() {
         schema_version: Some(1),
         flush_size_bytes: Some(16 * 1024 * 1024),
     };
-    
+
     let metadata_2 = CollectionMetadata {
         collection_id: collection_2.clone(),
         vector_dimensions: 256,
@@ -296,19 +299,23 @@ async fn test_multiple_collections() {
         schema_version: Some(1),
         flush_size_bytes: Some(32 * 1024 * 1024),
     };
-    
+
     // Update metadata for both collections
-    engine.update_collection_metadata(collection_1.clone(), metadata_1).await;
-    engine.update_collection_metadata(collection_2.clone(), metadata_2).await;
-    
+    engine
+        .update_collection_metadata(collection_1.clone(), metadata_1)
+        .await;
+    engine
+        .update_collection_metadata(collection_2.clone(), metadata_2)
+        .await;
+
     // Test that both collections are accessible
     let retrieved_1 = engine.get_collection_metadata(&collection_1).await.unwrap();
     let retrieved_2 = engine.get_collection_metadata(&collection_2).await.unwrap();
-    
+
     assert_eq!(retrieved_1.vector_dimensions, 128);
     assert_eq!(retrieved_1.distance_metric, "cosine");
     assert_eq!(retrieved_1.active_clusters.len(), 1);
-    
+
     assert_eq!(retrieved_2.vector_dimensions, 256);
     assert_eq!(retrieved_2.distance_metric, "euclidean");
     assert_eq!(retrieved_2.active_clusters.len(), 2);

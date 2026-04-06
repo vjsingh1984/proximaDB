@@ -382,10 +382,12 @@ impl FederatedExecutor {
                     }
                 };
 
-                let doc_store = self
-                    .storage
-                    .get_document_store()
-                    .ok_or_else(|| anyhow!("Document store is not configured for collection '{}'", target))?;
+                let doc_store = self.storage.get_document_store().ok_or_else(|| {
+                    anyhow!(
+                        "Document store is not configured for collection '{}'",
+                        target
+                    )
+                })?;
 
                 let documents = doc_store
                     .query_documents(target, doc_filter, self.config.batch_size, 0)
@@ -422,10 +424,9 @@ impl FederatedExecutor {
 
             ModelType::Graph => {
                 // For graph scans, fetch all nodes from the graph store
-                let graph_store = self
-                    .storage
-                    .get_graph_store()
-                    .ok_or_else(|| anyhow!("Graph store is not configured for target '{}'", target))?;
+                let graph_store = self.storage.get_graph_store().ok_or_else(|| {
+                    anyhow!("Graph store is not configured for target '{}'", target)
+                })?;
 
                 let schema = Arc::new(Schema::new(vec![
                     Field::new("node_id", DataType::Utf8, false),
@@ -444,8 +445,7 @@ impl FederatedExecutor {
                 let props: Vec<String> = nodes
                     .iter()
                     .map(|n| {
-                        serde_json::to_string(&n.properties)
-                            .unwrap_or_else(|_| "{}".to_string())
+                        serde_json::to_string(&n.properties).unwrap_or_else(|_| "{}".to_string())
                     })
                     .collect();
                 let batch = RecordBatch::try_new(
@@ -461,7 +461,8 @@ impl FederatedExecutor {
 
             ModelType::Vector => Err(anyhow!(
                 "Full vector collection scans are not supported for '{}'; use VECTOR_SEARCH('{}', <query_vector>, <top_k>) to search by similarity or apply metadata filters via DOCUMENT_QUERY",
-                target, target
+                target,
+                target
             )),
 
             _ => Err(anyhow!(
@@ -666,7 +667,6 @@ impl FederatedExecutor {
         // Scan first document to detect vector fields and their dimensions
         let mut vector_fields: Vec<(String, usize)> = Vec::new(); // (field_name, dimension)
         if let Some(first_doc) = documents.first() {
-
             for (field_name, sql_value) in &first_doc.document.fields {
                 if let Some(sql_value::Value::ArrayValue(arr)) = sql_value.value.as_ref() {
                     // Check if this array contains only numbers (likely a vector)
@@ -998,7 +998,8 @@ impl FederatedExecutor {
 
             if let Some(idx) = leaf_idx {
                 let array = outer_batch.column(idx);
-                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
+                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row)
+                {
                     return Ok(vector);
                 }
             }
@@ -1009,7 +1010,8 @@ impl FederatedExecutor {
             let full_idx = Self::resolve_column_index(outer_batch.schema().as_ref(), &full_nested);
             if let Some(idx) = full_idx {
                 let array = outer_batch.column(idx);
-                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
+                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row)
+                {
                     return Ok(vector);
                 }
             }
@@ -1017,14 +1019,17 @@ impl FederatedExecutor {
 
         // Also try the full column_path as a direct column name (before base_column split)
         {
-            let full_path_idx = Self::resolve_column_index(outer_batch.schema().as_ref(), column_path)
-                .or_else(|| {
-                    let prefixed = format!("{}.{}", table, column_path);
-                    Self::resolve_column_index(outer_batch.schema().as_ref(), &prefixed)
-                });
+            let full_path_idx =
+                Self::resolve_column_index(outer_batch.schema().as_ref(), column_path).or_else(
+                    || {
+                        let prefixed = format!("{}.{}", table, column_path);
+                        Self::resolve_column_index(outer_batch.schema().as_ref(), &prefixed)
+                    },
+                );
             if let Some(idx) = full_path_idx {
                 let array = outer_batch.column(idx);
-                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
+                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row)
+                {
                     return Ok(vector);
                 }
             }
@@ -1057,9 +1062,10 @@ impl FederatedExecutor {
 
         // Fast path: try direct Arrow extraction (no JSON parsing needed)
         if nested_path.is_empty()
-            && let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row) {
-                return Ok(vector);
-            }
+            && let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row)
+        {
+            return Ok(vector);
+        }
 
         match array.data_type() {
             DataType::Utf8 => {
@@ -1094,33 +1100,31 @@ impl FederatedExecutor {
     fn try_extract_vector_from_arrow(array: &dyn Array, row: usize) -> Option<Vec<f32>> {
         // Try FixedSizeList<Float32> first (most common for embeddings)
         if let Some(fsl) = array.as_any().downcast_ref::<FixedSizeListArray>()
-            && !fsl.is_null(row) {
-                let values = fsl.value(row);
-                if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
-                    return Some(float_array.values().to_vec());
-                }
-                // Try Float64 list and convert to f32
-                if let Some(f64_array) =
-                    values.as_any().downcast_ref::<arrow::array::Float64Array>()
-                {
-                    return Some(f64_array.values().iter().map(|&v| v as f32).collect());
-                }
+            && !fsl.is_null(row)
+        {
+            let values = fsl.value(row);
+            if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
+                return Some(float_array.values().to_vec());
             }
+            // Try Float64 list and convert to f32
+            if let Some(f64_array) = values.as_any().downcast_ref::<arrow::array::Float64Array>() {
+                return Some(f64_array.values().iter().map(|&v| v as f32).collect());
+            }
+        }
 
         // Try List<Float32>
         if let Some(list) = array.as_any().downcast_ref::<ListArray>()
-            && !list.is_null(row) {
-                let values = list.value(row);
-                if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
-                    return Some(float_array.values().to_vec());
-                }
-                // Try Float64 list and convert to f32
-                if let Some(f64_array) =
-                    values.as_any().downcast_ref::<arrow::array::Float64Array>()
-                {
-                    return Some(f64_array.values().iter().map(|&v| v as f32).collect());
-                }
+            && !list.is_null(row)
+        {
+            let values = list.value(row);
+            if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
+                return Some(float_array.values().to_vec());
             }
+            // Try Float64 list and convert to f32
+            if let Some(f64_array) = values.as_any().downcast_ref::<arrow::array::Float64Array>() {
+                return Some(f64_array.values().iter().map(|&v| v as f32).collect());
+            }
+        }
 
         None
     }
@@ -2876,7 +2880,8 @@ impl FederatedExecutor {
                 let field = batch_schema.field(*index);
                 let requested_name = output_columns
                     .get(position)
-                    .or_else(|| columns.get(position)).map_or_else(|| field.name(), String::as_str);
+                    .or_else(|| columns.get(position))
+                    .map_or_else(|| field.name(), String::as_str);
 
                 if field.name() == requested_name {
                     field.as_ref().clone()
@@ -2958,7 +2963,8 @@ impl FederatedExecutor {
                 let field = batch_schema.field(*index);
                 // For dynamically added columns (beyond output_columns), use the field's own name
                 let requested_name = output_columns
-                    .get(position).map_or_else(|| field.name(), String::as_str);
+                    .get(position)
+                    .map_or_else(|| field.name(), String::as_str);
 
                 if field.name() == requested_name {
                     field.as_ref().clone()

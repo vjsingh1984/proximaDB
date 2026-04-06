@@ -166,10 +166,15 @@ impl StreamingParquetWriterStats {
 
         let mut norm_min = self.vector_norm_min.unwrap_or(f32::MAX);
         let mut norm_max = self.vector_norm_max.unwrap_or(f32::MIN);
-        let mut norm_sum = self.vector_norm_mean.unwrap_or(0.0)
-            * self.total_records as f32;
-        let mut comp_min = self.vector_component_min.clone().unwrap_or_else(|| vec![f32::MAX; dim]);
-        let mut comp_max = self.vector_component_max.clone().unwrap_or_else(|| vec![f32::MIN; dim]);
+        let mut norm_sum = self.vector_norm_mean.unwrap_or(0.0) * self.total_records as f32;
+        let mut comp_min = self
+            .vector_component_min
+            .clone()
+            .unwrap_or_else(|| vec![f32::MAX; dim]);
+        let mut comp_max = self
+            .vector_component_max
+            .clone()
+            .unwrap_or_else(|| vec![f32::MIN; dim]);
 
         // Ensure dimension matches
         if comp_min.len() != dim {
@@ -180,15 +185,23 @@ impl StreamingParquetWriterStats {
         for vec in vectors {
             // Compute L2 norm
             let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
-            if norm < norm_min { norm_min = norm; }
-            if norm > norm_max { norm_max = norm; }
+            if norm < norm_min {
+                norm_min = norm;
+            }
+            if norm > norm_max {
+                norm_max = norm;
+            }
             norm_sum += norm;
 
             // Update per-dimension bounds
             for (i, &v) in vec.iter().enumerate() {
                 if i < dim {
-                    if v < comp_min[i] { comp_min[i] = v; }
-                    if v > comp_max[i] { comp_max[i] = v; }
+                    if v < comp_min[i] {
+                        comp_min[i] = v;
+                    }
+                    if v > comp_max[i] {
+                        comp_max[i] = v;
+                    }
                 }
             }
         }
@@ -196,7 +209,11 @@ impl StreamingParquetWriterStats {
         let total = self.total_records + vectors.len();
         self.vector_norm_min = Some(norm_min);
         self.vector_norm_max = Some(norm_max);
-        self.vector_norm_mean = if total > 0 { Some(norm_sum / total as f32) } else { None };
+        self.vector_norm_mean = if total > 0 {
+            Some(norm_sum / total as f32)
+        } else {
+            None
+        };
         self.vector_component_min = Some(comp_min);
         self.vector_component_max = Some(comp_max);
     }

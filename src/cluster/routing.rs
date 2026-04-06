@@ -916,14 +916,15 @@ impl RoutingService {
 
         // Log routing decision for tracing
         if let Some(ctx) = context
-            && let Some(trace_id) = &ctx.trace_id {
-                tracing::debug!(
-                    trace_id = %trace_id,
-                    collection_id = %collection_id,
-                    shard_count = decisions.len(),
-                    "Routed to multiple shards"
-                );
-            }
+            && let Some(trace_id) = &ctx.trace_id
+        {
+            tracing::debug!(
+                trace_id = %trace_id,
+                collection_id = %collection_id,
+                shard_count = decisions.len(),
+                "Routed to multiple shards"
+            );
+        }
 
         Ok(decisions)
     }

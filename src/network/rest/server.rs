@@ -48,13 +48,11 @@ pub struct RestServer {
 }
 
 /// Authentication configuration for the REST server
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RestAuthConfig {
     /// Whether unified authentication is enabled
     pub enabled: bool,
 }
-
 
 /// Security configuration for the REST server.
 ///

@@ -305,17 +305,19 @@ impl FileSplit {
             // If split's max < predicate's min, split can be pruned
             if let (Some(split_max), Some(_pred_min)) = (&bounds.max, min.as_f64())
                 && let Some(split_max_val) = split_max.as_f64()
-                    && let Some(pred_min_val) = min.as_f64()
-                        && split_max_val < pred_min_val {
-                            return true;
-                        }
+                && let Some(pred_min_val) = min.as_f64()
+                && split_max_val < pred_min_val
+            {
+                return true;
+            }
             // If split's min > predicate's max, split can be pruned
             if let (Some(split_min), Some(_pred_max)) = (&bounds.min, max.as_f64())
                 && let Some(split_min_val) = split_min.as_f64()
-                    && let Some(pred_max_val) = max.as_f64()
-                        && split_min_val > pred_max_val {
-                            return true;
-                        }
+                && let Some(pred_max_val) = max.as_f64()
+                && split_min_val > pred_max_val
+            {
+                return true;
+            }
         }
         false // Cannot prune - must read this split
     }
@@ -382,7 +384,8 @@ impl FileSplit {
             && let SpatialBounds::BoundingBox {
                 min_corner,
                 max_corner,
-            } = spatial {
+            } = spatial
+        {
             // Calculate diagonal as conservative radius estimate
             let diagonal_sq: f32 = min_corner
                 .iter()
@@ -461,7 +464,9 @@ impl ScalarValue {
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     Some(ScalarValue::Int64(i))
-                } else { n.as_f64().map(ScalarValue::Float64) }
+                } else {
+                    n.as_f64().map(ScalarValue::Float64)
+                }
             }
             serde_json::Value::String(s) => Some(ScalarValue::String(s.clone())),
             _ => None,
@@ -496,41 +501,45 @@ impl ColumnBounds {
                 if let (Some(min), Some(max)) = (&self.min, &self.max)
                     && let (Some(min_val), Some(max_val)) =
                         (ScalarValue::from_json(min), ScalarValue::from_json(max))
-                    {
-                        return value < &min_val || value > &max_val;
-                    }
+                {
+                    return value < &min_val || value > &max_val;
+                }
                 false
             }
             ScalarPredicate::LessThan(value) => {
                 // If min >= value, prune
                 if let Some(min) = &self.min
-                    && let Some(min_val) = ScalarValue::from_json(min) {
-                        return &min_val >= value;
-                    }
+                    && let Some(min_val) = ScalarValue::from_json(min)
+                {
+                    return &min_val >= value;
+                }
                 false
             }
             ScalarPredicate::LessThanOrEqual(value) => {
                 // If min > value, prune
                 if let Some(min) = &self.min
-                    && let Some(min_val) = ScalarValue::from_json(min) {
-                        return &min_val > value;
-                    }
+                    && let Some(min_val) = ScalarValue::from_json(min)
+                {
+                    return &min_val > value;
+                }
                 false
             }
             ScalarPredicate::GreaterThan(value) => {
                 // If max <= value, prune
                 if let Some(max) = &self.max
-                    && let Some(max_val) = ScalarValue::from_json(max) {
-                        return &max_val <= value;
-                    }
+                    && let Some(max_val) = ScalarValue::from_json(max)
+                {
+                    return &max_val <= value;
+                }
                 false
             }
             ScalarPredicate::GreaterThanOrEqual(value) => {
                 // If max < value, prune
                 if let Some(max) = &self.max
-                    && let Some(max_val) = ScalarValue::from_json(max) {
-                        return &max_val < value;
-                    }
+                    && let Some(max_val) = ScalarValue::from_json(max)
+                {
+                    return &max_val < value;
+                }
                 false
             }
             ScalarPredicate::IsNull => {
@@ -546,9 +555,9 @@ impl ColumnBounds {
                 if let (Some(min), Some(max)) = (&self.min, &self.max)
                     && let (Some(min_val), Some(max_val)) =
                         (ScalarValue::from_json(min), ScalarValue::from_json(max))
-                    {
-                        return &max_val < low || &min_val > high;
-                    }
+                {
+                    return &max_val < low || &min_val > high;
+                }
                 false
             }
             ScalarPredicate::In(values) => {
@@ -556,9 +565,9 @@ impl ColumnBounds {
                 if let (Some(min), Some(max)) = (&self.min, &self.max)
                     && let (Some(min_val), Some(max_val)) =
                         (ScalarValue::from_json(min), ScalarValue::from_json(max))
-                    {
-                        return values.iter().all(|v| v < &min_val || v > &max_val);
-                    }
+                {
+                    return values.iter().all(|v| v < &min_val || v > &max_val);
+                }
                 false
             }
             ScalarPredicate::NotEqual(_) => {

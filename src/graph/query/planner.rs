@@ -1429,9 +1429,9 @@ impl QueryPlanner {
                     .iter()
                     .min_by_key(|(_, cached)| cached.last_accessed)
                     .map(|(k, v)| (k.clone(), v.clone()))
-                {
-                    cache.remove(&lru_key);
-                }
+            {
+                cache.remove(&lru_key);
+            }
         }
 
         cache.insert(

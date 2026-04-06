@@ -521,7 +521,11 @@ mod tests {
             bloom_benefit_score: 0.5,
         };
         let (bits, _) = manager.calculate_optimal_size(&stats);
-        assert!(bits <= 1024 * 8, "Bits {} should not exceed memory limit", bits);
+        assert!(
+            bits <= 1024 * 8,
+            "Bits {} should not exceed memory limit",
+            bits
+        );
     }
 
     #[test]
@@ -541,7 +545,11 @@ mod tests {
         if let Some(bloom) = manager.column_blooms.get("fp_test") {
             let fp_rate = manager.estimate_false_positive_rate(bloom.as_ref(), 1000);
             // FP rate should be a valid probability
-            assert!(fp_rate >= 0.0 && fp_rate <= 1.0, "FP rate {} out of range", fp_rate);
+            assert!(
+                fp_rate >= 0.0 && fp_rate <= 1.0,
+                "FP rate {} out of range",
+                fp_rate
+            );
         }
     }
 

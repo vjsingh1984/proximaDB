@@ -24,8 +24,8 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use crate::query::multimodel_router::{MultiModelResult, StoreType};
+use anyhow::Result;
 
 /// Multi-model SQL execution context.
 ///
@@ -194,11 +194,7 @@ pub enum SqlPlan {
 ///
 /// This is the central dispatch point that bridges SQL parsing to service layer execution.
 /// It uses `StoreType` detection to determine which service layer should handle the query.
-pub fn lower_sql_to_plan(
-    sql: &str,
-    table_name: &str,
-    store_type: StoreType,
-) -> Result<SqlPlan> {
+pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> Result<SqlPlan> {
     let upper = sql.trim().to_uppercase();
 
     // DDL
@@ -226,7 +222,10 @@ pub fn lower_sql_to_plan(
                     filters: None,
                 })
             } else {
-                Err(anyhow::anyhow!("Unsupported vector SQL: {}", &sql[..sql.len().min(50)]))
+                Err(anyhow::anyhow!(
+                    "Unsupported vector SQL: {}",
+                    &sql[..sql.len().min(50)]
+                ))
             }
         }
         StoreType::Document => {
@@ -249,7 +248,10 @@ pub fn lower_sql_to_plan(
                     id: String::new(),
                 })
             } else {
-                Err(anyhow::anyhow!("Unsupported document SQL: {}", &sql[..sql.len().min(50)]))
+                Err(anyhow::anyhow!(
+                    "Unsupported document SQL: {}",
+                    &sql[..sql.len().min(50)]
+                ))
             }
         }
         StoreType::Graph => {
@@ -295,7 +297,10 @@ pub fn lower_sql_to_plan(
                     })
                 }
             } else {
-                Err(anyhow::anyhow!("Unsupported graph SQL: {}", &sql[..sql.len().min(50)]))
+                Err(anyhow::anyhow!(
+                    "Unsupported graph SQL: {}",
+                    &sql[..sql.len().min(50)]
+                ))
             }
         }
         StoreType::Observability => {
@@ -315,8 +320,12 @@ pub fn lower_sql_to_plan(
                 })
             } else if table_name.starts_with("metric_") {
                 // Check for aggregation functions
-                if upper.contains("AVG(") || upper.contains("SUM(") || upper.contains("COUNT(")
-                    || upper.contains("MIN(") || upper.contains("MAX(") || upper.contains("RATE(")
+                if upper.contains("AVG(")
+                    || upper.contains("SUM(")
+                    || upper.contains("COUNT(")
+                    || upper.contains("MIN(")
+                    || upper.contains("MAX(")
+                    || upper.contains("RATE(")
                 {
                     Ok(SqlPlan::MetricAggregate {
                         namespace,
@@ -348,8 +357,11 @@ pub fn lower_sql_to_plan(
         StoreType::Relational => {
             if upper.starts_with("SELECT") {
                 // Check for aggregation
-                if upper.contains("AVG(") || upper.contains("SUM(") || upper.contains("COUNT(")
-                    || upper.contains("MIN(") || upper.contains("MAX(")
+                if upper.contains("AVG(")
+                    || upper.contains("SUM(")
+                    || upper.contains("COUNT(")
+                    || upper.contains("MIN(")
+                    || upper.contains("MAX(")
                 {
                     Ok(SqlPlan::Aggregate {
                         store_type: StoreType::Relational,
@@ -386,7 +398,10 @@ pub fn lower_sql_to_plan(
                     filter: None,
                 })
             } else {
-                Err(anyhow::anyhow!("Unsupported relational SQL: {}", &sql[..sql.len().min(50)]))
+                Err(anyhow::anyhow!(
+                    "Unsupported relational SQL: {}",
+                    &sql[..sql.len().min(50)]
+                ))
             }
         }
         StoreType::TimeSeries => {
@@ -424,7 +439,13 @@ mod tests {
             StoreType::Relational,
         )
         .unwrap();
-        assert!(matches!(plan, SqlPlan::CreateTable { store_type: StoreType::Relational, .. }));
+        assert!(matches!(
+            plan,
+            SqlPlan::CreateTable {
+                store_type: StoreType::Relational,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -528,13 +549,15 @@ mod tests {
 
     #[test]
     fn test_lower_select_relational_aggregate() {
-        let plan = lower_sql_to_plan(
-            "SELECT COUNT(*) FROM users",
-            "users",
-            StoreType::Relational,
-        )
-        .unwrap();
-        assert!(matches!(plan, SqlPlan::Aggregate { store_type: StoreType::Relational, .. }));
+        let plan = lower_sql_to_plan("SELECT COUNT(*) FROM users", "users", StoreType::Relational)
+            .unwrap();
+        assert!(matches!(
+            plan,
+            SqlPlan::Aggregate {
+                store_type: StoreType::Relational,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -572,12 +595,7 @@ mod tests {
 
     #[test]
     fn test_lower_drop_table() {
-        let plan = lower_sql_to_plan(
-            "DROP TABLE users",
-            "users",
-            StoreType::Relational,
-        )
-        .unwrap();
+        let plan = lower_sql_to_plan("DROP TABLE users", "users", StoreType::Relational).unwrap();
         assert!(matches!(plan, SqlPlan::DropTable { .. }));
     }
 

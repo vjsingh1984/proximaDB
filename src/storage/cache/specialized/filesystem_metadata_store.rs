@@ -123,9 +123,10 @@ impl FilesystemMetadataStore {
         // Promote to hot cache if frequently accessed
         // (In real implementation, would track access frequency)
         if self.hot_cache.len() < self.max_hot_entries
-            && let Some(entry) = BaseCache::get_with_hooks(&self.base, &key).await {
-                self.hot_cache.insert(key, Arc::new(entry));
-            }
+            && let Some(entry) = BaseCache::get_with_hooks(&self.base, &key).await
+        {
+            self.hot_cache.insert(key, Arc::new(entry));
+        }
 
         Ok(())
     }

@@ -346,10 +346,7 @@ impl QueryFacadeAdapter {
         let response = self.query_result_to_vector_response(result)?;
 
         debug!(
-            results = response
-                .results
-                .as_ref()
-                .map_or(0, |r| r.results.len()),
+            results = response.results.as_ref().map_or(0, |r| r.results.len()),
             elapsed_ms = start.elapsed().as_millis(),
             "Vector search completed via adapter"
         );
@@ -375,9 +372,7 @@ impl QueryFacadeAdapter {
 
         // Log validation status for federated queries
         if self.validation_enabled && Self::should_use_federated_request(sql) {
-            info!(
-                "Plan validation is enabled for federated SQL query - will check capabilities"
-            );
+            info!("Plan validation is enabled for federated SQL query - will check capabilities");
         }
 
         let query_request = if Self::should_use_federated_request(sql) {

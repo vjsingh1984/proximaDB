@@ -240,9 +240,10 @@ impl PartitionPruner {
             .filter(|p| {
                 if let Some(value) = p.values.get(time_field)
                     && let Some(ts_str) = value.as_str()
-                        && let Some(ts) = self.parse_timestamp(ts_str) {
-                            return ts >= from && ts <= to;
-                        }
+                    && let Some(ts) = self.parse_timestamp(ts_str)
+                {
+                    return ts >= from && ts <= to;
+                }
                 false
             })
             .collect();
@@ -627,12 +628,10 @@ impl PartitionPruner {
 
         for partition in partitions {
             for (field, value) in &partition.values {
-                map.entry(field.clone())
-                    .or_default()
-                    .push(PartitionRange {
-                        min: value.clone(),
-                        max: value.clone(),
-                    });
+                map.entry(field.clone()).or_default().push(PartitionRange {
+                    min: value.clone(),
+                    max: value.clone(),
+                });
             }
         }
 

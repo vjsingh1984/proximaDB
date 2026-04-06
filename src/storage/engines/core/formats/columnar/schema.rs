@@ -399,10 +399,11 @@ impl ColumnarSchemaBuilder {
 
         // Check cache first
         if let Some(cached) = self.get_cached_schema(&cache_key).await
-            && !cached.is_expired() {
-                debug!("Schema cache hit for collection: {}", collection_id);
-                return Ok((cached.schema, cached.compression_metadata));
-            }
+            && !cached.is_expired()
+        {
+            debug!("Schema cache hit for collection: {}", collection_id);
+            return Ok((cached.schema, cached.compression_metadata));
+        }
 
         info!(
             "Building quantization-aware schema for collection: {} (dim: {})",
@@ -659,9 +660,7 @@ impl ColumnarSchemaBuilder {
             // Enable dictionary encoding for low-cardinality strings
             let field = if config.optimization.enable_dictionary_encoding
                 && filterable.data_type == FilterableData::String
-                && filterable
-                    .estimated_cardinality
-                    .is_some_and(|c| c < 10000)
+                && filterable.estimated_cardinality.is_some_and(|c| c < 10000)
             {
                 Field::new(&filterable.name, data_type, filterable.nullable).with_metadata(
                     HashMap::from([("encoding".to_string(), "dictionary".to_string())]),

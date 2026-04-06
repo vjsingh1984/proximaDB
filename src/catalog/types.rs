@@ -447,8 +447,7 @@ pub struct CatalogPartitionField {
 pub type PartitionField = CatalogPartitionField;
 
 /// Partition transforms (Iceberg-compatible)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PartitionTransform {
     /// Identity transform (no transformation)
     #[default]
@@ -468,7 +467,6 @@ pub enum PartitionTransform {
     /// Void transform (always produces null)
     Void,
 }
-
 
 impl std::fmt::Display for PartitionTransform {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

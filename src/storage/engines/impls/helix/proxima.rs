@@ -197,8 +197,7 @@ impl HelixSIMDWriter {
 
         // Get compression ratio from the block's encoded data
         let compression_ratio = if let Some(ref encoded) = block.encoded_vectors {
-            let original_size =
-                records.len() * records.first().map_or(0, |r| r.vector.len()) * 4;
+            let original_size = records.len() * records.first().map_or(0, |r| r.vector.len()) * 4;
             let encoded_size: usize = encoded.iter().map(|d| d.len()).sum();
             if original_size > 0 {
                 (encoded_size * 100) / original_size
@@ -1015,7 +1014,9 @@ fn select_blocks_by_centroid(
             .map(|(idx, meta)| {
                 let hilbert_code = meta
                     .hilbert_range
-                    .map_or(SpatialCode::Code64(0), |(min, max)| SpatialCode::Code64((min + max) / 2));
+                    .map_or(SpatialCode::Code64(0), |(min, max)| {
+                        SpatialCode::Code64((min + max) / 2)
+                    });
                 BlockPruningInfo::with_centroid(idx, hilbert_code, meta.block_centroid.clone())
             })
             .collect();

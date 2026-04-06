@@ -131,9 +131,7 @@ mod tests {
         let query = vec![1.0, 0.0, 0.0];
         let document = vec![0.9, 0.1, 0.0];
 
-        let score = scorer
-            .compute_single_pair_score(&query, &document)
-            .unwrap();
+        let score = scorer.compute_single_pair_score(&query, &document).unwrap();
 
         assert!(score > 0.8, "Similar vectors should have high score");
     }
@@ -143,15 +141,9 @@ mod tests {
         let _ = initialize_hardware_capabilities_default();
         let scorer = LateInteractionScorer::new(DistanceMetric::Cosine);
 
-        let expanded_queries = vec![
-            vec![1.0, 0.0, 0.0],
-            vec![0.9, 0.1, 0.0],
-        ];
+        let expanded_queries = vec![vec![1.0, 0.0, 0.0], vec![0.9, 0.1, 0.0]];
 
-        let document_vectors = vec![
-            vec![0.8, 0.2, 0.0],
-            vec![0.1, 0.9, 0.0],
-        ];
+        let document_vectors = vec![vec![0.8, 0.2, 0.0], vec![0.1, 0.9, 0.0]];
 
         let result = scorer
             .compute_detailed_score(&expanded_queries, &document_vectors, 5, "doc1".to_string())

@@ -10,8 +10,7 @@ use std::fmt;
 pub type ActionId = u32;
 
 /// Primary index strategy selection
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum IndexStrategy {
     /// Hierarchical Navigable Small World graph
     HNSW {
@@ -51,7 +50,6 @@ pub enum IndexStrategy {
     DirectScan,
 }
 
-
 impl fmt::Display for IndexStrategy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -70,8 +68,7 @@ impl fmt::Display for IndexStrategy {
 }
 
 /// Search mode selection
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum SearchModeAction {
     /// Exact search (100% recall, slowest)
     #[default]
@@ -87,7 +84,6 @@ pub enum SearchModeAction {
         threshold: u32,
     },
 }
-
 
 impl fmt::Display for SearchModeAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -132,8 +128,7 @@ impl fmt::Display for QuantizationStage {
 }
 
 /// Block pruning configuration
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum BlockPruneConfig {
     /// No block pruning
     #[default]
@@ -150,7 +145,6 @@ pub enum BlockPruneConfig {
     /// Zone map based pruning
     ZoneMap,
 }
-
 
 impl fmt::Display for BlockPruneConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

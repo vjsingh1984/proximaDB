@@ -30,7 +30,7 @@
 //! function calls (COUNT, SUM, AVG, MIN, MAX, COLLECT, etc.), parameters, lists.
 
 use super::cypher_ast::*;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 // ---------------------------------------------------------------------------
 // Tokenizer
@@ -100,17 +100,17 @@ enum TokenKind {
     Minus,
     Slash,
     Percent,
-    Eq,       // =
-    Neq,      // <>
-    Lt,       // <
-    Gt,       // >
-    Lte,      // <=
-    Gte,      // >=
-    RegexOp,  // =~
-    Arrow,    // ->
-    LArrow,   // <-
-    DotDot,   // ..
-    Dollar,   // $
+    Eq,      // =
+    Neq,     // <>
+    Lt,      // <
+    Gt,      // >
+    Lte,     // <=
+    Gte,     // >=
+    RegexOp, // =~
+    Arrow,   // ->
+    LArrow,  // <-
+    DotDot,  // ..
+    Dollar,  // $
 
     Eof,
 }
@@ -172,12 +172,34 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 bail!("Unterminated string literal starting at position {pos}");
             }
             i += 1; // closing quote
-            tokens.push(Token { kind: TokenKind::StringLit(s), pos });
+            tokens.push(Token {
+                kind: TokenKind::StringLit(s),
+                pos,
+            });
             continue;
         }
 
         // Numbers
-        if chars[i].is_ascii_digit() || (chars[i] == '-' && i + 1 < len && chars[i + 1].is_ascii_digit() && (tokens.is_empty() || matches!(tokens.last().map(|t| &t.kind), Some(TokenKind::LParen | TokenKind::Comma | TokenKind::Colon | TokenKind::Eq | TokenKind::Neq | TokenKind::Lt | TokenKind::Gt | TokenKind::Lte | TokenKind::Gte)))) {
+        if chars[i].is_ascii_digit()
+            || (chars[i] == '-'
+                && i + 1 < len
+                && chars[i + 1].is_ascii_digit()
+                && (tokens.is_empty()
+                    || matches!(
+                        tokens.last().map(|t| &t.kind),
+                        Some(
+                            TokenKind::LParen
+                                | TokenKind::Comma
+                                | TokenKind::Colon
+                                | TokenKind::Eq
+                                | TokenKind::Neq
+                                | TokenKind::Lt
+                                | TokenKind::Gt
+                                | TokenKind::Lte
+                                | TokenKind::Gte
+                        )
+                    )))
+        {
             let start = i;
             if chars[i] == '-' {
                 i += 1;
@@ -190,11 +212,21 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 while i < len && chars[i].is_ascii_digit() {
                     i += 1;
                 }
-                let val: f64 = input[start..i].parse().with_context(|| format!("Invalid float at position {start}"))?;
-                tokens.push(Token { kind: TokenKind::Float(val), pos });
+                let val: f64 = input[start..i]
+                    .parse()
+                    .with_context(|| format!("Invalid float at position {start}"))?;
+                tokens.push(Token {
+                    kind: TokenKind::Float(val),
+                    pos,
+                });
             } else {
-                let val: i64 = input[start..i].parse().with_context(|| format!("Invalid integer at position {start}"))?;
-                tokens.push(Token { kind: TokenKind::Integer(val), pos });
+                let val: i64 = input[start..i]
+                    .parse()
+                    .with_context(|| format!("Invalid integer at position {start}"))?;
+                tokens.push(Token {
+                    kind: TokenKind::Integer(val),
+                    pos,
+                });
             }
             continue;
         }
@@ -252,13 +284,62 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
         if i + 1 < len {
             let two = &input[i..i + 2];
             match two {
-                "->" => { tokens.push(Token { kind: TokenKind::Arrow, pos }); i += 2; continue; }
-                "<-" => { tokens.push(Token { kind: TokenKind::LArrow, pos }); i += 2; continue; }
-                "<>" => { tokens.push(Token { kind: TokenKind::Neq, pos }); i += 2; continue; }
-                "<=" => { tokens.push(Token { kind: TokenKind::Lte, pos }); i += 2; continue; }
-                ">=" => { tokens.push(Token { kind: TokenKind::Gte, pos }); i += 2; continue; }
-                "=~" => { tokens.push(Token { kind: TokenKind::RegexOp, pos }); i += 2; continue; }
-                ".." => { tokens.push(Token { kind: TokenKind::DotDot, pos }); i += 2; continue; }
+                "->" => {
+                    tokens.push(Token {
+                        kind: TokenKind::Arrow,
+                        pos,
+                    });
+                    i += 2;
+                    continue;
+                }
+                "<-" => {
+                    tokens.push(Token {
+                        kind: TokenKind::LArrow,
+                        pos,
+                    });
+                    i += 2;
+                    continue;
+                }
+                "<>" => {
+                    tokens.push(Token {
+                        kind: TokenKind::Neq,
+                        pos,
+                    });
+                    i += 2;
+                    continue;
+                }
+                "<=" => {
+                    tokens.push(Token {
+                        kind: TokenKind::Lte,
+                        pos,
+                    });
+                    i += 2;
+                    continue;
+                }
+                ">=" => {
+                    tokens.push(Token {
+                        kind: TokenKind::Gte,
+                        pos,
+                    });
+                    i += 2;
+                    continue;
+                }
+                "=~" => {
+                    tokens.push(Token {
+                        kind: TokenKind::RegexOp,
+                        pos,
+                    });
+                    i += 2;
+                    continue;
+                }
+                ".." => {
+                    tokens.push(Token {
+                        kind: TokenKind::DotDot,
+                        pos,
+                    });
+                    i += 2;
+                    continue;
+                }
                 _ => {}
             }
         }
@@ -290,7 +371,10 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
         i += 1;
     }
 
-    tokens.push(Token { kind: TokenKind::Eof, pos: len });
+    tokens.push(Token {
+        kind: TokenKind::Eof,
+        pos: len,
+    });
     Ok(tokens)
 }
 
@@ -345,8 +429,15 @@ impl CypherParser {
 
     fn expect_ident(&mut self) -> Result<String> {
         match self.peek().clone() {
-            TokenKind::Ident(s) => { self.advance(); Ok(s) }
-            other => bail!("Expected identifier but found {:?} at position {}", other, self.tokens[self.cursor].pos),
+            TokenKind::Ident(s) => {
+                self.advance();
+                Ok(s)
+            }
+            other => bail!(
+                "Expected identifier but found {:?} at position {}",
+                other,
+                self.tokens[self.cursor].pos
+            ),
         }
     }
 
@@ -377,7 +468,10 @@ impl CypherParser {
     fn consume_ident_or_keyword(&mut self) -> Result<String> {
         let tok = self.peek().clone();
         match tok {
-            TokenKind::Ident(s) => { self.advance(); Ok(s) }
+            TokenKind::Ident(s) => {
+                self.advance();
+                Ok(s)
+            }
             // Allow reserved words as property names / labels
             _ if self.at_keyword_ident() => {
                 let name = format!("{:?}", self.peek());
@@ -392,17 +486,47 @@ impl CypherParser {
     /// Consume an identifier, also accepting keywords that are valid as names.
     fn consume_name(&mut self) -> Result<String> {
         match self.peek().clone() {
-            TokenKind::Ident(s) => { self.advance(); Ok(s) }
+            TokenKind::Ident(s) => {
+                self.advance();
+                Ok(s)
+            }
             // Keywords that can also be used as variable/label/property names
-            TokenKind::Order => { self.advance(); Ok("order".into()) }
-            TokenKind::By => { self.advance(); Ok("by".into()) }
-            TokenKind::Asc => { self.advance(); Ok("asc".into()) }
-            TokenKind::Desc => { self.advance(); Ok("desc".into()) }
-            TokenKind::Ascending => { self.advance(); Ok("ascending".into()) }
-            TokenKind::Descending => { self.advance(); Ok("descending".into()) }
-            TokenKind::All => { self.advance(); Ok("all".into()) }
-            TokenKind::Set => { self.advance(); Ok("set".into()) }
-            TokenKind::Contains => { self.advance(); Ok("contains".into()) }
+            TokenKind::Order => {
+                self.advance();
+                Ok("order".into())
+            }
+            TokenKind::By => {
+                self.advance();
+                Ok("by".into())
+            }
+            TokenKind::Asc => {
+                self.advance();
+                Ok("asc".into())
+            }
+            TokenKind::Desc => {
+                self.advance();
+                Ok("desc".into())
+            }
+            TokenKind::Ascending => {
+                self.advance();
+                Ok("ascending".into())
+            }
+            TokenKind::Descending => {
+                self.advance();
+                Ok("descending".into())
+            }
+            TokenKind::All => {
+                self.advance();
+                Ok("all".into())
+            }
+            TokenKind::Set => {
+                self.advance();
+                Ok("set".into())
+            }
+            TokenKind::Contains => {
+                self.advance();
+                Ok("contains".into())
+            }
             _ => self.expect_ident(),
         }
     }
@@ -491,7 +615,11 @@ impl CypherParser {
                     clauses.push(CypherClause::Union(UnionClause { all }));
                 }
                 other => {
-                    bail!("Unexpected token {:?} at position {}", other, self.tokens[self.cursor].pos);
+                    bail!(
+                        "Unexpected token {:?} at position {}",
+                        other,
+                        self.tokens[self.cursor].pos
+                    );
                 }
             }
         }
@@ -560,7 +688,11 @@ impl CypherParser {
 
         self.expect(&TokenKind::RParen)?;
 
-        Ok(NodePattern { variable, labels, properties })
+        Ok(NodePattern {
+            variable,
+            labels,
+            properties,
+        })
     }
 
     fn parse_rel_pattern(&mut self) -> Result<RelPattern> {
@@ -649,11 +781,20 @@ impl CypherParser {
                 self.advance();
                 Direction::Both
             } else {
-                bail!("Expected -> or - after relationship pattern at position {}", self.tokens[self.cursor].pos);
+                bail!(
+                    "Expected -> or - after relationship pattern at position {}",
+                    self.tokens[self.cursor].pos
+                );
             }
         };
 
-        Ok(RelPattern { variable, rel_types, direction, properties, range })
+        Ok(RelPattern {
+            variable,
+            rel_types,
+            direction,
+            properties,
+            range,
+        })
     }
 
     fn parse_property_map(&mut self) -> Result<Vec<(String, CypherValue)>> {
@@ -679,12 +820,30 @@ impl CypherParser {
 
     fn parse_cypher_value(&mut self) -> Result<CypherValue> {
         match self.peek().clone() {
-            TokenKind::Integer(n) => { self.advance(); Ok(CypherValue::Integer(n)) }
-            TokenKind::Float(f) => { self.advance(); Ok(CypherValue::Float(f)) }
-            TokenKind::StringLit(s) => { self.advance(); Ok(CypherValue::String(s)) }
-            TokenKind::BoolTrue => { self.advance(); Ok(CypherValue::Boolean(true)) }
-            TokenKind::BoolFalse => { self.advance(); Ok(CypherValue::Boolean(false)) }
-            TokenKind::Null => { self.advance(); Ok(CypherValue::Null) }
+            TokenKind::Integer(n) => {
+                self.advance();
+                Ok(CypherValue::Integer(n))
+            }
+            TokenKind::Float(f) => {
+                self.advance();
+                Ok(CypherValue::Float(f))
+            }
+            TokenKind::StringLit(s) => {
+                self.advance();
+                Ok(CypherValue::String(s))
+            }
+            TokenKind::BoolTrue => {
+                self.advance();
+                Ok(CypherValue::Boolean(true))
+            }
+            TokenKind::BoolFalse => {
+                self.advance();
+                Ok(CypherValue::Boolean(false))
+            }
+            TokenKind::Null => {
+                self.advance();
+                Ok(CypherValue::Null)
+            }
             TokenKind::LBracket => {
                 self.advance();
                 let mut items = Vec::new();
@@ -704,7 +863,11 @@ impl CypherParser {
                 let props = self.parse_property_map()?;
                 Ok(CypherValue::Map(props))
             }
-            other => bail!("Expected value but found {:?} at position {}", other, self.tokens[self.cursor].pos),
+            other => bail!(
+                "Expected value but found {:?} at position {}",
+                other,
+                self.tokens[self.cursor].pos
+            ),
         }
     }
 
@@ -815,7 +978,11 @@ impl CypherParser {
             let prop = self.consume_name()?;
             self.expect(&TokenKind::Eq)?;
             let value = self.parse_expression()?;
-            items.push(SetItem::Property { variable: var, property: prop, value });
+            items.push(SetItem::Property {
+                variable: var,
+                property: prop,
+                value,
+            });
             if !self.at(&TokenKind::Comma) {
                 break;
             }
@@ -835,7 +1002,10 @@ impl CypherParser {
             }
             self.advance();
         }
-        Ok(DeleteClause { detach, expressions })
+        Ok(DeleteClause {
+            detach,
+            expressions,
+        })
     }
 
     // -- WITH -------------------------------------------------------------
@@ -848,7 +1018,10 @@ impl CypherParser {
         } else {
             None
         };
-        Ok(WithClause { items, where_clause })
+        Ok(WithClause {
+            items,
+            where_clause,
+        })
     }
 
     // -- UNWIND -----------------------------------------------------------
@@ -864,7 +1037,10 @@ impl CypherParser {
 
         let variable = self.consume_name()?;
 
-        Ok(UnwindClause { expression, variable })
+        Ok(UnwindClause {
+            expression,
+            variable,
+        })
     }
 
     // -- Expressions (precedence climbing) --------------------------------
@@ -927,7 +1103,9 @@ impl CypherParser {
             TokenKind::Contains => Some(CompOp::Contains),
             TokenKind::StartsWith => {
                 // STARTS WITH is two tokens
-                if self.cursor + 1 < self.tokens.len() && self.tokens[self.cursor + 1].kind == TokenKind::With {
+                if self.cursor + 1 < self.tokens.len()
+                    && self.tokens[self.cursor + 1].kind == TokenKind::With
+                {
                     Some(CompOp::StartsWith)
                 } else {
                     None
@@ -935,7 +1113,9 @@ impl CypherParser {
             }
             TokenKind::EndsWith => {
                 // ENDS WITH is two tokens
-                if self.cursor + 1 < self.tokens.len() && self.tokens[self.cursor + 1].kind == TokenKind::With {
+                if self.cursor + 1 < self.tokens.len()
+                    && self.tokens[self.cursor + 1].kind == TokenKind::With
+                {
                     Some(CompOp::EndsWith)
                 } else {
                     None
@@ -971,18 +1151,32 @@ impl CypherParser {
                 CompOp::IsNull => {
                     self.advance(); // IS
                     self.advance(); // NULL
-                    return Ok(Expression::Comparison(Box::new(left), comp_op, Box::new(Expression::Literal(CypherValue::Null))));
+                    return Ok(Expression::Comparison(
+                        Box::new(left),
+                        comp_op,
+                        Box::new(Expression::Literal(CypherValue::Null)),
+                    ));
                 }
                 CompOp::IsNotNull => {
                     self.advance(); // IS
                     self.advance(); // NOT
                     self.advance(); // NULL
-                    return Ok(Expression::Comparison(Box::new(left), comp_op, Box::new(Expression::Literal(CypherValue::Null))));
+                    return Ok(Expression::Comparison(
+                        Box::new(left),
+                        comp_op,
+                        Box::new(Expression::Literal(CypherValue::Null)),
+                    ));
                 }
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
             let right = self.parse_addition()?;
-            Ok(Expression::Comparison(Box::new(left), comp_op, Box::new(right)))
+            Ok(Expression::Comparison(
+                Box::new(left),
+                comp_op,
+                Box::new(right),
+            ))
         } else {
             Ok(left)
         }
@@ -995,12 +1189,17 @@ impl CypherParser {
                 TokenKind::Plus => {
                     self.advance();
                     let right = self.parse_multiplication()?;
-                    left = Expression::BinaryOp(Box::new(left), BinaryOperator::Plus, Box::new(right));
+                    left =
+                        Expression::BinaryOp(Box::new(left), BinaryOperator::Plus, Box::new(right));
                 }
                 TokenKind::Minus => {
                     self.advance();
                     let right = self.parse_multiplication()?;
-                    left = Expression::BinaryOp(Box::new(left), BinaryOperator::Minus, Box::new(right));
+                    left = Expression::BinaryOp(
+                        Box::new(left),
+                        BinaryOperator::Minus,
+                        Box::new(right),
+                    );
                 }
                 _ => break,
             }
@@ -1015,17 +1214,29 @@ impl CypherParser {
                 TokenKind::Star => {
                     self.advance();
                     let right = self.parse_unary()?;
-                    left = Expression::BinaryOp(Box::new(left), BinaryOperator::Multiply, Box::new(right));
+                    left = Expression::BinaryOp(
+                        Box::new(left),
+                        BinaryOperator::Multiply,
+                        Box::new(right),
+                    );
                 }
                 TokenKind::Slash => {
                     self.advance();
                     let right = self.parse_unary()?;
-                    left = Expression::BinaryOp(Box::new(left), BinaryOperator::Divide, Box::new(right));
+                    left = Expression::BinaryOp(
+                        Box::new(left),
+                        BinaryOperator::Divide,
+                        Box::new(right),
+                    );
                 }
                 TokenKind::Percent => {
                     self.advance();
                     let right = self.parse_unary()?;
-                    left = Expression::BinaryOp(Box::new(left), BinaryOperator::Modulo, Box::new(right));
+                    left = Expression::BinaryOp(
+                        Box::new(left),
+                        BinaryOperator::Modulo,
+                        Box::new(right),
+                    );
                 }
                 _ => break,
             }
@@ -1057,12 +1268,30 @@ impl CypherParser {
 
     fn parse_primary(&mut self) -> Result<Expression> {
         match self.peek().clone() {
-            TokenKind::Integer(n) => { self.advance(); Ok(Expression::Literal(CypherValue::Integer(n))) }
-            TokenKind::Float(f) => { self.advance(); Ok(Expression::Literal(CypherValue::Float(f))) }
-            TokenKind::StringLit(s) => { self.advance(); Ok(Expression::Literal(CypherValue::String(s))) }
-            TokenKind::BoolTrue => { self.advance(); Ok(Expression::Literal(CypherValue::Boolean(true))) }
-            TokenKind::BoolFalse => { self.advance(); Ok(Expression::Literal(CypherValue::Boolean(false))) }
-            TokenKind::Null => { self.advance(); Ok(Expression::Literal(CypherValue::Null)) }
+            TokenKind::Integer(n) => {
+                self.advance();
+                Ok(Expression::Literal(CypherValue::Integer(n)))
+            }
+            TokenKind::Float(f) => {
+                self.advance();
+                Ok(Expression::Literal(CypherValue::Float(f)))
+            }
+            TokenKind::StringLit(s) => {
+                self.advance();
+                Ok(Expression::Literal(CypherValue::String(s)))
+            }
+            TokenKind::BoolTrue => {
+                self.advance();
+                Ok(Expression::Literal(CypherValue::Boolean(true)))
+            }
+            TokenKind::BoolFalse => {
+                self.advance();
+                Ok(Expression::Literal(CypherValue::Boolean(false)))
+            }
+            TokenKind::Null => {
+                self.advance();
+                Ok(Expression::Literal(CypherValue::Null))
+            }
 
             TokenKind::Dollar => {
                 self.advance();
@@ -1081,16 +1310,15 @@ impl CypherParser {
                     // Check if this might be a list comprehension: [x IN list ...]
                     // We need to look ahead to see if there's an IN keyword
                     let save_cursor = self.cursor;
-                    let is_comprehension = matches!(self.peek(), TokenKind::Ident(_)) &&
-                        {
-                            // Peek ahead to check for IN
-                            let temp_cursor = save_cursor + 1;
-                            if temp_cursor < self.tokens.len() {
-                                matches!(self.tokens[temp_cursor].kind, TokenKind::In)
-                            } else {
-                                false
-                            }
-                        };
+                    let is_comprehension = matches!(self.peek(), TokenKind::Ident(_)) && {
+                        // Peek ahead to check for IN
+                        let temp_cursor = save_cursor + 1;
+                        if temp_cursor < self.tokens.len() {
+                            matches!(self.tokens[temp_cursor].kind, TokenKind::In)
+                        } else {
+                            false
+                        }
+                    };
                     self.cursor = save_cursor; // Restore cursor
 
                     if is_comprehension {
@@ -1161,7 +1389,11 @@ impl CypherParser {
                 }
             }
 
-            other => bail!("Expected expression but found {:?} at position {}", other, self.tokens[self.cursor].pos),
+            other => bail!(
+                "Expected expression but found {:?} at position {}",
+                other,
+                self.tokens[self.cursor].pos
+            ),
         }
     }
 
@@ -1348,9 +1580,8 @@ mod tests {
 
     #[test]
     fn test_parse_multi_hop() {
-        let stmt = CypherParser::parse(
-            "MATCH (a)-[:KNOWS]->(b)-[:WORKS_AT]->(c) RETURN c"
-        ).unwrap();
+        let stmt =
+            CypherParser::parse("MATCH (a)-[:KNOWS]->(b)-[:WORKS_AT]->(c) RETURN c").unwrap();
 
         match &stmt.clauses[0] {
             CypherClause::Match(mc) => {
@@ -1381,9 +1612,8 @@ mod tests {
 
     #[test]
     fn test_parse_optional_match() {
-        let stmt = CypherParser::parse(
-            "MATCH (a) OPTIONAL MATCH (a)-[:KNOWS]->(b) RETURN a, b"
-        ).unwrap();
+        let stmt =
+            CypherParser::parse("MATCH (a) OPTIONAL MATCH (a)-[:KNOWS]->(b) RETURN a, b").unwrap();
 
         assert_eq!(stmt.clauses.len(), 3);
 
@@ -1407,9 +1637,8 @@ mod tests {
 
     #[test]
     fn test_parse_aggregation() {
-        let stmt = CypherParser::parse(
-            "MATCH (n:Person) RETURN n.city, COUNT(n) AS count"
-        ).unwrap();
+        let stmt =
+            CypherParser::parse("MATCH (n:Person) RETURN n.city, COUNT(n) AS count").unwrap();
 
         match &stmt.clauses[1] {
             CypherClause::Return(rc) => {
@@ -1440,9 +1669,7 @@ mod tests {
 
     #[test]
     fn test_parse_create() {
-        let stmt = CypherParser::parse(
-            "CREATE (n:Person {name: 'Alice', age: 30})"
-        ).unwrap();
+        let stmt = CypherParser::parse("CREATE (n:Person {name: 'Alice', age: 30})").unwrap();
 
         assert_eq!(stmt.clauses.len(), 1);
         match &stmt.clauses[0] {
@@ -1454,7 +1681,9 @@ mod tests {
                         assert_eq!(np.labels, vec!["Person"]);
                         assert_eq!(np.properties.len(), 2);
                         assert_eq!(np.properties[0].0, "name");
-                        assert!(matches!(&np.properties[0].1, CypherValue::String(s) if s == "Alice"));
+                        assert!(
+                            matches!(&np.properties[0].1, CypherValue::String(s) if s == "Alice")
+                        );
                         assert_eq!(np.properties[1].0, "age");
                         assert!(matches!(&np.properties[1].1, CypherValue::Integer(30)));
                     }
@@ -1467,9 +1696,9 @@ mod tests {
 
     #[test]
     fn test_parse_where_complex() {
-        let stmt = CypherParser::parse(
-            "MATCH (n:Person) WHERE n.age > 25 AND n.city = 'NYC' RETURN n"
-        ).unwrap();
+        let stmt =
+            CypherParser::parse("MATCH (n:Person) WHERE n.age > 25 AND n.city = 'NYC' RETURN n")
+                .unwrap();
 
         assert_eq!(stmt.clauses.len(), 3);
 
@@ -1498,9 +1727,9 @@ mod tests {
 
     #[test]
     fn test_parse_order_limit() {
-        let stmt = CypherParser::parse(
-            "MATCH (n:Person) RETURN n.name ORDER BY n.name DESC LIMIT 10"
-        ).unwrap();
+        let stmt =
+            CypherParser::parse("MATCH (n:Person) RETURN n.name ORDER BY n.name DESC LIMIT 10")
+                .unwrap();
 
         // Clauses: MATCH, RETURN, ORDER BY, LIMIT
         assert_eq!(stmt.clauses.len(), 4);
@@ -1526,8 +1755,9 @@ mod tests {
     #[test]
     fn test_parse_union() {
         let stmt = CypherParser::parse(
-            "MATCH (n:Person) RETURN n.name UNION MATCH (n:Company) RETURN n.name"
-        ).unwrap();
+            "MATCH (n:Person) RETURN n.name UNION MATCH (n:Company) RETURN n.name",
+        )
+        .unwrap();
 
         // MATCH, RETURN, UNION, MATCH, RETURN
         assert_eq!(stmt.clauses.len(), 5);
@@ -1540,9 +1770,9 @@ mod tests {
 
     #[test]
     fn test_parse_union_all() {
-        let stmt = CypherParser::parse(
-            "MATCH (n:Person) RETURN n UNION ALL MATCH (n:Company) RETURN n"
-        ).unwrap();
+        let stmt =
+            CypherParser::parse("MATCH (n:Person) RETURN n UNION ALL MATCH (n:Company) RETURN n")
+                .unwrap();
 
         match &stmt.clauses[2] {
             CypherClause::Union(uc) => assert!(uc.all),
@@ -1552,20 +1782,16 @@ mod tests {
 
     #[test]
     fn test_parse_variable_length_path() {
-        let stmt = CypherParser::parse(
-            "MATCH (a)-[*1..3]->(b) RETURN b"
-        ).unwrap();
+        let stmt = CypherParser::parse("MATCH (a)-[*1..3]->(b) RETURN b").unwrap();
 
         match &stmt.clauses[0] {
-            CypherClause::Match(mc) => {
-                match &mc.patterns[0].elements[1] {
-                    PatternElement::Relationship(rp) => {
-                        assert_eq!(rp.range, Some((Some(1), Some(3))));
-                        assert_eq!(rp.direction, Direction::Right);
-                    }
-                    other => panic!("Expected Relationship, got {:?}", other),
+            CypherClause::Match(mc) => match &mc.patterns[0].elements[1] {
+                PatternElement::Relationship(rp) => {
+                    assert_eq!(rp.range, Some((Some(1), Some(3))));
+                    assert_eq!(rp.direction, Direction::Right);
                 }
-            }
+                other => panic!("Expected Relationship, got {:?}", other),
+            },
             other => panic!("Expected Match, got {:?}", other),
         }
     }
@@ -1573,8 +1799,9 @@ mod tests {
     #[test]
     fn test_parse_with_clause() {
         let stmt = CypherParser::parse(
-            "MATCH (n:Person) WITH n.city AS city, COUNT(n) AS cnt WHERE cnt > 5 RETURN city"
-        ).unwrap();
+            "MATCH (n:Person) WITH n.city AS city, COUNT(n) AS cnt WHERE cnt > 5 RETURN city",
+        )
+        .unwrap();
 
         match &stmt.clauses[1] {
             CypherClause::With(wc) => {
@@ -1589,15 +1816,16 @@ mod tests {
 
     #[test]
     fn test_parse_set_clause() {
-        let stmt = CypherParser::parse(
-            "MATCH (n:Person {name: 'Alice'}) SET n.age = 31 RETURN n"
-        ).unwrap();
+        let stmt = CypherParser::parse("MATCH (n:Person {name: 'Alice'}) SET n.age = 31 RETURN n")
+            .unwrap();
 
         match &stmt.clauses[1] {
             CypherClause::Set(sc) => {
                 assert_eq!(sc.items.len(), 1);
                 match &sc.items[0] {
-                    SetItem::Property { variable, property, .. } => {
+                    SetItem::Property {
+                        variable, property, ..
+                    } => {
                         assert_eq!(variable, "n");
                         assert_eq!(property, "age");
                     }
@@ -1609,9 +1837,7 @@ mod tests {
 
     #[test]
     fn test_parse_delete_clause() {
-        let stmt = CypherParser::parse(
-            "MATCH (n:Person {name: 'Alice'}) DETACH DELETE n"
-        ).unwrap();
+        let stmt = CypherParser::parse("MATCH (n:Person {name: 'Alice'}) DETACH DELETE n").unwrap();
 
         match &stmt.clauses[1] {
             CypherClause::Delete(dc) => {
@@ -1624,20 +1850,16 @@ mod tests {
 
     #[test]
     fn test_parse_left_directed_relationship() {
-        let stmt = CypherParser::parse(
-            "MATCH (a)<-[:KNOWS]-(b) RETURN a, b"
-        ).unwrap();
+        let stmt = CypherParser::parse("MATCH (a)<-[:KNOWS]-(b) RETURN a, b").unwrap();
 
         match &stmt.clauses[0] {
-            CypherClause::Match(mc) => {
-                match &mc.patterns[0].elements[1] {
-                    PatternElement::Relationship(rp) => {
-                        assert_eq!(rp.direction, Direction::Left);
-                        assert_eq!(rp.rel_types, vec!["KNOWS"]);
-                    }
-                    other => panic!("Expected Relationship, got {:?}", other),
+            CypherClause::Match(mc) => match &mc.patterns[0].elements[1] {
+                PatternElement::Relationship(rp) => {
+                    assert_eq!(rp.direction, Direction::Left);
+                    assert_eq!(rp.rel_types, vec!["KNOWS"]);
                 }
-            }
+                other => panic!("Expected Relationship, got {:?}", other),
+            },
             other => panic!("Expected Match, got {:?}", other),
         }
     }
@@ -1698,14 +1920,12 @@ mod tests {
         let stmt = CypherParser::parse("MATCH (n:Person:Employee) RETURN n").unwrap();
 
         match &stmt.clauses[0] {
-            CypherClause::Match(mc) => {
-                match &mc.patterns[0].elements[0] {
-                    PatternElement::Node(np) => {
-                        assert_eq!(np.labels, vec!["Person", "Employee"]);
-                    }
-                    other => panic!("Expected Node, got {:?}", other),
+            CypherClause::Match(mc) => match &mc.patterns[0].elements[0] {
+                PatternElement::Node(np) => {
+                    assert_eq!(np.labels, vec!["Person", "Employee"]);
                 }
-            }
+                other => panic!("Expected Node, got {:?}", other),
+            },
             other => panic!("Expected Match, got {:?}", other),
         }
     }
@@ -1728,17 +1948,13 @@ mod tests {
         let stmt = CypherParser::parse("MATCH (n:Person) WHERE n.name = $name RETURN n").unwrap();
 
         match &stmt.clauses[1] {
-            CypherClause::Where(wc) => {
-                match &wc.expression {
-                    Expression::Comparison(_, CompOp::Eq, right) => {
-                        match right.as_ref() {
-                            Expression::Parameter(name) => assert_eq!(name, "name"),
-                            other => panic!("Expected Parameter, got {:?}", other),
-                        }
-                    }
-                    other => panic!("Expected Comparison, got {:?}", other),
-                }
-            }
+            CypherClause::Where(wc) => match &wc.expression {
+                Expression::Comparison(_, CompOp::Eq, right) => match right.as_ref() {
+                    Expression::Parameter(name) => assert_eq!(name, "name"),
+                    other => panic!("Expected Parameter, got {:?}", other),
+                },
+                other => panic!("Expected Comparison, got {:?}", other),
+            },
             other => panic!("Expected Where, got {:?}", other),
         }
     }
@@ -1799,38 +2015,42 @@ mod tests {
 
     #[test]
     fn test_parse_reduce() {
-        let stmt = CypherParser::parse("RETURN REDUCE(total = 0, x IN [1, 2, 3] | total + x)").unwrap();
+        let stmt =
+            CypherParser::parse("RETURN REDUCE(total = 0, x IN [1, 2, 3] | total + x)").unwrap();
 
         match &stmt.clauses[0] {
-            CypherClause::Return(rc) => {
-                match &rc.items[0].expression {
-                    Expression::Reduce { accumulator, variable, .. } => {
-                        assert_eq!(accumulator, "total");
-                        assert_eq!(variable, "x");
-                    }
-                    other => panic!("Expected Reduce, got {:?}", other),
+            CypherClause::Return(rc) => match &rc.items[0].expression {
+                Expression::Reduce {
+                    accumulator,
+                    variable,
+                    ..
+                } => {
+                    assert_eq!(accumulator, "total");
+                    assert_eq!(variable, "x");
                 }
-            }
+                other => panic!("Expected Reduce, got {:?}", other),
+            },
             other => panic!("Expected Return, got {:?}", other),
         }
     }
 
     #[test]
     fn test_parse_reduce_complex() {
-        let stmt = CypherParser::parse(
-            "RETURN REDUCE(sum = 0, n IN collect(n.price) | sum + n)"
-        ).unwrap();
+        let stmt =
+            CypherParser::parse("RETURN REDUCE(sum = 0, n IN collect(n.price) | sum + n)").unwrap();
 
         match &stmt.clauses[0] {
-            CypherClause::Return(rc) => {
-                match &rc.items[0].expression {
-                    Expression::Reduce { accumulator, variable, .. } => {
-                        assert_eq!(accumulator, "sum");
-                        assert_eq!(variable, "n");
-                    }
-                    other => panic!("Expected Reduce, got {:?}", other),
+            CypherClause::Return(rc) => match &rc.items[0].expression {
+                Expression::Reduce {
+                    accumulator,
+                    variable,
+                    ..
+                } => {
+                    assert_eq!(accumulator, "sum");
+                    assert_eq!(variable, "n");
                 }
-            }
+                other => panic!("Expected Reduce, got {:?}", other),
+            },
             other => panic!("Expected Return, got {:?}", other),
         }
     }
@@ -1842,35 +2062,42 @@ mod tests {
         let stmt = CypherParser::parse("RETURN [x IN [1, 2, 3] | x * 2]").unwrap();
 
         match &stmt.clauses[0] {
-            CypherClause::Return(rc) => {
-                match &rc.items[0].expression {
-                    Expression::ListComprehension { variable, list: _, filter, projection } => {
-                        assert_eq!(variable, "x");
-                        assert!(filter.is_none());
-                        assert!(projection.is_some());
-                    }
-                    other => panic!("Expected ListComprehension, got {:?}", other),
+            CypherClause::Return(rc) => match &rc.items[0].expression {
+                Expression::ListComprehension {
+                    variable,
+                    list: _,
+                    filter,
+                    projection,
+                } => {
+                    assert_eq!(variable, "x");
+                    assert!(filter.is_none());
+                    assert!(projection.is_some());
                 }
-            }
+                other => panic!("Expected ListComprehension, got {:?}", other),
+            },
             other => panic!("Expected Return, got {:?}", other),
         }
     }
 
     #[test]
     fn test_parse_list_comprehension_with_filter() {
-        let stmt = CypherParser::parse("RETURN [x IN [1, 2, 3, 4, 5] WHERE x > 2 | x * 2]").unwrap();
+        let stmt =
+            CypherParser::parse("RETURN [x IN [1, 2, 3, 4, 5] WHERE x > 2 | x * 2]").unwrap();
 
         match &stmt.clauses[0] {
-            CypherClause::Return(rc) => {
-                match &rc.items[0].expression {
-                    Expression::ListComprehension { variable, list: _, filter, projection } => {
-                        assert_eq!(variable, "x");
-                        assert!(filter.is_some());
-                        assert!(projection.is_some());
-                    }
-                    other => panic!("Expected ListComprehension, got {:?}", other),
+            CypherClause::Return(rc) => match &rc.items[0].expression {
+                Expression::ListComprehension {
+                    variable,
+                    list: _,
+                    filter,
+                    projection,
+                } => {
+                    assert_eq!(variable, "x");
+                    assert!(filter.is_some());
+                    assert!(projection.is_some());
                 }
-            }
+                other => panic!("Expected ListComprehension, got {:?}", other),
+            },
             other => panic!("Expected Return, got {:?}", other),
         }
     }
@@ -1880,16 +2107,19 @@ mod tests {
         let stmt = CypherParser::parse("RETURN [x IN [1, 2, 3] WHERE x > 1]").unwrap();
 
         match &stmt.clauses[0] {
-            CypherClause::Return(rc) => {
-                match &rc.items[0].expression {
-                    Expression::ListComprehension { variable, list: _, filter, projection } => {
-                        assert_eq!(variable, "x");
-                        assert!(filter.is_some());
-                        assert!(projection.is_none());
-                    }
-                    other => panic!("Expected ListComprehension, got {:?}", other),
+            CypherClause::Return(rc) => match &rc.items[0].expression {
+                Expression::ListComprehension {
+                    variable,
+                    list: _,
+                    filter,
+                    projection,
+                } => {
+                    assert_eq!(variable, "x");
+                    assert!(filter.is_some());
+                    assert!(projection.is_none());
                 }
-            }
+                other => panic!("Expected ListComprehension, got {:?}", other),
+            },
             other => panic!("Expected Return, got {:?}", other),
         }
     }
@@ -1898,19 +2128,16 @@ mod tests {
 
     #[test]
     fn test_parse_pattern_comprehension() {
-        let stmt = CypherParser::parse(
-            "MATCH (a:Person) RETURN [(a)-->(b:Friend) | b.name]"
-        ).unwrap();
+        let stmt =
+            CypherParser::parse("MATCH (a:Person) RETURN [(a)-->(b:Friend) | b.name]").unwrap();
 
         match &stmt.clauses[1] {
-            CypherClause::Return(rc) => {
-                match &rc.items[0].expression {
-                    Expression::PatternComprehension { filter, .. } => {
-                        assert!(filter.is_none());
-                    }
-                    other => panic!("Expected PatternComprehension, got {:?}", other),
+            CypherClause::Return(rc) => match &rc.items[0].expression {
+                Expression::PatternComprehension { filter, .. } => {
+                    assert!(filter.is_none());
                 }
-            }
+                other => panic!("Expected PatternComprehension, got {:?}", other),
+            },
             other => panic!("Expected Return, got {:?}", other),
         }
     }
@@ -1918,18 +2145,17 @@ mod tests {
     #[test]
     fn test_parse_pattern_comprehension_with_filter() {
         let stmt = CypherParser::parse(
-            "MATCH (a:Person) RETURN [(a)-->(b:Friend) WHERE b.age > 25 | b.name]"
-        ).unwrap();
+            "MATCH (a:Person) RETURN [(a)-->(b:Friend) WHERE b.age > 25 | b.name]",
+        )
+        .unwrap();
 
         match &stmt.clauses[1] {
-            CypherClause::Return(rc) => {
-                match &rc.items[0].expression {
-                    Expression::PatternComprehension { filter, .. } => {
-                        assert!(filter.is_some());
-                    }
-                    other => panic!("Expected PatternComprehension, got {:?}", other),
+            CypherClause::Return(rc) => match &rc.items[0].expression {
+                Expression::PatternComprehension { filter, .. } => {
+                    assert!(filter.is_some());
                 }
-            }
+                other => panic!("Expected PatternComprehension, got {:?}", other),
+            },
             other => panic!("Expected Return, got {:?}", other),
         }
     }
@@ -1938,17 +2164,17 @@ mod tests {
 
     #[test]
     fn test_parse_unwind_with_comprehension() {
-        let stmt = CypherParser::parse(
-            "UNWIND [1, 2, 3] AS x RETURN [y IN [x, x*2] | y * 3]"
-        ).unwrap();
+        let stmt =
+            CypherParser::parse("UNWIND [1, 2, 3] AS x RETURN [y IN [x, x*2] | y * 3]").unwrap();
         assert_eq!(stmt.clauses.len(), 2);
     }
 
     #[test]
     fn test_parse_reduce_with_unwind() {
         let stmt = CypherParser::parse(
-            "UNWIND [[1, 2], [3, 4]] AS nested RETURN REDUCE(sum = 0, x IN nested | sum + x)"
-        ).unwrap();
+            "UNWIND [[1, 2], [3, 4]] AS nested RETURN REDUCE(sum = 0, x IN nested | sum + x)",
+        )
+        .unwrap();
         assert_eq!(stmt.clauses.len(), 2);
     }
 }

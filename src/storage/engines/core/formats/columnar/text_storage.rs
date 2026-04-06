@@ -156,8 +156,7 @@ pub struct TextStorageConfig {
 }
 
 /// Compression options for sidecar files
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidecarCompression {
     /// No compression
     None,
@@ -167,7 +166,6 @@ pub enum SidecarCompression {
     /// Zstd compression (better ratio)
     Zstd,
 }
-
 
 impl Default for TextStorageConfig {
     fn default() -> Self {
@@ -1376,16 +1374,17 @@ impl TextColumnWriter {
 
         // Auto-index if full-text indexing is enabled
         if self.auto_index
-            && let Some(ref mut index) = self.fulltext_index {
-                // For inline/sidecar, index the full document
-                // For chunked, index each chunk separately
-                if strategy == TextStorageStrategy::Chunked {
-                    // Chunks are indexed during write_chunked, skip here
-                } else {
-                    // Index the full document
-                    let _ = index.add_document(record_id, content);
-                }
+            && let Some(ref mut index) = self.fulltext_index
+        {
+            // For inline/sidecar, index the full document
+            // For chunked, index each chunk separately
+            if strategy == TextStorageStrategy::Chunked {
+                // Chunks are indexed during write_chunked, skip here
+            } else {
+                // Index the full document
+                let _ = index.add_document(record_id, content);
             }
+        }
 
         Ok(())
     }
@@ -1687,13 +1686,14 @@ impl TextColumnReader {
             // Replace sidecar references with actual content
             for value in &mut result {
                 if let Some(val) = value.as_ref()
-                    && val.starts_with("__sidecar__:") {
-                        let record_id = &val[12..];
-                        if let Some(sidecar_ref) = sidecar_map.get(record_id) {
-                            let content = self.load_sidecar(sidecar_ref).await?;
-                            *value = Some(content);
-                        }
+                    && val.starts_with("__sidecar__:")
+                {
+                    let record_id = &val[12..];
+                    if let Some(sidecar_ref) = sidecar_map.get(record_id) {
+                        let content = self.load_sidecar(sidecar_ref).await?;
+                        *value = Some(content);
                     }
+                }
             }
         }
 

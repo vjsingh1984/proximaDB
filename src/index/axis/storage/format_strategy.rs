@@ -108,8 +108,7 @@ impl IndexFormatStrategy {
 
             IndexSerializationFormat::BincodeCompressed => {
                 debug!("Serializing with compressed Bincode");
-                let bincode_data =
-                    bincode::serialize(data).map_err(SerializationError::Bincode)?;
+                let bincode_data = bincode::serialize(data).map_err(SerializationError::Bincode)?;
 
                 // Compress with zstd
                 let compressed = zstd::encode_all(&bincode_data[..], 3)
@@ -133,8 +132,7 @@ impl IndexFormatStrategy {
                 warn!("Avro with compression not fully implemented, using bincode+zstd");
 
                 // Simulate Avro + compression with bincode + higher compression
-                let bincode_data =
-                    bincode::serialize(data).map_err(SerializationError::Bincode)?;
+                let bincode_data = bincode::serialize(data).map_err(SerializationError::Bincode)?;
 
                 // Use higher compression level for Avro simulation
                 let compression_level = match format {

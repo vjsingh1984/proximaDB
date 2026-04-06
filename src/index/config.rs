@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Index update behavior modes
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum IndexUpdateMode {
     /// Block flush until index is updated (default for strong consistency)
     #[default]
@@ -19,7 +18,6 @@ pub enum IndexUpdateMode {
     /// Sync for small batches, async for large batches
     Hybrid,
 }
-
 
 /// HNSW algorithm configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -97,8 +95,7 @@ impl Default for IvfConfig {
 }
 
 /// Random projection types for LSH
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum RandomProjection {
     /// Gaussian random projection using normally-distributed vectors.
     #[default]
@@ -108,7 +105,6 @@ pub enum RandomProjection {
     /// Sparse random projection for memory-efficient hashing.
     Sparse,
 }
-
 
 /// LSH algorithm configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -320,10 +316,7 @@ impl IndexConfig {
             lsh_config,
             build_concurrency: Some(self.build_concurrency.map_or(1, |x| x as u32)),
             memory_limit_mb: Some(self.memory_limit_mb.map_or(512, |x| x as u32)),
-            checkpoint_interval_ms: Some(
-                self.checkpoint_interval_ms
-                    .map_or(30000, |x| x as u32),
-            ),
+            checkpoint_interval_ms: Some(self.checkpoint_interval_ms.map_or(30000, |x| x as u32)),
             is_primary: Some(true),           // Default to primary index
             use_cases: vec![],                // Default empty use cases
             selectivity_threshold: Some(0.0), // Default no selectivity threshold
@@ -557,35 +550,40 @@ impl IndexConfig {
 
         // Validate general config
         if let Some(timeout) = self.async_update_timeout_ms
-            && timeout < 1000 {
-                return Err(anyhow::anyhow!(
-                    "async_update_timeout_ms should be at least 1000ms"
-                ));
-            }
+            && timeout < 1000
+        {
+            return Err(anyhow::anyhow!(
+                "async_update_timeout_ms should be at least 1000ms"
+            ));
+        }
 
         if let Some(batch_size) = self.async_update_batch_size
-            && batch_size == 0 {
-                return Err(anyhow::anyhow!(
-                    "async_update_batch_size must be greater than 0"
-                ));
-            }
+            && batch_size == 0
+        {
+            return Err(anyhow::anyhow!(
+                "async_update_batch_size must be greater than 0"
+            ));
+        }
 
         if let Some(concurrency) = self.build_concurrency
-            && concurrency == 0 {
-                return Err(anyhow::anyhow!("build_concurrency must be greater than 0"));
-            }
+            && concurrency == 0
+        {
+            return Err(anyhow::anyhow!("build_concurrency must be greater than 0"));
+        }
 
         if let Some(memory_limit) = self.memory_limit_mb
-            && memory_limit < 64 {
-                return Err(anyhow::anyhow!("memory_limit_mb should be at least 64MB"));
-            }
+            && memory_limit < 64
+        {
+            return Err(anyhow::anyhow!("memory_limit_mb should be at least 64MB"));
+        }
 
         if let Some(checkpoint) = self.checkpoint_interval_ms
-            && checkpoint < 1000 {
-                return Err(anyhow::anyhow!(
-                    "checkpoint_interval_ms should be at least 1000ms"
-                ));
-            }
+            && checkpoint < 1000
+        {
+            return Err(anyhow::anyhow!(
+                "checkpoint_interval_ms should be at least 1000ms"
+            ));
+        }
 
         Ok(())
     }
@@ -822,74 +820,75 @@ impl IndexConfig {
         match algorithm {
             "HNSW" => {
                 if let Some(user_hnsw) = &proto.hnsw_config
-                    && let Some(mut smart_hnsw) = config.hnsw_config.take() {
-                        // Apply user overrides to smart defaults
-                        if user_hnsw.m.unwrap_or(0) != 0 {
-                            smart_hnsw.m = user_hnsw.m.unwrap_or(16) as usize;
-                        }
-                        if user_hnsw.ef_construction.unwrap_or(0) != 0 {
-                            smart_hnsw.ef_construction =
-                                user_hnsw.ef_construction.unwrap_or(200) as usize;
-                        }
-                        if user_hnsw.ef_search.unwrap_or(0) != 0 {
-                            smart_hnsw.ef_search = user_hnsw.ef_search.unwrap_or(100) as usize;
-                        }
-                        if user_hnsw.max_partition_size.unwrap_or(0) != 0 {
-                            smart_hnsw.max_partition_size =
-                                user_hnsw.max_partition_size.unwrap_or(100000) as usize;
-                        }
-                        if user_hnsw.memory_limit_mb.unwrap_or(0) != 0 {
-                            smart_hnsw.memory_limit_mb =
-                                user_hnsw.memory_limit_mb.unwrap_or(512) as usize;
-                        }
-                        // prune_connections and level_multiplier are not in proto - use smart defaults
-
-                        // Boolean fields: use user value if explicitly set, otherwise keep smart default
-                        if let Some(adaptive) = user_hnsw.adaptive_parameters {
-                            smart_hnsw.adaptive_parameters = adaptive;
-                        }
-                        if let Some(simd) = user_hnsw.use_simd {
-                            smart_hnsw.use_simd = simd;
-                        }
-                        if let Some(lazy) = user_hnsw.lazy_loading {
-                            smart_hnsw.lazy_loading = lazy;
-                        }
-
-                        config.hnsw_config = Some(smart_hnsw);
+                    && let Some(mut smart_hnsw) = config.hnsw_config.take()
+                {
+                    // Apply user overrides to smart defaults
+                    if user_hnsw.m.unwrap_or(0) != 0 {
+                        smart_hnsw.m = user_hnsw.m.unwrap_or(16) as usize;
                     }
+                    if user_hnsw.ef_construction.unwrap_or(0) != 0 {
+                        smart_hnsw.ef_construction =
+                            user_hnsw.ef_construction.unwrap_or(200) as usize;
+                    }
+                    if user_hnsw.ef_search.unwrap_or(0) != 0 {
+                        smart_hnsw.ef_search = user_hnsw.ef_search.unwrap_or(100) as usize;
+                    }
+                    if user_hnsw.max_partition_size.unwrap_or(0) != 0 {
+                        smart_hnsw.max_partition_size =
+                            user_hnsw.max_partition_size.unwrap_or(100000) as usize;
+                    }
+                    if user_hnsw.memory_limit_mb.unwrap_or(0) != 0 {
+                        smart_hnsw.memory_limit_mb =
+                            user_hnsw.memory_limit_mb.unwrap_or(512) as usize;
+                    }
+                    // prune_connections and level_multiplier are not in proto - use smart defaults
+
+                    // Boolean fields: use user value if explicitly set, otherwise keep smart default
+                    if let Some(adaptive) = user_hnsw.adaptive_parameters {
+                        smart_hnsw.adaptive_parameters = adaptive;
+                    }
+                    if let Some(simd) = user_hnsw.use_simd {
+                        smart_hnsw.use_simd = simd;
+                    }
+                    if let Some(lazy) = user_hnsw.lazy_loading {
+                        smart_hnsw.lazy_loading = lazy;
+                    }
+
+                    config.hnsw_config = Some(smart_hnsw);
+                }
             }
             "IVF" => {
                 if let Some(user_ivf) = &proto.ivf_config
-                    && let Some(mut smart_ivf) = config.ivf_config.take() {
-                        // Apply user overrides to smart defaults
-                        if user_ivf.n_lists.unwrap_or(0) != 0 {
-                            smart_ivf.n_lists = user_ivf.n_lists.unwrap_or(1000) as usize;
-                        }
-                        if user_ivf.n_probe.unwrap_or(0) != 0 {
-                            smart_ivf.n_probe = user_ivf.n_probe.unwrap_or(10) as usize;
-                        }
-                        if user_ivf.quantization_bits.unwrap_or(0) != 0 {
-                            smart_ivf.quantization_bits =
-                                user_ivf.quantization_bits.unwrap_or(8) as usize;
-                        }
-                        if user_ivf.pq_subspaces.unwrap_or(0) != 0 {
-                            smart_ivf.pq_subspaces = user_ivf.pq_subspaces.unwrap_or(8) as usize;
-                        }
-                        if user_ivf.min_train_size.unwrap_or(0) != 0 {
-                            smart_ivf.min_train_size =
-                                user_ivf.min_train_size.unwrap_or(1000) as usize;
-                        }
-
-                        // Boolean fields: use user value if explicitly set, otherwise keep smart default
-                        if let Some(pq) = user_ivf.use_pq {
-                            smart_ivf.use_pq = pq;
-                        }
-                        if let Some(train) = user_ivf.train_on_insert {
-                            smart_ivf.train_on_insert = train;
-                        }
-
-                        config.ivf_config = Some(smart_ivf);
+                    && let Some(mut smart_ivf) = config.ivf_config.take()
+                {
+                    // Apply user overrides to smart defaults
+                    if user_ivf.n_lists.unwrap_or(0) != 0 {
+                        smart_ivf.n_lists = user_ivf.n_lists.unwrap_or(1000) as usize;
                     }
+                    if user_ivf.n_probe.unwrap_or(0) != 0 {
+                        smart_ivf.n_probe = user_ivf.n_probe.unwrap_or(10) as usize;
+                    }
+                    if user_ivf.quantization_bits.unwrap_or(0) != 0 {
+                        smart_ivf.quantization_bits =
+                            user_ivf.quantization_bits.unwrap_or(8) as usize;
+                    }
+                    if user_ivf.pq_subspaces.unwrap_or(0) != 0 {
+                        smart_ivf.pq_subspaces = user_ivf.pq_subspaces.unwrap_or(8) as usize;
+                    }
+                    if user_ivf.min_train_size.unwrap_or(0) != 0 {
+                        smart_ivf.min_train_size = user_ivf.min_train_size.unwrap_or(1000) as usize;
+                    }
+
+                    // Boolean fields: use user value if explicitly set, otherwise keep smart default
+                    if let Some(pq) = user_ivf.use_pq {
+                        smart_ivf.use_pq = pq;
+                    }
+                    if let Some(train) = user_ivf.train_on_insert {
+                        smart_ivf.train_on_insert = train;
+                    }
+
+                    config.ivf_config = Some(smart_ivf);
+                }
             }
             _ => {}
         }

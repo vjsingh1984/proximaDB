@@ -618,14 +618,15 @@ impl IcebergFormat {
             let name = name.to_string_lossy();
 
             // Match v1.metadata.json, v2.metadata.json, etc.
-            if name.starts_with('v') && name.ends_with(".metadata.json")
+            if name.starts_with('v')
+                && name.ends_with(".metadata.json")
                 && let Ok(version) = name
                     .trim_start_matches('v')
                     .trim_end_matches(".metadata.json")
                     .parse::<i32>()
-                {
-                    max_version = max_version.max(version);
-                }
+            {
+                max_version = max_version.max(version);
+            }
         }
 
         Ok(max_version)

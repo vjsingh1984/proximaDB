@@ -390,11 +390,12 @@ impl MetricsPersistenceLayer {
                             .strip_prefix("snapshot_")
                             .and_then(|s| s.strip_suffix(".bincode"))
                             && let Ok(timestamp) = timestamp_str.parse::<i64>()
-                                && timestamp < cutoff {
-                                    let path = format!("{}/{}", collection_path, snapshot.name);
-                                    self.filesystem_factory.delete(&path).await?;
-                                    deleted_count += 1;
-                                }
+                            && timestamp < cutoff
+                        {
+                            let path = format!("{}/{}", collection_path, snapshot.name);
+                            self.filesystem_factory.delete(&path).await?;
+                            deleted_count += 1;
+                        }
                     }
                 }
             }
@@ -495,17 +496,18 @@ impl MetricsPersistenceLayer {
             if self.filesystem_factory.exists(&partition_path).await? {
                 let entries = self.filesystem_factory.list(&partition_path).await?;
                 for entry in entries {
-                    if entry.name.starts_with("collection_") && entry.name.ends_with(".json")
+                    if entry.name.starts_with("collection_")
+                        && entry.name.ends_with(".json")
                         && let Some(id) = entry
                             .name
                             .strip_prefix("collection_")
                             .and_then(|s| s.strip_suffix(".json"))
-                        {
-                            let collection_id = id.to_string();
-                            if !collection_id.is_empty() && !collections.contains(&collection_id) {
-                                collections.push(collection_id);
-                            }
+                    {
+                        let collection_id = id.to_string();
+                        if !collection_id.is_empty() && !collections.contains(&collection_id) {
+                            collections.push(collection_id);
                         }
+                    }
                 }
             }
         }

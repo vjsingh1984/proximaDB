@@ -487,9 +487,10 @@ impl MetadataSerializer for SstMetadataSerializer {
         // Check TTL first (fastest filter)
         if let Some(ttl_threshold) = query_context.metadata_filters.get("ttl_threshold")
             && let Ok(threshold) = ttl_threshold.parse::<u64>()
-                && sst_metadata.global.max_timestamp < threshold {
-                    return true; // Entire file is expired
-                }
+            && sst_metadata.global.max_timestamp < threshold
+        {
+            return true; // Entire file is expired
+        }
 
         // Check global bloom filter for ID lookups
         if !query_context.id_lookups.is_empty() {

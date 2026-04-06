@@ -255,7 +255,7 @@ fn analyze_jaggedness(data: &[f32]) -> f64 {
     let jump_ratio = large_jumps as f64 / deltas.len() as f64;
 
     // Combined jaggedness score
-    
+
     (change_ratio * 0.7 + jump_ratio * 0.3).min(1.0)
 }
 

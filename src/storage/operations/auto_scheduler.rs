@@ -613,7 +613,6 @@ impl AutoScheduler {
                 let mut queue = self.pending_queue.lock().await;
 
                 // Find the highest priority operation that's ready to run
-                
 
                 queue
                     .iter()
@@ -738,19 +737,19 @@ impl AutoScheduler {
             && let Err(e) = self
                 .schedule_flush("__global__", OperationPriority::Normal)
                 .await
-            {
-                warn!("⏰ Failed to schedule flush: {}", e);
-            }
+        {
+            warn!("⏰ Failed to schedule flush: {}", e);
+        }
 
         // Check compaction triggers (prefer idle/low-activity periods)
         if (analysis.is_idle || analysis.is_low_activity_window)
             && self.should_trigger_compaction(&metrics).await
-                && let Err(e) = self
-                    .schedule_compaction("__global__", OperationPriority::Low)
-                    .await
-                {
-                    warn!("⏰ Failed to schedule compaction: {}", e);
-                }
+            && let Err(e) = self
+                .schedule_compaction("__global__", OperationPriority::Low)
+                .await
+        {
+            warn!("⏰ Failed to schedule compaction: {}", e);
+        }
 
         // Schedule periodic health checks
         self.schedule_periodic_operations().await;
@@ -781,9 +780,9 @@ impl AutoScheduler {
                     None,
                 )
                 .await
-            {
-                let _ = self.schedule(operation).await;
-            }
+        {
+            let _ = self.schedule(operation).await;
+        }
 
         // Schedule periodic stats collection (every minute)
         let last_stats = self
@@ -798,9 +797,9 @@ impl AutoScheduler {
                     None,
                 )
                 .await
-            {
-                let _ = self.schedule(operation).await;
-            }
+        {
+            let _ = self.schedule(operation).await;
+        }
     }
 
     async fn get_last_operation_time(&self, op_type: OperationType) -> DateTime<Utc> {
@@ -809,7 +808,8 @@ impl AutoScheduler {
         history
             .iter()
             .rev()
-            .find(|op| op.operation_type == op_type).map_or_else(|| Utc::now() - Duration::hours(1), |op| op.scheduled_at)
+            .find(|op| op.operation_type == op_type)
+            .map_or_else(|| Utc::now() - Duration::hours(1), |op| op.scheduled_at)
     }
 
     async fn analyze_workload(&self) {

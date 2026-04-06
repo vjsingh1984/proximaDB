@@ -178,18 +178,20 @@ fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> 
         let byte_idx = idx / 8;
         let bit_idx = idx % 8;
 
-        if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0
-            && value_idx < num_nonzero {
-                let offset = values_start + value_idx * 4;
-                let val = i32::from_le_bytes([
-                    data[offset],
-                    data[offset + 1],
-                    data[offset + 2],
-                    data[offset + 3],
-                ]);
-                *res_val = val;
-                value_idx += 1;
-            }
+        if byte_idx < bitmap.len()
+            && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0
+            && value_idx < num_nonzero
+        {
+            let offset = values_start + value_idx * 4;
+            let val = i32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]);
+            *res_val = val;
+            value_idx += 1;
+        }
     }
 
     Ok(result)
@@ -235,22 +237,24 @@ fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> 
         let byte_idx = idx / 8;
         let bit_idx = idx % 8;
 
-        if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0
-            && value_idx < num_nonzero {
-                let offset = values_start + value_idx * 8;
-                let val = i64::from_le_bytes([
-                    data[offset],
-                    data[offset + 1],
-                    data[offset + 2],
-                    data[offset + 3],
-                    data[offset + 4],
-                    data[offset + 5],
-                    data[offset + 6],
-                    data[offset + 7],
-                ]);
-                *res_val = val;
-                value_idx += 1;
-            }
+        if byte_idx < bitmap.len()
+            && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0
+            && value_idx < num_nonzero
+        {
+            let offset = values_start + value_idx * 8;
+            let val = i64::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
+            ]);
+            *res_val = val;
+            value_idx += 1;
+        }
     }
 
     Ok(result)

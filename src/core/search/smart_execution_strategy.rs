@@ -394,9 +394,7 @@ impl SmartExecutionStrategy {
             batch_size: params.query_vectors.as_ref().map_or(1, |v| v.len()),
             requires_vectors: true,  // Would check if vectors are needed
             requires_metadata: true, // Would check if metadata is needed
-            distance_metric: params
-                .distance_metric
-                .unwrap_or(DistanceMetric::Cosine),
+            distance_metric: params.distance_metric.unwrap_or(DistanceMetric::Cosine),
             has_runtime_hints: params.runtime_hints.is_some(),
         }
     }
@@ -457,10 +455,7 @@ impl SmartExecutionStrategy {
         } else if metadata.index_types.contains(&"HNSW".to_string()) {
             "HNSW" // HNSW for pure similarity search
         } else {
-            metadata
-                .index_types
-                .first()
-                .map_or("FLAT", |s| s.as_str())
+            metadata.index_types.first().map_or("FLAT", |s| s.as_str())
         };
 
         let fallback_probability = if metadata.update_frequency > 100.0 {

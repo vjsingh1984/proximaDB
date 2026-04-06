@@ -1082,26 +1082,28 @@ impl HardwareCapabilities {
             let line_lower = line.to_lowercase();
 
             // Check for ARM cache size indicators
-            if line_lower.contains("cache") && line_lower.contains("size")
-                && let Some(size) = Self::parse_arm_cache_size(line) {
-                    // ARM cpuinfo often doesn't specify cache level clearly
-                    // Use heuristics based on size ranges
-                    if size <= 128 * 1024
-                        && (line_lower.contains("instruction") || line_lower.contains("icache"))
-                    {
-                        // Likely L1 instruction cache
-                        cache_sizes.l1_instruction = size;
-                    } else if size <= 128 * 1024 {
-                        // Likely L1 data cache
-                        cache_sizes.l1_data = size;
-                    } else if size <= 4 * 1024 * 1024 {
-                        // Likely L2 cache
-                        cache_sizes.l2 = size;
-                    } else {
-                        // Likely L3 cache
-                        cache_sizes.l3 = size;
-                    }
+            if line_lower.contains("cache")
+                && line_lower.contains("size")
+                && let Some(size) = Self::parse_arm_cache_size(line)
+            {
+                // ARM cpuinfo often doesn't specify cache level clearly
+                // Use heuristics based on size ranges
+                if size <= 128 * 1024
+                    && (line_lower.contains("instruction") || line_lower.contains("icache"))
+                {
+                    // Likely L1 instruction cache
+                    cache_sizes.l1_instruction = size;
+                } else if size <= 128 * 1024 {
+                    // Likely L1 data cache
+                    cache_sizes.l1_data = size;
+                } else if size <= 4 * 1024 * 1024 {
+                    // Likely L2 cache
+                    cache_sizes.l2 = size;
+                } else {
+                    // Likely L3 cache
+                    cache_sizes.l3 = size;
                 }
+            }
 
             // Check for specific ARM vendor cache info
             if line_lower.contains("apple") && line_lower.contains("cache") {
@@ -1409,7 +1411,7 @@ pub fn initialize_hardware_capabilities_default() -> Result<()> {
 ///
 /// # Panics
 /// Panics if called before initialize_hardware_capabilities()
-#[allow(clippy::panic)]  // Intentional panic for API misuse detection
+#[allow(clippy::panic)] // Intentional panic for API misuse detection
 pub fn hardware_capabilities() -> Arc<HardwareCapabilities> {
     match HARDWARE_CAPABILITIES.get() {
         Some(caps) => caps.clone(),
@@ -1621,14 +1623,12 @@ pub struct HardwareQuery;
 impl HardwareQuery {
     /// Check if AVX-512 is available
     pub fn has_avx512() -> bool {
-        try_get_hardware_capabilities()
-            .is_some_and(|caps| caps.has_avx512())
+        try_get_hardware_capabilities().is_some_and(|caps| caps.has_avx512())
     }
 
     /// Check if GPU acceleration is available
     pub fn has_gpu() -> bool {
-        try_get_hardware_capabilities()
-            .is_some_and(|caps| caps.has_gpu())
+        try_get_hardware_capabilities().is_some_and(|caps| caps.has_gpu())
     }
 
     /// Get the number of CPU cores
@@ -1645,8 +1645,9 @@ impl HardwareQuery {
 
     /// Get recommended cache size
     pub fn recommended_cache_size() -> u64 {
-        try_get_hardware_capabilities()
-            .map_or(1024 * 1024 * 1024, |caps| caps.memory.recommended_cache_size) // 1GB default
+        try_get_hardware_capabilities().map_or(1024 * 1024 * 1024, |caps| {
+            caps.memory.recommended_cache_size
+        }) // 1GB default
     }
 
     /// Get L3 cache size for optimal row group sizing

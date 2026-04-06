@@ -218,10 +218,7 @@ impl SmartResultCache {
         // Update invalidation tracker
         let mut tracker = self.invalidation_tracker.write().await;
         for file in accessed_files {
-            tracker
-                .entry(file)
-                .or_default()
-                .push(query_hash);
+            tracker.entry(file).or_default().push(query_hash);
         }
 
         debug!("Cached result for query hash {}", query_hash);

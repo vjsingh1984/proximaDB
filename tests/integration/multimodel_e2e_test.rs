@@ -11,10 +11,10 @@
 //! These tests validate that a SQL statement entered via any protocol
 //! (REST, PG wire, Arrow Flight) is routed to the same engine.
 
+use proximadb::query::multimodel_executor::{SqlPlan, lower_sql_to_plan};
 use proximadb::query::multimodel_router::{
-    detect_store_type_from_create, detect_store_type_from_query, StoreType,
+    StoreType, detect_store_type_from_create, detect_store_type_from_query,
 };
-use proximadb::query::multimodel_executor::{lower_sql_to_plan, SqlPlan};
 
 // =============================================================================
 // 1. STORE TYPE DETECTION — CREATE TABLE (all 7 models)
@@ -46,20 +46,15 @@ fn test_create_routes_to_graph() {
 
 #[test]
 fn test_create_routes_to_observability() {
-    let sql = "CREATE TABLE app_logs (ts TIMESTAMP, severity TEXT, message TEXT) USING OBSERVABILITY";
-    assert_eq!(
-        detect_store_type_from_create(sql),
-        StoreType::Observability
-    );
+    let sql =
+        "CREATE TABLE app_logs (ts TIMESTAMP, severity TEXT, message TEXT) USING OBSERVABILITY";
+    assert_eq!(detect_store_type_from_create(sql), StoreType::Observability);
 }
 
 #[test]
 fn test_create_routes_to_observability_via_timeseries() {
     let sql = "CREATE TABLE sensor_data (ts TIMESTAMP, value FLOAT) USING TIMESERIES";
-    assert_eq!(
-        detect_store_type_from_create(sql),
-        StoreType::Observability
-    );
+    assert_eq!(detect_store_type_from_create(sql), StoreType::Observability);
 }
 
 #[test]
@@ -196,11 +191,19 @@ fn test_query_catalog_override() {
         }
     };
     assert_eq!(
-        detect_store_type_from_query("SELECT * FROM my_vectors LIMIT 5", "my_vectors", Some(&catalog)),
+        detect_store_type_from_query(
+            "SELECT * FROM my_vectors LIMIT 5",
+            "my_vectors",
+            Some(&catalog)
+        ),
         StoreType::Vector
     );
     assert_eq!(
-        detect_store_type_from_query("SELECT * FROM my_docs WHERE id = 1", "my_docs", Some(&catalog)),
+        detect_store_type_from_query(
+            "SELECT * FROM my_docs WHERE id = 1",
+            "my_docs",
+            Some(&catalog)
+        ),
         StoreType::Document
     );
     // Catalog returns None → default to Relational
@@ -231,7 +234,9 @@ fn test_e2e_document_select_lowers_to_document_query() {
     assert_eq!(store_type, StoreType::Document);
 
     let plan = lower_sql_to_plan(sql, "doc_products", store_type).unwrap();
-    assert!(matches!(plan, SqlPlan::DocumentQuery { collection, .. } if collection == "doc_products"));
+    assert!(
+        matches!(plan, SqlPlan::DocumentQuery { collection, .. } if collection == "doc_products")
+    );
 }
 
 #[test]
@@ -371,7 +376,13 @@ fn test_e2e_relational_aggregate() {
     assert_eq!(store_type, StoreType::Relational);
 
     let plan = lower_sql_to_plan(sql, "employees", store_type).unwrap();
-    assert!(matches!(plan, SqlPlan::Aggregate { store_type: StoreType::Relational, .. }));
+    assert!(matches!(
+        plan,
+        SqlPlan::Aggregate {
+            store_type: StoreType::Relational,
+            ..
+        }
+    ));
 }
 
 // =============================================================================
@@ -400,7 +411,10 @@ fn test_e2e_create_document_table() {
     let plan = lower_sql_to_plan(sql, "products", store_type).unwrap();
     assert!(matches!(
         plan,
-        SqlPlan::CreateTable { store_type: StoreType::Document, .. }
+        SqlPlan::CreateTable {
+            store_type: StoreType::Document,
+            ..
+        }
     ));
 }
 
@@ -413,7 +427,10 @@ fn test_e2e_create_graph_table() {
     let plan = lower_sql_to_plan(sql, "social", store_type).unwrap();
     assert!(matches!(
         plan,
-        SqlPlan::CreateTable { store_type: StoreType::Graph, .. }
+        SqlPlan::CreateTable {
+            store_type: StoreType::Graph,
+            ..
+        }
     ));
 }
 
@@ -426,7 +443,10 @@ fn test_e2e_create_observability_table() {
     let plan = lower_sql_to_plan(sql, "app_logs", store_type).unwrap();
     assert!(matches!(
         plan,
-        SqlPlan::CreateTable { store_type: StoreType::Observability, .. }
+        SqlPlan::CreateTable {
+            store_type: StoreType::Observability,
+            ..
+        }
     ));
 }
 
@@ -439,7 +459,10 @@ fn test_e2e_create_relational_table() {
     let plan = lower_sql_to_plan(sql, "users", store_type).unwrap();
     assert!(matches!(
         plan,
-        SqlPlan::CreateTable { store_type: StoreType::Relational, .. }
+        SqlPlan::CreateTable {
+            store_type: StoreType::Relational,
+            ..
+        }
     ));
 }
 
@@ -533,7 +556,10 @@ fn test_cross_protocol_store_type_consistency() {
 fn test_all_using_clauses_recognized() {
     let cases = vec![
         ("CREATE TABLE t (id TEXT) USING VECTOR", StoreType::Vector),
-        ("CREATE TABLE t (id TEXT) USING DOCUMENT", StoreType::Document),
+        (
+            "CREATE TABLE t (id TEXT) USING DOCUMENT",
+            StoreType::Document,
+        ),
         ("CREATE TABLE t (id TEXT) USING GRAPH", StoreType::Graph),
         (
             "CREATE TABLE t (id TEXT) USING OBSERVABILITY",

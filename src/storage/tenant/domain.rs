@@ -135,13 +135,14 @@ impl DomainManager {
 
         // Check if domain already exists
         if let Some(tenant_domains) = self.tenant_domains.get(tenant_id)
-            && tenant_domains.contains_key(domain_name) {
-                return Err(anyhow!(
-                    "Domain {} already exists in tenant {}",
-                    domain_name,
-                    tenant_id
-                ));
-            }
+            && tenant_domains.contains_key(domain_name)
+        {
+            return Err(anyhow!(
+                "Domain {} already exists in tenant {}",
+                domain_name,
+                tenant_id
+            ));
+        }
 
         // Create domain context
         let domain_context = DomainContext {

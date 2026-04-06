@@ -152,9 +152,10 @@ impl ParallelWALSearch {
 
                 // Apply metadata filter if present
                 if let Some(filter) = metadata_filter
-                    && !self.evaluate_filter(record, filter) {
-                        return None;
-                    }
+                    && !self.evaluate_filter(record, filter)
+                {
+                    return None;
+                }
 
                 // Calculate distance using SIMD when available
                 let score = if use_simd {
@@ -532,7 +533,8 @@ impl EarlyTerminationTracker {
 
     /// Get final results
     pub fn get_top_k(self) -> Vec<SearchCandidate> {
-        let mut candidates = Arc::try_unwrap(self.candidates).map_or_else(|arc| arc.read().clone(), |rwlock| rwlock.into_inner());
+        let mut candidates = Arc::try_unwrap(self.candidates)
+            .map_or_else(|arc| arc.read().clone(), |rwlock| rwlock.into_inner());
 
         candidates.sort_unstable_by(|a, b| {
             b.score

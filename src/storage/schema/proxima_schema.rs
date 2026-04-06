@@ -705,12 +705,13 @@ impl ProximaDataType {
             ArrowDataType::Map(field, _) => {
                 // Extract key/value types from Map struct
                 if let ArrowDataType::Struct(fields) = field.data_type()
-                    && fields.len() >= 2 {
-                        return ProximaDataType::Map {
-                            key: Box::new(Self::from_arrow_type(fields[0].data_type())),
-                            value: Box::new(Self::from_arrow_type(fields[1].data_type())),
-                        };
-                    }
+                    && fields.len() >= 2
+                {
+                    return ProximaDataType::Map {
+                        key: Box::new(Self::from_arrow_type(fields[0].data_type())),
+                        value: Box::new(Self::from_arrow_type(fields[1].data_type())),
+                    };
+                }
                 ProximaDataType::Json // Fallback
             }
             ArrowDataType::Struct(fields) => ProximaDataType::Struct {

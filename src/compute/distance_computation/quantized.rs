@@ -644,80 +644,84 @@ impl QuantizedDistanceCalculator {
 
         // Stage 1: Binary filtering (if available and quality target allows)
         if let Some(_binary_data) = &quantized_vector.binary
-            && current_quality < target_quality {
-                let result = self
-                    .compute_distance(query, quantized_vector, SelectedFormat::Binary)
-                    .await?;
-                final_distance = result.similarity;
-                current_quality = result.quality_estimate;
-                stages.push("Binary".to_string());
+            && current_quality < target_quality
+        {
+            let result = self
+                .compute_distance(query, quantized_vector, SelectedFormat::Binary)
+                .await?;
+            final_distance = result.similarity;
+            current_quality = result.quality_estimate;
+            stages.push("Binary".to_string());
 
-                trace!(
-                    "Binary stage: distance={:.4}, quality={:.2}",
-                    final_distance, current_quality
-                );
-            }
+            trace!(
+                "Binary stage: distance={:.4}, quality={:.2}",
+                final_distance, current_quality
+            );
+        }
 
         // Stage 2: INT8 approximation (if available and needed)
         if let Some(_int8_data) = &quantized_vector.int8
-            && current_quality < target_quality {
-                let result = self
-                    .compute_distance(query, quantized_vector, SelectedFormat::INT8)
-                    .await?;
-                final_distance = result.similarity;
-                current_quality = result.quality_estimate;
-                stages.push("INT8".to_string());
+            && current_quality < target_quality
+        {
+            let result = self
+                .compute_distance(query, quantized_vector, SelectedFormat::INT8)
+                .await?;
+            final_distance = result.similarity;
+            current_quality = result.quality_estimate;
+            stages.push("INT8".to_string());
 
-                trace!(
-                    "INT8 stage: distance={:.4}, quality={:.2}",
-                    final_distance, current_quality
-                );
-            }
+            trace!(
+                "INT8 stage: distance={:.4}, quality={:.2}",
+                final_distance, current_quality
+            );
+        }
 
         // Stage 3: PQ approximation (if available and needed)
         if let Some(_pq_data) = &quantized_vector.pq
-            && current_quality < target_quality {
-                let result = self
-                    .compute_distance(query, quantized_vector, SelectedFormat::PQ)
-                    .await?;
-                final_distance = result.similarity;
-                current_quality = result.quality_estimate;
-                stages.push("PQ".to_string());
+            && current_quality < target_quality
+        {
+            let result = self
+                .compute_distance(query, quantized_vector, SelectedFormat::PQ)
+                .await?;
+            final_distance = result.similarity;
+            current_quality = result.quality_estimate;
+            stages.push("PQ".to_string());
 
-                trace!(
-                    "PQ stage: distance={:.4}, quality={:.2}",
-                    final_distance, current_quality
-                );
-            }
+            trace!(
+                "PQ stage: distance={:.4}, quality={:.2}",
+                final_distance, current_quality
+            );
+        }
 
         // Stage 4: Full precision (if available and needed)
         if let Some(_fp32_data) = &quantized_vector.fp32
-            && current_quality < target_quality {
-                // For FP32, we need to use the distance engine directly
-                let fp32_vector = quantized_vector
-                    .fp32
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("FP32 data not available"))?;
-                let similarity = self.distance_engine.calculate_distance(
-                    query,
-                    fp32_vector,
-                    &DistanceMetric::Cosine, // Use default metric
-                );
-                let result = QuantizedDistanceResult {
-                    similarity: similarity.normalized_score,
-                    quality_estimate: 1.0,
-                    method: ComputationMethod::ExactFP32,
-                    metrics: DistanceMetrics::default(),
-                };
-                final_distance = result.similarity;
-                current_quality = result.quality_estimate;
-                stages.push("FP32".to_string());
+            && current_quality < target_quality
+        {
+            // For FP32, we need to use the distance engine directly
+            let fp32_vector = quantized_vector
+                .fp32
+                .as_ref()
+                .ok_or_else(|| anyhow!("FP32 data not available"))?;
+            let similarity = self.distance_engine.calculate_distance(
+                query,
+                fp32_vector,
+                &DistanceMetric::Cosine, // Use default metric
+            );
+            let result = QuantizedDistanceResult {
+                similarity: similarity.normalized_score,
+                quality_estimate: 1.0,
+                method: ComputationMethod::ExactFP32,
+                metrics: DistanceMetrics::default(),
+            };
+            final_distance = result.similarity;
+            current_quality = result.quality_estimate;
+            stages.push("FP32".to_string());
 
-                trace!(
-                    "FP32 stage: distance={:.4}, quality={:.2}",
-                    final_distance, current_quality
-                );
-            }
+            trace!(
+                "FP32 stage: distance={:.4}, quality={:.2}",
+                final_distance, current_quality
+            );
+        }
 
         let computation_time = start_time.elapsed().as_secs_f64() * 1_000_000.0;
 

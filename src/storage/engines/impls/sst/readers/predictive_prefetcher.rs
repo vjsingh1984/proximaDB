@@ -231,24 +231,25 @@ impl PredictivePrefetcher {
             .access_patterns
             .sequential_patterns
             .get(&current_key.file_path)
-            && seq_pattern.access_count > 3 {
-                // Use access count as confidence metric
-                for i in 1..=self.config.prefetch_window {
-                    let next_block_id =
-                        (current_key.block_id as i32 + seq_pattern.stride * i as i32) as u32;
-                    let next_key = BlockCacheKey {
-                        file_path: current_key.file_path.clone(),
-                        block_id: next_block_id,
-                        block_index: current_key.block_index + i,
-                    };
+            && seq_pattern.access_count > 3
+        {
+            // Use access count as confidence metric
+            for i in 1..=self.config.prefetch_window {
+                let next_block_id =
+                    (current_key.block_id as i32 + seq_pattern.stride * i as i32) as u32;
+                let next_key = BlockCacheKey {
+                    file_path: current_key.file_path.clone(),
+                    block_id: next_block_id,
+                    block_index: current_key.block_index + i,
+                };
 
-                    predictions.push((
-                        next_key,
-                        0.8 * (0.9_f64).powi(i as i32), // Use fixed confidence decay
-                        PatternType::Sequential,
-                    ));
-                }
+                predictions.push((
+                    next_key,
+                    0.8 * (0.9_f64).powi(i as i32), // Use fixed confidence decay
+                    PatternType::Sequential,
+                ));
             }
+        }
 
         // Random pattern prediction (hot blocks)
         if let Some(rand_pattern) = self
@@ -297,11 +298,12 @@ impl PredictivePrefetcher {
             if record.key.file_path == current_key.file_path {
                 // Look at next accesses
                 if let Some(next_record) = history.get(i + 1)
-                    && next_record.key.file_path == current_key.file_path {
-                        *pattern_scores
-                            .entry(next_record.key.block_id)
-                            .or_insert(0.0) += 1.0;
-                    }
+                    && next_record.key.file_path == current_key.file_path
+                {
+                    *pattern_scores
+                        .entry(next_record.key.block_id)
+                        .or_insert(0.0) += 1.0;
+                }
             }
         }
 
@@ -380,10 +382,11 @@ impl PredictivePrefetcher {
         // Convert BlockCacheKey to String for map lookup
         let key_str = format!("{}:{}:{}", key.file_path, key.block_id, key.block_index);
         if let Some(pattern) = self.access_patterns.sequential_patterns.get(&key_str)
-            && pattern.access_count > 3 {
-                // Use access count threshold
-                return AccessType::Sequential;
-            }
+            && pattern.access_count > 3
+        {
+            // Use access count threshold
+            return AccessType::Sequential;
+        }
 
         AccessType::Random
     }

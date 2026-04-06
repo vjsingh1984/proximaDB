@@ -228,40 +228,42 @@ impl StorageQuantizationEngine {
 
         // Train primary quantization (PQ)
         if let Some(ref level) = self.config.primary_level
-            && let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
-                let codebook_id = format!("storage_pq_{}_{}", pq.num_subvectors, pq.bits_per_code);
+            && let Some(QuantizationLevel::Pq(pq)) = &level.level_type
+        {
+            let codebook_id = format!("storage_pq_{}_{}", pq.num_subvectors, pq.bits_per_code);
 
-                info!("Training PQ codebook: {}", codebook_id);
-                self.unified_engine
-                    .train_pq_codebook(
-                        &training_vectors,
-                        pq.num_subvectors as usize,
-                        pq.bits_per_code as u8,
-                        &codebook_id,
-                    )
-                    .await?;
+            info!("Training PQ codebook: {}", codebook_id);
+            self.unified_engine
+                .train_pq_codebook(
+                    &training_vectors,
+                    pq.num_subvectors as usize,
+                    pq.bits_per_code as u8,
+                    &codebook_id,
+                )
+                .await?;
 
-                // Cache the trained codebook centroids for fast access
-                // The centroids are stored as flattened arrays for efficient distance computation
-                let centroids_cache: Vec<Vec<f32>> = (0..pq.num_subvectors)
-                    .map(|_subspace| {
-                        // For now, create placeholder centroids - in production these would be loaded
-                        // from the codebook store after training
-                        let num_centroids = 1 << pq.bits_per_code;
-                        let subvector_dim =
-                            training_vectors[0].len().div_ceil(pq.num_subvectors as usize);
-                        vec![0.0f32; num_centroids as usize * subvector_dim]
-                    })
-                    .collect();
+            // Cache the trained codebook centroids for fast access
+            // The centroids are stored as flattened arrays for efficient distance computation
+            let centroids_cache: Vec<Vec<f32>> = (0..pq.num_subvectors)
+                .map(|_subspace| {
+                    // For now, create placeholder centroids - in production these would be loaded
+                    // from the codebook store after training
+                    let num_centroids = 1 << pq.bits_per_code;
+                    let subvector_dim = training_vectors[0]
+                        .len()
+                        .div_ceil(pq.num_subvectors as usize);
+                    vec![0.0f32; num_centroids as usize * subvector_dim]
+                })
+                .collect();
 
-                self.codebooks
-                    .insert(codebook_id.clone(), Arc::new(centroids_cache));
+            self.codebooks
+                .insert(codebook_id.clone(), Arc::new(centroids_cache));
 
-                info!(
-                    "Cached PQ codebook {} with {} subspaces",
-                    codebook_id, pq.num_subvectors
-                );
-            }
+            info!(
+                "Cached PQ codebook {} with {} subspaces",
+                codebook_id, pq.num_subvectors
+            );
+        }
 
         // No training needed for binary or INT8 quantization
 
@@ -956,20 +958,21 @@ impl StorageQuantizationEngine {
 
         // Check if we have PQ quantization configuration and precompute distance table
         if let Some(ref level) = self.config.primary_level
-            && let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
-                // Precompute distance table for faster PQ distance calculations
-                let _distance_table = self.precompute_pq_distance_table(
-                    query,
-                    pq.num_subvectors as usize,
-                    pq.bits_per_code as u8,
-                )?;
-                debug!(
-                    "Precomputed distance table for PQ ranking with {} subvectors",
-                    pq.num_subvectors
-                );
-                // Note: The distance table would be used in an optimized version of
-                // calculate_batch_distances that accepts precomputed tables
-            }
+            && let Some(QuantizationLevel::Pq(pq)) = &level.level_type
+        {
+            // Precompute distance table for faster PQ distance calculations
+            let _distance_table = self.precompute_pq_distance_table(
+                query,
+                pq.num_subvectors as usize,
+                pq.bits_per_code as u8,
+            )?;
+            debug!(
+                "Precomputed distance table for PQ ranking with {} subvectors",
+                pq.num_subvectors
+            );
+            // Note: The distance table would be used in an optimized version of
+            // calculate_batch_distances that accepts precomputed tables
+        }
 
         // Calculate distances
         // Note: Distance table optimization is prepared but the actual optimized computation

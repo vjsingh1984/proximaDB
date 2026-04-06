@@ -354,7 +354,11 @@ impl PlanNode {
         let mut capabilities = CapabilitySet::new();
 
         match &self.node_type {
-            PlanNodeType::Scan { target, model_type, predicates } => {
+            PlanNodeType::Scan {
+                target,
+                model_type,
+                predicates,
+            } => {
                 // All scans require basic scan capability
                 capabilities.add(Capability::Scan);
 
@@ -411,7 +415,11 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::VectorSearch { collection: _, top_k: _, query_vector_source } => {
+            PlanNodeType::VectorSearch {
+                collection: _,
+                top_k: _,
+                query_vector_source,
+            } => {
                 capabilities.add(Capability::VectorSearch);
                 capabilities.add(Capability::Scan);
 
@@ -426,7 +434,10 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::GraphTraversal { cypher, start_nodes: _ } => {
+            PlanNodeType::GraphTraversal {
+                cypher,
+                start_nodes: _,
+            } => {
                 capabilities.add(Capability::GraphQuery);
                 capabilities.add(Capability::GraphTraversal);
                 capabilities.add(Capability::PatternMatching);
@@ -438,7 +449,10 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::DocumentQuery { collection: _, filter } => {
+            PlanNodeType::DocumentQuery {
+                collection: _,
+                filter,
+            } => {
                 capabilities.add(Capability::DocumentQuery);
                 capabilities.add(Capability::Scan);
                 capabilities.add(Capability::FullTextSearch);
@@ -451,7 +465,11 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::ObservabilityQuery { namespace: _, query_type, time_range } => {
+            PlanNodeType::ObservabilityQuery {
+                namespace: _,
+                query_type,
+                time_range,
+            } => {
                 capabilities.add(Capability::Scan);
 
                 match query_type {
@@ -474,7 +492,12 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::HashJoin { left, right, join_keys: _, join_type: _ } => {
+            PlanNodeType::HashJoin {
+                left,
+                right,
+                join_keys: _,
+                join_type: _,
+            } => {
                 capabilities.add(Capability::Join);
                 capabilities.add(Capability::Scan);
 
@@ -488,7 +511,11 @@ impl PlanNode {
                 }
             }
 
-            PlanNodeType::NestedLoopJoin { outer, inner, correlation: _ } => {
+            PlanNodeType::NestedLoopJoin {
+                outer,
+                inner,
+                correlation: _,
+            } => {
                 capabilities.add(Capability::Join);
                 capabilities.add(Capability::Scan);
 
@@ -500,7 +527,11 @@ impl PlanNode {
                 capabilities = capabilities.union(&inner.required_capabilities);
             }
 
-            PlanNodeType::IndexJoin { left, right, index_lookup: _ } => {
+            PlanNodeType::IndexJoin {
+                left,
+                right,
+                index_lookup: _,
+            } => {
                 capabilities.add(Capability::Join);
                 capabilities.add(Capability::Scan);
                 capabilities.add(Capability::Filter);
@@ -510,7 +541,10 @@ impl PlanNode {
                 capabilities = capabilities.union(&right.required_capabilities);
             }
 
-            PlanNodeType::Filter { input, predicate: _ } => {
+            PlanNodeType::Filter {
+                input,
+                predicate: _,
+            } => {
                 capabilities.add(Capability::Filter);
                 capabilities.add(Capability::PredicatePushdown);
 
@@ -538,14 +572,22 @@ impl PlanNode {
                 capabilities = capabilities.union(&input.required_capabilities);
             }
 
-            PlanNodeType::Limit { input, limit: _, offset: _ } => {
+            PlanNodeType::Limit {
+                input,
+                limit: _,
+                offset: _,
+            } => {
                 capabilities.add(Capability::Limit);
                 capabilities.add(Capability::Scan);
 
                 capabilities = capabilities.union(&input.required_capabilities);
             }
 
-            PlanNodeType::Aggregate { input, group_by: _, aggregates: _ } => {
+            PlanNodeType::Aggregate {
+                input,
+                group_by: _,
+                aggregates: _,
+            } => {
                 capabilities.add(Capability::Aggregate);
                 capabilities.add(Capability::Scan);
 
@@ -579,8 +621,12 @@ impl PlanNode {
     ///
     /// # Returns
     /// A new CapabilitySet containing only the capabilities that are both claimed and actually available
-    pub fn get_honest_capabilities(&self, actual_engine_capabilities: &CapabilitySet) -> CapabilitySet {
-        self.required_capabilities.intersection(actual_engine_capabilities)
+    pub fn get_honest_capabilities(
+        &self,
+        actual_engine_capabilities: &CapabilitySet,
+    ) -> CapabilitySet {
+        self.required_capabilities
+            .intersection(actual_engine_capabilities)
     }
 
     /// Validate that this plan node's capabilities are supported by the storage engine
@@ -601,15 +647,14 @@ impl PlanNode {
         let missing_caps = self.required_capabilities.difference(&honest_caps);
 
         if !missing_caps.is_empty() {
-            let missing_list: Vec<String> = missing_caps
-                .iter()
-                .map(|c| format!("{:?}", c))
-                .collect();
+            let missing_list: Vec<String> =
+                missing_caps.iter().map(|c| format!("{:?}", c)).collect();
 
             return Err(anyhow!(
                 "Plan node '{}' requires capabilities that the storage engine doesn't support: {:?}. \
                  Please either use a different storage engine or modify the query.",
-                node_description, missing_list
+                node_description,
+                missing_list
             ));
         }
 
@@ -642,7 +687,11 @@ impl PlanNode {
         let missing_capabilities = required.difference(&honest_capabilities);
         let extra_capabilities = actual_engine_capabilities.difference(&honest_capabilities);
 
-        (honest_capabilities, missing_capabilities, extra_capabilities)
+        (
+            honest_capabilities,
+            missing_capabilities,
+            extra_capabilities,
+        )
     }
 }
 
@@ -1111,8 +1160,8 @@ impl AdvancedCostEstimator {
         const ALPHA: f64 = 0.2; // EMA smoothing factor
 
         if let Some(observed_cpu_per_distance) = feedback.observed_cpu_per_distance {
-            self.cpu_cycles_per_distance = self.cpu_cycles_per_distance * (1.0 - ALPHA)
-                + observed_cpu_per_distance * ALPHA;
+            self.cpu_cycles_per_distance =
+                self.cpu_cycles_per_distance * (1.0 - ALPHA) + observed_cpu_per_distance * ALPHA;
         }
         if let Some(observed_io_per_page) = feedback.observed_io_per_page {
             self.io_cost_per_page =
@@ -1227,7 +1276,9 @@ impl RuntimeStatisticsCollector {
         self.update_cardinality_history(feedback);
         self.update_latency_history(feedback);
         if let Some(rows_scanned) = feedback.rows_scanned
-            && rows_scanned > 0 && feedback.actual_cardinality > 0 {
+            && rows_scanned > 0
+            && feedback.actual_cardinality > 0
+        {
             self.update_selectivity_history(
                 &feedback.operation_key,
                 feedback.actual_cardinality as f64 / rows_scanned as f64,
@@ -1288,14 +1339,12 @@ impl RuntimeStatisticsCollector {
         if feedback.actual_latency_ms > entry.p95_latency_ms {
             entry.p95_latency_ms = feedback.actual_latency_ms;
         } else {
-            entry.p95_latency_ms =
-                entry.p95_latency_ms * 0.99 + feedback.actual_latency_ms * 0.01;
+            entry.p95_latency_ms = entry.p95_latency_ms * 0.99 + feedback.actual_latency_ms * 0.01;
         }
         entry.sample_count += 1;
         if feedback.estimated_cost > 0.0 {
             let new_ratio = feedback.actual_latency_ms / feedback.estimated_cost;
-            entry.cost_latency_ratio =
-                entry.cost_latency_ratio * (1.0 - ALPHA) + new_ratio * ALPHA;
+            entry.cost_latency_ratio = entry.cost_latency_ratio * (1.0 - ALPHA) + new_ratio * ALPHA;
         }
     }
 
@@ -1707,9 +1756,7 @@ impl JoinOrderOptimizer {
                         left_entry.cost + right_entry.cost + build_cost + probe_cost + output_cost;
 
                     // Update best if this is better
-                    let is_better = best_entry
-                        .as_ref()
-                        .is_none_or(|e| join_cost < e.cost);
+                    let is_better = best_entry.as_ref().is_none_or(|e| join_cost < e.cost);
 
                     if is_better {
                         let plan = PlanNode {
@@ -2146,10 +2193,7 @@ impl CrossModelOptimizer {
     }
 
     /// Create an optimizer with a custom runtime statistics collector
-    pub fn with_runtime_stats(
-        mut self,
-        stats: std::sync::Arc<RuntimeStatisticsCollector>,
-    ) -> Self {
+    pub fn with_runtime_stats(mut self, stats: std::sync::Arc<RuntimeStatisticsCollector>) -> Self {
         self.runtime_stats = stats;
         self
     }
@@ -2178,8 +2222,7 @@ impl CrossModelOptimizer {
         );
 
         // 3. Update cost model parameters from hardware observations
-        self.advanced_cost_estimator
-            .update_from_feedback(&feedback);
+        self.advanced_cost_estimator.update_from_feedback(&feedback);
 
         // 4. Invalidate cached plans if performance regressed significantly
         if self.runtime_stats.should_invalidate_plan(
@@ -2367,9 +2410,10 @@ impl CrossModelOptimizer {
                     _ => None,
                 };
                 if let Some(name) = collection_name
-                    && let Some(model_stats) = provider.get_statistics(&name) {
-                        stats.insert(name, model_stats);
-                    }
+                    && let Some(model_stats) = provider.get_statistics(&name)
+                {
+                    stats.insert(name, model_stats);
+                }
             }
             // Also check query targets
             for target in &query.targets {
@@ -2588,9 +2632,9 @@ impl CrossModelOptimizer {
             .unwrap_or_else(|| ("unknown".to_string(), None));
 
         // Estimate filter complexity and fields
-        let filter_complexity = filter
-            .as_ref()
-            .map_or(1, |f| f.matches("AND").count() + f.matches("OR").count() + 1);
+        let filter_complexity = filter.as_ref().map_or(1, |f| {
+            f.matches("AND").count() + f.matches("OR").count() + 1
+        });
         let filter_fields: Vec<String> = vec![]; // Would need proper filter parsing
 
         // Get statistics
@@ -2946,7 +2990,8 @@ impl CrossModelOptimizer {
         let projection_sources = select_items
             .iter()
             .map(|item| {
-                Self::parse_aggregate_expr(item).map_or_else(|| item.expression.clone(), |aggregate| aggregate.alias)
+                Self::parse_aggregate_expr(item)
+                    .map_or_else(|| item.expression.clone(), |aggregate| aggregate.alias)
             })
             .collect::<Vec<_>>();
         let projection_output_columns = select_items
@@ -3505,7 +3550,8 @@ impl CrossModelOptimizer {
     fn plan_sql_query(&self, query: &FederatedQuery) -> Result<PlanNode> {
         let target = query
             .targets
-            .first().map_or_else(|| "unknown".to_string(), |t| t.name.clone());
+            .first()
+            .map_or_else(|| "unknown".to_string(), |t| t.name.clone());
 
         Ok(PlanNode {
             id: self.next_id(),
@@ -3826,7 +3872,10 @@ impl CrossModelOptimizer {
     }
 
     fn vector_source_from_literal(raw: &str) -> VectorSource {
-        Self::parse_vector_literal(raw).map_or_else(|| Self::vector_source_from_expression(raw), VectorSource::Literal)
+        Self::parse_vector_literal(raw).map_or_else(
+            || Self::vector_source_from_expression(raw),
+            VectorSource::Literal,
+        )
     }
 
     fn vector_source_from_expression(expr: &str) -> VectorSource {
@@ -4822,9 +4871,10 @@ impl CrossModelOptimizer {
                 let mut agg_required: Vec<String> = group_by.clone();
                 for agg in &aggregates {
                     if let Some(col) = &agg.column
-                        && !agg_required.contains(col) {
-                            agg_required.push(col.clone());
-                        }
+                        && !agg_required.contains(col)
+                    {
+                        agg_required.push(col.clone());
+                    }
                 }
 
                 let input = self.push_projections_with_required(*input, &agg_required)?;
@@ -6216,11 +6266,9 @@ mod tests {
         let mut optimizer = CrossModelOptimizer::new();
 
         // Record in the cardinality_estimator directly (bypassing runtime stats)
-        optimizer.cardinality_estimator.record_actual_cardinality(
-            "legacy:op".to_string(),
-            100,
-            50,
-        );
+        optimizer
+            .cardinality_estimator
+            .record_actual_cardinality("legacy:op".to_string(), 100, 50);
 
         // Should use the cardinality estimator as fallback
         let calibrated = optimizer.calibrated_cardinality("legacy:op", 200);
@@ -6567,10 +6615,8 @@ mod tests {
     #[test]
     fn test_pre_inferred_capabilities_used() {
         // Test that pre-inferred capabilities are used without re-inferring
-        let pre_inferred = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-        ]);
+        let pre_inferred =
+            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
 
         let node = PlanNode {
             id: 1,
@@ -6619,7 +6665,8 @@ mod tests {
             required_capabilities: claimed_capabilities.clone(),
         };
 
-        let (honest, missing, extra) = node.get_capability_honesty_report(&actual_engine_capabilities);
+        let (honest, missing, extra) =
+            node.get_capability_honesty_report(&actual_engine_capabilities);
 
         // Honest capabilities should only include what's actually available
         assert!(honest.contains_capability(&Capability::VectorSearch));
@@ -6638,10 +6685,8 @@ mod tests {
     #[test]
     fn test_capability_validation_passes_when_supported() {
         // Test that validation passes when all claimed capabilities are supported
-        let claimed_capabilities = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-        ]);
+        let claimed_capabilities =
+            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
 
         let engine_capabilities = CapabilitySet::from_capabilities(&[
             Capability::VectorSearch,
@@ -6663,7 +6708,10 @@ mod tests {
         };
 
         // Should pass validation
-        assert!(node.validate_capabilities(&engine_capabilities, "test node").is_ok());
+        assert!(
+            node.validate_capabilities(&engine_capabilities, "test node")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -6674,10 +6722,8 @@ mod tests {
             Capability::GraphQuery, // Not supported by engine
         ]);
 
-        let engine_capabilities = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-        ]);
+        let engine_capabilities =
+            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
 
         let node = PlanNode {
             id: 1,

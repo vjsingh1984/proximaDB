@@ -393,10 +393,12 @@ impl DeltaLakeFormat {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 // Match commit files like 00000000000000000001.json
-                if name.ends_with(".json") && !name.contains("checkpoint")
-                    && let Ok(version) = name.trim_end_matches(".json").parse::<i64>() {
-                        commits.push((version, path));
-                    }
+                if name.ends_with(".json")
+                    && !name.contains("checkpoint")
+                    && let Ok(version) = name.trim_end_matches(".json").parse::<i64>()
+                {
+                    commits.push((version, path));
+                }
             }
         }
 
@@ -432,8 +434,7 @@ impl DeltaLakeFormat {
             return Err(anyhow!("No commits found in delta log"));
         }
 
-        let target_version =
-            version.unwrap_or_else(|| commits.last().map_or(0, |(v, _)| *v));
+        let target_version = version.unwrap_or_else(|| commits.last().map_or(0, |(v, _)| *v));
 
         // Find checkpoint if available
         let checkpoint_version = self.find_latest_checkpoint().await?;
@@ -449,10 +450,11 @@ impl DeltaLakeFormat {
 
         // Load from checkpoint if available
         if let Some(cv) = checkpoint_version
-            && cv <= target_version {
-                debug!("Loading from checkpoint version {}", cv);
-                // Deferred: Load checkpoint parquet file
-            }
+            && cv <= target_version
+        {
+            debug!("Loading from checkpoint version {}", cv);
+            // Deferred: Load checkpoint parquet file
+        }
 
         // Apply commits
         for (v, path) in &commits {
@@ -1031,16 +1033,17 @@ impl OpenTableFormat for DeltaLakeFormat {
             let content = fs::read_to_string(path).await?;
             for line in content.lines() {
                 if let Ok(action) = serde_json::from_str::<HashMap<String, serde_json::Value>>(line)
-                    && let Some(info) = action.get("commitInfo") {
-                        let commit_info: CommitInfoAction = serde_json::from_value(info.clone())?;
-                        let commit_time = Utc
-                            .timestamp_millis_opt(commit_info.timestamp)
-                            .single()
-                            .unwrap_or_else(Utc::now);
-                        if commit_time <= timestamp {
-                            return self.get_snapshot_at(&self.config.table_uri, *version).await;
-                        }
+                    && let Some(info) = action.get("commitInfo")
+                {
+                    let commit_info: CommitInfoAction = serde_json::from_value(info.clone())?;
+                    let commit_time = Utc
+                        .timestamp_millis_opt(commit_info.timestamp)
+                        .single()
+                        .unwrap_or_else(Utc::now);
+                    if commit_time <= timestamp {
+                        return self.get_snapshot_at(&self.config.table_uri, *version).await;
                     }
+                }
             }
         }
 
@@ -1161,20 +1164,21 @@ impl OpenTableFormat for DeltaLakeFormat {
 
             // Check modification time
             if let Ok(metadata) = entry.metadata().await
-                && let Ok(modified) = metadata.modified() {
-                    let modified_ms = modified
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as i64)
-                        .unwrap_or(0);
+                && let Ok(modified) = metadata.modified()
+            {
+                let modified_ms = modified
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
 
-                    if modified_ms < cutoff {
-                        let size = metadata.len();
-                        if fs::remove_file(&path).await.is_ok() {
-                            removed_bytes += size;
-                            debug!("Vacuumed file: {}", name);
-                        }
+                if modified_ms < cutoff {
+                    let size = metadata.len();
+                    if fs::remove_file(&path).await.is_ok() {
+                        removed_bytes += size;
+                        debug!("Vacuumed file: {}", name);
                     }
                 }
+            }
         }
 
         info!("Vacuum removed {} bytes", removed_bytes);

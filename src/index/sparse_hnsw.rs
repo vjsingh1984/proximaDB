@@ -19,9 +19,9 @@
 //! - **NLP Applications**: Document similarity, semantic search
 //! - **Recommendation Systems**: User-item interaction matrices
 
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::time::Instant;
-use anyhow::{Result, anyhow};
 use tracing::{debug, info};
 
 use crate::core::hardware_capabilities::HardwareCapabilities;
@@ -77,7 +77,7 @@ impl SparseVector {
     pub fn from_sparse(
         id: String,
         elements: HashMap<usize, f32>,
-        metadata: serde_json::Value
+        metadata: serde_json::Value,
     ) -> Self {
         let norm = elements.values().map(|&v| v * v).sum::<f32>().sqrt();
 
@@ -91,7 +91,12 @@ impl SparseVector {
 
     /// Get the dimensionality (highest non-zero dimension)
     pub fn dimensionality(&self) -> usize {
-        self.elements.keys().copied().max().map(|d| d + 1).unwrap_or(0)
+        self.elements
+            .keys()
+            .copied()
+            .max()
+            .map(|d| d + 1)
+            .unwrap_or(0)
     }
 
     /// Get the number of non-zero elements
@@ -106,7 +111,8 @@ impl SparseVector {
         }
 
         // Calculate dot product only over overlapping dimensions
-        let dot_product: f32 = self.elements
+        let dot_product: f32 = self
+            .elements
             .iter()
             .filter_map(|(dim, &val)| other.elements.get(dim).map(|&other_val| val * other_val))
             .sum();
@@ -232,7 +238,10 @@ impl SparseHNSWIndex {
         // Determine node level based on a simple heuristic
         let max_level = self.get_random_level(nnz);
 
-        debug!("Inserting sparse vector {} (nnz={}, level={})", vector_id, nnz, max_level);
+        debug!(
+            "Inserting sparse vector {} (nnz={}, level={})",
+            vector_id, nnz, max_level
+        );
 
         // Create node
         let mut node = SparseHNSWNode {
@@ -259,11 +268,18 @@ impl SparseHNSWIndex {
 
             // Add connections to selected neighbors
             for candidate_id in &candidates {
-                node.connections.entry(level).or_insert_with(Vec::new).push(candidate_id.clone());
+                node.connections
+                    .entry(level)
+                    .or_insert_with(Vec::new)
+                    .push(candidate_id.clone());
 
                 // Add reverse connection
                 if let Some(candidate) = self.vectors.get_mut(candidate_id) {
-                    candidate.connections.entry(level).or_insert_with(Vec::new).push(node.id.clone());
+                    candidate
+                        .connections
+                        .entry(level)
+                        .or_insert_with(Vec::new)
+                        .push(node.id.clone());
                 }
             }
 
@@ -274,7 +290,8 @@ impl SparseHNSWIndex {
         }
 
         // Set entry point if this is the first node or has higher level
-        let entry_level = self.entry_point
+        let entry_level = self
+            .entry_point
             .as_ref()
             .and_then(|id| self.vectors.get(id))
             .map(|n| n.max_level)
@@ -301,11 +318,14 @@ impl SparseHNSWIndex {
         let start = Instant::now();
 
         // Get entry point
-        let entry_id = self.entry_point
+        let entry_id = self
+            .entry_point
             .as_ref()
             .ok_or_else(|| anyhow!("No entry point for search"))?;
 
-        let _entry = self.vectors.get(entry_id)
+        let _entry = self
+            .vectors
+            .get(entry_id)
             .ok_or_else(|| anyhow!("Entry point not found"))?;
 
         // Perform greedy search using a Vec-based frontier (f32 does not implement Ord)
@@ -373,24 +393,32 @@ impl SparseHNSWIndex {
     /// Get index statistics
     pub fn stats(&self) -> SparseHNSWStats {
         let total_vectors = self.vectors.len();
-        let total_connections: usize = self.vectors.values()
+        let total_connections: usize = self
+            .vectors
+            .values()
             .map(|node| node.connections.values().map(|v| v.len()).sum::<usize>())
             .sum();
 
         let avg_nnz = if total_vectors > 0 {
-            self.vectors.values()
+            self.vectors
+                .values()
                 .map(|node| node.vector.nnz())
-                .sum::<usize>() as f64 / total_vectors as f64
+                .sum::<usize>() as f64
+                / total_vectors as f64
         } else {
             0.0
         };
 
-        let max_nnz = self.vectors.values()
+        let max_nnz = self
+            .vectors
+            .values()
             .map(|node| node.vector.nnz())
             .max()
             .unwrap_or(0);
 
-        let dimensions: Vec<_> = self.vectors.values()
+        let dimensions: Vec<_> = self
+            .vectors
+            .values()
             .map(|node| node.vector.dimensionality())
             .collect();
 
@@ -526,7 +554,7 @@ mod tests {
         let sparse = SparseVector::from_dense(
             "test".to_string(),
             &dense,
-            serde_json::json!({"category": "test"})
+            serde_json::json!({"category": "test"}),
         );
 
         assert_eq!(sparse.nnz(), 2);
@@ -539,13 +567,13 @@ mod tests {
         let v1 = SparseVector::from_sparse(
             "v1".to_string(),
             vec![(0, 1.0), (2, 2.0)].into_iter().collect(),
-            serde_json::json!({})
+            serde_json::json!({}),
         );
 
         let v2 = SparseVector::from_sparse(
             "v2".to_string(),
             vec![(0, 2.0), (2, 1.0)].into_iter().collect(),
-            serde_json::json!({})
+            serde_json::json!({}),
         );
 
         let sim = v1.cosine_similarity(&v2);
@@ -562,13 +590,13 @@ mod tests {
         let v1 = SparseVector::from_sparse(
             "v1".to_string(),
             vec![(0, 1.0), (1, 1.0), (2, 1.0)].into_iter().collect(),
-            serde_json::json!({})
+            serde_json::json!({}),
         );
 
         let v2 = SparseVector::from_sparse(
             "v2".to_string(),
             vec![(0, 1.0), (1, 1.0), (3, 1.0)].into_iter().collect(),
-            serde_json::json!({})
+            serde_json::json!({}),
         );
 
         let sim = v1.jaccard_similarity(&v2);
@@ -586,13 +614,13 @@ mod tests {
         let v1 = SparseVector::from_sparse(
             "v1".to_string(),
             vec![(0, 1.0), (2, 2.0)].into_iter().collect(),
-            serde_json::json!({"category": "A"})
+            serde_json::json!({"category": "A"}),
         );
 
         let v2 = SparseVector::from_sparse(
             "v2".to_string(),
             vec![(0, 2.0), (1, 1.0)].into_iter().collect(),
-            serde_json::json!({"category": "B"})
+            serde_json::json!({"category": "B"}),
         );
 
         assert!(index.insert(v1).is_ok());
@@ -615,7 +643,7 @@ mod tests {
             let vector = SparseVector::from_sparse(
                 format!("v{}", i),
                 elements,
-                serde_json::json!({"index": i})
+                serde_json::json!({"index": i}),
             );
 
             index.insert(vector).unwrap();
@@ -626,11 +654,8 @@ mod tests {
         query_elements.insert(5, 0.5);
         query_elements.insert(105, 1.0);
 
-        let query = SparseVector::from_sparse(
-            "query".to_string(),
-            query_elements,
-            serde_json::json!({})
-        );
+        let query =
+            SparseVector::from_sparse("query".to_string(), query_elements, serde_json::json!({}));
 
         // Search
         let results = index.search(&query, 5).unwrap();
@@ -642,11 +667,8 @@ mod tests {
     #[test]
     fn test_sparse_hnsw_empty_index() {
         let index = SparseHNSWIndex::new();
-        let query = SparseVector::from_sparse(
-            "query".to_string(),
-            HashMap::new(),
-            serde_json::json!({})
-        );
+        let query =
+            SparseVector::from_sparse("query".to_string(), HashMap::new(), serde_json::json!({}));
 
         let results = index.search(&query, 5).unwrap();
         assert_eq!(results.len(), 0);

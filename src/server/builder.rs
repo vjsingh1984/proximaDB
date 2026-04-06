@@ -75,8 +75,7 @@ impl Default for NetworkConfig {
 }
 
 /// Hardware acceleration configuration
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum HardwareAcceleration {
     /// CPU-only with SIMD optimizations
     SIMD,
@@ -92,7 +91,6 @@ pub enum HardwareAcceleration {
     /// No acceleration (fallback)
     None,
 }
-
 
 /// Compute system configuration
 #[derive(Debug, Clone)]
@@ -137,8 +135,7 @@ impl Default for ComputeConfig {
 pub use crate::compute::distance_computation::DistanceMetric;
 
 /// Indexing algorithm configuration
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum IndexingAlgorithm {
     /// Hierarchical Navigable Small World (default for most cases)
     #[default]
@@ -154,7 +151,6 @@ pub enum IndexingAlgorithm {
     /// Auto-select based on data characteristics
     Auto,
 }
-
 
 /// Indexing system configuration
 #[derive(Debug, Clone)]
@@ -255,8 +251,7 @@ impl Default for MonitoringConfig {
 }
 
 /// Complete server configuration
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ServerConfig {
     /// Network configuration
     pub network: NetworkConfig,
@@ -270,7 +265,6 @@ pub struct ServerConfig {
     /// Monitoring configuration
     pub monitoring: MonitoringConfig,
 }
-
 
 /// Unified server builder that coordinates all subsystems
 pub struct ServerBuilder {

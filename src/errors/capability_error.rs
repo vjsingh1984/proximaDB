@@ -204,7 +204,9 @@ impl CapabilityError {
     fn error_type_to_string(&self) -> &'static str {
         match self.error_type {
             CapabilityErrorType::UnsupportedCapability => "unsupported_capability",
-            CapabilityErrorType::MultipleUnsupportedCapabilities => "multiple_unsupported_capabilities",
+            CapabilityErrorType::MultipleUnsupportedCapabilities => {
+                "multiple_unsupported_capabilities"
+            }
         }
     }
 
@@ -249,7 +251,11 @@ impl CapabilityError {
         let alternatives_str = alternatives.join(", ");
         Self {
             capability: capability.to_string(),
-            available_alternatives: if is_empty { vec![] } else { alternatives.clone() },
+            available_alternatives: if is_empty {
+                vec![]
+            } else {
+                alternatives.clone()
+            },
             message: if is_empty {
                 format!(
                     "The requested capability '{}' is not supported by the selected storage engine.",
@@ -258,8 +264,7 @@ impl CapabilityError {
             } else {
                 format!(
                     "The requested capability '{}' is not supported. Available alternatives: {}",
-                    capability,
-                    alternatives_str
+                    capability, alternatives_str
                 )
             },
             error_type: CapabilityErrorType::UnsupportedCapability,
@@ -272,7 +277,11 @@ impl CapabilityError {
         let alternatives_str = alternatives.join(", ");
         Self {
             capability: capabilities.join(", "),
-            available_alternatives: if is_empty { vec![] } else { alternatives.clone() },
+            available_alternatives: if is_empty {
+                vec![]
+            } else {
+                alternatives.clone()
+            },
             message: if is_empty {
                 format!(
                     "Multiple capabilities are not supported: {}. Please check the storage engine capabilities.",
@@ -300,7 +309,6 @@ impl From<CapabilityCheckError> for CapabilityError {
         Self::new(check_error)
     }
 }
-
 
 // ============================================================================
 /// Convert CapabilityError into ApiError for HTTP/gRPC responses
@@ -435,7 +443,9 @@ mod tests {
         let api_error = crate::errors::ApiError::from(cap_error);
 
         // Should convert to InvalidArgument
-        assert!(api_error.to_string().contains("GraphQuery") ||
-                api_error.to_string().contains("capability"));
+        assert!(
+            api_error.to_string().contains("GraphQuery")
+                || api_error.to_string().contains("capability")
+        );
     }
 }

@@ -184,7 +184,8 @@ impl SstManifest {
         let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
             ::create_metadata_strategy(&*fs, None)
             .map_err(|e| anyhow::anyhow!("Failed to create write strategy: {}", e))?;
-        let write_options = strategy.create_file_options(&*fs, &self.manifest_url)
+        let write_options = strategy
+            .create_file_options(&*fs, &self.manifest_url)
             .map_err(|e| anyhow::anyhow!("Failed to create file options: {}", e))?;
 
         // Atomic write: write to temp file, then rename to final path
@@ -304,7 +305,9 @@ impl SstManifest {
             .files
             .values()
             .filter(|f| {
-                !(f.marked_for_deletion || f.max_key.as_str() < min_key || f.min_key.as_str() > max_key)
+                !(f.marked_for_deletion
+                    || f.max_key.as_str() < min_key
+                    || f.min_key.as_str() > max_key)
             })
             .cloned()
             .collect()

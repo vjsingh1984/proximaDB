@@ -232,8 +232,7 @@ impl FilteredIVFIndex {
 
         debug!(
             "Executing filtered IVF search with top_k={}, nprobe={}",
-            params.top_k,
-            params.nprobe
+            params.top_k, params.nprobe
         );
 
         // Adjust nprobe based on filter selectivity if adaptive
@@ -364,7 +363,11 @@ impl FilteredIVFIndex {
     }
 
     /// Rank candidates by similarity to query vector
-    fn rank_candidates(&self, query: &[f32], candidates: &[IVFVector]) -> Result<Vec<SearchResult>> {
+    fn rank_candidates(
+        &self,
+        query: &[f32],
+        candidates: &[IVFVector],
+    ) -> Result<Vec<SearchResult>> {
         let mut ranked = BinaryHeap::new();
 
         for candidate in candidates {
@@ -505,11 +508,13 @@ mod tests {
             top_k: 10,
             nprobe: 10,
             nlist: 100,
-            filter: Some(Arc::from(normalize_filter(crate::core::search::FilterExpression::Comparison {
-                field: "status".to_string(),
-                operator: ComparisonOperator::Equals,
-                value: serde_json::json!("active"),
-            }))),
+            filter: Some(Arc::from(normalize_filter(
+                crate::core::search::FilterExpression::Comparison {
+                    field: "status".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    value: serde_json::json!("active"),
+                },
+            ))),
             enable_batch_filtering: true,
             adaptive_nprobe: true,
         };

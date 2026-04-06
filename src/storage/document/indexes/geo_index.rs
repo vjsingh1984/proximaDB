@@ -33,7 +33,10 @@ impl GeoPoint {
             return Err(anyhow!("Latitude must be between -90 and 90, got {}", lat));
         }
         if !(-180.0..=180.0).contains(&lon) {
-            return Err(anyhow!("Longitude must be between -180 and 180, got {}", lon));
+            return Err(anyhow!(
+                "Longitude must be between -180 and 180, got {}",
+                lon
+            ));
         }
         Ok(Self { lat, lon })
     }
@@ -91,8 +94,7 @@ impl GeoIndex {
             .entry(hash.clone())
             .or_default()
             .insert(doc_id.to_string());
-        self.doc_to_geo
-            .insert(doc_id.to_string(), (hash, point));
+        self.doc_to_geo.insert(doc_id.to_string(), (hash, point));
 
         Ok(())
     }
@@ -165,11 +167,7 @@ impl GeoIndex {
     }
 
     /// Find k nearest documents to a point
-    pub fn query_nearest(
-        &self,
-        center: &GeoPoint,
-        k: usize,
-    ) -> Vec<(String, GeoPoint, f64)> {
+    pub fn query_nearest(&self, center: &GeoPoint, k: usize) -> Vec<(String, GeoPoint, f64)> {
         let mut all: Vec<(String, GeoPoint, f64)> = self
             .doc_to_geo
             .iter()
@@ -281,7 +279,11 @@ mod tests {
         let hash = GeoIndex::encode(48.8584, 2.2945, 6);
         assert_eq!(hash.len(), 6);
         // Geohash for Paris area should start with "u09"
-        assert!(hash.starts_with("u09"), "Expected Paris geohash, got: {}", hash);
+        assert!(
+            hash.starts_with("u09"),
+            "Expected Paris geohash, got: {}",
+            hash
+        );
     }
 
     #[test]
@@ -289,10 +291,14 @@ mod tests {
         let mut idx = GeoIndex::new("location");
 
         // Insert some European cities
-        idx.insert("paris", GeoPoint::new(48.8566, 2.3522).unwrap()).unwrap();
-        idx.insert("london", GeoPoint::new(51.5074, -0.1278).unwrap()).unwrap();
-        idx.insert("berlin", GeoPoint::new(52.5200, 13.4050).unwrap()).unwrap();
-        idx.insert("madrid", GeoPoint::new(40.4168, -3.7038).unwrap()).unwrap();
+        idx.insert("paris", GeoPoint::new(48.8566, 2.3522).unwrap())
+            .unwrap();
+        idx.insert("london", GeoPoint::new(51.5074, -0.1278).unwrap())
+            .unwrap();
+        idx.insert("berlin", GeoPoint::new(52.5200, 13.4050).unwrap())
+            .unwrap();
+        idx.insert("madrid", GeoPoint::new(40.4168, -3.7038).unwrap())
+            .unwrap();
 
         // Query within 400km of Paris — should include Paris only (London is ~340km, close)
         let center = GeoPoint::new(48.8566, 2.3522).unwrap();
@@ -324,8 +330,10 @@ mod tests {
     fn test_bbox_query() {
         let mut idx = GeoIndex::new("loc");
 
-        idx.insert("inside", GeoPoint::new(45.0, 10.0).unwrap()).unwrap();
-        idx.insert("outside", GeoPoint::new(60.0, 20.0).unwrap()).unwrap();
+        idx.insert("inside", GeoPoint::new(45.0, 10.0).unwrap())
+            .unwrap();
+        idx.insert("outside", GeoPoint::new(60.0, 20.0).unwrap())
+            .unwrap();
 
         let results = idx.query_bbox(40.0, 5.0, 50.0, 15.0);
         assert_eq!(results.len(), 1);

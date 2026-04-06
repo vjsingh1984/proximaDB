@@ -66,7 +66,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::evaluate_predicate_vectorized;
 
 use arrow::array::RecordBatch;
-use arrow::datatypes::{Schema, Field, DataType};
+use arrow::datatypes::{DataType, Field, Schema};
 
 // Type alias for bloom filter
 type BloomFilter = SstableBloomFilter;
@@ -1348,7 +1348,8 @@ impl UnifiedSstableReader {
             blocks.len()
         );
         if let Some(first_block) = blocks.first()
-            && let Some(_first_rec) = first_block.records.first() {}
+            && let Some(_first_rec) = first_block.records.first()
+        {}
 
         // Step 4: Process blocks and compute distances
         let mut results = Vec::new();
@@ -1558,7 +1559,9 @@ impl UnifiedSstableReader {
         block_prune: &crate::core::search::BlockPruneConfig,
         max_workers: Option<usize>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        use crate::storage::engines::impls::sst::readers::morsel_scheduler::{MorselScheduler, MORSEL_SIZE};
+        use crate::storage::engines::impls::sst::readers::morsel_scheduler::{
+            MORSEL_SIZE, MorselScheduler,
+        };
 
         trace!(
             "SST Reader: parallel morsel search called with file_path: {}",
@@ -1597,10 +1600,8 @@ impl UnifiedSstableReader {
         );
 
         // Flatten all records from all blocks
-        let all_records: Vec<VectorRecord> = blocks
-            .into_iter()
-            .flat_map(|block| block.records)
-            .collect();
+        let all_records: Vec<VectorRecord> =
+            blocks.into_iter().flat_map(|block| block.records).collect();
 
         let total_records = all_records.len();
 
@@ -1627,7 +1628,9 @@ impl UnifiedSstableReader {
         info!(
             "Using parallel morsel processing for {} records with {} workers",
             total_records,
-            max_workers.unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4))
+            max_workers.unwrap_or_else(|| std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4))
         );
 
         // Create morsel scheduler
@@ -1664,25 +1667,22 @@ impl UnifiedSstableReader {
                         }
 
                         // Compute distance
-                        let distance = distance_compute.calculate_distance(
-                            &qv,
-                            &record.vector,
-                            &metric,
-                        );
+                        let distance =
+                            distance_compute.calculate_distance(&qv, &record.vector, &metric);
 
                         // Create result
-                    let result = crate::core::search::results::OptimizedSearchRecord::new(
-                        record.id.clone(),
-                        distance.normalized_score,
-                    )
-                    .with_similarity(distance.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(record.metadata.clone());
+                        let result = crate::core::search::results::OptimizedSearchRecord::new(
+                            record.id.clone(),
+                            distance.normalized_score,
+                        )
+                        .with_similarity(distance.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(record.metadata.clone());
 
-                    results.push(result);
-                }
+                        results.push(result);
+                    }
 
-                Ok(results)
+                    Ok(results)
                 }
             })
             .await?;
@@ -1724,8 +1724,8 @@ impl UnifiedSstableReader {
         collection: Option<&crate::proto::proximadb_v1::Collection>,
         block_prune: &crate::core::search::BlockPruneConfig,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        use crate::compute::PipelineOperator;
         use crate::compute::PipelineExecutor;
+        use crate::compute::PipelineOperator;
 
         trace!(
             "SST Reader: pipeline execution search called with file_path: {}",
@@ -1764,10 +1764,8 @@ impl UnifiedSstableReader {
         );
 
         // Flatten all records from all blocks
-        let all_records: Vec<VectorRecord> = blocks
-            .into_iter()
-            .flat_map(|block| block.records)
-            .collect();
+        let all_records: Vec<VectorRecord> =
+            blocks.into_iter().flat_map(|block| block.records).collect();
 
         trace!(
             "Pipeline execution: processing {} records with filter and top-k",
@@ -1775,11 +1773,9 @@ impl UnifiedSstableReader {
         );
 
         // Build pipeline operators
-        let mut operators = vec![
-            PipelineOperator::Scan {
-                source: file_path.to_string(),
-            },
-        ];
+        let mut operators = vec![PipelineOperator::Scan {
+            source: file_path.to_string(),
+        }];
 
         // Add filter operator if filter expression exists
         if let Some(filter_expr) = &filter {
@@ -1835,16 +1831,20 @@ impl UnifiedSstableReader {
 
     /// Convert VectorRecord batch to Arrow RecordBatch for vectorized processing
     fn records_to_batch(&self, records: &[VectorRecord]) -> Result<RecordBatch> {
-        use arrow::array::{StringArray, Float32Array};
+        use arrow::array::{Float32Array, StringArray};
 
         if records.is_empty() {
             // Return empty batch with correct schema
             let schema = Schema::new(vec![
                 Field::new("id", DataType::Utf8, false),
-                Field::new("vector", DataType::FixedSizeList(
-                    Arc::new(Field::new("item", DataType::Float32, true)),
-                    384, // Default dimension
-                ), true),
+                Field::new(
+                    "vector",
+                    DataType::FixedSizeList(
+                        Arc::new(Field::new("item", DataType::Float32, true)),
+                        384, // Default dimension
+                    ),
+                    true,
+                ),
             ]);
             return Ok(RecordBatch::new_empty(Arc::new(schema)));
         }
@@ -1853,9 +1853,7 @@ impl UnifiedSstableReader {
         let ids: Vec<&str> = records.iter().map(|r| r.id.as_str()).collect();
 
         // Extract vectors (assuming all vectors have the same dimension)
-        let vector_dim = records.first()
-            .map(|r| r.vector.len())
-            .unwrap_or(384);
+        let vector_dim = records.first().map(|r| r.vector.len()).unwrap_or(384);
 
         // Flatten vectors for Arrow FixedSizeList
         let mut vector_values = Vec::with_capacity(records.len() * vector_dim);
@@ -1867,16 +1865,11 @@ impl UnifiedSstableReader {
 
         // Create FixedSizeList array for vectors
         // Deferred: Include vector column in batch schema (TD-041 Phase 3)
-        let schema = Schema::new(vec![
-            Field::new("id", DataType::Utf8, false),
-        ]);
+        let schema = Schema::new(vec![Field::new("id", DataType::Utf8, false)]);
 
         let id_array = StringArray::from(ids);
 
-        let batch = RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(id_array)],
-        )?;
+        let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(id_array)])?;
 
         Ok(batch)
     }
@@ -1886,12 +1879,16 @@ impl UnifiedSstableReader {
         &self,
         filter: &FilterExpression,
     ) -> Result<crate::storage::engines::core::formats::columnar::FilterCondition> {
-        use crate::storage::engines::core::formats::columnar::FilterCondition;
         use crate::core::search::ComparisonOperator;
+        use crate::storage::engines::core::formats::columnar::FilterCondition;
 
         // Convert FilterExpression to FilterCondition for vectorized executor
         match filter {
-            FilterExpression::Comparison { field, operator, value } => {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
                 match operator {
                     ComparisonOperator::Equals => {
                         Ok(FilterCondition::Equals(field.clone(), value.clone()))
@@ -1915,19 +1912,28 @@ impl UnifiedSstableReader {
                     }
                     _ => {
                         // For other operators, use a pass-through condition
-                        Ok(FilterCondition::Equals("_id".to_string(), serde_json::Value::String("_dummy".to_string())))
+                        Ok(FilterCondition::Equals(
+                            "_id".to_string(),
+                            serde_json::Value::String("_dummy".to_string()),
+                        ))
                     }
                 }
             }
             _ => {
                 // Fallback: return a condition that always passes
-                Ok(FilterCondition::Equals("_id".to_string(), serde_json::Value::String("_dummy".to_string())))
+                Ok(FilterCondition::Equals(
+                    "_id".to_string(),
+                    serde_json::Value::String("_dummy".to_string()),
+                ))
             }
         }
     }
 
     /// Extract indices of selected rows from a boolean selection mask
-    fn extract_selected_indices(&self, selection: &arrow::array::BooleanArray) -> Result<Vec<usize>> {
+    fn extract_selected_indices(
+        &self,
+        selection: &arrow::array::BooleanArray,
+    ) -> Result<Vec<usize>> {
         let mut indices = Vec::new();
         for (i, val) in selection.iter().enumerate() {
             if val == Some(true) {
@@ -1973,7 +1979,10 @@ impl UnifiedSstableReader {
 
         if &magic_bytes[0..4] != b"SST1" {
             // Log what we actually found for debugging
-            let found_magic = std::str::from_utf8(&magic_bytes[0..4]).map_or_else(|_| format!("bytes: {:?}", &magic_bytes[0..4]), |s| s.to_string());
+            let found_magic = std::str::from_utf8(&magic_bytes[0..4]).map_or_else(
+                |_| format!("bytes: {:?}", &magic_bytes[0..4]),
+                |s| s.to_string(),
+            );
 
             return Err(anyhow::anyhow!(
                 "Invalid SSTable format: expected SST1 magic marker, found '{}' in file {}",
@@ -2681,9 +2690,10 @@ impl UnifiedSstableReader {
                 // Fast tombstone check (most common early exit)
                 // A tombstone is indicated by expires_at being set and in the past
                 let current_time = chrono::Utc::now().timestamp_millis();
-                if record.expires_at.is_some_and(|expires_at| {
-                    expires_at > 0 && expires_at < current_time
-                }) {
+                if record
+                    .expires_at
+                    .is_some_and(|expires_at| expires_at > 0 && expires_at < current_time)
+                {
                     tombstones += 1;
                     continue;
                 }
@@ -2694,10 +2704,11 @@ impl UnifiedSstableReader {
                     && !crate::core::search::sql_value_filter::evaluate_filter(
                         filter,
                         &record.metadata,
-                    ) {
-                        filtered_out += 1;
-                        continue; // Skip to next record immediately
-                    }
+                    )
+                {
+                    filtered_out += 1;
+                    continue; // Skip to next record immediately
+                }
 
                 // Calculate similarity using unified distance computation for semantic correctness
                 let metric = distance_metric.unwrap_or(
@@ -3317,7 +3328,7 @@ impl UnifiedSstableReader {
             }
         } else {
             // Load index from disk
-            
+
             // Zero-copy system handles index caching automatically via metadata cache
             self.load_index_optimized(&context.file_path).await?
         };
@@ -4353,8 +4364,7 @@ impl UnifiedSstableReader {
             // See: src/storage/engines/impls/sst/writer.rs:120-134 for writer side
             // See: src/storage/engines/core/formats/proximablocks/mod.rs for best practices
             const CACHE_LINE_SIZE: u64 = 64;
-            let aligned_block_len =
-                block_len.div_ceil(CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
+            let aligned_block_len = block_len.div_ceil(CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
             let padding = aligned_block_len - block_len;
             if padding > 0 && padding < CACHE_LINE_SIZE {
                 offset += padding;
@@ -5071,9 +5081,10 @@ impl UnifiedSstableReader {
                 if let Some(index_entry) = index_blocks.get(*block_idx) {
                     // Zone map pruning: skip blocks that can't contain matching values
                     if let Some(filter) = filter_expr
-                        && !self.should_read_block_for_filter(index_entry, filter) {
-                            continue; // Skip this block - zone map says no matches possible
-                        }
+                        && !self.should_read_block_for_filter(index_entry, filter)
+                    {
+                        continue; // Skip this block - zone map says no matches possible
+                    }
 
                     blocks_after_zone_map += 1;
                     match block_reader
@@ -5137,23 +5148,23 @@ impl UnifiedSstableReader {
         // Check each condition against block's min/max values
         for (column, filter_value) in &metadata_conditions {
             if let Some(min_val) = index_entry.metadata_min_values.get(column)
-                && let Some(max_val) = index_entry.metadata_max_values.get(column) {
-                    // Use centralized comparison: if value is outside [min, max], skip block
-                    if Self::compare_metadata_values(filter_value, min_val)
-                        == std::cmp::Ordering::Less
-                        || Self::compare_metadata_values(filter_value, max_val)
-                            == std::cmp::Ordering::Greater
-                    {
-                        tracing::debug!(
-                            "🔍 Zone map pruning: block {} rejected - {} not in [{:?}, {:?}]",
-                            index_entry.block_id,
-                            filter_value,
-                            min_val,
-                            max_val
-                        );
-                        return false;
-                    }
+                && let Some(max_val) = index_entry.metadata_max_values.get(column)
+            {
+                // Use centralized comparison: if value is outside [min, max], skip block
+                if Self::compare_metadata_values(filter_value, min_val) == std::cmp::Ordering::Less
+                    || Self::compare_metadata_values(filter_value, max_val)
+                        == std::cmp::Ordering::Greater
+                {
+                    tracing::debug!(
+                        "🔍 Zone map pruning: block {} rejected - {} not in [{:?}, {:?}]",
+                        index_entry.block_id,
+                        filter_value,
+                        min_val,
+                        max_val
+                    );
+                    return false;
                 }
+            }
             // If column not tracked in block stats, be conservative and include block
         }
 
@@ -6671,7 +6682,11 @@ mod centroid_tests {
             &prune_config,
         );
         assert_eq!(selected.len(), 4, "None mode should return all 4 blocks");
-        assert_eq!(selected, vec![0, 1, 2, 3], "Should return all block indices");
+        assert_eq!(
+            selected,
+            vec![0, 1, 2, 3],
+            "Should return all block indices"
+        );
     }
 
     #[test]
@@ -6697,7 +6712,11 @@ mod centroid_tests {
             crate::compute::distance_computation::DistanceMetric::Euclidean,
             &prune_config,
         );
-        assert_eq!(selected.len(), 2, "SQRT mode should return sqrt(4)=2 blocks");
+        assert_eq!(
+            selected.len(),
+            2,
+            "SQRT mode should return sqrt(4)=2 blocks"
+        );
         assert_eq!(selected, vec![0, 1], "Should return 2 closest blocks");
     }
 
@@ -6725,7 +6744,11 @@ mod centroid_tests {
             crate::compute::distance_computation::DistanceMetric::Euclidean,
             &prune_config,
         );
-        assert_eq!(selected.len(), 2, "Ratio mode should return ratio*n=2 blocks");
+        assert_eq!(
+            selected.len(),
+            2,
+            "Ratio mode should return ratio*n=2 blocks"
+        );
         assert_eq!(selected, vec![0, 1], "Should return 2 closest blocks");
     }
 
@@ -6753,7 +6776,11 @@ mod centroid_tests {
             crate::compute::distance_computation::DistanceMetric::Euclidean,
             &prune_config,
         );
-        assert_eq!(selected.len(), 3, "Fixed mode should return exactly 3 blocks");
+        assert_eq!(
+            selected.len(),
+            3,
+            "Fixed mode should return exactly 3 blocks"
+        );
         assert_eq!(selected, vec![0, 1, 2], "Should return 3 closest blocks");
     }
 
@@ -6870,7 +6897,11 @@ mod centroid_tests {
             crate::compute::distance_computation::DistanceMetric::Euclidean,
             &prune_config,
         );
-        assert_eq!(selected.len(), 0, "Empty blocks should return empty selection");
+        assert_eq!(
+            selected.len(),
+            0,
+            "Empty blocks should return empty selection"
+        );
     }
 
     #[test]
@@ -6891,11 +6922,7 @@ mod centroid_tests {
             crate::compute::distance_computation::DistanceMetric::Euclidean,
             &prune_config,
         );
-        assert_eq!(
-            selected.len(),
-            1,
-            "Single block should always be selected"
-        );
+        assert_eq!(selected.len(), 1, "Single block should always be selected");
         assert_eq!(selected, vec![0]);
     }
 

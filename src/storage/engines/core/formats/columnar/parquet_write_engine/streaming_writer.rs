@@ -96,7 +96,8 @@ impl StreamingParquetWriter {
         );
 
         // Convert proto filterable columns to columnar format
-        let columnar_filterable: Vec<ColumnarFilterableSpec> = filterable_columns.map_or_else(Vec::new, |cols| {
+        let columnar_filterable: Vec<ColumnarFilterableSpec> =
+            filterable_columns.map_or_else(Vec::new, |cols| {
                 cols.iter()
                     .map(ColumnarFilterableSpec::from_proto)
                     .collect()
@@ -314,24 +315,15 @@ impl StreamingParquetWriter {
         }
 
         // Timestamp
-        let timestamps: Vec<i64> = records
-            .iter()
-            .map(|r| r.timestamp.unwrap_or(0))
-            .collect();
+        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0)).collect();
         arrays.push(Arc::new(Int64Array::from(timestamps)));
 
         // Updated at (optional)
-        let updated_at: Vec<Option<i64>> = records
-            .iter()
-            .map(|r| r.updated_at)
-            .collect();
+        let updated_at: Vec<Option<i64>> = records.iter().map(|r| r.updated_at).collect();
         arrays.push(Arc::new(Int64Array::from(updated_at)));
 
         // Expires at (optional)
-        let expires_at: Vec<Option<i64>> = records
-            .iter()
-            .map(|r| r.expires_at)
-            .collect();
+        let expires_at: Vec<Option<i64>> = records.iter().map(|r| r.expires_at).collect();
         arrays.push(Arc::new(Int64Array::from(expires_at)));
 
         // Version (optional)

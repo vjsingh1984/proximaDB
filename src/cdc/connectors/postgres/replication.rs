@@ -97,12 +97,7 @@ impl ReplicationStream {
     /// - Bytes 17-24: apply LSN (big-endian u64)
     /// - Bytes 25-32: client timestamp (microseconds since 2000-01-01)
     /// - Byte 33: reply requested flag
-    pub fn build_standby_status(
-        &self,
-        write_lsn: u64,
-        flush_lsn: u64,
-        apply_lsn: u64,
-    ) -> Vec<u8> {
+    pub fn build_standby_status(&self, write_lsn: u64, flush_lsn: u64, apply_lsn: u64) -> Vec<u8> {
         let mut msg = Vec::with_capacity(34);
         msg.push(b'r');
         msg.extend_from_slice(&write_lsn.to_be_bytes());
@@ -167,9 +162,7 @@ impl ReplicationStream {
         });
 
         // Check if replication slot exists
-        let slot_check = client
-            .query_one(self.check_slot_sql().as_str(), &[])
-            .await;
+        let slot_check = client.query_one(self.check_slot_sql().as_str(), &[]).await;
 
         let slot_exists = match slot_check {
             Ok(_) => true,
@@ -185,7 +178,8 @@ impl ReplicationStream {
                         slot = %self.config.slot_name,
                         "Creating replication slot"
                     );
-                    client.execute(self.create_slot_sql().as_str(), &[])
+                    client
+                        .execute(self.create_slot_sql().as_str(), &[])
                         .await
                         .map_err(|e| anyhow!("Failed to create replication slot: {}", e))?;
                 }
@@ -213,7 +207,8 @@ impl ReplicationStream {
 
         // Execute START_REPLICATION command
         // Note: This switches the connection to replication mode
-        client.execute(start_sql.as_str(), &[])
+        client
+            .execute(start_sql.as_str(), &[])
             .await
             .map_err(|e| anyhow!("Failed to start replication: {}", e))?;
 
@@ -242,7 +237,9 @@ impl ReplicationStream {
             "PostgreSQL CDC transport is not available; enable 'experimental-cdc-connectors' feature"
         );
 
-        warn!("PostgreSQL replication connect() requires 'experimental-cdc-connectors' feature to be enabled");
+        warn!(
+            "PostgreSQL replication connect() requires 'experimental-cdc-connectors' feature to be enabled"
+        );
         self.connected = false;
         Err(anyhow!(
             "PostgreSQL logical replication requires 'experimental-cdc-connectors' feature. \
@@ -271,8 +268,8 @@ impl ReplicationStream {
 
 #[cfg(test)]
 mod tests {
+    use super::super::config::{SlotBehavior, SnapshotMode};
     use super::*;
-    use super::super::config::{SnapshotMode, SlotBehavior};
 
     fn test_config() -> PostgresConfig {
         PostgresConfig {
@@ -358,7 +355,10 @@ mod tests {
     #[test]
     fn test_format_lsn() {
         assert_eq!(ReplicationStream::format_lsn(0x16B3748), "0/16B3748");
-        assert_eq!(ReplicationStream::format_lsn((1u64 << 32) | 0xABCDEF0), "1/ABCDEF0");
+        assert_eq!(
+            ReplicationStream::format_lsn((1u64 << 32) | 0xABCDEF0),
+            "1/ABCDEF0"
+        );
     }
 
     #[test]

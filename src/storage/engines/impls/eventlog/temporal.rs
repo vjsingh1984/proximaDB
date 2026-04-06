@@ -108,9 +108,10 @@ impl TemporalQueryEngine {
         for sequence in sequences {
             // Skip if before snapshot
             if let Some(snapshot_seq) = snapshot_sequence
-                && sequence <= snapshot_seq {
-                    continue;
-                }
+                && sequence <= snapshot_seq
+            {
+                continue;
+            }
 
             // Load event
             let event_info = self.event_index.get_event_info(sequence).await?;
@@ -179,8 +180,7 @@ impl TemporalQueryEngine {
             entity_id, from_sequence, to_sequence
         );
 
-        let limit = to_sequence
-            .map_or(usize::MAX, |s| (s - from_sequence + 1) as usize);
+        let limit = to_sequence.map_or(usize::MAX, |s| (s - from_sequence + 1) as usize);
         let sequences = self
             .event_index
             .get_entity_events(entity_id, from_sequence, limit)

@@ -525,9 +525,10 @@ impl ProgressiveColumnarSearch {
                 .await?;
             // Check threshold
             if let Some(threshold) = self.config.binary_config.distance_threshold
-                && binary_distance > threshold {
-                    continue;
-                }
+                && binary_distance > threshold
+            {
+                continue;
+            }
 
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,
@@ -615,9 +616,10 @@ impl ProgressiveColumnarSearch {
 
             // Check threshold
             if let Some(threshold) = self.config.int8_config.distance_threshold
-                && int8_distance > threshold {
-                    continue;
-                }
+                && int8_distance > threshold
+            {
+                continue;
+            }
 
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,
@@ -705,9 +707,10 @@ impl ProgressiveColumnarSearch {
 
             // Check threshold
             if let Some(threshold) = self.config.pq_config.distance_threshold
-                && pq_distance > threshold {
-                    continue;
-                }
+                && pq_distance > threshold
+            {
+                continue;
+            }
 
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,

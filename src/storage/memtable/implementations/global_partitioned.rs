@@ -906,9 +906,10 @@ impl GlobalPartitionedMemtable {
             // Secondary: Efficiency score (highest first)
             let efficiency_cmp = b.efficiency_score.partial_cmp(&a.efficiency_score);
             if let Some(cmp) = efficiency_cmp
-                && cmp != std::cmp::Ordering::Equal {
-                    return cmp;
-                }
+                && cmp != std::cmp::Ordering::Equal
+            {
+                return cmp;
+            }
 
             // Tertiary: Age score (oldest first)
             a.age_score
@@ -1090,38 +1091,39 @@ impl GlobalPartitionedMemtable {
     pub async fn remove_batch(&self, collection_id: &str, batch_id: &str) -> Result<()> {
         let mut collections = self.collections.write().await;
         if let Some(partition) = collections.get_mut(collection_id)
-            && let Some(removed_batch) = partition.wal_batches.remove(batch_id) {
-                // Update partition stats
-                partition.vector_count = partition
-                    .vector_count
-                    .saturating_sub(removed_batch.vector_records.len());
-                partition.total_size = partition
-                    .total_size
-                    .saturating_sub(removed_batch.total_size_bytes);
-                partition.batch_count = partition.batch_count.saturating_sub(1);
+            && let Some(removed_batch) = partition.wal_batches.remove(batch_id)
+        {
+            // Update partition stats
+            partition.vector_count = partition
+                .vector_count
+                .saturating_sub(removed_batch.vector_records.len());
+            partition.total_size = partition
+                .total_size
+                .saturating_sub(removed_batch.total_size_bytes);
+            partition.batch_count = partition.batch_count.saturating_sub(1);
 
-                // Remove from vector index
-                for vector_record in removed_batch.vector_records.iter() {
-                    if !vector_record.id.is_empty() {
-                        partition.vector_id_index.remove(&vector_record.id);
-                    }
+            // Remove from vector index
+            for vector_record in removed_batch.vector_records.iter() {
+                if !vector_record.id.is_empty() {
+                    partition.vector_id_index.remove(&vector_record.id);
                 }
-
-                // Update global metrics
-                let mut metrics = self.metrics.write().await;
-                metrics.entry_count = metrics
-                    .entry_count
-                    .saturating_sub(removed_batch.vector_records.len());
-
-                tracing::debug!(
-                    "🗑️ Removed batch {} from collection {} ({} vectors)",
-                    batch_id,
-                    collection_id,
-                    removed_batch.vector_records.len()
-                );
-
-                return Ok(());
             }
+
+            // Update global metrics
+            let mut metrics = self.metrics.write().await;
+            metrics.entry_count = metrics
+                .entry_count
+                .saturating_sub(removed_batch.vector_records.len());
+
+            tracing::debug!(
+                "🗑️ Removed batch {} from collection {} ({} vectors)",
+                batch_id,
+                collection_id,
+                removed_batch.vector_records.len()
+            );
+
+            return Ok(());
+        }
 
         Err(anyhow::anyhow!(
             "Batch {} not found in collection {}",
@@ -1175,9 +1177,9 @@ impl GlobalPartitionedMemtable {
     /// Get stats for a specific collection
     pub async fn stats(&self, collection_id: &str) -> (usize, usize) {
         let collections = self.collections.read().await;
-        collections
-            .get(collection_id)
-            .map_or((0, 0), |partition| (partition.vector_count, partition.total_size))
+        collections.get(collection_id).map_or((0, 0), |partition| {
+            (partition.vector_count, partition.total_size)
+        })
     }
 
     /// List all collection IDs

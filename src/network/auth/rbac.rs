@@ -75,8 +75,10 @@ impl RbacService {
             .user_roles
             .try_read()
             .map_err(|_| AuthError::InvalidCredentials)?;
-        let roles = user_roles
-            .get(user_id).map_or_else(|| vec![self.config.default_role.clone()], |roles| roles.iter().cloned().collect());
+        let roles = user_roles.get(user_id).map_or_else(
+            || vec![self.config.default_role.clone()],
+            |roles| roles.iter().cloned().collect(),
+        );
         Ok(roles)
     }
 
@@ -351,9 +353,9 @@ impl RbacService {
                     && !self
                         .user_has_collection_access(user_id, collection_id)
                         .await
-                    {
-                        return Err(AuthError::AuthorizationDenied(permission));
-                    }
+                {
+                    return Err(AuthError::AuthorizationDenied(permission));
+                }
             }
             ResourceType::System => {
                 // System operations require admin role

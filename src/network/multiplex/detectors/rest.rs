@@ -108,24 +108,25 @@ impl ProtocolDetector for RestDetector {
 
         // Check Content-Type
         if let Some(content_type) = headers.get(header::CONTENT_TYPE)
-            && let Ok(ct) = content_type.to_str() {
-                if Self::is_rest_content_type(ct) {
-                    confidence = 0.9;
-                } else if ct.starts_with("application/grpc") {
-                    // Explicitly not REST
-                    return None;
-                }
+            && let Ok(ct) = content_type.to_str()
+        {
+            if Self::is_rest_content_type(ct) {
+                confidence = 0.9;
+            } else if ct.starts_with("application/grpc") {
+                // Explicitly not REST
+                return None;
             }
+        }
 
         // Check Accept header
         if let Some(accept) = headers.get(header::ACCEPT)
             && let Ok(acc) = accept.to_str()
-                && (acc.contains("application/json")
-                    || acc.contains("text/html")
-                    || acc.contains("*/*"))
-                {
-                    confidence = confidence.max(0.7);
-                }
+            && (acc.contains("application/json")
+                || acc.contains("text/html")
+                || acc.contains("*/*"))
+        {
+            confidence = confidence.max(0.7);
+        }
 
         // Check HTTP version (HTTP/1.x strongly indicates REST)
         match request.version() {

@@ -59,8 +59,7 @@ pub struct TranslationMetadata {
 }
 
 /// User context for translation (simplified version)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserContext {
     pub user_id: String,
     pub tenant_id: Option<String>,
@@ -612,7 +611,6 @@ impl Default for TranslatorConfig {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

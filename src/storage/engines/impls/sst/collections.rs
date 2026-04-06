@@ -368,10 +368,11 @@ impl SstEngine {
 
         for file_path in &files {
             if let Ok(fs) = self.filesystem().get_filesystem(file_path)
-                && let Ok(metadata) = fs.metadata(file_path).await {
-                    total_size += metadata.size;
-                    file_sizes.insert(file_path.clone(), metadata.size);
-                }
+                && let Ok(metadata) = fs.metadata(file_path).await
+            {
+                total_size += metadata.size;
+                file_sizes.insert(file_path.clone(), metadata.size);
+            }
         }
 
         Ok(CollectionSizeInfo {

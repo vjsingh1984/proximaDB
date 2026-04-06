@@ -272,9 +272,10 @@ impl PostgresConnector {
         if key_columns.is_empty() {
             // Use first column as fallback
             if let Some((_, value)) = tuple.values.first()
-                && let ColumnValue::Text(s) = value {
-                    return s.clone();
-                }
+                && let ColumnValue::Text(s) = value
+            {
+                return s.clone();
+            }
             return "unknown".to_string();
         }
 
@@ -377,7 +378,8 @@ impl CdcSource for PostgresConnector {
         );
 
         // Load last known offset
-        let _start_lsn = if let Ok(Some(offset)) = offset_store.get(&self.pg_config.slot_name).await {
+        let _start_lsn = if let Ok(Some(offset)) = offset_store.get(&self.pg_config.slot_name).await
+        {
             *self.current_lsn.write().await = offset.lsn;
             offset.lsn
         } else {

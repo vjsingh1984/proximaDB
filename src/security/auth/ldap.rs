@@ -4,8 +4,8 @@ use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
+use super::{AuthCredentials, IdentityProvider};
 use crate::security::unified_rbac::{AuthMethod, UnifiedUserContext};
-use super::{IdentityProvider, AuthCredentials};
 
 /// LDAP Identity Provider
 ///
@@ -59,7 +59,8 @@ impl LdapProvider {
 
     /// Add a group-to-role mapping
     pub fn with_group_mapping(mut self, ldap_group_cn: String, proximadb_role: String) -> Self {
-        self.group_role_mapping.insert(ldap_group_cn, proximadb_role);
+        self.group_role_mapping
+            .insert(ldap_group_cn, proximadb_role);
         self
     }
 
@@ -79,7 +80,10 @@ impl LdapProvider {
     fn extract_cn(dn: &str) -> Option<String> {
         for part in dn.split(',') {
             let part = part.trim();
-            if let Some(cn) = part.strip_prefix("cn=").or_else(|| part.strip_prefix("CN=")) {
+            if let Some(cn) = part
+                .strip_prefix("cn=")
+                .or_else(|| part.strip_prefix("CN="))
+            {
                 return Some(cn.to_string());
             }
         }
@@ -123,7 +127,12 @@ impl IdentityProvider for LdapProvider {
                 }
 
                 // Prevent LDAP injection in username
-                if username.contains('*') || username.contains('(') || username.contains(')') || username.contains('\\') || username.contains('\0') {
+                if username.contains('*')
+                    || username.contains('(')
+                    || username.contains(')')
+                    || username.contains('\\')
+                    || username.contains('\0')
+                {
                     return Err(anyhow!("Username contains invalid characters"));
                 }
 
@@ -136,7 +145,9 @@ impl IdentityProvider for LdapProvider {
                 // Without it, we operate in gateway mode: the LDAP bind is
                 // handled by an upstream proxy and we trust the credentials.
                 {
-                    if !self.server_url.starts_with("ldap://") && !self.server_url.starts_with("ldaps://") {
+                    if !self.server_url.starts_with("ldap://")
+                        && !self.server_url.starts_with("ldaps://")
+                    {
                         return Err(anyhow!("Invalid LDAP server URL: {}", self.server_url));
                     }
 
@@ -147,7 +158,10 @@ impl IdentityProvider for LdapProvider {
                     metadata.insert("bind_dn".to_string(), bind_dn);
                     metadata.insert("server".to_string(), self.server_url.clone());
 
-                    info!("LDAP authentication accepted for user '{}' (gateway mode)", username);
+                    info!(
+                        "LDAP authentication accepted for user '{}' (gateway mode)",
+                        username
+                    );
 
                     Ok(UnifiedUserContext {
                         user_id: username.clone(),
@@ -164,7 +178,9 @@ impl IdentityProvider for LdapProvider {
                     })
                 }
             }
-            _ => Err(anyhow!("LDAP requires username and password for authentication")),
+            _ => Err(anyhow!(
+                "LDAP requires username and password for authentication"
+            )),
         }
     }
 
@@ -237,7 +253,12 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid characters"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid characters")
+        );
     }
 
     #[tokio::test]
@@ -252,7 +273,12 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("username and password"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("username and password")
+        );
     }
 
     #[tokio::test]
@@ -314,10 +340,16 @@ mod tests {
 
     #[test]
     fn test_active_directory_mode() {
-        let provider = LdapProvider::new("ldap://dc.corp.com".to_string(), "dc=corp,dc=com".to_string())
-            .with_active_directory();
+        let provider = LdapProvider::new(
+            "ldap://dc.corp.com".to_string(),
+            "dc=corp,dc=com".to_string(),
+        )
+        .with_active_directory();
 
         assert_eq!(provider.user_attribute, "sAMAccountName");
-        assert_eq!(provider.construct_bind_dn("jdoe"), "sAMAccountName=jdoe,dc=corp,dc=com");
+        assert_eq!(
+            provider.construct_bind_dn("jdoe"),
+            "sAMAccountName=jdoe,dc=corp,dc=com"
+        );
     }
 }

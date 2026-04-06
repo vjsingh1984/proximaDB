@@ -83,8 +83,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Configuration for object storage access
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StorageOptions {
     /// Storage URL (s3://, gs://, azure://, file://)
     pub url: String,
@@ -113,7 +112,6 @@ pub struct StorageOptions {
     /// Additional storage options
     pub options: HashMap<String, String>,
 }
-
 
 impl StorageOptions {
     /// Create options for local filesystem

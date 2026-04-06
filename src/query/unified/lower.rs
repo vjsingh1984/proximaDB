@@ -29,15 +29,14 @@
 //! - **LIMIT** → TopK operators
 //! - **MultiModal queries** → Union operators with fusion strategies
 
-use anyhow::Result;
-use tracing::{debug, trace, warn};
-use crate::query::unified::fusion::FusionStrategy;
 use crate::query::multimodal::plan::{
-    JoinCondition, JoinType, MultiModelPlan, Operator,
-    PlanContext,
+    JoinCondition, JoinType, MultiModelPlan, Operator, PlanContext,
 };
 use crate::query::unified::ast::*;
+use crate::query::unified::fusion::FusionStrategy;
 use crate::query::unified::uql::{SelectStatement, UQLStatement};
+use anyhow::Result;
+use tracing::{debug, trace, warn};
 
 /// UQL to MultiModelPlan lowerer
 pub struct UQLLowerer {
@@ -229,7 +228,10 @@ impl UQLLowerer {
     }
 
     /// Lower WHERE clause to Filter operator
-    fn lower_where(&self, where_clause: &crate::query::unified::uql::WhereClause) -> Result<Operator> {
+    fn lower_where(
+        &self,
+        where_clause: &crate::query::unified::uql::WhereClause,
+    ) -> Result<Operator> {
         trace!("Lowering WHERE clause");
 
         // Convert conditions to filter expression
@@ -237,7 +239,8 @@ impl UQLLowerer {
             self.convert_condition_to_filter(&where_clause.conditions[0])?
         } else {
             // Multiple conditions combined with logic operator
-            let converted_exprs: Result<Vec<_>> = where_clause.conditions
+            let converted_exprs: Result<Vec<_>> = where_clause
+                .conditions
                 .iter()
                 .map(|c| self.convert_condition_to_filter(c))
                 .collect();
@@ -273,7 +276,9 @@ impl UQLLowerer {
         trace!("Lowering ORDER BY: {:?}", order_by.columns);
 
         // For simplicity, use the first column for sort
-        let (column, sort_order) = order_by.columns.first()
+        let (column, sort_order) = order_by
+            .columns
+            .first()
             .ok_or_else(|| anyhow::anyhow!("ORDER BY clause has no columns"))?;
 
         let ascending = matches!(sort_order, crate::query::unified::uql::SortOrder::Asc);
@@ -299,8 +304,14 @@ impl UQLLowerer {
     }
 
     /// Lower MultiModal statement to operators
-    fn lower_multimodal(&self, multimodal: &crate::query::unified::uql::MultiModalStatement) -> Result<Vec<Operator>> {
-        trace!("Lowering MultiModal statement with {} components", multimodal.components.len());
+    fn lower_multimodal(
+        &self,
+        multimodal: &crate::query::unified::uql::MultiModalStatement,
+    ) -> Result<Vec<Operator>> {
+        trace!(
+            "Lowering MultiModal statement with {} components",
+            multimodal.components.len()
+        );
 
         // For MultiModal queries, we create separate plans for each component
         // and combine them with a Union operator
@@ -340,9 +351,16 @@ impl UQLLowerer {
     }
 
     /// Convert condition from UQL to unified FilterExpression
-    fn convert_condition_to_filter(&self, condition: &crate::query::unified::uql::Condition) -> Result<crate::core::search::FilterExpression> {
+    fn convert_condition_to_filter(
+        &self,
+        condition: &crate::query::unified::uql::Condition,
+    ) -> Result<crate::core::search::FilterExpression> {
         match condition {
-            crate::query::unified::uql::Condition::Comparison { field, operator, value } => {
+            crate::query::unified::uql::Condition::Comparison {
+                field,
+                operator,
+                value,
+            } => {
                 let core_operator = match operator {
                     crate::query::unified::uql::ComparisonOperator::Eq => {
                         crate::core::search::ComparisonOperator::Equals
@@ -363,7 +381,10 @@ impl UQLLowerer {
                         crate::core::search::ComparisonOperator::LessThanOrEqual
                     }
                     _ => {
-                        return Err(anyhow::anyhow!("Unsupported filter operator: {:?}", operator));
+                        return Err(anyhow::anyhow!(
+                            "Unsupported filter operator: {:?}",
+                            operator
+                        ));
                     }
                 };
 
@@ -371,17 +392,16 @@ impl UQLLowerer {
                     crate::query::unified::uql::Value::String(s) => {
                         serde_json::Value::String(s.clone())
                     }
-                    crate::query::unified::uql::Value::Number(n) => {
-                        serde_json::Value::Number(
-                            serde_json::Number::from_f64(*n)
-                                .unwrap_or_else(|| serde_json::Number::from(0))
-                        )
-                    }
-                    crate::query::unified::uql::Value::Boolean(b) => {
-                        serde_json::Value::Bool(*b)
-                    }
+                    crate::query::unified::uql::Value::Number(n) => serde_json::Value::Number(
+                        serde_json::Number::from_f64(*n)
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    ),
+                    crate::query::unified::uql::Value::Boolean(b) => serde_json::Value::Bool(*b),
                     _ => {
-                        return Err(anyhow::anyhow!("Unsupported filter value type: {:?}", value));
+                        return Err(anyhow::anyhow!(
+                            "Unsupported filter value type: {:?}",
+                            value
+                        ));
                     }
                 };
 
@@ -391,9 +411,10 @@ impl UQLLowerer {
                     value: filter_value,
                 })
             }
-            _ => {
-                Err(anyhow::anyhow!("Unsupported condition type: {:?}", condition))
-            }
+            _ => Err(anyhow::anyhow!(
+                "Unsupported condition type: {:?}",
+                condition
+            )),
         }
     }
 
@@ -404,10 +425,7 @@ impl UQLLowerer {
 }
 
 /// Convenience function to lower a UQL statement
-pub fn lower_uql_to_plan(
-    statement: &UQLStatement,
-    context: PlanContext,
-) -> Result<MultiModelPlan> {
+pub fn lower_uql_to_plan(statement: &UQLStatement, context: PlanContext) -> Result<MultiModelPlan> {
     let mut lowerer = UQLLowerer::new(context);
     lowerer.lower(statement)
 }
@@ -426,8 +444,8 @@ mod tests {
     use super::*;
     use crate::core::search::ComparisonOperator;
     use crate::query::unified::uql::{
-        Condition, DataSource, LogicOperator, OrderByClause, SelectStatement,
-        SortOrder, UQLStatement, WhereClause,
+        Condition, DataSource, LogicOperator, OrderByClause, SelectStatement, SortOrder,
+        UQLStatement, WhereClause,
     };
 
     #[test]
@@ -562,7 +580,11 @@ mod tests {
         let core_filter = lowerer.convert_condition_to_filter(&condition).unwrap();
 
         match core_filter {
-            crate::core::search::FilterExpression::Comparison { field, operator, value } => {
+            crate::core::search::FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
                 assert_eq!(field, "status");
                 assert_eq!(operator, ComparisonOperator::Equals);
                 assert_eq!(value, serde_json::json!("active"));

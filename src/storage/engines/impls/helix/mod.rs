@@ -960,9 +960,10 @@ impl HelixEngine {
 
         // Check L0 trigger
         if let Some(l0_files) = levels.get(&0)
-            && l0_files.len() >= self.config.level0_file_num_compaction_trigger {
-                return true;
-            }
+            && l0_files.len() >= self.config.level0_file_num_compaction_trigger
+        {
+            return true;
+        }
 
         // Check size ratio triggers for other levels
         for level in 1..self.config.max_levels {
@@ -1833,7 +1834,9 @@ impl UnifiedStorageEngine for HelixEngine {
                 (query_hilbert, sstable.hilbert_range)
             {
                 // Simple range check (could be more sophisticated)
-                let distance_to_range = min_key.saturating_sub(query_key).max(query_key.saturating_sub(max_key));
+                let distance_to_range = min_key
+                    .saturating_sub(query_key)
+                    .max(query_key.saturating_sub(max_key));
 
                 tracing::debug!(
                     "[HELIX] SSTable hilbert_range=({}, {}), query_key={}, distance={}",
@@ -2068,14 +2071,15 @@ impl UnifiedStorageEngine for HelixEngine {
 
             // Try to get from vector cache first
             if let Some(vector_cache) = orchestrator.get_vector_cache()
-                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
-                    // Track cache hit for access pattern learning
-                    orchestrator.pattern_tracker().track_access_async(
-                        cache_key.clone(),
-                        crate::storage::cache::orchestrator::CacheType::VectorData,
-                    );
-                    return Ok(Some(cached_vector));
-                }
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await
+            {
+                // Track cache hit for access pattern learning
+                orchestrator.pattern_tracker().track_access_async(
+                    cache_key.clone(),
+                    crate::storage::cache::orchestrator::CacheType::VectorData,
+                );
+                return Ok(Some(cached_vector));
+            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(
@@ -2135,7 +2139,11 @@ impl UnifiedStorageEngine for HelixEngine {
         let metrics = self.metrics.read().await;
         let total_vectors = metrics.total_vectors;
         let total_bytes = metrics.total_size_bytes;
-        let avg_vector_bytes = if total_vectors > 0 { total_bytes / total_vectors } else { 640 };
+        let avg_vector_bytes = if total_vectors > 0 {
+            total_bytes / total_vectors
+        } else {
+            640
+        };
 
         Ok(crate::storage::traits::CollectionStats {
             row_count: total_vectors,

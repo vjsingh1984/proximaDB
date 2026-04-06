@@ -693,7 +693,6 @@ impl SearchCostEstimator {
             available_memory_gb: 16.0,
             cpu_cores: num_cpus::get(),
         };
-        
 
         // Populate with typical performance data for immediate use
         // These would be replaced by actual benchmarks in production

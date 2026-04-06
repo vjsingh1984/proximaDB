@@ -399,9 +399,10 @@ async fn phase1_binary_filtering(
             let block = &superblock.blocks[b_idx];
             // Apply metadata filter at block level
             if let Some(f) = filter
-                && !block_matches_filter(block, f) {
-                    continue;
-                }
+                && !block_matches_filter(block, f)
+            {
+                continue;
+            }
 
             // Check each vector in block using binary sketches or fallback to direct comparison
             if let Some(ref sketches) = block.quantized_vectors {
@@ -1712,7 +1713,10 @@ mod tests {
         use crate::compute::distance_computation::DistanceMetric as DM;
         assert!(matches!(parse_distance_metric("cosine"), DM::Cosine));
         assert!(matches!(parse_distance_metric("dot"), DM::DotProduct));
-        assert!(matches!(parse_distance_metric("dotproduct"), DM::DotProduct));
+        assert!(matches!(
+            parse_distance_metric("dotproduct"),
+            DM::DotProduct
+        ));
         assert!(matches!(parse_distance_metric("manhattan"), DM::Manhattan));
         assert!(matches!(parse_distance_metric("l1"), DM::Manhattan));
         assert!(matches!(parse_distance_metric("hamming"), DM::Hamming));
@@ -1792,9 +1796,6 @@ mod tests {
     fn test_compare_json_values_incompatible_types() {
         let a = serde_json::json!(10);
         let b = serde_json::json!("hello");
-        assert_eq!(
-            compare_json_values(&a, &b, std::cmp::Ordering::Equal),
-            None
-        );
+        assert_eq!(compare_json_values(&a, &b, std::cmp::Ordering::Equal), None);
     }
 }

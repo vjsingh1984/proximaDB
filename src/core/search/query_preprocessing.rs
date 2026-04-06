@@ -80,8 +80,7 @@ impl QueryPreprocessor {
             "QueryPreprocessor::new called with cache_size: {}",
             cache_size
         );
-        let cache_size = NonZeroUsize::new(cache_size)
-            .map_or(100, NonZeroUsize::get);
+        let cache_size = NonZeroUsize::new(cache_size).map_or(100, NonZeroUsize::get);
 
         // Initialize quantization engine with default configuration
         // TEMPORARILY DISABLED TO DEBUG SEGFAULT
@@ -154,12 +153,13 @@ impl QueryPreprocessor {
             let mut cache = self.cache.write();
             trace!("Cache lock acquired");
             if let Some(cached) = cache.get(&vector_hash)
-                && cached.distance_metric == distance_metric {
-                    debug!("Cache hit!");
-                    self.stats.write().hits += 1;
-                    trace!("Query cache hit for hash {}", vector_hash);
-                    return cached.clone();
-                }
+                && cached.distance_metric == distance_metric
+            {
+                debug!("Cache hit!");
+                self.stats.write().hits += 1;
+                trace!("Query cache hit for hash {}", vector_hash);
+                return cached.clone();
+            }
         }
         debug!("Cache miss - preprocessing query");
         trace!("Cache miss, preprocessing query");
@@ -492,27 +492,29 @@ impl QueryPreprocessor {
             .iter()
             .any(|l| matches!(l.level_type, Some(QuantizationLevel::Binary(_))))
             && let Some(engine) = &self.quantization_engine
-                && let Ok(quantized) = engine
-                    .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Binary)
-                    .await
-                    && let Some(storage_data) = quantized.into_iter().next()
-                        && let Some(primary) = storage_data.primary {
-                            binary = Some(Arc::new(primary.data));
-                        }
+            && let Ok(quantized) = engine
+                .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Binary)
+                .await
+            && let Some(storage_data) = quantized.into_iter().next()
+            && let Some(primary) = storage_data.primary
+        {
+            binary = Some(Arc::new(primary.data));
+        }
 
         if levels
             .iter()
             .any(|l| matches!(l.level_type, Some(QuantizationLevel::Scalar(_))))
             && let Some(engine) = &self.quantization_engine
-                && let Ok(quantized) = engine
-                    .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Int8)
-                    .await
-                    && let Some(storage_data) = quantized.into_iter().next()
-                        && let Some(primary) = storage_data.primary {
-                            int8 = Some(Arc::new(
-                                primary.data.into_iter().map(|b| b as i8).collect(),
-                            ));
-                        }
+            && let Ok(quantized) = engine
+                .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Int8)
+                .await
+            && let Some(storage_data) = quantized.into_iter().next()
+            && let Some(primary) = storage_data.primary
+        {
+            int8 = Some(Arc::new(
+                primary.data.into_iter().map(|b| b as i8).collect(),
+            ));
+        }
 
         if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 4))
             && let Some(engine) = &self.quantization_engine
@@ -603,7 +605,10 @@ impl QueryPreprocessor {
         for val in vector.iter().take(sample_size / 2) {
             val.to_bits().hash(&mut hasher);
         }
-        for val in vector.iter().skip(vector.len().saturating_sub(sample_size / 2)) {
+        for val in vector
+            .iter()
+            .skip(vector.len().saturating_sub(sample_size / 2))
+        {
             val.to_bits().hash(&mut hasher);
         }
         vector.len().hash(&mut hasher);

@@ -110,9 +110,7 @@ impl ColdStorageBackend {
     pub async fn new(backend_type: BackendType, storage_path: &Path) -> Result<Self> {
         // Create storage directory if it doesn't exist
         fs::create_dir_all(storage_path).await.map_err(|e| {
-            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(
-                e.to_string(),
-            )))
+            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
         })?;
 
         let backend = Self {
@@ -399,11 +397,8 @@ impl ColdStorageBackend {
         fs::create_dir_all(file_path.parent().unwrap())
             .await
             .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(
-                    e.to_string(),
-                )))
+                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
             })?;
-        }
 
         let json_data = serde_json::to_string_pretty(node)
             .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))?;
@@ -411,9 +406,7 @@ impl ColdStorageBackend {
         fs::write(&file_path, json_data.as_bytes())
             .await
             .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(
-                    e.to_string(),
-                )))
+                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
             })?;
 
         Ok(StorageLocation {
@@ -440,11 +433,8 @@ impl ColdStorageBackend {
         fs::create_dir_all(file_path.parent().unwrap())
             .await
             .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(
-                    e.to_string(),
-                )))
+                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
             })?;
-        }
 
         let json_data = serde_json::to_string_pretty(edge)
             .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))?;
@@ -452,9 +442,7 @@ impl ColdStorageBackend {
         fs::write(&file_path, json_data.as_bytes())
             .await
             .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(
-                    e.to_string(),
-                )))
+                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
             })?;
 
         Ok(StorageLocation {
@@ -476,9 +464,7 @@ impl ColdStorageBackend {
     async fn read_node_json(&self, location: &StorageLocation) -> Result<StorableNode> {
         let file_path = self.storage_path.join(&location.file_path);
         let json_data = fs::read_to_string(&file_path).await.map_err(|e| {
-            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(
-                e.to_string(),
-            )))
+            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
         })?;
 
         serde_json::from_str(&json_data)
@@ -488,9 +474,7 @@ impl ColdStorageBackend {
     async fn read_edge_json(&self, location: &StorageLocation) -> Result<StorableEdge> {
         let file_path = self.storage_path.join(&location.file_path);
         let json_data = fs::read_to_string(&file_path).await.map_err(|e| {
-            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(
-                e.to_string(),
-            )))
+            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
         })?;
 
         serde_json::from_str(&json_data)

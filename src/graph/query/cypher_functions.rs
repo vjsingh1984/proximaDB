@@ -62,10 +62,10 @@
 //! MATCH (o:Order) RETURN o.created_at, duration(o.created_at, timestamp())
 //! ```
 
+use anyhow::{Result, anyhow, bail};
 use std::collections::HashMap;
-use anyhow::{Result, bail, anyhow};
 
-use super::cypher_ast::{Expression, CypherValue};
+use super::cypher_ast::{CypherValue, Expression};
 
 /// Context for function evaluation
 pub struct FunctionContext {
@@ -176,7 +176,13 @@ impl CypherFunctionRegistry {
         self.register(CypherFunction::new("trim", 1, 1, false, cypher_trim));
         self.register(CypherFunction::new("ltrim", 1, 1, false, cypher_ltrim));
         self.register(CypherFunction::new("rtrim", 1, 1, false, cypher_rtrim));
-        self.register(CypherFunction::new("substring", 3, 3, false, cypher_substring));
+        self.register(CypherFunction::new(
+            "substring",
+            3,
+            3,
+            false,
+            cypher_substring,
+        ));
         self.register(CypherFunction::new("replace", 3, 3, false, cypher_replace));
         self.register(CypherFunction::new("size", 1, 1, false, cypher_size));
         self.register(CypherFunction::new("length", 1, 1, false, cypher_size)); // Alias for size
@@ -184,7 +190,13 @@ impl CypherFunctionRegistry {
         self.register(CypherFunction::new("left", 2, 2, false, cypher_left));
         self.register(CypherFunction::new("right", 2, 2, false, cypher_right));
         self.register(CypherFunction::new("reverse", 1, 1, false, cypher_reverse));
-        self.register(CypherFunction::new("toString", 1, 1, false, cypher_to_string));
+        self.register(CypherFunction::new(
+            "toString",
+            1,
+            1,
+            false,
+            cypher_to_string,
+        ));
     }
 
     /// Register all math functions
@@ -216,10 +228,34 @@ impl CypherFunctionRegistry {
     /// Register all date/time functions
     fn register_date_functions(&mut self) {
         self.register(CypherFunction::new("date", 0, 1, false, cypher_date));
-        self.register(CypherFunction::new("datetime", 1, 3, false, cypher_datetime));
-        self.register(CypherFunction::new("timestamp", 0, 0, false, cypher_timestamp));
-        self.register(CypherFunction::new("duration", 2, 2, false, cypher_duration));
-        self.register(CypherFunction::new("toString", 1, 1, false, cypher_to_string));
+        self.register(CypherFunction::new(
+            "datetime",
+            1,
+            3,
+            false,
+            cypher_datetime,
+        ));
+        self.register(CypherFunction::new(
+            "timestamp",
+            0,
+            0,
+            false,
+            cypher_timestamp,
+        ));
+        self.register(CypherFunction::new(
+            "duration",
+            2,
+            2,
+            false,
+            cypher_duration,
+        ));
+        self.register(CypherFunction::new(
+            "toString",
+            1,
+            1,
+            false,
+            cypher_to_string,
+        ));
     }
 
     /// Register aggregation functions
@@ -347,7 +383,9 @@ fn cypher_replace(args: &[Expression], _ctx: &FunctionContext) -> Result<CypherV
         _ => bail!("replace third argument must be a string"),
     };
 
-    Ok(CypherValue::String(string.replace(&search, replacement.as_str())))
+    Ok(CypherValue::String(
+        string.replace(&search, replacement.as_str()),
+    ))
 }
 
 fn cypher_size(args: &[Expression], _ctx: &FunctionContext) -> Result<CypherValue> {
@@ -510,7 +548,9 @@ fn cypher_round(args: &[Expression], _ctx: &FunctionContext) -> Result<CypherVal
     };
 
     let multiplier = 10_f64.powi(precision as i32);
-    Ok(CypherValue::Float((value * multiplier).round() / multiplier))
+    Ok(CypherValue::Float(
+        (value * multiplier).round() / multiplier,
+    ))
 }
 
 fn cypher_sign(args: &[Expression], _ctx: &FunctionContext) -> Result<CypherValue> {
@@ -537,7 +577,7 @@ fn cypher_sqrt(args: &[Expression], _ctx: &FunctionContext) -> Result<CypherValu
                 bail!("sqrt of negative number")
             }
             Ok(CypherValue::Float(f.sqrt()))
-        },
+        }
         _ => bail!("sqrt requires a numeric argument"),
     }
 }
@@ -863,7 +903,9 @@ fn cypher_datetime(args: &[Expression], ctx: &FunctionContext) -> Result<CypherV
             .ok_or_else(|| anyhow!("Invalid time"))?
     };
 
-    Ok(CypherValue::String(datetime.format("%Y-%m-%dT%H:%M:%S").to_string()))
+    Ok(CypherValue::String(
+        datetime.format("%Y-%m-%dT%H:%M:%S").to_string(),
+    ))
 }
 
 fn cypher_timestamp(_args: &[Expression], _ctx: &FunctionContext) -> Result<CypherValue> {
@@ -889,9 +931,7 @@ fn cypher_duration(args: &[Expression], ctx: &FunctionContext) -> Result<CypherV
         (CypherValue::Integer(s), CypherValue::Integer(e)) => {
             Ok(CypherValue::Integer((e - s).max(0)))
         }
-        (CypherValue::Float(s), CypherValue::Float(e)) => {
-            Ok(CypherValue::Float((e - s).max(0.0)))
-        }
+        (CypherValue::Float(s), CypherValue::Float(e)) => Ok(CypherValue::Float((e - s).max(0.0))),
         _ => bail!("duration requires timestamp arguments"),
     }
 }
@@ -1012,18 +1052,14 @@ fn cypher_collect(args: &[Expression], ctx: &FunctionContext) -> Result<CypherVa
 // =============================================================================
 
 /// Evaluate a Cypher expression to a value
-pub fn evaluate_expression(
-    expr: &Expression,
-    ctx: &FunctionContext,
-) -> Result<CypherValue> {
+pub fn evaluate_expression(expr: &Expression, ctx: &FunctionContext) -> Result<CypherValue> {
     match expr {
         Expression::Literal(value) => Ok(value.clone()),
 
-        Expression::Variable(name) => {
-            ctx.get_variable(name)
-                .cloned()
-                .ok_or_else(|| anyhow!("Variable '{}' not found", name))
-        }
+        Expression::Variable(name) => ctx
+            .get_variable(name)
+            .cloned()
+            .ok_or_else(|| anyhow!("Variable '{}' not found", name)),
 
         Expression::Property(box_expr, property) => {
             // For now, return a placeholder
@@ -1047,9 +1083,7 @@ pub fn evaluate_expression(
             evaluate_unary_op(unary_op, &operand)
         }
 
-        Expression::FunctionCall(name, args) => {
-            evaluate_function_call(name, args, ctx)
-        }
+        Expression::FunctionCall(name, args) => evaluate_function_call(name, args, ctx),
 
         Expression::Parameter(param) => {
             // For now, return a placeholder
@@ -1077,7 +1111,11 @@ pub fn evaluate_expression(
 }
 
 /// Evaluate a binary operation
-fn evaluate_binary_op(left: &CypherValue, op: &crate::graph::query::cypher_ast::BinaryOperator, right: &CypherValue) -> Result<CypherValue> {
+fn evaluate_binary_op(
+    left: &CypherValue,
+    op: &crate::graph::query::cypher_ast::BinaryOperator,
+    right: &CypherValue,
+) -> Result<CypherValue> {
     use crate::graph::query::cypher_ast::BinaryOperator;
 
     let l = to_numeric(left)?;
@@ -1099,20 +1137,17 @@ fn evaluate_binary_op(left: &CypherValue, op: &crate::graph::query::cypher_ast::
             }
             CypherValue::Float(l % r)
         }
-        BinaryOperator::And => CypherValue::Boolean(
-            truthy(left)? && truthy(right)?
-        ),
-        BinaryOperator::Or => CypherValue::Boolean(
-            truthy(left)? || truthy(right)?
-        ),
-        BinaryOperator::Xor => CypherValue::Boolean(
-            truthy(left)? ^ truthy(right)?
-        ),
+        BinaryOperator::And => CypherValue::Boolean(truthy(left)? && truthy(right)?),
+        BinaryOperator::Or => CypherValue::Boolean(truthy(left)? || truthy(right)?),
+        BinaryOperator::Xor => CypherValue::Boolean(truthy(left)? ^ truthy(right)?),
     })
 }
 
 /// Evaluate a unary operation
-fn evaluate_unary_op(op: &crate::graph::query::cypher_ast::UnaryOperator, operand: &CypherValue) -> Result<CypherValue> {
+fn evaluate_unary_op(
+    op: &crate::graph::query::cypher_ast::UnaryOperator,
+    operand: &CypherValue,
+) -> Result<CypherValue> {
     use crate::graph::query::cypher_ast::UnaryOperator;
 
     match op {
@@ -1125,10 +1160,15 @@ fn evaluate_unary_op(op: &crate::graph::query::cypher_ast::UnaryOperator, operan
 }
 
 /// Evaluate a function call
-fn evaluate_function_call(name: &str, args: &[Expression], ctx: &FunctionContext) -> Result<CypherValue> {
+fn evaluate_function_call(
+    name: &str,
+    args: &[Expression],
+    ctx: &FunctionContext,
+) -> Result<CypherValue> {
     let registry = CypherFunctionRegistry::new();
 
-    let function = registry.get(name)
+    let function = registry
+        .get(name)
         .ok_or_else(|| anyhow!("Unknown function: {}", name))?;
 
     // Validate argument count
@@ -1147,7 +1187,11 @@ fn evaluate_function_call(name: &str, args: &[Expression], ctx: &FunctionContext
 }
 
 /// Evaluate a comparison operation
-fn evaluate_comparison(left: &CypherValue, op: &crate::graph::query::cypher_ast::CompOp, right: &CypherValue) -> Result<bool> {
+fn evaluate_comparison(
+    left: &CypherValue,
+    op: &crate::graph::query::cypher_ast::CompOp,
+    right: &CypherValue,
+) -> Result<bool> {
     use crate::graph::query::cypher_ast::CompOp;
 
     match op {
@@ -1160,7 +1204,9 @@ fn evaluate_comparison(left: &CypherValue, op: &crate::graph::query::cypher_ast:
         CompOp::In => {
             // Simplified IN check
             if let CypherValue::List(items) = right {
-                Ok(items.iter().any(|item| compare_values(left, item).unwrap_or(1) == 0))
+                Ok(items
+                    .iter()
+                    .any(|item| compare_values(left, item).unwrap_or(1) == 0))
             } else {
                 Ok(false)
             }
@@ -1173,20 +1219,16 @@ fn evaluate_comparison(left: &CypherValue, op: &crate::graph::query::cypher_ast:
 fn compare_values(left: &CypherValue, right: &CypherValue) -> Result<i32> {
     use std::cmp::Ordering;
     match (left, right) {
-        (CypherValue::String(l), CypherValue::String(r)) => {
-            Ok(match l.cmp(r) {
-                Ordering::Less => -1,
-                Ordering::Equal => 0,
-                Ordering::Greater => 1,
-            })
-        }
-        (CypherValue::Integer(l), CypherValue::Integer(r)) => {
-            Ok(match l.cmp(r) {
-                Ordering::Less => -1,
-                Ordering::Equal => 0,
-                Ordering::Greater => 1,
-            })
-        }
+        (CypherValue::String(l), CypherValue::String(r)) => Ok(match l.cmp(r) {
+            Ordering::Less => -1,
+            Ordering::Equal => 0,
+            Ordering::Greater => 1,
+        }),
+        (CypherValue::Integer(l), CypherValue::Integer(r)) => Ok(match l.cmp(r) {
+            Ordering::Less => -1,
+            Ordering::Equal => 0,
+            Ordering::Greater => 1,
+        }),
         (CypherValue::Integer(l), CypherValue::Float(r)) => {
             let l_f = *l as f64;
             let r_f = *r;
@@ -1212,13 +1254,11 @@ fn compare_values(left: &CypherValue, right: &CypherValue) -> Result<i32> {
                 Ordering::Greater => 1,
             })
         }
-        (CypherValue::Boolean(l), CypherValue::Boolean(r)) => {
-            Ok(match l.cmp(r) {
-                Ordering::Less => -1,
-                Ordering::Equal => 0,
-                Ordering::Greater => 1,
-            })
-        }
+        (CypherValue::Boolean(l), CypherValue::Boolean(r)) => Ok(match l.cmp(r) {
+            Ordering::Less => -1,
+            Ordering::Equal => 0,
+            Ordering::Greater => 1,
+        }),
         _ => Ok(0), // Null or complex types
     }
 }
@@ -1255,19 +1295,25 @@ mod tests {
         let ctx = FunctionContext::new();
 
         // Test toUpper
-        let expr = Expression::FunctionCall("toUpper".to_string(), vec![
-            Expression::Literal(CypherValue::String("hello".to_string()))
-        ]);
+        let expr = Expression::FunctionCall(
+            "toUpper".to_string(),
+            vec![Expression::Literal(CypherValue::String(
+                "hello".to_string(),
+            ))],
+        );
         assert_eq!(
             evaluate_expression(&expr, &ctx).unwrap(),
             CypherValue::String("HELLO".to_string())
         );
 
         // Test concat
-        let expr = Expression::FunctionCall("concat".to_string(), vec![
-            Expression::Literal(CypherValue::String("Hello ".to_string())),
-            Expression::Literal(CypherValue::String("World".to_string())),
-        ]);
+        let expr = Expression::FunctionCall(
+            "concat".to_string(),
+            vec![
+                Expression::Literal(CypherValue::String("Hello ".to_string())),
+                Expression::Literal(CypherValue::String("World".to_string())),
+            ],
+        );
         assert_eq!(
             evaluate_expression(&expr, &ctx).unwrap(),
             CypherValue::String("Hello World".to_string())
@@ -1279,19 +1325,23 @@ mod tests {
         let ctx = FunctionContext::new();
 
         // Test abs
-        let expr = Expression::FunctionCall("abs".to_string(), vec![
-            Expression::Literal(CypherValue::Integer(-5))
-        ]);
+        let expr = Expression::FunctionCall(
+            "abs".to_string(),
+            vec![Expression::Literal(CypherValue::Integer(-5))],
+        );
         assert_eq!(
             evaluate_expression(&expr, &ctx).unwrap(),
             CypherValue::Integer(5)
         );
 
         // Test round
-        let expr = Expression::FunctionCall("round".to_string(), vec![
-            Expression::Literal(CypherValue::Float(3.7)),
-            Expression::Literal(CypherValue::Integer(1))
-        ]);
+        let expr = Expression::FunctionCall(
+            "round".to_string(),
+            vec![
+                Expression::Literal(CypherValue::Float(3.7)),
+                Expression::Literal(CypherValue::Integer(1)),
+            ],
+        );
         let result = evaluate_expression(&expr, &ctx).unwrap();
         match result {
             CypherValue::Float(f) => assert!((f - 3.7).abs() < 0.01),

@@ -424,7 +424,9 @@ impl EventLogQuery for EventLogClient {
     async fn get_file_status(&self, file_path: &str) -> Result<Option<FileIndexingStatus>> {
         match &self.mode {
             ClientMode::Embedded(service) => service.get_file_status(file_path).await,
-            _ => Err(anyhow::anyhow!("Remote get_file_status not yet implemented")),
+            _ => Err(anyhow::anyhow!(
+                "Remote get_file_status not yet implemented"
+            )),
         }
     }
 
@@ -449,7 +451,9 @@ impl EventLogQuery for EventLogClient {
     ) -> Result<ExtractionMode> {
         match &self.mode {
             ClientMode::Embedded(service) => service.get_extraction_hints(event, index_type).await,
-            _ => Err(anyhow::anyhow!("Remote get_extraction_hints not yet implemented")),
+            _ => Err(anyhow::anyhow!(
+                "Remote get_extraction_hints not yet implemented"
+            )),
         }
     }
 

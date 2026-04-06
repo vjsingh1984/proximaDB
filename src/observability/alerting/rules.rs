@@ -179,12 +179,13 @@ impl RuleCondition {
             RuleCondition::Between(low, high) => value >= *low && value <= *high,
             RuleCondition::Outside(low, high) => value < *low || value > *high,
             RuleCondition::RateOfChange(_) => false, // Requires historical data
-            RuleCondition::Composite { operator, conditions } => match operator {
+            RuleCondition::Composite {
+                operator,
+                conditions,
+            } => match operator {
                 LogicalOp::And => conditions.iter().all(|c| c.matches(value)),
                 LogicalOp::Or => conditions.iter().any(|c| c.matches(value)),
-                LogicalOp::Not => {
-                    conditions.first().map_or(true, |c| !c.matches(value))
-                }
+                LogicalOp::Not => conditions.first().map_or(true, |c| !c.matches(value)),
             },
         }
     }
@@ -201,13 +202,19 @@ impl RuleCondition {
             RuleCondition::Between(low, high) => format!("between {} and {}", low, high),
             RuleCondition::Outside(low, high) => format!("outside {} - {}", low, high),
             RuleCondition::RateOfChange(rate) => format!("rate of change > {}", rate),
-            RuleCondition::Composite { operator, conditions } => {
+            RuleCondition::Composite {
+                operator,
+                conditions,
+            } => {
                 let op_str = match operator {
                     LogicalOp::And => "AND",
                     LogicalOp::Or => "OR",
                     LogicalOp::Not => "NOT",
                 };
-                let parts: Vec<_> = conditions.iter().map(|c| c.threshold_description()).collect();
+                let parts: Vec<_> = conditions
+                    .iter()
+                    .map(|c| c.threshold_description())
+                    .collect();
                 format!("({} {})", op_str, parts.join(", "))
             }
         }

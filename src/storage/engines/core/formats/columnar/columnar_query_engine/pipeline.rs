@@ -18,7 +18,7 @@
 //! (sort, aggregate) buffer all input before producing output.
 
 use anyhow::Result;
-use arrow::array::{Array, Float32Array, FixedSizeListArray, ListArray, StringArray};
+use arrow::array::{Array, FixedSizeListArray, Float32Array, ListArray, StringArray};
 use arrow::record_batch::RecordBatch;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -76,7 +76,10 @@ impl PipelineOperator for ScanOperator {
         let batch = self.batches[self.current_idx].clone();
         self.current_idx += 1;
 
-        trace!("ScanOperator: emitting chunk with {} rows", batch.num_rows());
+        trace!(
+            "ScanOperator: emitting chunk with {} rows",
+            batch.num_rows()
+        );
         Ok(Some(DataChunk::new(batch)))
     }
 
@@ -190,7 +193,9 @@ impl ScoreOperator {
                 (0..num_rows)
                     .map(|i| {
                         let arr = list.value(i);
-                        let fa = arr.as_any().downcast_ref::<Float32Array>()
+                        let fa = arr
+                            .as_any()
+                            .downcast_ref::<Float32Array>()
                             .expect("List should contain Float32Array elements");
                         (0..fa.len()).map(|j| fa.value(j)).collect()
                     })
@@ -240,10 +245,7 @@ impl PipelineOperator for ScoreOperator {
         let scored_batch = RecordBatch::try_new(new_schema, columns)
             .map_err(|e| anyhow::anyhow!("Failed to create scored batch: {}", e))?;
 
-        trace!(
-            "ScoreOperator: scored {} rows",
-            scored_batch.num_rows()
-        );
+        trace!("ScoreOperator: scored {} rows", scored_batch.num_rows());
 
         Ok(Some(DataChunk::new(scored_batch)))
     }
@@ -316,7 +318,11 @@ impl TopKOperator {
                     let values = fl.values().as_any().downcast_ref::<Float32Array>()?;
                     let dim = fl.value_length() as usize;
                     let start = row_idx * dim;
-                    Some(Arc::new((start..start + dim).map(|i| values.value(i)).collect::<Vec<f32>>()))
+                    Some(Arc::new(
+                        (start..start + dim)
+                            .map(|i| values.value(i))
+                            .collect::<Vec<f32>>(),
+                    ))
                 } else {
                     None
                 }
@@ -378,9 +384,10 @@ impl PipelineOperator for TopKOperator {
                 let score = scores.value(row_idx);
 
                 if let Some(min) = self.min_score
-                    && score < min {
-                        continue;
-                    }
+                    && score < min
+                {
+                    continue;
+                }
 
                 if !self.queue.would_accept(score) {
                     continue;
@@ -570,11 +577,7 @@ mod tests {
         let scan = ScanOperator::new(vec![batch]);
 
         let query = vec![1.0, 0.0, 0.0, 0.0]; // unit vector along first axis
-        let mut score_op = ScoreOperator::new(
-            Box::new(scan),
-            query,
-            DistanceMetric::Cosine,
-        );
+        let mut score_op = ScoreOperator::new(Box::new(scan), query, DistanceMetric::Cosine);
 
         let chunk = score_op.next_chunk().unwrap().unwrap();
         let scored_batch = chunk.batch();

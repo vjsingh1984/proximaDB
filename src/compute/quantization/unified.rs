@@ -523,24 +523,25 @@ impl UnifiedQuantizationEngine {
         if all_same {
             // Optimized batch processing for same quantization level
             if let Some(QuantizationLevel::Pq(pq)) = &first_level.level_type
-                && let Some(codebook_id) = &pq.codebook_id {
-                    let codebook = self
-                        .codebook_store
-                        .get_codebook(codebook_id)
-                        .await?
-                        .context("Codebook not found")?;
+                && let Some(codebook_id) = &pq.codebook_id
+            {
+                let codebook = self
+                    .codebook_store
+                    .get_codebook(codebook_id)
+                    .await?
+                    .context("Codebook not found")?;
 
-                    // Precompute distance tables for PQ
-                    let distance_tables =
-                        self.precompute_pq_distance_tables(query, &codebook, metric)?;
+                // Precompute distance tables for PQ
+                let distance_tables =
+                    self.precompute_pq_distance_tables(query, &codebook, metric)?;
 
-                    for (i, quantized) in quantized_batch.iter().enumerate() {
-                        distances[i] =
-                            self.lookup_pq_distance(&quantized.data, &distance_tables, metric)?;
-                    }
-
-                    return Ok(distances);
+                for (i, quantized) in quantized_batch.iter().enumerate() {
+                    distances[i] =
+                        self.lookup_pq_distance(&quantized.data, &distance_tables, metric)?;
                 }
+
+                return Ok(distances);
+            }
         }
 
         // Fallback to individual distance calculations
@@ -707,8 +708,7 @@ impl UnifiedQuantizationEngine {
         for _iteration in 0..max_iterations {
             // Save current centroids for convergence check (flat copy, no allocation)
             for (j, centroid) in centroids.iter().enumerate() {
-                old_centroids_flat[j * dimension..(j + 1) * dimension]
-                    .copy_from_slice(centroid);
+                old_centroids_flat[j * dimension..(j + 1) * dimension].copy_from_slice(centroid);
             }
 
             // Assignment step
@@ -1738,12 +1738,25 @@ impl UnifiedQuantizationEngine {
         // Check if both have the same variant
         let same_type = matches!(
             (query_type, data_type),
-            (Some(QuantizationLevel::None(_)), Some(QuantizationLevel::None(_)))
-                | (Some(QuantizationLevel::Uniform(_)), Some(QuantizationLevel::Uniform(_)))
-                | (Some(QuantizationLevel::Pq(_)), Some(QuantizationLevel::Pq(_)))
-                | (Some(QuantizationLevel::Scalar(_)), Some(QuantizationLevel::Scalar(_)))
-                | (Some(QuantizationLevel::Binary(_)), Some(QuantizationLevel::Binary(_)))
-                | (Some(QuantizationLevel::Custom(_)), Some(QuantizationLevel::Custom(_)))
+            (
+                Some(QuantizationLevel::None(_)),
+                Some(QuantizationLevel::None(_))
+            ) | (
+                Some(QuantizationLevel::Uniform(_)),
+                Some(QuantizationLevel::Uniform(_))
+            ) | (
+                Some(QuantizationLevel::Pq(_)),
+                Some(QuantizationLevel::Pq(_))
+            ) | (
+                Some(QuantizationLevel::Scalar(_)),
+                Some(QuantizationLevel::Scalar(_))
+            ) | (
+                Some(QuantizationLevel::Binary(_)),
+                Some(QuantizationLevel::Binary(_))
+            ) | (
+                Some(QuantizationLevel::Custom(_)),
+                Some(QuantizationLevel::Custom(_))
+            )
         );
 
         if !same_type {

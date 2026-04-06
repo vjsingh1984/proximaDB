@@ -178,7 +178,10 @@ impl SstEngine {
     pub async fn build_bloom_filter(&self, records: &[VectorRecord]) -> Result<SstableBloomFilter> {
         debug!("Building bloom filter for {} records", records.len());
 
-        use crate::core::bloom::{BloomFilterConfig, BloomFilterStats, BloomStrategy, HashAlgorithm, factory::BloomFilterFactory};
+        use crate::core::bloom::{
+            BloomFilterConfig, BloomFilterStats, BloomStrategy, HashAlgorithm,
+            factory::BloomFilterFactory,
+        };
 
         let num_keys = records.len();
         let bloom_config = BloomFilterConfig {
@@ -195,7 +198,9 @@ impl SstEngine {
             bloom.insert(record.id.as_bytes());
         }
 
-        let data = bloom.serialize().map_err(|e| anyhow::anyhow!("Bloom filter serialization failed: {}", e))?;
+        let data = bloom
+            .serialize()
+            .map_err(|e| anyhow::anyhow!("Bloom filter serialization failed: {}", e))?;
         let stats = BloomFilterStats {
             key_count: num_keys as u64,
             metadata_columns: 0,
@@ -204,7 +209,12 @@ impl SstEngine {
             metadata_queries_saved: 0,
         };
 
-        Ok(SstableBloomFilter::new(bloom_config, data, Vec::new(), stats))
+        Ok(SstableBloomFilter::new(
+            bloom_config,
+            data,
+            Vec::new(),
+            stats,
+        ))
     }
 
     /// Serialize records to SSTable row format
@@ -366,16 +376,17 @@ impl SstableFileUtils {
             while let Some(entry) = entries.next_entry().await? {
                 if let Some(name) = entry.file_name().to_str()
                     && name.ends_with(".sst")
-                        && let Ok(metadata) = entry.metadata().await {
-                            files.push(SstableFileInfo {
-                                path: entry.path().to_string_lossy().to_string(),
-                                name: name.to_string(),
-                                size: metadata.len(),
-                                created: metadata.created().ok(),
-                                level: 0,    // Will be parsed from filename
-                                sequence: 0, // Will be parsed from filename
-                            });
-                        }
+                    && let Ok(metadata) = entry.metadata().await
+                {
+                    files.push(SstableFileInfo {
+                        path: entry.path().to_string_lossy().to_string(),
+                        name: name.to_string(),
+                        size: metadata.len(),
+                        created: metadata.created().ok(),
+                        level: 0,    // Will be parsed from filename
+                        sequence: 0, // Will be parsed from filename
+                    });
+                }
             }
         }
 

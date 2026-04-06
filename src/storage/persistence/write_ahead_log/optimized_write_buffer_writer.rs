@@ -813,7 +813,13 @@ mod tests {
             let base_location = format!("file://{}", temp_dir.path().display());
 
             let result = writer
-                .write_vectors("test_collection", vectors, sequences, OptimizedFormat::Bincode, base_location)
+                .write_vectors(
+                    "test_collection",
+                    vectors,
+                    sequences,
+                    OptimizedFormat::Bincode,
+                    base_location,
+                )
                 .await;
 
             assert!(

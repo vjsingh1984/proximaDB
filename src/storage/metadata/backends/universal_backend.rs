@@ -536,10 +536,11 @@ impl UniversalMetadataBackend {
                     .strip_prefix("op_")
                     .and_then(|s| s.strip_suffix(".oplog"))
                     && let Ok(sequence) = seq_str.parse::<u64>()
-                        && sequence > after_sequence {
-                            let op_path = ops_dir.join(&entry.name);
-                            incremental_ops.push((sequence, op_path));
-                        }
+                    && sequence > after_sequence
+                {
+                    let op_path = ops_dir.join(&entry.name);
+                    incremental_ops.push((sequence, op_path));
+                }
             }
         }
 
@@ -583,9 +584,10 @@ impl UniversalMetadataBackend {
             Some("Delete") => {
                 // collection_id is the name, need to get UUID first
                 if let Some(collection_id) = op_json["collection_id"].as_str()
-                    && let Some(uuid) = self.index.get_uuid_by_name(collection_id) {
-                        self.index.remove_collection(&uuid);
-                    }
+                    && let Some(uuid) = self.index.get_uuid_by_name(collection_id)
+                {
+                    self.index.remove_collection(&uuid);
+                }
             }
             _ => {
                 // Unknown operation type, skip
@@ -879,14 +881,15 @@ impl UniversalMetadataBackend {
     async fn check_snapshot_trigger(&self) -> Result<()> {
         let ops_count = self.ops_since_snapshot.fetch_add(1, Ordering::SeqCst) + 1;
         if ops_count >= self.config.snapshot_threshold
-            && let Some(manager) = self.snapshot_manager.lock().await.as_ref() {
-                let fs = self.get_fs()?;
-                if let Err(e) = manager.create_snapshot(&self.index, &*fs).await {
-                    warn!("📸 Snapshot creation failed: {}", e);
-                } else {
-                    self.ops_since_snapshot.store(0, Ordering::SeqCst);
-                }
+            && let Some(manager) = self.snapshot_manager.lock().await.as_ref()
+        {
+            let fs = self.get_fs()?;
+            if let Err(e) = manager.create_snapshot(&self.index, &*fs).await {
+                warn!("📸 Snapshot creation failed: {}", e);
+            } else {
+                self.ops_since_snapshot.store(0, Ordering::SeqCst);
             }
+        }
         Ok(())
     }
 
@@ -1068,7 +1071,8 @@ impl UniversalMetadataBackend {
             operation_type: OperationType::Update,
             collection_id: record
                 .config
-                .as_ref().map_or_else(|| "unknown".to_string(), |c| c.name.clone()),
+                .as_ref()
+                .map_or_else(|| "unknown".to_string(), |c| c.name.clone()),
             collection_data: Some(record.clone()),
         };
 
@@ -1670,7 +1674,10 @@ impl SnapshotManager {
         let archive_dir = self.base_path.join("archive");
 
         // Get all snapshots from current directory (except snapshot.meta)
-        let current_entries = fs.list(&current_dir.to_string_lossy()).await.unwrap_or_default();
+        let current_entries = fs
+            .list(&current_dir.to_string_lossy())
+            .await
+            .unwrap_or_default();
 
         // Archive timestamped snapshots
         for entry in current_entries {

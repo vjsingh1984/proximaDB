@@ -202,7 +202,8 @@ impl ProgressiveSearchExecutor {
                         &record.id
                     );
                     // Perform quantization based on the first level requested
-                    let first_level = levels.first()
+                    let first_level = levels
+                        .first()
                         .ok_or_else(|| anyhow::anyhow!("No quantization levels provided"))?;
                     let quantized_data = match first_level.quantization_type {
                         QuantizationType::Binary => {

@@ -204,15 +204,16 @@ impl ProximaBlockReader {
             // Check bloom filter if enabled
             if use_bloom_filters
                 && let Some(bloom) = &block.bloom_filter
-                    && !self.check_bloom_filter(bloom, &filter_expression) {
-                        continue; // Skip this block
-                    }
+                && !self.check_bloom_filter(bloom, &filter_expression)
+            {
+                continue; // Skip this block
+            }
 
             // Check metadata statistics if enabled
-            if use_metadata_stats
-                && !self.check_metadata_stats(&block.metadata, &filter_expression) {
-                    continue; // Skip this block
-                }
+            if use_metadata_stats && !self.check_metadata_stats(&block.metadata, &filter_expression)
+            {
+                continue; // Skip this block
+            }
 
             // Block passed all filters
             filtered_blocks.push(block);
@@ -278,21 +279,19 @@ impl ProximaBlockReader {
 
         for block in all_blocks {
             // Check bloom filter for each target key
-            if use_bloom_filters
-                && let Some(bloom) = &block.bloom_filter {
-                    let mut has_match = false;
-                    for key in target_keys {
-                        // SstableBloomFilter uses might_contain_key() method
-                        if !found_keys.contains(key) && bloom.might_contain_key(key).unwrap_or(true)
-                        {
-                            has_match = true;
-                            found_keys.insert(key.clone());
-                        }
-                    }
-                    if !has_match {
-                        continue; // Skip this block
+            if use_bloom_filters && let Some(bloom) = &block.bloom_filter {
+                let mut has_match = false;
+                for key in target_keys {
+                    // SstableBloomFilter uses might_contain_key() method
+                    if !found_keys.contains(key) && bloom.might_contain_key(key).unwrap_or(true) {
+                        has_match = true;
+                        found_keys.insert(key.clone());
                     }
                 }
+                if !has_match {
+                    continue; // Skip this block
+                }
+            }
 
             result_blocks.push(block);
 
@@ -478,7 +477,7 @@ impl ProximaBlockReader {
                             (&col_stats.min_value, &col_stats.max_value)
                         {
                             // Try numeric comparison first, fall back to string comparison
-                            
+
                             if let (Ok(val_num), Ok(min_num), Ok(max_num)) = (
                                 serde_json::from_value::<f64>(value.clone()),
                                 serde_json::from_value::<f64>(min_val.clone()),

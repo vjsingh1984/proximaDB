@@ -324,8 +324,9 @@ pub fn sql_value_to_json(value: &SqlValue) -> JsonValue {
             ProtoSqlValueInner::NullValue(_) => JsonValue::Null,
             ProtoSqlValueInner::BoolValue(b) => JsonValue::Bool(*b),
             ProtoSqlValueInner::Int64Value(i) => JsonValue::Number((*i).into()),
-            ProtoSqlValueInner::NumberValue(f) => serde_json::Number::from_f64(*f)
-                .map_or(JsonValue::Null, JsonValue::Number),
+            ProtoSqlValueInner::NumberValue(f) => {
+                serde_json::Number::from_f64(*f).map_or(JsonValue::Null, JsonValue::Number)
+            }
             ProtoSqlValueInner::StringValue(s) => JsonValue::String(s.clone()),
             ProtoSqlValueInner::BytesValue(b) => JsonValue::String(base64_helper::encode(b)),
             ProtoSqlValueInner::ArrayValue(arr) => {

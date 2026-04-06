@@ -172,7 +172,8 @@ mod write_ahead_log_batch_strategy_tests {
             _base_location: &str,
             _immediate_sync: bool,
         ) -> Result<Vec<u64>> {
-            self.write_native_batch(batch, collection_id, "file:///tmp/test").await
+            self.write_native_batch(batch, collection_id, "file:///tmp/test")
+                .await
         }
 
         async fn read_all_batches(
@@ -287,7 +288,8 @@ mod write_ahead_log_batch_strategy_tests {
 
         fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
             // Use JSON deserialization instead of bincode for compatibility with custom serde impls
-            serde_json::from_slice(data).map_err(|e| anyhow::anyhow!("Deserialization failed: {}", e))
+            serde_json::from_slice(data)
+                .map_err(|e| anyhow::anyhow!("Deserialization failed: {}", e))
         }
 
         async fn close(&self) -> Result<()> {
@@ -308,13 +310,14 @@ mod write_ahead_log_batch_strategy_tests {
         VectorRecord {
             id: id.to_string(),
             vector,
-            metadata: std::collections::HashMap::from([
-                ("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+            metadata: std::collections::HashMap::from([(
+                "category".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
                     value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                         "test".to_string(),
                     )),
-                }),
-            ]),
+                },
+            )]),
             timestamp: Some(now as i64),
             updated_at: Some(now as i64),
             expires_at: None,
@@ -654,7 +657,9 @@ mod write_ahead_log_batch_strategy_tests {
         let batch = create_test_batch("test", 1);
 
         // Should still work since mock doesn't require filesystem
-        let result = strategy.write_native_batch(batch, "test", "file:///tmp/test").await;
+        let result = strategy
+            .write_native_batch(batch, "test", "file:///tmp/test")
+            .await;
         assert!(result.is_ok());
     }
 
@@ -791,11 +796,7 @@ mod write_ahead_log_batch_strategy_tests {
         assert!(result.is_err());
 
         let error = result.unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Unsupported payload format")
-        );
+        assert!(error.to_string().contains("Unsupported payload format"));
     }
 
     // Distance metric and similarity search tests

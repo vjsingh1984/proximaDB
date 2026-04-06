@@ -157,11 +157,12 @@ impl Compaction {
         // Extract collection ID from path like: /path/to/collection_id/data/level0/file.sst
         if let Some(path) = paths.first()
             && let Some(_parent) = path.parent()
-                && let Some(_parent_parent) = _parent.parent()
-                    && let Some(parent_parent_parent) = _parent_parent.parent()
-                        && let Some(_collection_id) = parent_parent_parent.file_name() {
-                            return Ok(_collection_id.to_string_lossy().to_string());
-                        }
+            && let Some(_parent_parent) = _parent.parent()
+            && let Some(parent_parent_parent) = _parent_parent.parent()
+            && let Some(_collection_id) = parent_parent_parent.file_name()
+        {
+            return Ok(_collection_id.to_string_lossy().to_string());
+        }
 
         Ok("unknown".to_string())
     }
@@ -836,9 +837,9 @@ impl Compaction {
             // Check if record is expired (TTL-based expiry for non-tombstones)
             // This is different from tombstones - these are regular records that have expired
             let is_expired = !is_tombstone
-                && vector_record.expires_at.is_some_and(|expires_at| {
-                    expires_at > 0 && expires_at < current_time_secs
-                });
+                && vector_record
+                    .expires_at
+                    .is_some_and(|expires_at| expires_at > 0 && expires_at < current_time_secs);
 
             // Skip expired records completely - they are physically deleted
             if is_expired {
@@ -1104,9 +1105,7 @@ impl Compaction {
                 .metadata(&staging_file_path.to_string_lossy())
                 .await
                 .map_err(|e| {
-                    crate::core::StorageError::DiskIO(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    crate::core::StorageError::DiskIO(std::io::Error::other(e.to_string()))
                 })?;
             let written_bytes = metadata.size;
 
@@ -1206,9 +1205,7 @@ impl Compaction {
 
             let output_path = task.output_file.to_string_lossy();
             let metadata = fs.metadata(&output_path).await.map_err(|e| {
-                crate::core::StorageError::DiskIO(std::io::Error::other(
-                    e.to_string(),
-                ))
+                crate::core::StorageError::DiskIO(std::io::Error::other(e.to_string()))
             })?;
             metadata.size
         };

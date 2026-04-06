@@ -19,8 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Transaction isolation level
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum IsolationLevel {
     /// Read uncommitted - lowest isolation, highest concurrency
     /// Allows dirty reads (reading uncommitted changes)
@@ -43,7 +42,6 @@ pub enum IsolationLevel {
     /// Transactions appear to execute sequentially
     Serializable,
 }
-
 
 impl IsolationLevel {
     /// Get the strictness level (higher = more strict)
@@ -74,8 +72,7 @@ impl IsolationLevel {
 }
 
 /// Conflict resolution strategy for concurrent transactions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ConflictResolution {
     /// First writer wins - later transactions abort on conflict
     #[default]
@@ -93,7 +90,6 @@ pub enum ConflictResolution {
     /// Wait and retry - wait for conflicting transaction to complete
     WaitAndRetry,
 }
-
 
 /// Lock mode for resources
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

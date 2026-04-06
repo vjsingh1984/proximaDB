@@ -1363,9 +1363,9 @@ impl SstConfig {
     /// server default at 2048KB for production performance
     pub fn test_config_256kb() -> Self {
         Self {
-            block_size_kb: 256, // Small blocks for quantization clustering tests
+            block_size_kb: 256,              // Small blocks for quantization clustering tests
             compression: "zstd".to_string(), // Zstd compression for tests
-            compression_level: 3, // Balanced compression level
+            compression_level: 3,            // Balanced compression level
             ..Default::default()
         }
     }
@@ -1375,7 +1375,7 @@ impl SstConfig {
         Self {
             block_size_kb: 512,
             compression: "zstd".to_string(), // Zstd compression for tests
-            compression_level: 3, // Balanced compression level
+            compression_level: 3,            // Balanced compression level
             ..Default::default()
         }
     }
@@ -1595,8 +1595,7 @@ pub struct WalStorageConfig {
 }
 
 /// Strategy for distributing WAL segments across multiple storage directories
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub enum WalDistributionStrategy {
     /// Round-robin across WAL directories
     RoundRobin,
@@ -1606,7 +1605,6 @@ pub enum WalDistributionStrategy {
     #[default]
     LoadBalanced,
 }
-
 
 impl Default for WalStorageConfig {
     fn default() -> Self {

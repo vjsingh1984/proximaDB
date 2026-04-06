@@ -214,12 +214,13 @@ impl PrefetchEngine {
     /// Check if a file was prefetched (mark as useful if it was)
     pub fn was_prefetched(&self, path: &str) -> bool {
         if let Some(entry) = self.prefetching.get(path)
-            && matches!(entry.value(), PrefetchStatus::Completed) {
-                self.stats
-                    .useful_prefetches
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return true;
-            }
+            && matches!(entry.value(), PrefetchStatus::Completed)
+        {
+            self.stats
+                .useful_prefetches
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return true;
+        }
         false
     }
 

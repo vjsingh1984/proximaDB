@@ -128,13 +128,14 @@ pub fn standardize(vector: &[f32]) -> Vec<f32> {
 pub fn validate_vector(vector: &[f32], expected_dimension: Option<usize>) -> Result<()> {
     // Check dimension
     if let Some(dim) = expected_dimension
-        && vector.len() != dim {
-            return Err(anyhow!(
-                "Dimension mismatch: expected {}, got {}",
-                dim,
-                vector.len()
-            ));
-        }
+        && vector.len() != dim
+    {
+        return Err(anyhow!(
+            "Dimension mismatch: expected {}, got {}",
+            dim,
+            vector.len()
+        ));
+    }
 
     // Check for empty vector
     if vector.is_empty() {

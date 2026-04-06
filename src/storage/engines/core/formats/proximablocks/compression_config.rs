@@ -353,9 +353,10 @@ impl RowBasedCompressionConfig {
             .vector_compression
             .hardware_optimizations
             .use_hardware_acceleration
-            && let Some(simd_algorithm) = self.get_simd_optimal_algorithm(hardware) {
-                return simd_algorithm;
-            }
+            && let Some(simd_algorithm) = self.get_simd_optimal_algorithm(hardware)
+        {
+            return simd_algorithm;
+        }
 
         // Size-based selection
         match data_size {

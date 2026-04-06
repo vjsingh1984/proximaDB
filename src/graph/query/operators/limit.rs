@@ -60,9 +60,10 @@ impl PhysicalOperator for LimitOperator {
     fn next(&mut self) -> Result<Option<ResultTuple>> {
         // Check if we've reached the limit
         if let Some(limit) = self.limit
-            && self.returned_count >= limit {
-                return Ok(None);
-            }
+            && self.returned_count >= limit
+        {
+            return Ok(None);
+        }
 
         // Skip rows if needed
         let skip_count = self.skip.unwrap_or(0);

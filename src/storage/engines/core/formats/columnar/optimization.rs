@@ -649,9 +649,9 @@ impl StreamingRowGroupIterator {
                             .fields()
                             .iter()
                             .position(|f| f.name() == field.name())
-                        {
-                            projection_indices.push(index);
-                        }
+                    {
+                        projection_indices.push(index);
+                    }
                 }
                 if !projection_indices.is_empty() {
                     Some(parquet::arrow::ProjectionMask::leaves(

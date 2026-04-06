@@ -6,8 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Optimization goal determines reward weighting
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum OptimizationGoal {
     /// Minimize latency (60% latency, 30% recall, 10% throughput)
     MinLatency,
@@ -28,7 +27,6 @@ pub enum OptimizationGoal {
         throughput_weight: u8,
     },
 }
-
 
 impl OptimizationGoal {
     /// Get weights for this goal (normalized to sum to 1.0)
@@ -381,17 +379,20 @@ impl RewardCalculator {
     ) -> f32 {
         // Check hard constraints first
         if let Some(max_lat) = hard_constraints.max_latency_ms
-            && latency_ms > max_lat {
-                return 0.0; // Constraint violation = zero reward
-            }
+            && latency_ms > max_lat
+        {
+            return 0.0; // Constraint violation = zero reward
+        }
         if let Some(min_rec) = hard_constraints.min_recall
-            && recall < min_rec {
-                return 0.0;
-            }
+            && recall < min_rec
+        {
+            return 0.0;
+        }
         if let Some(min_qps) = hard_constraints.min_qps
-            && throughput_qps < min_qps {
-                return 0.0;
-            }
+            && throughput_qps < min_qps
+        {
+            return 0.0;
+        }
 
         // No constraint violations, calculate normal reward
         self.calculate(latency_ms, recall, throughput_qps, target)

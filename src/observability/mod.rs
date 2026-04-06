@@ -504,9 +504,9 @@ impl ObservabilityService {
                 .collect();
 
             // Extract status code from SpanStatus message
-            let (status_code, status_message) = trace_data
-                .status
-                .map_or((0, String::new()), |s| (s.code, s.message.unwrap_or_default())); // 0 = Unset
+            let (status_code, status_message) = trace_data.status.map_or((0, String::new()), |s| {
+                (s.code, s.message.unwrap_or_default())
+            }); // 0 = Unset
 
             let span = TraceSpan {
                 trace_id: trace_data.trace_id,
@@ -600,15 +600,17 @@ impl ObservabilityService {
         for summary in summaries {
             // Apply operation filter
             if let Some(op) = &params.operation
-                && &summary.root_operation != op {
-                    continue;
-                }
+                && &summary.root_operation != op
+            {
+                continue;
+            }
 
             // Apply min duration filter
             if let Some(min_dur) = params.min_duration_ns
-                && summary.duration_ns < min_dur {
-                    continue;
-                }
+                && summary.duration_ns < min_dur
+            {
+                continue;
+            }
 
             // Fetch all spans for this trace
             let spans = self
@@ -1034,9 +1036,9 @@ impl ObservabilityStorageOperations for ObservabilityService {
                 .collect();
 
             // Extract status code from SpanStatus message
-            let (status_code, status_message) = trace_data
-                .status
-                .map_or((0, String::new()), |s| (s.code, s.message.unwrap_or_default())); // 0 = Unset
+            let (status_code, status_message) = trace_data.status.map_or((0, String::new()), |s| {
+                (s.code, s.message.unwrap_or_default())
+            }); // 0 = Unset
 
             let span = TraceSpan {
                 trace_id: trace_data.trace_id,

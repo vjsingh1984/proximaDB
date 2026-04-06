@@ -616,7 +616,8 @@ impl TimeSeriesEngine {
         collection_id: &str,
         partition_key: DateTime<Utc>,
     ) -> Result<()> {
-        if let std::collections::btree_map::Entry::Vacant(e) = self.partitions.entry(partition_key) {
+        if let std::collections::btree_map::Entry::Vacant(e) = self.partitions.entry(partition_key)
+        {
             let partition = TimePartition::new(partition_key, collection_id.to_string())?;
             e.insert(partition);
         }
@@ -983,12 +984,13 @@ impl TimeSeriesEngine {
 
         // Try BETWEEN pattern first
         if let Some(caps) = between_re.captures(filter_expr)
-            && let (Some(start_str), Some(end_str)) = (caps.get(1), caps.get(2)) {
-                let start = Self::parse_timestamp(start_str.as_str())
-                    .unwrap_or(now - chrono::Duration::hours(24));
-                let end = Self::parse_timestamp(end_str.as_str()).unwrap_or(now);
-                return Ok((start, end));
-            }
+            && let (Some(start_str), Some(end_str)) = (caps.get(1), caps.get(2))
+        {
+            let start = Self::parse_timestamp(start_str.as_str())
+                .unwrap_or(now - chrono::Duration::hours(24));
+            let end = Self::parse_timestamp(end_str.as_str()).unwrap_or(now);
+            return Ok((start, end));
+        }
 
         // Try >= and <= pattern
         let start = if let Some(caps) = start_re.captures(filter_expr) {

@@ -397,17 +397,17 @@ impl ConnectionManager {
             let cache = self.health_cache.read().await;
             if let Some(health) = cache.get(&key)
                 && !health.is_expired(self.config.health_cache_ttl)
-                    && health.status != ServingStatus::Serving
-                {
-                    return Err(RpcError::new(
-                        RpcErrorKind::Connection,
-                        format!(
-                            "Node {} is unhealthy: {}",
-                            endpoint,
-                            health.last_error.as_deref().unwrap_or("unknown")
-                        ),
-                    ));
-                }
+                && health.status != ServingStatus::Serving
+            {
+                return Err(RpcError::new(
+                    RpcErrorKind::Connection,
+                    format!(
+                        "Node {} is unhealthy: {}",
+                        endpoint,
+                        health.last_error.as_deref().unwrap_or("unknown")
+                    ),
+                ));
+            }
         }
 
         // Get or create channel pool

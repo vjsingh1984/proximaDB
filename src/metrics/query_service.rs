@@ -115,10 +115,11 @@ impl MetricsQueryService {
         // Check cache first
         let cache = self.cache.read().await;
         if let Some(cached) = &cache.global
-            && self.is_cache_valid(cached.cached_at, cached.ttl_seconds) {
-                debug!("Returning cached global metrics");
-                return Ok(cached.metrics.clone());
-            }
+            && self.is_cache_valid(cached.cached_at, cached.ttl_seconds)
+        {
+            debug!("Returning cached global metrics");
+            return Ok(cached.metrics.clone());
+        }
         drop(cache);
 
         // Load from store
@@ -144,17 +145,18 @@ impl MetricsQueryService {
         // Check cache first
         let cache = self.cache.read().await;
         if let Some(cached) = cache.collections.get(collection_id)
-            && self.is_cache_valid(cached.cached_at, cached.ttl_seconds) {
-                debug!("Returning cached metrics for collection {}", collection_id);
-                return self.format_metrics_response(
-                    &cached.metrics,
-                    if options.include_hints {
-                        Some(&cached.hints)
-                    } else {
-                        None
-                    },
-                );
-            }
+            && self.is_cache_valid(cached.cached_at, cached.ttl_seconds)
+        {
+            debug!("Returning cached metrics for collection {}", collection_id);
+            return self.format_metrics_response(
+                &cached.metrics,
+                if options.include_hints {
+                    Some(&cached.hints)
+                } else {
+                    None
+                },
+            );
+        }
         drop(cache);
 
         // Load from store

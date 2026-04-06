@@ -29,8 +29,7 @@ pub enum WorkloadType {
 }
 
 /// Complete system configuration
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ZeroCopyIOConfig {
     /// Metadata cache configuration
     pub metadata_cache: MetadataCacheConfig,

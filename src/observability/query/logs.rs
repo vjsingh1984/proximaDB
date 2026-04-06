@@ -473,8 +473,10 @@ impl LogAggregator {
                 .source
                 .clone()
                 .unwrap_or_else(|| "<unknown>".to_string()),
-            "severity" => Severity::try_from(log.severity).map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s)),
-            "level" => Severity::try_from(log.severity).map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s)),
+            "severity" => Severity::try_from(log.severity)
+                .map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s)),
+            "level" => Severity::try_from(log.severity)
+                .map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s)),
             _ => {
                 // Check in fields map
                 if let Some(sql_value) = log.fields.get(field) {

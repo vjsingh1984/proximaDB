@@ -296,7 +296,7 @@ impl CollectionAnalyzer {
 
         Ok(AccessFrequencyMetrics {
             reads_per_second: queries_in_window / (time_window_hours * 3600.0),
-            writes_per_second: 0.0,          // Deferred: Track write operations
+            writes_per_second: 0.0, // Deferred: Track write operations
             read_write_ratio: f64::INFINITY, // Mostly reads
             peak_qps: queries_in_window / (time_window_hours * 3600.0) * 2.0, // Estimate peak
         })
@@ -393,13 +393,10 @@ impl QueryPatternTracker {
 
         QueryPatternAnalysis {
             total_queries: stats.as_ref().map_or(0, |s| s.total_queries),
-            point_query_percentage: stats.as_ref().map_or(0, |s| s.point_queries) as f32
+            point_query_percentage: stats.as_ref().map_or(0, |s| s.point_queries) as f32 / total,
+            similarity_search_percentage: stats.as_ref().map_or(0, |s| s.similarity_queries) as f32
                 / total,
-            similarity_search_percentage: stats.as_ref().map_or(0, |s| s.similarity_queries)
-                as f32
-                / total,
-            metadata_filter_percentage: stats.as_ref().map_or(0, |s| s.filtered_queries)
-                as f32
+            metadata_filter_percentage: stats.as_ref().map_or(0, |s| s.filtered_queries) as f32
                 / total,
             average_k: stats.as_ref().map_or(10.0, |s| s.average_k),
             query_distribution: QueryDistribution {
@@ -429,9 +426,7 @@ impl PerformanceMetricsCollector {
 
         // Add to historical metrics
         let mut historical = self.historical_metrics.write().await;
-        let history = historical
-            .entry(collection_id.to_string())
-            .or_default();
+        let history = historical.entry(collection_id.to_string()).or_default();
 
         history.push(TimestampedMetrics {
             metrics,

@@ -230,12 +230,13 @@ impl<'de> Deserialize<'de> for SqlValue {
                 // Prefer integer if it fits, otherwise use float
                 if let Some(i) = n.as_i64() {
                     Some(SqlValueVariant::Int64Value(i))
-                } else { n.as_f64().map(SqlValueVariant::NumberValue) }
+                } else {
+                    n.as_f64().map(SqlValueVariant::NumberValue)
+                }
             }
             serde_json::Value::Array(arr) => {
                 // Convert JSON array to SqlArray
-                let values: Vec<SqlValue> =
-                    arr.iter().filter_map(json_to_sql_value).collect();
+                let values: Vec<SqlValue> = arr.iter().filter_map(json_to_sql_value).collect();
                 Some(SqlValueVariant::ArrayValue(
                     crate::proto::proximadb_v1::SqlArray { values },
                 ))
@@ -243,36 +244,41 @@ impl<'de> Deserialize<'de> for SqlValue {
             serde_json::Value::Object(obj) => {
                 // Check for proto-style wrapped values first
                 if let Some(v) = obj.get("string_value")
-                    && let Some(s) = v.as_str() {
-                        return Ok(SqlValue {
-                            value: Some(SqlValueVariant::StringValue(s.to_string())),
-                        });
-                    }
+                    && let Some(s) = v.as_str()
+                {
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::StringValue(s.to_string())),
+                    });
+                }
                 if let Some(v) = obj.get("number_value")
-                    && let Some(f) = v.as_f64() {
-                        return Ok(SqlValue {
-                            value: Some(SqlValueVariant::NumberValue(f)),
-                        });
-                    }
+                    && let Some(f) = v.as_f64()
+                {
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::NumberValue(f)),
+                    });
+                }
                 if let Some(v) = obj.get("bool_value")
-                    && let Some(b) = v.as_bool() {
-                        return Ok(SqlValue {
-                            value: Some(SqlValueVariant::BoolValue(b)),
-                        });
-                    }
+                    && let Some(b) = v.as_bool()
+                {
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::BoolValue(b)),
+                    });
+                }
                 if let Some(v) = obj.get("int64_value")
-                    && let Some(i) = v.as_i64() {
-                        return Ok(SqlValue {
-                            value: Some(SqlValueVariant::Int64Value(i)),
-                        });
-                    }
+                    && let Some(i) = v.as_i64()
+                {
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::Int64Value(i)),
+                    });
+                }
                 if let Some(v) = obj.get("bytes_value")
-                    && let Some(s) = v.as_str() {
-                        let bytes = base64_decode(s).map_err(serde::de::Error::custom)?;
-                        return Ok(SqlValue {
-                            value: Some(SqlValueVariant::BytesValue(bytes)),
-                        });
-                    }
+                    && let Some(s) = v.as_str()
+                {
+                    let bytes = base64_decode(s).map_err(serde::de::Error::custom)?;
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::BytesValue(bytes)),
+                    });
+                }
                 if obj.contains_key("null_value") {
                     return Ok(SqlValue {
                         value: Some(SqlValueVariant::NullValue(0)),
@@ -317,7 +323,9 @@ fn json_to_sql_value(json: &serde_json::Value) -> Option<SqlValue> {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Some(SqlValueVariant::Int64Value(i))
-            } else { n.as_f64().map(SqlValueVariant::NumberValue) }
+            } else {
+                n.as_f64().map(SqlValueVariant::NumberValue)
+            }
         }
         serde_json::Value::Array(arr) => {
             let values: Vec<SqlValue> = arr.iter().filter_map(json_to_sql_value).collect();
@@ -536,9 +544,13 @@ impl<'de> Deserialize<'de> for PropertyValue {
             Some(PropertyValueVariant::ArrayValue(v))
         } else if let Some(v) = helper.object_value {
             Some(PropertyValueVariant::ObjectValue(v))
-        } else { helper.vector_value.map(|v| PropertyValueVariant::VectorValue(
-                crate::proto::proximadb_v1::VectorData { values: v },
-            )) };
+        } else {
+            helper.vector_value.map(|v| {
+                PropertyValueVariant::VectorValue(crate::proto::proximadb_v1::VectorData {
+                    values: v,
+                })
+            })
+        };
 
         Ok(PropertyValue { value })
     }
@@ -648,17 +660,25 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::TypedField {
         let value = if let Some(val) = helper.value {
             if let Some(obj) = val.as_object() {
                 if let Some(string_val) = obj.get("string_value") {
-                    string_val.as_str().map(|s| crate::proto::proximadb_v1::typed_field::Value::StringValue(
-                            s.to_string(),
-                        ))
+                    string_val.as_str().map(|s| {
+                        crate::proto::proximadb_v1::typed_field::Value::StringValue(s.to_string())
+                    })
                 } else if let Some(int_val) = obj.get("int_value") {
-                    int_val.as_i64().map(crate::proto::proximadb_v1::typed_field::Value::IntValue)
+                    int_val
+                        .as_i64()
+                        .map(crate::proto::proximadb_v1::typed_field::Value::IntValue)
                 } else if let Some(double_val) = obj.get("double_value") {
-                    double_val.as_f64().map(crate::proto::proximadb_v1::typed_field::Value::DoubleValue)
+                    double_val
+                        .as_f64()
+                        .map(crate::proto::proximadb_v1::typed_field::Value::DoubleValue)
                 } else if let Some(bool_val) = obj.get("bool_value") {
-                    bool_val.as_bool().map(crate::proto::proximadb_v1::typed_field::Value::BoolValue)
+                    bool_val
+                        .as_bool()
+                        .map(crate::proto::proximadb_v1::typed_field::Value::BoolValue)
                 } else if let Some(timestamp_val) = obj.get("timestamp_value_ms") {
-                    timestamp_val.as_i64().map(crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs)
+                    timestamp_val
+                        .as_i64()
+                        .map(crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs)
                 } else {
                     None
                 }
@@ -733,7 +753,11 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataValue {
             ))
         } else if let Some(v) = helper.double_value {
             Some(crate::proto::proximadb_v1::metadata_value::Value::DoubleValue(v))
-        } else { helper.bool_value.map(crate::proto::proximadb_v1::metadata_value::Value::BoolValue) };
+        } else {
+            helper
+                .bool_value
+                .map(crate::proto::proximadb_v1::metadata_value::Value::BoolValue)
+        };
 
         Ok(crate::proto::proximadb_v1::MetadataValue { value })
     }
@@ -767,7 +791,11 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::FilterClause {
             ))
         } else if let Some(v) = helper.double_value {
             Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(v))
-        } else { helper.bool_value.map(crate::proto::proximadb_v1::filter_clause::Value::BoolValue) };
+        } else {
+            helper
+                .bool_value
+                .map(crate::proto::proximadb_v1::filter_clause::Value::BoolValue)
+        };
 
         Ok(crate::proto::proximadb_v1::FilterClause {
             field: helper.field,

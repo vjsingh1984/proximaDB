@@ -281,8 +281,7 @@ pub struct Snapshot {
 }
 
 /// Compression codec options
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CompressionCodec {
     None,
     Snappy,
@@ -292,7 +291,6 @@ pub enum CompressionCodec {
     Zstd,
     Brotli,
 }
-
 
 /// Write mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

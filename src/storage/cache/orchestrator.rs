@@ -351,9 +351,11 @@ impl AccessPatternTracker {
         for i in 0..update_count {
             let idx = history_len - 1 - i;
             if let Some(record) = history.get_mut(idx)
-                && !record.followed_by.contains(&key) && record.followed_by.len() < 5 {
-                    record.followed_by.push(key.clone());
-                }
+                && !record.followed_by.contains(&key)
+                && record.followed_by.len() < 5
+            {
+                record.followed_by.push(key.clone());
+            }
         }
 
         // Add new record
@@ -412,9 +414,11 @@ impl AccessPatternTracker {
             for i in 0..update_count {
                 let idx = history_len - 1 - i;
                 if let Some(record) = history_guard.get_mut(idx)
-                    && !record.followed_by.contains(&event.key) && record.followed_by.len() < 5 {
-                        record.followed_by.push(event.key.clone());
-                    }
+                    && !record.followed_by.contains(&event.key)
+                    && record.followed_by.len() < 5
+                {
+                    record.followed_by.push(event.key.clone());
+                }
             }
 
             // Add new record
@@ -803,10 +807,7 @@ impl CascadeInvalidator {
             .push(depends_on.clone());
 
         // Add reverse dependency
-        self.reverse_index
-            .entry(depends_on)
-            .or_default()
-            .push(key);
+        self.reverse_index.entry(depends_on).or_default().push(key);
     }
 
     /// Get all entries that should be invalidated when a key changes
@@ -1124,7 +1125,8 @@ impl CrossCacheOrchestrator {
 
                 if let Some(request) = prefetch_engine.dequeue_fetch_request().await
                     && request.cache_type == CacheType::Metadata
-                    && metadata_cache.is_some() {
+                    && metadata_cache.is_some()
+                {
                     // Would actually fetch and cache metadata
                     // cache.prefetch(&request.key).await;
                 }
@@ -1253,12 +1255,7 @@ impl CrossCacheOrchestrator {
         // Execute puts in batch
         for (idx, key, value, ttl) in puts {
             let _ = self
-                .put(
-                    batch.cache_type.clone(),
-                    key.clone(),
-                    value.clone(),
-                    *ttl,
-                )
+                .put(batch.cache_type.clone(), key.clone(), value.clone(), *ttl)
                 .await;
             results[idx] = Some(Vec::new()); // Indicate success
         }

@@ -236,9 +236,10 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
 
                     // Update statistics
                     if let Some(ref mut builder) = self.current_row_group
-                        && let Some(dim) = self.dimension {
-                            builder.update(float_array, dim, self.config.sample_rate);
-                        }
+                        && let Some(dim) = self.dimension
+                    {
+                        builder.update(float_array, dim, self.config.sample_rate);
+                    }
                 }
             }
             // Also handle direct Float32Array (less common)
@@ -255,9 +256,10 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
                 }
 
                 if let Some(ref mut builder) = self.current_row_group
-                    && let Some(dim) = self.dimension {
-                        builder.update(float_array, dim, self.config.sample_rate);
-                    }
+                    && let Some(dim) = self.dimension
+                {
+                    builder.update(float_array, dim, self.config.sample_rate);
+                }
             }
         }
 

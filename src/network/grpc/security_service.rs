@@ -437,9 +437,7 @@ impl SecurityService for SecurityServiceImpl {
 
         info!(
             "SetTenantSecurityPolicy: tenant_id={}",
-            req.policy
-                .as_ref()
-                .map_or(&String::new(), |p| &p.tenant_id)
+            req.policy.as_ref().map_or(&String::new(), |p| &p.tenant_id)
         );
 
         // Deferred: Implement tenant security policy setting

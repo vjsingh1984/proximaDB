@@ -39,12 +39,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
 
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{Edge, Node};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-    StorageEngineStrategy, StorageQueryContext, UnifiedStorageEngine,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    StorageQueryContext, UnifiedStorageEngine,
 };
 
 use crate::proto::proximadb_v1::VectorRecord;
@@ -103,10 +103,7 @@ impl TitanGraphEngine {
             .push(Arc::clone(&arc));
 
         // Update incoming adjacency for the target node.
-        self.incoming
-            .entry(to)
-            .or_default()
-            .push(Arc::clone(&arc));
+        self.incoming.entry(to).or_default().push(Arc::clone(&arc));
 
         Ok(arc)
     }

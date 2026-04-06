@@ -458,8 +458,7 @@ pub struct IndexMaintenanceConfig {
 }
 
 /// Universal schema configuration
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct UniversalSchemaConfig {
     /// Core vector schema
     pub vector_schema: VectorSchemaConfig,
@@ -794,7 +793,6 @@ impl Default for IndexMaintenanceConfig {
         }
     }
 }
-
 
 impl Default for VectorSchemaConfig {
     fn default() -> Self {

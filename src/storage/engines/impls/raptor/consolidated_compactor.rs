@@ -400,14 +400,11 @@ impl RaptorCompactor {
         let mut latest_by_id: HashMap<String, VectorRecord> = HashMap::new();
 
         for vector in vectors.drain(..) {
-            let should_keep = latest_by_id
-                .get(&vector.id)
-                .is_none_or(|existing| {
-                    // Keep if newer version or same version with earlier timestamp
-                    vector.version.unwrap_or(0) > existing.version.unwrap_or(0)
-                        || (vector.version == existing.version
-                            && vector.timestamp < existing.timestamp)
-                });
+            let should_keep = latest_by_id.get(&vector.id).is_none_or(|existing| {
+                // Keep if newer version or same version with earlier timestamp
+                vector.version.unwrap_or(0) > existing.version.unwrap_or(0)
+                    || (vector.version == existing.version && vector.timestamp < existing.timestamp)
+            });
 
             if should_keep {
                 latest_by_id.insert(vector.id.clone(), vector);

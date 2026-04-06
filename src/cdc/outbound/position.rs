@@ -202,9 +202,10 @@ impl PositionTracker {
     /// Save position to store (checkpoint)
     pub async fn checkpoint(&self, subscription_id: &str) -> CdcResult<()> {
         if let Some(ref store) = self.store
-            && let Some(position) = self.get(subscription_id) {
-                store.save(subscription_id, &position).await?;
-            }
+            && let Some(position) = self.get(subscription_id)
+        {
+            store.save(subscription_id, &position).await?;
+        }
         Ok(())
     }
 
@@ -305,9 +306,10 @@ impl PositionStore for FilePositionStore {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "pos")
-                && let Some(stem) = path.file_stem() {
-                    ids.push(stem.to_string_lossy().to_string());
-                }
+                && let Some(stem) = path.file_stem()
+            {
+                ids.push(stem.to_string_lossy().to_string());
+            }
         }
 
         Ok(ids)

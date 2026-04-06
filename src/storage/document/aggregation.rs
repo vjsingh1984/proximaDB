@@ -27,8 +27,8 @@ use crate::proto::proximadb_v1::{
 use crate::proto::proximadb_v1::SortField;
 
 use super::DocumentRecord;
-use super::query::filter::FilterEvaluator;
 use super::aggregation_extensions::{LookupConfig, LookupFetcher, execute_lookup};
+use super::query::filter::FilterEvaluator;
 
 /// Aggregation pipeline executor
 pub struct AggregationExecutor {
@@ -397,10 +397,9 @@ impl AggregationExecutor {
         if has_inclusions {
             // Include mode: only include specified fields
             for (field, &include) in &project_stage.fields {
-                if include
-                    && let Some(val) = doc.fields.get(field) {
-                        result.fields.insert(field.clone(), val.clone());
-                    }
+                if include && let Some(val) = doc.fields.get(field) {
+                    result.fields.insert(field.clone(), val.clone());
+                }
             }
         } else if has_exclusions {
             // Exclude mode: include all except specified fields
@@ -706,9 +705,10 @@ impl AggregationExecutor {
     fn document_contains_term(&self, doc: &SqlObject, term: &str, paths: &[String]) -> bool {
         for path in paths {
             if let Some(text) = self.extract_text_value(doc, path)
-                && text.to_lowercase().contains(term) {
-                    return true;
-                }
+                && text.to_lowercase().contains(term)
+            {
+                return true;
+            }
         }
         false
     }
@@ -841,9 +841,11 @@ impl AggregationExecutor {
                     Some(SqlValue {
                         value: Some(SqlValueVariant::Int64Value(i)),
                     })
-                } else { n.as_f64().map(|f| SqlValue {
+                } else {
+                    n.as_f64().map(|f| SqlValue {
                         value: Some(SqlValueVariant::NumberValue(f)),
-                    }) }
+                    })
+                }
             }
             JsonValue::String(s) => Some(SqlValue {
                 value: Some(SqlValueVariant::StringValue(s.clone())),

@@ -43,8 +43,7 @@ pub struct ProgressiveRecalls {
 ///
 /// This enum allows users to choose between exact search (100% recall) and
 /// approximate search (faster but potentially lower recall).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub enum SearchMode {
     /// Exact search with 100% recall - searches all partitions (current default behavior)
     /// This is the safest option for accuracy-critical applications.
@@ -69,10 +68,8 @@ pub enum SearchMode {
     },
 }
 
-
 /// Hybrid search mode controlling how BM25 text and vector results are combined
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub enum HybridSearchMode {
     /// Vector search only (default, ignores text_query)
     #[default]
@@ -87,7 +84,6 @@ pub enum HybridSearchMode {
         rrf_k: u32,
     },
 }
-
 
 impl SearchMode {
     /// Create approximate search mode with auto-calculated nprobe
@@ -305,8 +301,8 @@ impl Default for SearchParams {
             timeout_ms: Some(5000),
             enable_two_stage: Some(true),
             enable_vectorized_execution: Some(false), // Disabled by default (TD-041)
-            enable_parallel_morsels: Some(false), // Disabled by default (TD-039)
-            enable_pipeline_execution: Some(false), // Disabled by default (TD-031)
+            enable_parallel_morsels: Some(false),     // Disabled by default (TD-039)
+            enable_pipeline_execution: Some(false),   // Disabled by default (TD-031)
             quantization_hint: None,
             enable_clustering_hint: Some(true),
             enable_metadata_filtering_hint: Some(true),
@@ -494,10 +490,14 @@ pub mod json_comparison {
     /// ```
     pub fn compare_json_numbers(n1: &Number, n2: &Number) -> bool {
         // Try integer comparison first (preserves precision)
-        if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) { return i1 == i2 }
+        if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+            return i1 == i2;
+        }
 
         // Try unsigned integer comparison for large positive numbers
-        if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) { return u1 == u2 }
+        if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) {
+            return u1 == u2;
+        }
 
         // Fall back to float comparison with epsilon for precision
         match (n1.as_f64(), n2.as_f64()) {
@@ -524,10 +524,14 @@ pub mod json_comparison {
         match (a, b) {
             (Value::Number(n1), Value::Number(n2)) => {
                 // Try integer comparison first for precision
-                if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) { return i1.cmp(&i2) }
+                if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+                    return i1.cmp(&i2);
+                }
 
                 // Try unsigned comparison for large numbers
-                if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) { return u1.cmp(&u2) }
+                if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) {
+                    return u1.cmp(&u2);
+                }
 
                 // Fall back to float comparison
                 let f1 = n1.as_f64();
@@ -1274,10 +1278,7 @@ mod tests {
     #[test]
     fn test_search_params_with_filters() {
         let mut filters = HashMap::new();
-        filters.insert(
-            "category".to_string(),
-            serde_json::json!("electronics"),
-        );
+        filters.insert("category".to_string(), serde_json::json!("electronics"));
         filters.insert("price".to_string(), serde_json::json!(99.99));
 
         let params = SearchParams::default().with_simple_filters(filters);
@@ -1326,10 +1327,7 @@ mod tests {
 
         // Adaptive with default threshold
         let adaptive = SearchMode::adaptive();
-        assert_eq!(
-            adaptive,
-            SearchMode::Adaptive { threshold: 10_000 }
-        );
+        assert_eq!(adaptive, SearchMode::Adaptive { threshold: 10_000 });
         assert!(!adaptive.is_exact());
 
         // effective_nprobe: Exact searches all partitions
@@ -1352,7 +1350,8 @@ mod tests {
         );
 
         // effective_nprobe: Adaptive above threshold uses approximate
-        let adaptive_above = SearchMode::Adaptive { threshold: 10_000 }.effective_nprobe(100, 50_000);
+        let adaptive_above =
+            SearchMode::Adaptive { threshold: 10_000 }.effective_nprobe(100, 50_000);
         assert_eq!(adaptive_above, 10); // sqrt(100) = 10
     }
 
@@ -1411,7 +1410,9 @@ mod tests {
         };
         match &comparison {
             FilterExpression::Comparison {
-                field, operator, value,
+                field,
+                operator,
+                value,
             } => {
                 assert_eq!(field, "status");
                 assert_eq!(*operator, ComparisonOperator::Equals);

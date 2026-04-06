@@ -331,28 +331,28 @@ impl CompiledFilter {
                     .is_none_or(|v| !Self::values_equal(v, value)) // Field not present is "not equal"
             }
 
-            CompiledFilter::GreaterThan { field, value } => metadata
-                .get(field)
-                .is_some_and(|v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Greater)),
+            CompiledFilter::GreaterThan { field, value } => metadata.get(field).is_some_and(|v| {
+                Self::compare_values(v, value) == Some(std::cmp::Ordering::Greater)
+            }),
 
-            CompiledFilter::GreaterThanOrEqual { field, value } => metadata
-                .get(field)
-                .is_some_and(|v| {
+            CompiledFilter::GreaterThanOrEqual { field, value } => {
+                metadata.get(field).is_some_and(|v| {
                     let ord = Self::compare_values(v, value);
                     ord == Some(std::cmp::Ordering::Greater)
                         || ord == Some(std::cmp::Ordering::Equal)
-                }),
+                })
+            }
 
             CompiledFilter::LessThan { field, value } => metadata
                 .get(field)
                 .is_some_and(|v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Less)),
 
-            CompiledFilter::LessThanOrEqual { field, value } => metadata
-                .get(field)
-                .is_some_and(|v| {
+            CompiledFilter::LessThanOrEqual { field, value } => {
+                metadata.get(field).is_some_and(|v| {
                     let ord = Self::compare_values(v, value);
                     ord == Some(std::cmp::Ordering::Less) || ord == Some(std::cmp::Ordering::Equal)
-                }),
+                })
+            }
 
             CompiledFilter::Contains { field, substring } => metadata
                 .get(field)
@@ -382,14 +382,11 @@ impl CompiledFilter {
                 .get(field)
                 .is_none_or(|v| !values.iter().any(|val| Self::values_equal(v, val))),
 
-            CompiledFilter::Between { field, min, max } => metadata
-                .get(field)
-                .is_some_and(|v| {
-                    Self::compare_values(v, min)
-                        .is_some_and(|o| o != std::cmp::Ordering::Less)
-                        && Self::compare_values(v, max)
-                            .is_some_and(|o| o != std::cmp::Ordering::Greater)
-                }),
+            CompiledFilter::Between { field, min, max } => metadata.get(field).is_some_and(|v| {
+                Self::compare_values(v, min).is_some_and(|o| o != std::cmp::Ordering::Less)
+                    && Self::compare_values(v, max)
+                        .is_some_and(|o| o != std::cmp::Ordering::Greater)
+            }),
 
             CompiledFilter::IsNull { field } => {
                 !metadata.contains_key(field) || metadata.get(field) == Some(&Value::Null)

@@ -48,7 +48,6 @@ where
     l3_backend: Option<Arc<NetworkBackend<K, CacheEntry<V>>>>,
 
     // Note: Eviction now handled by global CrossCacheOrchestrator
-
     /// Metrics collector for cache operations
     metrics: Arc<UnifiedMetricsCollector>,
 
@@ -268,7 +267,9 @@ where
                                         e
                                     );
                                 } else {
-                                    tracing::debug!("Spilled entry to L2 after L1 capacity exceeded");
+                                    tracing::debug!(
+                                        "Spilled entry to L2 after L1 capacity exceeded"
+                                    );
                                 }
                             } else {
                                 tracing::error!(
@@ -282,10 +283,7 @@ where
                     // No global orchestrator — try L2 spillover directly (TD-034)
                     if let Some(ref l2) = self.l2_backend {
                         if let Err(e) = l2.put(key, entry).await {
-                            tracing::warn!(
-                                "L2 spill failed (no orchestrator): {:?}",
-                                e
-                            );
+                            tracing::warn!("L2 spill failed (no orchestrator): {:?}", e);
                         } else {
                             tracing::debug!("Spilled entry to L2 (no orchestrator available)");
                         }

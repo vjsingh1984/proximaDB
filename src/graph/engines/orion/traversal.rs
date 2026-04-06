@@ -311,19 +311,22 @@ pub async fn breadth_first_search(
 
                     // Track path if enabled
                     if config.track_paths
-                        && let Some(existing_path) = paths.get(&current_node_id) {
-                            let mut new_path = existing_path.clone();
-                            new_path.push(neighbor_id.clone());
-                            paths.insert(neighbor_id.clone(), new_path);
-                        }
+                        && let Some(existing_path) = paths.get(&current_node_id)
+                    {
+                        let mut new_path = existing_path.clone();
+                        new_path.push(neighbor_id.clone());
+                        paths.insert(neighbor_id.clone(), new_path);
+                    }
 
                     // Hint orchestrator to prefetch adjacency for next frontier (bounded)
-                    if prefetch_budget > 0 && config.enable_prefetch
-                        && let Some(orch) = CrossCacheOrchestrator::global() {
-                            let key = format!("adj::{}", neighbor_id);
-                            orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                            prefetch_budget -= 1;
-                        }
+                    if prefetch_budget > 0
+                        && config.enable_prefetch
+                        && let Some(orch) = CrossCacheOrchestrator::global()
+                    {
+                        let key = format!("adj::{}", neighbor_id);
+                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                        prefetch_budget -= 1;
+                    }
                 }
             }
         }
@@ -498,19 +501,22 @@ pub async fn depth_first_search(
 
                 // Track path if enabled
                 if config.track_paths
-                    && let Some(existing_path) = paths.get(&current_node_id) {
-                        let mut new_path = existing_path.clone();
-                        new_path.push(neighbor_id.clone());
-                        paths.insert(neighbor_id.clone(), new_path);
-                    }
+                    && let Some(existing_path) = paths.get(&current_node_id)
+                {
+                    let mut new_path = existing_path.clone();
+                    new_path.push(neighbor_id.clone());
+                    paths.insert(neighbor_id.clone(), new_path);
+                }
 
                 // Hint orchestrator to prefetch adjacency for next frontier (bounded)
-                if prefetch_budget > 0 && config.enable_prefetch
-                    && let Some(orch) = CrossCacheOrchestrator::global() {
-                        let key = format!("adj::{}", neighbor_id);
-                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                        prefetch_budget -= 1;
-                    }
+                if prefetch_budget > 0
+                    && config.enable_prefetch
+                    && let Some(orch) = CrossCacheOrchestrator::global()
+                {
+                    let key = format!("adj::{}", neighbor_id);
+                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    prefetch_budget -= 1;
+                }
             }
         }
     }
@@ -596,9 +602,10 @@ pub async fn parallel_breadth_first_search(
     while !current_level.is_empty() {
         // Check depth limit
         if let Some(max_depth) = config.max_depth
-            && current_depth >= max_depth {
-                break;
-            }
+            && current_depth >= max_depth
+        {
+            break;
+        }
         current_depth += 1;
 
         // Parallel neighbor expansion for all nodes at this level
@@ -641,7 +648,8 @@ pub async fn parallel_breadth_first_search(
                             let parent_path = paths_guard
                                 .iter()
                                 .zip(node_ids_guard.iter())
-                                .find(|(_, id)| *id == node_id).map_or_else(|| vec![node_id.clone()], |(p, _)| p.clone());
+                                .find(|(_, id)| *id == node_id)
+                                .map_or_else(|| vec![node_id.clone()], |(p, _)| p.clone());
                             drop(paths_guard);
                             drop(node_ids_guard);
 
@@ -759,9 +767,10 @@ pub async fn parallel_breadth_first_search(
 
         // Check frontier cap
         if let Some(cap) = config.max_frontier
-            && current_level.len() > cap {
-                current_level.truncate(cap);
-            }
+            && current_level.len() > cap
+        {
+            current_level.truncate(cap);
+        }
     }
 
     stats.execution_time_microseconds = start_time.elapsed().as_micros() as u64;
@@ -924,9 +933,10 @@ pub async fn dijkstra_shortest_path(
 
         // Skip if we've found a better path already
         if let Some(&best_distance) = distances.get(&current.node_id)
-            && current.distance > best_distance {
-                continue;
-            }
+            && current.distance > best_distance
+        {
+            continue;
+        }
 
         // Get outgoing edges
         let outgoing_edges = engine.get_outgoing_edges(
@@ -961,9 +971,10 @@ pub async fn dijkstra_shortest_path(
             }
             // Filter by edge type if specified
             if let Some(ref allowed_types) = config.edge_types
-                && !allowed_types.contains(&edge.edge_type) {
-                    continue;
-                }
+                && !allowed_types.contains(&edge.edge_type)
+            {
+                continue;
+            }
 
             let neighbor_id = &edge.to_node_id;
             let weight = edge.weight.unwrap_or(1.0);
@@ -981,12 +992,14 @@ pub async fn dijkstra_shortest_path(
                     distance: new_distance,
                 });
                 // Hint orchestrator to prefetch adjacency for likely next node (bounded)
-                if prefetch_budget > 0 && config.enable_prefetch
-                    && let Some(orch) = CrossCacheOrchestrator::global() {
-                        let key = format!("adj::{}", neighbor_id);
-                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                        prefetch_budget -= 1;
-                    }
+                if prefetch_budget > 0
+                    && config.enable_prefetch
+                    && let Some(orch) = CrossCacheOrchestrator::global()
+                {
+                    let key = format!("adj::{}", neighbor_id);
+                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    prefetch_budget -= 1;
+                }
             }
         }
     }
@@ -1185,12 +1198,14 @@ pub async fn astar_shortest_path(
                     f_cost: f,
                 });
                 // Hint orchestrator to prefetch adjacency for likely next node (bounded)
-                if prefetch_budget > 0 && config.enable_prefetch
-                    && let Some(orch) = CrossCacheOrchestrator::global() {
-                        let key = format!("adj::{}", neighbor);
-                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                        prefetch_budget -= 1;
-                    }
+                if prefetch_budget > 0
+                    && config.enable_prefetch
+                    && let Some(orch) = CrossCacheOrchestrator::global()
+                {
+                    let key = format!("adj::{}", neighbor);
+                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    prefetch_budget -= 1;
+                }
             }
         }
     }
@@ -1462,9 +1477,7 @@ pub async fn k_shortest_paths(
         impl Eq for QN {}
         impl Ord for QN {
             fn cmp(&self, o: &Self) -> Ordering {
-                o.dist
-                    .partial_cmp(&self.dist)
-                    .unwrap_or(Ordering::Equal)
+                o.dist.partial_cmp(&self.dist).unwrap_or(Ordering::Equal)
             }
         }
         impl PartialOrd for QN {
@@ -1498,9 +1511,10 @@ pub async fn k_shortest_paths(
                 continue;
             }
             if let Some(_md) = config.max_depth
-                && let Some(d0) = prev.get(&q.node_id) {
-                    let _ = d0; /* depth check omit for simplicity */
-                }
+                && let Some(d0) = prev.get(&q.node_id)
+            {
+                let _ = d0; /* depth check omit for simplicity */
+            }
             let outgoing = engine.get_outgoing_edges(
                 &q.node_id,
                 config.edge_types.as_ref().and_then(|t| {
@@ -1547,12 +1561,14 @@ pub async fn k_shortest_paths(
                         dist: nd,
                     });
                     // Hint orchestrator to prefetch adjacency for likely next node (bounded)
-                    if prefetch_budget > 0 && config.enable_prefetch
-                        && let Some(orch) = CrossCacheOrchestrator::global() {
-                            let key = format!("adj::{}", e.to_node_id);
-                            orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                            prefetch_budget -= 1;
-                        }
+                    if prefetch_budget > 0
+                        && config.enable_prefetch
+                        && let Some(orch) = CrossCacheOrchestrator::global()
+                    {
+                        let key = format!("adj::{}", e.to_node_id);
+                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                        prefetch_budget -= 1;
+                    }
                 }
             }
         }
@@ -1583,9 +1599,7 @@ pub async fn k_shortest_paths(
     impl Eq for Cand {}
     impl Ord for Cand {
         fn cmp(&self, o: &Self) -> Ordering {
-            o.cost
-                .partial_cmp(&self.cost)
-                .unwrap_or(Ordering::Equal)
+            o.cost.partial_cmp(&self.cost).unwrap_or(Ordering::Equal)
         }
     }
     impl PartialOrd for Cand {
@@ -1597,7 +1611,11 @@ pub async fn k_shortest_paths(
 
     for k_i in 1..k {
         let (last_path, _last_cost) = &result_paths[k_i - 1];
-        for (i, spur_node) in last_path.iter().enumerate().take(last_path.len().saturating_sub(1)) {
+        for (i, spur_node) in last_path
+            .iter()
+            .enumerate()
+            .take(last_path.len().saturating_sub(1))
+        {
             let root_path = &last_path[..=i];
             // Exclusions: remove edges that would create same root with previous paths
             let mut exclude_edges: HashSet<(NodeId, NodeId)> = HashSet::new();
@@ -1719,10 +1737,9 @@ pub async fn has_cycle(engine: &OrionGraphEngine) -> Result<bool> {
     }
 
     for (nid, c) in &color.clone() {
-        if *c == Color::White
-            && dfs(engine, nid, &mut color)? {
-                return Ok(true);
-            }
+        if *c == Color::White && dfs(engine, nid, &mut color)? {
+            return Ok(true);
+        }
     }
     Ok(false)
 }

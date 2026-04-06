@@ -312,9 +312,12 @@ fn extract_resource_id(path: &str) -> Option<String> {
     for (i, segment) in path_segments.iter().enumerate() {
         if matches!(*segment, "collections" | "vectors" | "users" | "roles")
             && let Some(id) = path_segments.get(i + 1)
-                && !id.is_empty() && *id != "search" && *id != "bulk" {
-                    return Some(id.to_string());
-                }
+            && !id.is_empty()
+            && *id != "search"
+            && *id != "bulk"
+        {
+            return Some(id.to_string());
+        }
     }
 
     None
@@ -664,38 +667,39 @@ pub async fn hybrid_auth_middleware<B>(
     // First, try mTLS authentication if configured
     if let Some(ref mtls_state) = mtls_state
         && mtls_state.config.enabled
-            && let Some(cert_info) = request.extensions().get::<ClientCertificateInfo>().cloned()
-                && cert_info.is_valid
-                    && let Some(cn) = &cert_info.common_name {
-                        // CN is valid, check against allowed patterns
-                        let cn_allowed = mtls_state.config.allowed_cn_patterns.is_empty()
-                            || mtls_state
-                                .config
-                                .allowed_cn_patterns
-                                .iter()
-                                .any(|p| matches_cn_pattern(cn, p));
+        && let Some(cert_info) = request.extensions().get::<ClientCertificateInfo>().cloned()
+        && cert_info.is_valid
+        && let Some(cn) = &cert_info.common_name
+    {
+        // CN is valid, check against allowed patterns
+        let cn_allowed = mtls_state.config.allowed_cn_patterns.is_empty()
+            || mtls_state
+                .config
+                .allowed_cn_patterns
+                .iter()
+                .any(|p| matches_cn_pattern(cn, p));
 
-                        if cn_allowed {
-                            let user_id = mtls_state
-                                .config
-                                .cn_to_user_mapping
-                                .get(cn)
-                                .cloned()
-                                .unwrap_or_else(|| cn.clone());
+        if cn_allowed {
+            let user_id = mtls_state
+                .config
+                .cn_to_user_mapping
+                .get(cn)
+                .cloned()
+                .unwrap_or_else(|| cn.clone());
 
-                            let authenticated_user = MtlsAuthenticatedUser {
-                                user_id,
-                                common_name: cn.clone(),
-                                organization: cert_info.organization.clone(),
-                                certificate_fingerprint: cert_info.fingerprint.clone(),
-                                roles: mtls_state.config.default_roles.clone(),
-                                auth_method: "mtls".to_string(),
-                            };
+            let authenticated_user = MtlsAuthenticatedUser {
+                user_id,
+                common_name: cn.clone(),
+                organization: cert_info.organization.clone(),
+                certificate_fingerprint: cert_info.fingerprint.clone(),
+                roles: mtls_state.config.default_roles.clone(),
+                auth_method: "mtls".to_string(),
+            };
 
-                            request.extensions_mut().insert(authenticated_user);
-                            return Ok(next.run(request).await);
-                        }
-                    }
+            request.extensions_mut().insert(authenticated_user);
+            return Ok(next.run(request).await);
+        }
+    }
 
     // Fall back to token-based authentication
     let auth_header = extract_auth_header(&request)?;

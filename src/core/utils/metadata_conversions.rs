@@ -208,13 +208,14 @@ pub fn validate_metadata_types(
 ) -> Result<()> {
     for item in metadata {
         if let Some(expected_type) = schema.get(&item.key)
-            && !matches_type(&item.value, expected_type) {
-                return Err(anyhow!(
-                    "Type mismatch for field '{}': expected {:?}",
-                    item.key,
-                    expected_type
-                ));
-            }
+            && !matches_type(&item.value, expected_type)
+        {
+            return Err(anyhow!(
+                "Type mismatch for field '{}': expected {:?}",
+                item.key,
+                expected_type
+            ));
+        }
     }
     Ok(())
 }
@@ -238,9 +239,16 @@ pub enum MetadataValueType {
 fn matches_type(value: &Option<metadata_item::Value>, expected: &MetadataValueType) -> bool {
     matches!(
         (value, expected),
-        (Some(metadata_item::Value::StringValue(_)), MetadataValueType::String)
-            | (Some(metadata_item::Value::NumberValue(_)), MetadataValueType::Number)
-            | (Some(metadata_item::Value::BoolValue(_)), MetadataValueType::Boolean)
+        (
+            Some(metadata_item::Value::StringValue(_)),
+            MetadataValueType::String
+        ) | (
+            Some(metadata_item::Value::NumberValue(_)),
+            MetadataValueType::Number
+        ) | (
+            Some(metadata_item::Value::BoolValue(_)),
+            MetadataValueType::Boolean
+        )
     )
 }
 

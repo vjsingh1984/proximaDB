@@ -113,7 +113,7 @@ mod schema_tests {
 // ============================================================================
 
 mod file_split_tests {
-    
+
     use proximadb::storage::formats::{
         CacheStatus, FileSplit, SpatialBounds, SplitLocality, SplitPlanner, SplitType, StorageTier,
     };

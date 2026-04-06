@@ -57,11 +57,9 @@ impl From<&Collection> for CollectionLookupResult {
             uuid: record.id.clone(),
             name: record
                 .config
-                .as_ref().map_or_else(|| "unknown".to_string(), |c| c.name.clone()),
-            dimension: record
-                .config
                 .as_ref()
-                .map_or(0, |c| c.dimension as i32),
+                .map_or_else(|| "unknown".to_string(), |c| c.name.clone()),
+            dimension: record.config.as_ref().map_or(0, |c| c.dimension as i32),
             distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric)),
             indexing_algorithm: record
                 .config
@@ -70,10 +68,7 @@ impl From<&Collection> for CollectionLookupResult {
                 .unwrap_or_else(|| "None".to_string()),
             storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine)),
             vector_count: record.stats.as_ref().map_or(0, |s| s.vector_count),
-            total_size_bytes: record
-                .stats
-                .as_ref()
-                .map_or(0, |s| s.data_size_bytes),
+            total_size_bytes: record.stats.as_ref().map_or(0, |s| s.data_size_bytes),
             timestamp: record.created_at,
             updated_at: record.updated_at,
         }
@@ -168,8 +163,7 @@ impl MetadataMemoryIndexes {
 
         // Remove old record if exists (for updates)
         if let Some(old_record) = self.uuid_to_record.get(&uuid) {
-            self.remove_from_secondary_indexes(old_record.value())
-                .await;
+            self.remove_from_secondary_indexes(old_record.value()).await;
         }
 
         // Primary indexes - O(1) operations
@@ -458,12 +452,13 @@ impl MetadataMemoryIndexes {
         {
             let mut prefix_index = self.name_prefix_index.write().await;
             if let Some(config) = record.config.as_ref()
-                && let Some(uuids) = prefix_index.get_mut(&config.name) {
-                    uuids.retain(|uuid| uuid != &record.id);
-                    if uuids.is_empty() {
-                        prefix_index.remove(&config.name);
-                    }
+                && let Some(uuids) = prefix_index.get_mut(&config.name)
+            {
+                uuids.retain(|uuid| uuid != &record.id);
+                if uuids.is_empty() {
+                    prefix_index.remove(&config.name);
                 }
+            }
         }
 
         // Tag index
@@ -485,12 +480,13 @@ impl MetadataMemoryIndexes {
         {
             let mut size_index = self.size_index.write().await;
             if let Some(stats) = &record.stats
-                && let Some(uuids) = size_index.get_mut(&stats.data_size_bytes) {
-                    uuids.retain(|uuid| uuid != &record.id);
-                    if uuids.is_empty() {
-                        size_index.remove(&stats.data_size_bytes);
-                    }
+                && let Some(uuids) = size_index.get_mut(&stats.data_size_bytes)
+            {
+                uuids.retain(|uuid| uuid != &record.id);
+                if uuids.is_empty() {
+                    size_index.remove(&stats.data_size_bytes);
                 }
+            }
         }
 
         // Time index

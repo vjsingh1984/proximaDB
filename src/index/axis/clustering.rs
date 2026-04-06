@@ -1015,7 +1015,6 @@ impl AxisClusteringEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[tokio::test]
     async fn test_kmeans_clustering() {
@@ -1076,8 +1075,8 @@ mod tests {
 
     // --- Inlined from tests/unit/clustering_models_test.rs ---
 
-    use anyhow::Result;
     use crate::compute::distance_computation::DistanceMetric;
+    use anyhow::Result;
 
     /// Generate test vectors for clustering
     fn generate_test_vectors(count: usize, dimension: usize, num_clusters: usize) -> Vec<Vec<f32>> {

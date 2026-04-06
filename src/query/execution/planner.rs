@@ -168,7 +168,8 @@ impl ExecutionPlanner {
         if !select.joins.is_empty() {
             // Use first FROM as left side
             let left_alias = select
-                .from.first()
+                .from
+                .first()
                 .and_then(|t| t.alias.clone())
                 .unwrap_or_else(|| "l".to_string());
             for j in &select.joins {
@@ -233,9 +234,9 @@ impl ExecutionPlanner {
             if let Expr::FuncCall { name, .. } = &order_expr.expr
                 && (name.to_uppercase().contains("VECTOR_SIMILARITY")
                     || name.to_uppercase().contains("COSINE_DISTANCE"))
-                {
-                    analysis.has_vector_functions = true;
-                }
+            {
+                analysis.has_vector_functions = true;
+            }
         }
 
         // Check for SKS functions in WHERE clause
@@ -325,7 +326,11 @@ impl ExecutionPlanner {
                 // Prefer SKS FOLLOW() when present; otherwise fallback to generic extraction
                 if let Some(fol) = self.find_sks_follow(select) {
                     self.validate_follow_edge(&fol)?;
-                    let graph_id = select.from.first().and_then(|t| t.name.clone()).unwrap_or_else(|| "default".to_string());
+                    let graph_id = select
+                        .from
+                        .first()
+                        .and_then(|t| t.name.clone())
+                        .unwrap_or_else(|| "default".to_string());
                     operations.push(ExecutionOperation::GraphTraversal {
                         graph_id: graph_id.clone(),
                         start_nodes: self.expr_to_start_nodes(&fol.start),
@@ -336,7 +341,11 @@ impl ExecutionPlanner {
                     });
                 } else {
                     operations.push(ExecutionOperation::GraphTraversal {
-                        graph_id: select.from.first().and_then(|t| t.name.clone()).unwrap_or_else(|| "default".to_string()),
+                        graph_id: select
+                            .from
+                            .first()
+                            .and_then(|t| t.name.clone())
+                            .unwrap_or_else(|| "default".to_string()),
                         start_nodes: self.extract_start_nodes(select)?,
                         edge_types: self.extract_edge_types(select)?,
                         max_depth: self.extract_max_depth(select).unwrap_or(3),
@@ -368,7 +377,11 @@ impl ExecutionPlanner {
                 if let Some(fol) = self.find_sks_follow(select) {
                     self.validate_follow_edge(&fol)?;
                     operations.push(ExecutionOperation::GraphTraversal {
-                        graph_id: select.from.first().and_then(|t| t.name.clone()).unwrap_or_else(|| "default".to_string()),
+                        graph_id: select
+                            .from
+                            .first()
+                            .and_then(|t| t.name.clone())
+                            .unwrap_or_else(|| "default".to_string()),
                         start_nodes: self.expr_to_start_nodes(&fol.start),
                         edge_types: vec![fol.edge],
                         max_depth: fol.max_depth,
@@ -441,9 +454,10 @@ impl ExecutionPlanner {
     fn find_sks_similar(&self, select: &Select) -> Option<SksSimilarArgs> {
         // Validate SIMILAR field roughly against schema: ensure the field name looks like an embedding column
         if let Some(expr) = &select.selection
-            && let Some(sim) = self.walk_find_similar(expr) {
-                return Some(sim);
-            }
+            && let Some(sim) = self.walk_find_similar(expr)
+        {
+            return Some(sim);
+        }
         for ob in &select.order_by {
             if let Some(sim) = self.walk_find_similar(&ob.expr) {
                 return Some(sim);
@@ -599,12 +613,13 @@ impl ExecutionPlanner {
             Expr::Param(ph) => {
                 // Expect $<n>
                 if let Some(n) = ph.strip_prefix('$')
-                    && let Ok(idx) = n.parse::<usize>() {
-                        let pos = idx.saturating_sub(1);
-                        if let Some(pv) = self.params.as_ref().and_then(|v| v.get(pos)) {
-                            return self.sql_value_to_vec(pv);
-                        }
+                    && let Ok(idx) = n.parse::<usize>()
+                {
+                    let pos = idx.saturating_sub(1);
+                    if let Some(pv) = self.params.as_ref().and_then(|v| v.get(pos)) {
+                        return self.sql_value_to_vec(pv);
                     }
+                }
                 None
             }
             _ => {
@@ -717,37 +732,40 @@ impl ExecutionPlanner {
     pub(crate) fn extract_join_keys_static(expr: &Expr) -> Option<(String, String)> {
         // Support simple equality join: a.id = b.entity_id
         if let Expr::Binary { left, op, right } = expr
-            && matches!(op, BinaryOp::Eq) {
-                let left_key = match &**left {
-                    Expr::Identifier(s) => s.clone(),
-                    _ => return None,
-                };
-                let right_key = match &**right {
-                    Expr::Identifier(s) => s.clone(),
-                    _ => return None,
-                };
-                return Some((left_key, right_key));
-            }
+            && matches!(op, BinaryOp::Eq)
+        {
+            let left_key = match &**left {
+                Expr::Identifier(s) => s.clone(),
+                _ => return None,
+            };
+            let right_key = match &**right {
+                Expr::Identifier(s) => s.clone(),
+                _ => return None,
+            };
+            return Some((left_key, right_key));
+        }
         None
     }
 
     pub(crate) fn extract_join_key_pairs_static(expr: &Expr) -> Vec<(String, String)> {
         let mut out = Vec::new();
-        if let Expr::Binary { left, op, right } = expr { match op {
-            BinaryOp::Eq => {
-                if let (Some(l), Some(r)) = (
-                    Self::extract_join_keys_static(expr).map(|p| p.0),
-                    Self::extract_join_keys_static(expr).map(|p| p.1),
-                ) {
-                    out.push((l, r));
+        if let Expr::Binary { left, op, right } = expr {
+            match op {
+                BinaryOp::Eq => {
+                    if let (Some(l), Some(r)) = (
+                        Self::extract_join_keys_static(expr).map(|p| p.0),
+                        Self::extract_join_keys_static(expr).map(|p| p.1),
+                    ) {
+                        out.push((l, r));
+                    }
                 }
+                BinaryOp::And => {
+                    out.extend(Self::extract_join_key_pairs_static(left));
+                    out.extend(Self::extract_join_key_pairs_static(right));
+                }
+                _ => {}
             }
-            BinaryOp::And => {
-                out.extend(Self::extract_join_key_pairs_static(left));
-                out.extend(Self::extract_join_key_pairs_static(right));
-            }
-            _ => {}
-        } }
+        }
         out
     }
 
@@ -760,7 +778,8 @@ impl ExecutionPlanner {
         for expr in projection {
             if let Expr::AggCall { name, args } = expr {
                 let alias = name.to_uppercase();
-                let field = args.first()
+                let field = args
+                    .first()
                     .and_then(|e| self.expr_to_identifier(e))
                     .unwrap_or("*".to_string());
                 let func = match alias.as_str() {
@@ -856,10 +875,12 @@ impl ExecutionPlanner {
     fn extract_query_vector(&self, select: &Select) -> Result<Option<Vec<f32>>> {
         for order_expr in &select.order_by {
             if let Expr::FuncCall { name, args } = &order_expr.expr
-                && name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 2 {
-                    // Extract vector from second argument (first is the vector field name)
-                    return Ok(self.try_parse_query_vector(&args[1]));
-                }
+                && name.to_uppercase().contains("VECTOR_SIMILARITY")
+                && args.len() >= 2
+            {
+                // Extract vector from second argument (first is the vector field name)
+                return Ok(self.try_parse_query_vector(&args[1]));
+            }
         }
         Ok(None)
     }
@@ -868,12 +889,14 @@ impl ExecutionPlanner {
     fn extract_distance_metric(&self, select: &Select) -> Result<String> {
         for order_expr in &select.order_by {
             if let Expr::FuncCall { name, args } = &order_expr.expr
-                && name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 3 {
-                    // Extract metric from third argument
-                    if let Expr::Literal(crate::query::ast::Literal::String(s)) = &args[2] {
-                        return Ok(s.to_lowercase());
-                    }
+                && name.to_uppercase().contains("VECTOR_SIMILARITY")
+                && args.len() >= 3
+            {
+                // Extract metric from third argument
+                if let Expr::Literal(crate::query::ast::Literal::String(s)) = &args[2] {
+                    return Ok(s.to_lowercase());
                 }
+            }
         }
         Ok("cosine".to_string()) // Default distance metric
     }

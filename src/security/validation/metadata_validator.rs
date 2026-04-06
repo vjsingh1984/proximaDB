@@ -321,7 +321,7 @@ pub struct CollectionNameValidator {
 /// Valid collection name pattern: alphanumeric, underscore, hyphen
 /// Must start with a letter or underscore
 static COLLECTION_NAME_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    #[allow(clippy::panic)]  // Intentional: compile-time invariant check
+    #[allow(clippy::panic)] // Intentional: compile-time invariant check
     Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
         .unwrap_or_else(|_| panic!("Invalid collection name regex"))
 });

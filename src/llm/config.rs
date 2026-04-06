@@ -171,7 +171,8 @@ impl EmbeddingProvider {
         // Common sentence-transformer dimensions
         if model_name.contains("MiniLM-L6")
             || model_name.contains("MiniLM-L12")
-            || model_name.contains("bge-small") {
+            || model_name.contains("bge-small")
+        {
             384
         } else if model_name.contains("bge-base") {
             768

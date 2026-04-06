@@ -100,8 +100,7 @@ pub struct AzureADConfig {
 }
 
 /// mTLS configuration for client certificate authentication
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MtlsConfig {
     /// Whether mTLS authentication is enabled
     pub enabled: bool,
@@ -115,7 +114,6 @@ pub struct MtlsConfig {
     #[serde(default)]
     pub cn_role_mapping: HashMap<String, String>,
 }
-
 
 /// Validated client identity extracted from an X.509 certificate
 #[derive(Debug, Clone)]
@@ -370,15 +368,16 @@ impl UnifiedAuthService {
             Some(api_key_info) => {
                 // Check if API key has expired
                 if let Some(expires_at) = api_key_info.expires_at
-                    && Utc::now() > expires_at {
-                        return Ok(AuthenticationResult {
-                            user_context: UnifiedUserContext::anonymous(),
-                            auth_method: AuthMethod::ApiKey,
-                            success: false,
-                            error_message: Some("API key expired".to_string()),
-                            requires_mfa: false,
-                        });
-                    }
+                    && Utc::now() > expires_at
+                {
+                    return Ok(AuthenticationResult {
+                        user_context: UnifiedUserContext::anonymous(),
+                        auth_method: AuthMethod::ApiKey,
+                        success: false,
+                        error_message: Some("API key expired".to_string()),
+                        requires_mfa: false,
+                    });
+                }
 
                 let user_context = self.convert_api_key_to_unified(api_key_info.clone());
                 Ok(AuthenticationResult {
@@ -618,11 +617,12 @@ impl UnifiedAuthService {
             .map(|ext| ext.value.to_vec());
 
         if let (Some(aki), Some(ski)) = (&client_aki, &ca_ski)
-            && aki != ski {
-                return Err(anyhow!(
-                    "Certificate Authority Key Identifier does not match CA Subject Key Identifier"
-                ));
-            }
+            && aki != ski
+        {
+            return Err(anyhow!(
+                "Certificate Authority Key Identifier does not match CA Subject Key Identifier"
+            ));
+        }
 
         // 3. Extract Common Name from the subject
         let common_name = client_cert

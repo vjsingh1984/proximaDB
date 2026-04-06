@@ -370,9 +370,9 @@ impl AccessPatternTracker {
                 .query_type_distribution
                 .iter()
                 .find(|(_, count)| **count == max_count)
-            {
-                stats.primary_query_type = query_type.clone();
-            }
+        {
+            stats.primary_query_type = query_type.clone();
+        }
 
         // Update recent pattern
         stats.recent_pattern.push_back(event.clone());

@@ -203,7 +203,7 @@ impl RaptorConfig {
     /// Configuration optimized for small k queries (k<10)
     pub fn for_small_k() -> Self {
         Self {
-            rowgroup_size: 500, // Minimize wasted reads
+            rowgroup_size: 500,  // Minimize wasted reads
             cache_size_mb: 4096, // Cache more rowgroups
             ..Default::default()
         }

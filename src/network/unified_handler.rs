@@ -1278,13 +1278,16 @@ impl UnifiedQueryHandler {
                     .into_iter()
                     .map(|c| {
                         let dimension = c.config.as_ref().map_or(0, |cfg| cfg.dimension);
-                        let vector_count =
-                            c.stats.as_ref().map_or(0, |s| s.vector_count as u64);
-                        let storage_engine = c
-                            .storage_assignment
-                            .as_ref().map_or_else(|| "sst".to_string(), |sa| {
-                                proximadb_v1::StorageEngine::try_from(sa.engine).map_or_else(|_| "sst".to_string(), |e| format!("{:?}", e).to_lowercase())
-                            });
+                        let vector_count = c.stats.as_ref().map_or(0, |s| s.vector_count as u64);
+                        let storage_engine = c.storage_assignment.as_ref().map_or_else(
+                            || "sst".to_string(),
+                            |sa| {
+                                proximadb_v1::StorageEngine::try_from(sa.engine).map_or_else(
+                                    |_| "sst".to_string(),
+                                    |e| format!("{:?}", e).to_lowercase(),
+                                )
+                            },
+                        );
 
                         CollectionInfo {
                             id: c.id,
@@ -1316,19 +1319,20 @@ impl UnifiedQueryHandler {
                     .map_err(|e| anyhow!("Failed to get collection: {}", e))?
                     .ok_or_else(|| anyhow!("Collection not found: {}", name))?;
 
-                let dimension = collection
-                    .config
-                    .as_ref()
-                    .map_or(0, |cfg| cfg.dimension);
+                let dimension = collection.config.as_ref().map_or(0, |cfg| cfg.dimension);
                 let vector_count = collection
                     .stats
                     .as_ref()
                     .map_or(0, |s| s.vector_count as u64);
-                let storage_engine = collection
-                    .storage_assignment
-                    .as_ref().map_or_else(|| "sst".to_string(), |sa| {
-                        proximadb_v1::StorageEngine::try_from(sa.engine).map_or_else(|_| "sst".to_string(), |e| format!("{:?}", e).to_lowercase())
-                    });
+                let storage_engine = collection.storage_assignment.as_ref().map_or_else(
+                    || "sst".to_string(),
+                    |sa| {
+                        proximadb_v1::StorageEngine::try_from(sa.engine).map_or_else(
+                            |_| "sst".to_string(),
+                            |e| format!("{:?}", e).to_lowercase(),
+                        )
+                    },
+                );
 
                 Ok(UnifiedQueryResponse {
                     success: true,

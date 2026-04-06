@@ -19,9 +19,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::{
-    AggregationStage, DocumentUpdate, IndexDefinition, VectorRecord,
-};
+use crate::proto::proximadb_v1::{AggregationStage, DocumentUpdate, IndexDefinition, VectorRecord};
 use crate::storage::document::{
     AggregateResult, DocumentQueryParams, DocumentQueryResult, DocumentRecord,
     DocumentStorageEngine, FlushToStorageResult,
@@ -86,9 +84,13 @@ impl CedarEngine {
     }
 
     /// Get or create the memtable for a collection.
-    fn get_collection(&self, collection: &str) -> dashmap::mapref::one::Ref<'_, String, DashMap<String, DocumentRecord>> {
+    fn get_collection(
+        &self,
+        collection: &str,
+    ) -> dashmap::mapref::one::Ref<'_, String, DashMap<String, DocumentRecord>> {
         if !self.collections.contains_key(collection) {
-            self.collections.insert(collection.to_string(), DashMap::new());
+            self.collections
+                .insert(collection.to_string(), DashMap::new());
         }
         self.collections.get(collection).unwrap()
     }
@@ -115,11 +117,7 @@ impl DocumentStorageEngine for CedarEngine {
         Ok(doc)
     }
 
-    async fn get_document(
-        &self,
-        collection: &str,
-        id: &str,
-    ) -> Result<Option<DocumentRecord>> {
+    async fn get_document(&self, collection: &str, id: &str) -> Result<Option<DocumentRecord>> {
         if let Some(col) = self.collections.get(collection) {
             Ok(col.get(id).map(|r| r.value().clone()))
         } else {
@@ -212,11 +210,7 @@ impl DocumentStorageEngine for CedarEngine {
         })
     }
 
-    async fn create_index(
-        &self,
-        _collection: &str,
-        _index_def: IndexDefinition,
-    ) -> Result<()> {
+    async fn create_index(&self, _collection: &str, _index_def: IndexDefinition) -> Result<()> {
         // Phase 2: implement secondary indexes
         Ok(())
     }
@@ -336,7 +330,10 @@ mod tests {
     #[test]
     fn test_cedar_engine_name() {
         let engine = CedarEngine::new().unwrap();
-        assert_eq!(crate::storage::document::DocumentStorageEngine::engine_name(&engine), "cedar");
+        assert_eq!(
+            crate::storage::document::DocumentStorageEngine::engine_name(&engine),
+            "cedar"
+        );
     }
 
     #[test]
@@ -348,7 +345,9 @@ mod tests {
     #[tokio::test]
     async fn test_cedar_collect_metrics() {
         let engine = CedarEngine::new().unwrap();
-        let metrics = DocumentStorageEngine::collect_metrics(&engine).await.unwrap();
+        let metrics = DocumentStorageEngine::collect_metrics(&engine)
+            .await
+            .unwrap();
         assert_eq!(metrics["engine"], serde_json::json!("cedar"));
     }
 
@@ -384,7 +383,10 @@ mod tests {
     #[tokio::test]
     async fn test_cedar_delete() {
         let engine = CedarEngine::new().unwrap();
-        engine.insert_document("col", make_doc("doc1", "col")).await.unwrap();
+        engine
+            .insert_document("col", make_doc("doc1", "col"))
+            .await
+            .unwrap();
         assert!(engine.delete_document("col", "doc1").await.unwrap());
         assert!(engine.get_document("col", "doc1").await.unwrap().is_none());
     }
@@ -425,8 +427,14 @@ mod tests {
     async fn test_cedar_document_count() {
         let engine = CedarEngine::new().unwrap();
         assert_eq!(engine.document_count("col").await.unwrap(), 0);
-        engine.insert_document("col", make_doc("d1", "col")).await.unwrap();
-        engine.insert_document("col", make_doc("d2", "col")).await.unwrap();
+        engine
+            .insert_document("col", make_doc("d1", "col"))
+            .await
+            .unwrap();
+        engine
+            .insert_document("col", make_doc("d2", "col"))
+            .await
+            .unwrap();
         assert_eq!(engine.document_count("col").await.unwrap(), 2);
     }
 

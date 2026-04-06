@@ -22,8 +22,7 @@ pub struct ExecutiveReport {
 }
 
 /// Report output formats
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ReportFormat {
     #[default]
     Html,
@@ -39,4 +38,3 @@ impl ReportGenerator {
         })
     }
 }
-

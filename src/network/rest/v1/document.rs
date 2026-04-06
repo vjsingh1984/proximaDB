@@ -738,9 +738,8 @@ fn json_to_aggregation_stage(value: &serde_json::Value) -> ApiResult<Aggregation
                 preserve_null: false,
             }
         } else {
-            serde_json::from_value(unwind_val.clone()).map_err(|e| {
-                ApiError::InvalidArgument(format!("Invalid $unwind stage: {}", e))
-            })?
+            serde_json::from_value(unwind_val.clone())
+                .map_err(|e| ApiError::InvalidArgument(format!("Invalid $unwind stage: {}", e)))?
         };
         Ok(AggregationStage {
             stage: Some(Stage::Unwind(stage)),

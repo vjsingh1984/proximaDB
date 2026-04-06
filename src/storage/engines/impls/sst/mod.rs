@@ -670,8 +670,7 @@ pub struct SstableHeader {
 // This eliminates duplication and ensures consistency across all storage engines
 
 /// Vector format type for bytemuck optimization
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum VectorFormat {
     /// All vectors have the same fixed dimension (use bytemuck)
     Fixed { dimension: usize },
@@ -681,7 +680,6 @@ pub enum VectorFormat {
     /// Mixed dimensions - majority fixed, some variable
     Mixed { dominant_dimension: usize },
 }
-
 
 // ============================================================================
 // FP16 Centroid Quantization Utilities (50% storage reduction)
@@ -798,8 +796,10 @@ impl BPlusTreeIndex {
         for (i, chunk) in entries.chunks(fanout).enumerate() {
             let start_key = chunk.first().map(|e| e.key.clone()).unwrap_or_default();
             // Use last_key from the last entry in chunk if available, otherwise fall back to key
-            let end_key = chunk
-                .last().map_or_else(|| start_key.clone(), |e| e.last_key.clone().unwrap_or_else(|| e.key.clone()));
+            let end_key = chunk.last().map_or_else(
+                || start_key.clone(),
+                |e| e.last_key.clone().unwrap_or_else(|| e.key.clone()),
+            );
             leaves.push(BPlusLeaf {
                 start_key,
                 end_key,
@@ -1749,16 +1749,18 @@ mod block_utils {
                 if col_stats.min_value.is_none() {
                     col_stats.min_value = Some(value.clone());
                 } else if let Some(ref mut min_val) = col_stats.min_value
-                    && compare_json_values(&value, min_val) == std::cmp::Ordering::Less {
-                        *min_val = value.clone();
-                    }
+                    && compare_json_values(&value, min_val) == std::cmp::Ordering::Less
+                {
+                    *min_val = value.clone();
+                }
 
                 if col_stats.max_value.is_none() {
                     col_stats.max_value = Some(value.clone());
                 } else if let Some(ref mut max_val) = col_stats.max_value
-                    && compare_json_values(&value, max_val) == std::cmp::Ordering::Greater {
-                        *max_val = value;
-                    }
+                    && compare_json_values(&value, max_val) == std::cmp::Ordering::Greater
+                {
+                    *max_val = value;
+                }
             }
         }
 
@@ -2002,9 +2004,7 @@ mod bplustree_tests {
                 metadata_null_counts: std::collections::HashMap::new(),
                 block_key_bloom: None,
                 block_metadata_bloom: None,
-                vector_format: VectorFormat::Fixed {
-                    dimension: 8,
-                },
+                vector_format: VectorFormat::Fixed { dimension: 8 },
                 zorder_code: None,
             })
             .collect()

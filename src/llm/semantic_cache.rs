@@ -154,11 +154,13 @@ impl SemanticCache {
         let cache = self.cache.read().await;
 
         if let Some(entry) = cache.get(&hash)
-            && entry.valid && !self.is_expired(&entry.response) {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                stats.hits += 1;
-                return Some(entry.response.clone());
-            }
+            && entry.valid
+            && !self.is_expired(&entry.response)
+        {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            stats.hits += 1;
+            return Some(entry.response.clone());
+        }
 
         // For semantic similarity matching, we'd search the cache collection
         // This is done via Victor's ProximaDB provider

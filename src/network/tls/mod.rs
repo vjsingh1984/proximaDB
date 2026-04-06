@@ -53,8 +53,7 @@ use std::sync::Arc;
 use tracing::info;
 
 /// TLS configuration for ProximaDB
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TlsConfig {
     /// Certificate manager
     pub certificate_manager: Option<CertificateManager>,
@@ -69,7 +68,6 @@ pub struct TlsConfig {
     /// Path to CA certificate file (for mTLS client verification)
     pub ca_file: Option<PathBuf>,
 }
-
 
 impl TlsConfig {
     /// Create new TLS configuration

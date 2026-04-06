@@ -658,9 +658,7 @@ impl AxisHnswIndex {
         let index = match AxisHnswIndex::new(config.clone(), state.dimension) {
             Ok(idx) => idx,
             Err(e) => {
-                return Err(SerializationError::Io(std::io::Error::other(
-                    e.to_string(),
-                )));
+                return Err(SerializationError::Io(std::io::Error::other(e.to_string())));
             }
         };
 
@@ -677,9 +675,10 @@ impl AxisHnswIndex {
             state.quantized_vectors,
             state.collection_config,
         ) {
-            return Err(SerializationError::Io(std::io::Error::other(
-                format!("Failed to restore HNSW state: {}", e),
-            )));
+            return Err(SerializationError::Io(std::io::Error::other(format!(
+                "Failed to restore HNSW state: {}",
+                e
+            ))));
         }
 
         info!(
@@ -737,9 +736,7 @@ impl UnifiedIvfIndex {
         let collection_id = "default_collection".to_string(); // Placeholder collection ID
         match UnifiedIvfIndex::new(collection_id, config.clone()) {
             Ok(index) => Ok(index),
-            Err(e) => Err(SerializationError::Io(std::io::Error::other(
-                e.to_string(),
-            ))),
+            Err(e) => Err(SerializationError::Io(std::io::Error::other(e.to_string()))),
         }
     }
 }

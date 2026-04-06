@@ -1511,7 +1511,11 @@ impl WriteAheadLogManager {
     }
 
     /// Set storage engine for delegated flush/compaction operations
-    pub fn set_storage_engine(&self, _storage_engine: Arc<dyn UnifiedStorageEngine>, _collection_id: &str) {
+    pub fn set_storage_engine(
+        &self,
+        _storage_engine: Arc<dyn UnifiedStorageEngine>,
+        _collection_id: &str,
+    ) {
         // Storage engine setting moved to config level — strategies receive it directly
         tracing::info!("Storage engine attached to WAL manager for delegated operations");
     }
@@ -1884,9 +1888,7 @@ impl WriteAheadLogManager {
         // Get vectors from the collection
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        let vectors = wal_behavior
-            .get_collection_vectors(collection_id)
-            .await?;
+        let vectors = wal_behavior.get_collection_vectors(collection_id).await?;
 
         // Apply sequence filtering and limit if needed
         let filtered: Vec<VectorRecord> = vectors
@@ -1930,9 +1932,7 @@ impl WriteAheadLogManager {
         // Get the vector records from the collection
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        let vectors = wal_behavior
-            .get_collection_vectors(collection_id)
-            .await?;
+        let vectors = wal_behavior.get_collection_vectors(collection_id).await?;
 
         // Apply limit if specified
         let limited_vectors: Vec<VectorRecord> = if let Some(lim) = limit {
@@ -1996,9 +1996,7 @@ impl WriteAheadLogManager {
     pub async fn get_collection_entries(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        wal_behavior
-            .get_collection_vectors(collection_id)
-            .await
+        wal_behavior.get_collection_vectors(collection_id).await
     }
 
     /// Get WAL statistics
@@ -2344,7 +2342,8 @@ impl WriteAheadLogManager {
                                 eprintln!("⚠️ DEBUG: No storage_assignment in collection");
                                 self.config
                                     .multi_disk
-                                    .data_directories.first()
+                                    .data_directories
+                                    .first()
                                     .cloned()
                                     .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
                             }
@@ -2353,7 +2352,8 @@ impl WriteAheadLogManager {
                             eprintln!("⚠️ DEBUG: Collection lookup failed, using fallback");
                             self.config
                                 .multi_disk
-                                .data_directories.first()
+                                .data_directories
+                                .first()
                                 .cloned()
                                 .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
                         }
@@ -2361,7 +2361,8 @@ impl WriteAheadLogManager {
                 } else {
                     self.config
                         .multi_disk
-                        .data_directories.first()
+                        .data_directories
+                        .first()
                         .cloned()
                         .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
                 }
@@ -2566,9 +2567,10 @@ impl WriteAheadLogManager {
 
                 // Apply fine-grained metadata filter if specified
                 if let Some(filter_expr) = metadata_filters
-                    && !self.evaluate_filter_on_record(vector_record, filter_expr) {
-                        continue;
-                    }
+                    && !self.evaluate_filter_on_record(vector_record, filter_expr)
+                {
+                    continue;
+                }
 
                 // Calculate distance
                 let similarity_result = distance_calculator.calculate_distance(
@@ -2914,9 +2916,7 @@ impl WriteAheadLogManager {
         {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            wal_behavior
-                .get_collection_vectors(collection_id)
-                .await
+            wal_behavior.get_collection_vectors(collection_id).await
         }
     }
 
@@ -3096,9 +3096,7 @@ impl WriteAheadLogManager {
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
 
         // Get collection vectors and flush them
-        let collection_vectors = wal_behavior
-            .get_collection_vectors(collection_id)
-            .await?;
+        let collection_vectors = wal_behavior.get_collection_vectors(collection_id).await?;
         if !collection_vectors.is_empty() {
             // Trigger flush by calling flush_all_vectors which will write to disk
             let _ = wal_behavior.flush_all_vectors().await?;

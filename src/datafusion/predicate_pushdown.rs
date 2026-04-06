@@ -333,7 +333,10 @@ mod tests {
     #[test]
     fn test_simple_equality() {
         let schema = test_schema();
-        let expr = col("id").eq(Expr::Literal(ScalarValue::Utf8(Some("test".to_string())), None));
+        let expr = col("id").eq(Expr::Literal(
+            ScalarValue::Utf8(Some("test".to_string())),
+            None,
+        ));
 
         let result = convert_expr_to_filter(&expr, &schema);
         assert!(result.is_ok());
@@ -343,7 +346,10 @@ mod tests {
     fn test_and_expression() {
         let schema = test_schema();
         let expr = col("id")
-            .eq(Expr::Literal(ScalarValue::Utf8(Some("test".to_string())), None))
+            .eq(Expr::Literal(
+                ScalarValue::Utf8(Some("test".to_string())),
+                None,
+            ))
             .and(col("id").is_not_null());
 
         let result = convert_expr_to_filter(&expr, &schema);

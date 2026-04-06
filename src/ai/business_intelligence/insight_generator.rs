@@ -151,13 +151,14 @@ impl InsightGenerator {
         // Revenue per customer insight
         if let (Some(total_revenue), Some(avg_per_customer)) =
             (revenue.total_revenue, revenue.avg_revenue_per_customer)
-            && avg_per_customer > 0.0 {
-                let customer_count = (total_revenue / avg_per_customer) as u64;
-                let insight = self
-                    .generate_customer_value_insight(avg_per_customer, customer_count)
-                    .await?;
-                insights.push(insight);
-            }
+            && avg_per_customer > 0.0
+        {
+            let customer_count = (total_revenue / avg_per_customer) as u64;
+            let insight = self
+                .generate_customer_value_insight(avg_per_customer, customer_count)
+                .await?;
+            insights.push(insight);
+        }
 
         Ok(Some(insights))
     }

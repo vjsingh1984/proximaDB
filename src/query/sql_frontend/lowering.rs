@@ -798,18 +798,20 @@ impl QueryLowering {
     /// Extract LIMIT value with bounds checking
     fn extract_limit(&self, expr: &SqlExpr) -> Option<u64> {
         if let SqlExpr::Value(value_with_span) = expr
-            && let Value::Number(n, _) = &value_with_span.value {
-                return n.parse::<u64>().ok();
-            }
+            && let Value::Number(n, _) = &value_with_span.value
+        {
+            return n.parse::<u64>().ok();
+        }
         None
     }
 
     /// Extract OFFSET value with bounds checking
     fn extract_offset(&self, offset_expr: &sqlparser::ast::Offset) -> Option<u64> {
         if let SqlExpr::Value(value_with_span) = &offset_expr.value
-            && let Value::Number(n, _) = &value_with_span.value {
-                return n.parse::<u64>().ok();
-            }
+            && let Value::Number(n, _) = &value_with_span.value
+        {
+            return n.parse::<u64>().ok();
+        }
         None
     }
 

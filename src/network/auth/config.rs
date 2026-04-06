@@ -20,8 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Comprehensive authentication configuration for enterprise deployment
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthConfig {
     /// Enable authentication (if false, all requests pass through)
     pub enabled: bool,
@@ -47,7 +46,6 @@ pub struct AuthConfig {
     /// Audit logging for authentication events
     pub audit_logging: AuditConfig,
 }
-
 
 /// JWT token configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

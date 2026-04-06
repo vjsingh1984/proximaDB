@@ -74,7 +74,12 @@ impl EscalationTracker {
     }
 
     /// Check what action should be taken for a given alert.
-    pub fn check(&self, alert_key: &str, policy: &EscalationPolicy, now: Instant) -> EscalationAction {
+    pub fn check(
+        &self,
+        alert_key: &str,
+        policy: &EscalationPolicy,
+        now: Instant,
+    ) -> EscalationAction {
         let Some(state) = self.active.get(alert_key) else {
             return EscalationAction::Wait;
         };
@@ -100,22 +105,30 @@ impl EscalationTracker {
         // Check if we need to notify this stage
         if stage_idx > state.current_stage {
             // Advanced to a new stage — notify
-            return EscalationAction::Notify { stage_index: stage_idx };
+            return EscalationAction::Notify {
+                stage_index: stage_idx,
+            };
         }
 
         // Same stage — check repeat interval
         if let Some(repeat) = policy.stages[stage_idx].repeat_interval {
             if let Some(last) = state.last_notification_at {
                 if now.duration_since(last) >= repeat {
-                    return EscalationAction::Notify { stage_index: stage_idx };
+                    return EscalationAction::Notify {
+                        stage_index: stage_idx,
+                    };
                 }
             } else {
                 // First notification for this stage
-                return EscalationAction::Notify { stage_index: stage_idx };
+                return EscalationAction::Notify {
+                    stage_index: stage_idx,
+                };
             }
         } else if state.last_notification_at.is_none() {
             // No repeat, but haven't notified yet
-            return EscalationAction::Notify { stage_index: stage_idx };
+            return EscalationAction::Notify {
+                stage_index: stage_idx,
+            };
         }
 
         EscalationAction::Wait

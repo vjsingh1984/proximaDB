@@ -329,9 +329,10 @@ impl SparkPartitionReader {
     /// Get progress estimate (0.0 to 1.0)
     pub fn progress(&self) -> f64 {
         if let Some(total) = self.partition.estimated_rows
-            && total > 0 {
-                return (self.records_read as f64) / (total as f64);
-            }
+            && total > 0
+        {
+            return (self.records_read as f64) / (total as f64);
+        }
         if self.exhausted { 1.0 } else { 0.0 }
     }
 }

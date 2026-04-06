@@ -52,8 +52,7 @@ pub type IndexingAlgorithm = String;
 /// Storage engine name (e.g., "sst", "viper", "helix")
 pub type StorageEngine = String;
 /// Compression algorithms for data storage and transmission
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
@@ -68,10 +67,8 @@ pub enum CompressionAlgorithm {
     Gzip,
 }
 
-
 /// Compaction strategies for storage optimization
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum CompactionStrategy {
     /// Size-tiered compaction (default - good for write-heavy workloads)
     #[default]
@@ -83,7 +80,6 @@ pub enum CompactionStrategy {
     /// No automatic compaction
     None,
 }
-
 
 /// Compaction configuration for storage engines
 #[derive(Debug, Clone)]
@@ -197,8 +193,7 @@ pub struct Collection {
 }
 
 /// Vector operation response metrics
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct VectorOperationMetrics {
     /// Total number of vectors processed
     pub total_processed: i64,
@@ -215,7 +210,6 @@ pub struct VectorOperationMetrics {
     /// Index update time in microseconds
     pub index_update_time_us: i64,
 }
-
 
 /// Vector insert request for zero-copy operations
 #[derive(Debug, Clone)]

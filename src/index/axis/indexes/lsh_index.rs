@@ -103,7 +103,7 @@ impl HashFunction {
                 // Box-Muller transform for normal distribution
                 let u1: f32 = rng.gen_range(0.0..1.0);
                 let u2: f32 = rng.gen_range(0.0..1.0);
-                
+
                 (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
             })
             .collect();
@@ -198,9 +198,7 @@ impl AxisLshIndex {
         dimension: usize,
         preferred_extraction_mode: ExtractionMode,
     ) -> Self {
-        let coll_str = collection_id
-            .as_ref()
-            .map_or("<unnamed>", |s| s.as_str());
+        let coll_str = collection_id.as_ref().map_or("<unnamed>", |s| s.as_str());
         info!(
             "Creating AXIS LSH index for collection '{}': {} tables, {} hashes, {} dim, repr={:?}",
             coll_str, config.n_tables, config.n_hashes, dimension, preferred_extraction_mode
@@ -273,10 +271,7 @@ impl AxisLshIndex {
                 PartitionedKey::new("default".to_string(), hash_value)
             };
 
-            table
-                .entry(key)
-                .or_default()
-                .insert(vector_id.clone());
+            table.entry(key).or_default().insert(vector_id.clone());
         }
 
         // Store vector in the collection-specific ZeroOverheadCollection

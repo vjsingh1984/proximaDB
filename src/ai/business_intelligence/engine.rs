@@ -93,8 +93,7 @@ pub struct BusinessMetrics {
 }
 
 /// Revenue-related metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RevenueMetrics {
     /// Total revenue amount
     pub total_revenue: Option<f64>,
@@ -107,8 +106,7 @@ pub struct RevenueMetrics {
 }
 
 /// Customer-related metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CustomerMetrics {
     /// Total number of customers
     pub total_customers: Option<u64>,
@@ -121,8 +119,7 @@ pub struct CustomerMetrics {
 }
 
 /// Operational metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OperationalMetrics {
     /// System uptime percentage
     pub system_uptime_percent: Option<f64>,
@@ -135,8 +132,7 @@ pub struct OperationalMetrics {
 }
 
 /// Performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PerformanceMetrics {
     /// Queries processed per second
     pub queries_per_second: Option<f64>,
@@ -804,7 +800,3 @@ mod tests {
         // Deferred: Implement with proper async test framework and mocks
     }
 }
-
-
-
-

@@ -140,10 +140,8 @@ impl MongoDbConnector {
 
         let db_name = mongo_config.database.as_deref().unwrap_or("default");
 
-        let source_config = SourceConfig::mongodb(
-            format!("mongodb_{}", db_name),
-            &mongo_config.connection_uri,
-        );
+        let source_config =
+            SourceConfig::mongodb(format!("mongodb_{}", db_name), &mongo_config.connection_uri);
 
         Ok(Self {
             base: BaseSource::new(source_config),
@@ -231,10 +229,11 @@ impl MongoDbConnector {
                 // Check if this is the vector field
                 if let Some(config) = collection_config
                     && config.vector_field.as_deref() == Some(key)
-                        && let Some(v) = self.parse_vector(value) {
-                            vector = Some(v);
-                            continue;
-                        }
+                    && let Some(v) = self.parse_vector(value)
+                {
+                    vector = Some(v);
+                    continue;
+                }
 
                 // Add to metadata
                 metadata.insert(key.clone(), value.clone());

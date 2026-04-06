@@ -3,8 +3,7 @@
 use crate::core::foundation::BaseConfig;
 
 /// Unified compression algorithm enum - replaces 10+ duplicates
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
@@ -29,7 +28,6 @@ pub enum CompressionAlgorithm {
     /// Mixed adaptive compression
     Mixed,
 }
-
 
 /// Unified compression configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -108,10 +108,7 @@ impl MorselScheduler {
                 .unwrap_or(4)
         });
 
-        info!(
-            "Creating MorselScheduler with {} workers",
-            workers
-        );
+        info!("Creating MorselScheduler with {} workers", workers);
 
         Self {
             max_workers: workers,
@@ -130,25 +127,20 @@ impl MorselScheduler {
     /// # Returns
     ///
     /// Vector of morsels covering the entire row group
-    pub fn divide_row_group(
-        &self,
-        row_group_idx: usize,
-        total_rows: usize,
-    ) -> Vec<Morsel> {
+    pub fn divide_row_group(&self, row_group_idx: usize, total_rows: usize) -> Vec<Morsel> {
         let mut morsels = Vec::new();
         let mut morsel_id = 0;
         let mut start_row = 0;
 
         loop {
             let remaining = total_rows.saturating_sub(start_row);
-            let row_count = if remaining == 0 { 0 } else { remaining.min(MORSEL_SIZE) };
+            let row_count = if remaining == 0 {
+                0
+            } else {
+                remaining.min(MORSEL_SIZE)
+            };
 
-            morsels.push(Morsel::new(
-                morsel_id,
-                start_row,
-                row_count,
-                row_group_idx,
-            ));
+            morsels.push(Morsel::new(morsel_id, start_row, row_count, row_group_idx));
 
             start_row += if row_count == 0 { 1 } else { row_count };
             morsel_id += 1;
@@ -219,7 +211,10 @@ impl MorselScheduler {
             // Spawn task for this morsel
             let task = tokio::spawn(async move {
                 let _permit = permit; // Hold permit until processing completes
-                trace!("Processing morsel {} ({} records)", morsel.id, morsel.row_count);
+                trace!(
+                    "Processing morsel {} ({} records)",
+                    morsel.id, morsel.row_count
+                );
                 processor_clone(morsel_records).await
             });
 
@@ -233,10 +228,7 @@ impl MorselScheduler {
             results.extend(morsel_results);
         }
 
-        debug!(
-            "Completed morsel processing: {} results",
-            results.len()
-        );
+        debug!("Completed morsel processing: {} results", results.len());
 
         Ok(results)
     }
@@ -248,7 +240,10 @@ impl MorselScheduler {
 
     /// Get the current morsel queue length
     pub fn queue_len(&self) -> usize {
-        self.morsel_queue.try_lock().map(|guard| guard.len()).unwrap_or(0)
+        self.morsel_queue
+            .try_lock()
+            .map(|guard| guard.len())
+            .unwrap_or(0)
     }
 }
 
@@ -347,9 +342,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_morsels_multiple() {
         let scheduler = MorselScheduler::new(Some(4));
-        let records = (0..10000)
-            .map(|_| VectorRecord::default())
-            .collect();
+        let records = (0..10000).map(|_| VectorRecord::default()).collect();
 
         let results = scheduler
             .process_morsels(records, |morsel_records| async move {

@@ -772,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::panic)]  // Test panic for assertion failure
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_hadoop_writable_conversion() {
         let writable = HadoopWritable::IntWritable(42);
         let json = writable.to_json();
@@ -799,7 +799,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::panic)]  // Test panic for assertion failure
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_hive_type_parsing() {
         assert!(matches!(parse_hive_type("string"), HiveType::String));
         assert!(matches!(parse_hive_type("int"), HiveType::Int));

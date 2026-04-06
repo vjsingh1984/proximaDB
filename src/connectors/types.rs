@@ -333,9 +333,10 @@ impl ColumnStatistics {
     /// Estimate selectivity for an equality predicate.
     pub fn selectivity_eq(&self, total_rows: u64) -> f64 {
         if let Some(distinct) = self.distinct_count
-            && distinct > 0 {
-                return 1.0 / distinct as f64;
-            }
+            && distinct > 0
+        {
+            return 1.0 / distinct as f64;
+        }
         // Default assumption: 10% selectivity
         0.1_f64.min(1.0 / (total_rows as f64).sqrt())
     }
@@ -361,13 +362,15 @@ impl ColumnStatistics {
 
         // Extend min/max range
         if let Some(ref other_min) = other.min_value
-            && (self.min_value.is_none() || self.min_value.as_ref().is_some_and(|m| other_min < m)) {
-                self.min_value = Some(other_min.clone());
-            }
+            && (self.min_value.is_none() || self.min_value.as_ref().is_some_and(|m| other_min < m))
+        {
+            self.min_value = Some(other_min.clone());
+        }
         if let Some(ref other_max) = other.max_value
-            && (self.max_value.is_none() || self.max_value.as_ref().is_some_and(|m| other_max > m)) {
-                self.max_value = Some(other_max.clone());
-            }
+            && (self.max_value.is_none() || self.max_value.as_ref().is_some_and(|m| other_max > m))
+        {
+            self.max_value = Some(other_max.clone());
+        }
 
         // Sorted property is lost after merge
         self.is_sorted = false;

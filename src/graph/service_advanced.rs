@@ -35,8 +35,7 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 // Deferred: These should be generated from graph.proto once proto build is configured
 
 /// Graph engine type selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GraphEngineTypeProto {
     /// No engine type specified; treated as default.
     Unspecified = 0,
@@ -48,7 +47,6 @@ pub enum GraphEngineTypeProto {
     /// QUASAR hybrid hot/cold tiering engine.
     Quasar = 3,
 }
-
 
 /// PULSAR graph configuration (stub)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

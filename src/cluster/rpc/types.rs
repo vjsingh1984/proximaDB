@@ -154,8 +154,7 @@ pub struct LogEntry {
 }
 
 /// Types of log entries
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LogEntryType {
     /// Normal command entry
     #[default]
@@ -165,7 +164,6 @@ pub enum LogEntryType {
     /// Configuration change entry
     Config,
 }
-
 
 /// Request for Raft InstallSnapshot RPC
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,8 +272,7 @@ pub enum ReplicationOperation {
 }
 
 /// Consistency levels for replication
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ConsistencyLevel {
     /// Only one node needs to acknowledge
     One,
@@ -287,7 +284,6 @@ pub enum ConsistencyLevel {
     /// Local datacenter quorum
     LocalQuorum,
 }
-
 
 /// Request to pull missed entries
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -516,8 +512,7 @@ pub struct HealthCheckResponse {
 }
 
 /// Serving status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ServingStatus {
     /// Node is healthy and serving requests
     #[default]
@@ -527,7 +522,6 @@ pub enum ServingStatus {
     /// Service is unknown
     ServiceUnknown,
 }
-
 
 /// Request for detailed status
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -574,8 +568,7 @@ pub struct StatusResponse {
 }
 
 /// Node roles
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum NodeRole {
     /// Raft follower
     #[default]
@@ -587,7 +580,6 @@ pub enum NodeRole {
     /// Observer (non-voting member)
     Observer,
 }
-
 
 /// Status of a shard on a node
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -615,8 +607,7 @@ pub struct ShardStatus {
 }
 
 /// Shard states
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ShardState {
     /// Shard is active and serving requests
     Active,
@@ -630,7 +621,6 @@ pub enum ShardState {
     /// Shard is inactive/offline
     Inactive,
 }
-
 
 #[cfg(test)]
 mod tests {

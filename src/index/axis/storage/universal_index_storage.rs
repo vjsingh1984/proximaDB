@@ -320,11 +320,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         match self.storage_engine {
             StorageEngine::SST => {
                 // Write as SST
-                let config =
-                    crate::storage::persistence::filesystem::FilesystemConfig {
-                        default_fs: Some(file_path.to_string_lossy().to_string()),
-                        ..Default::default()
-                    };
+                let config = crate::storage::persistence::filesystem::FilesystemConfig {
+                    default_fs: Some(file_path.to_string_lossy().to_string()),
+                    ..Default::default()
+                };
                 let filesystem_factory =
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -380,11 +379,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 if !file_path.exists() {
                     return Ok(None);
                 }
-                let config =
-                    crate::storage::persistence::filesystem::FilesystemConfig {
-                        default_fs: Some(file_path.to_string_lossy().to_string()),
-                        ..Default::default()
-                    };
+                let config = crate::storage::persistence::filesystem::FilesystemConfig {
+                    default_fs: Some(file_path.to_string_lossy().to_string()),
+                    ..Default::default()
+                };
                 let filesystem_factory =
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -393,9 +391,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 // Create zero-copy system for the reader
                 // Create UnifiedCachingFilesystem for the reader
                 let base_fs = filesystem.get_filesystem("file://").map_err(|e| {
-                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(
-                        format!("Failed to get base filesystem: {}", e),
-                    )))
+                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(format!(
+                        "Failed to get base filesystem: {}",
+                        e
+                    ))))
                 })?;
                 let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
                     base_fs,

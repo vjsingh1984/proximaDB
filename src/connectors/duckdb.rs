@@ -328,8 +328,7 @@ pub struct DuckDBVectorSearchParams {
 }
 
 /// DuckDB distance metrics
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum DuckDBDistanceMetric {
     /// Euclidean (L2) distance
     L2,
@@ -341,7 +340,6 @@ pub enum DuckDBDistanceMetric {
     /// Inner product
     InnerProduct,
 }
-
 
 /// DuckDB table scan function
 pub struct DuckDBTableScan {

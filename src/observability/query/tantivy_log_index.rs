@@ -261,7 +261,8 @@ impl TantivyLogIndex {
         }
 
         // Add severity
-        let severity_str = Severity::try_from(log.severity).map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s));
+        let severity_str = Severity::try_from(log.severity)
+            .map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s));
         doc.add_text(self.severity_field, &severity_str);
 
         // Build combined all-text field
@@ -322,7 +323,8 @@ impl TantivyLogIndex {
                 doc.add_text(self.source_field, source);
             }
 
-            let severity_str = Severity::try_from(log.severity).map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s));
+            let severity_str = Severity::try_from(log.severity)
+                .map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s));
             doc.add_text(self.severity_field, &severity_str);
 
             // Build all-text
@@ -423,11 +425,12 @@ impl TantivyLogIndex {
         for (_score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher.doc(doc_address)?;
             if let Some(id_value) = doc.get_first(self.id_field)
-                && let Some(id) = id_value.as_str() {
-                    let term = Term::from_field_text(self.id_field, id);
-                    writer.delete_term(term);
-                    deleted += 1;
-                }
+                && let Some(id) = id_value.as_str()
+            {
+                let term = Term::from_field_text(self.id_field, id);
+                writer.delete_term(term);
+                deleted += 1;
+            }
         }
 
         // Update count
@@ -509,13 +512,15 @@ impl TantivyLogIndex {
 
             // Apply time filter (post-filter for accuracy)
             if let Some(start) = options.start_time_ns
-                && timestamp_ns < start {
-                    continue;
-                }
+                && timestamp_ns < start
+            {
+                continue;
+            }
             if let Some(end) = options.end_time_ns
-                && timestamp_ns > end {
-                    continue;
-                }
+                && timestamp_ns > end
+            {
+                continue;
+            }
 
             results.push(LogSearchResult {
                 id,

@@ -19,11 +19,10 @@
 //! Tests the distributed query functionality integrated into the service layer,
 //! including the REST endpoint and QueryFacadeAdapter integration.
 
-
+use proximadb::query::facade::QueryRequest;
 use proximadb::query::facade::strategies::distributed::{
     DistributedQueryStrategy, DistributedStrategyConfig,
 };
-use proximadb::query::facade::QueryRequest;
 
 #[test]
 fn test_distributed_strategy_config_default() {

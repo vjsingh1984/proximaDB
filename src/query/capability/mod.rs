@@ -89,6 +89,4 @@
 
 pub mod registry;
 
-pub use registry::{
-    Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet,
-};
+pub use registry::{Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet};

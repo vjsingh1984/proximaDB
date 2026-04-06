@@ -252,10 +252,11 @@ impl MetadataStore {
 
         // Backup task
         if let Some(backup_config) = &self.config.backup_config
-            && backup_config.enabled {
-                let task = self.start_backup_task(backup_config.clone()).await?;
-                self.background_tasks.push(task);
-            }
+            && backup_config.enabled
+        {
+            let task = self.start_backup_task(backup_config.clone()).await?;
+            self.background_tasks.push(task);
+        }
 
         // Cache cleanup task
         if self.config.cache_config.enabled {
@@ -461,8 +462,12 @@ impl MetadataStoreInterface for MetadataStore {
                 config: {
                     let mut m = HashMap::new();
                     m.insert("dimension".to_string(), serde_json::json!(config.dimension));
-                    if let Some(dm) = config.distance_metric { m.insert("distance_metric".to_string(), serde_json::json!(dm)); }
-                    if let Some(se) = config.storage_engine { m.insert("storage_engine".to_string(), serde_json::json!(se)); }
+                    if let Some(dm) = config.distance_metric {
+                        m.insert("distance_metric".to_string(), serde_json::json!(dm));
+                    }
+                    if let Some(se) = config.storage_engine {
+                        m.insert("storage_engine".to_string(), serde_json::json!(se));
+                    }
                     m
                 },
                 description: Some(format!("Collection {}", config.name)),
@@ -554,8 +559,12 @@ impl MetadataStoreInterface for MetadataStore {
                 config: {
                     let mut m = HashMap::new();
                     m.insert("dimension".to_string(), serde_json::json!(config.dimension));
-                    if let Some(dm) = config.distance_metric { m.insert("distance_metric".to_string(), serde_json::json!(dm)); }
-                    if let Some(se) = config.storage_engine { m.insert("storage_engine".to_string(), serde_json::json!(se)); }
+                    if let Some(dm) = config.distance_metric {
+                        m.insert("distance_metric".to_string(), serde_json::json!(dm));
+                    }
+                    if let Some(se) = config.storage_engine {
+                        m.insert("storage_engine".to_string(), serde_json::json!(se));
+                    }
                     m
                 },
                 description: Some(format!("Collection {}", config.name)),

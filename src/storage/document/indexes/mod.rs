@@ -47,7 +47,6 @@ struct CollectionIndexes {
     geo_indexes: HashMap<String, GeoIndex>,
 }
 
-
 /// Index manager for document collections
 pub struct IndexManager {
     /// Indexes by collection name
@@ -204,9 +203,10 @@ impl IndexManager {
     ) -> Result<Vec<String>> {
         let indexes = self.indexes.read().await;
         if let Some(collection_indexes) = indexes.get(collection)
-            && let Some(index) = collection_indexes.path_indexes.get(path) {
-                return index.query(condition);
-            }
+            && let Some(index) = collection_indexes.path_indexes.get(path)
+        {
+            return index.query(condition);
+        }
         Ok(vec![])
     }
 
@@ -219,9 +219,10 @@ impl IndexManager {
     ) -> Result<Vec<String>> {
         let indexes = self.indexes.read().await;
         if let Some(collection_indexes) = indexes.get(collection)
-            && let Some(index) = collection_indexes.array_indexes.get(path) {
-                return index.query_contains(value);
-            }
+            && let Some(index) = collection_indexes.array_indexes.get(path)
+        {
+            return index.query_contains(value);
+        }
         Ok(vec![])
     }
 
@@ -234,9 +235,10 @@ impl IndexManager {
     ) -> Result<Vec<(String, f32)>> {
         let indexes = self.indexes.read().await;
         if let Some(collection_indexes) = indexes.get(collection)
-            && let Some(ref ft_index) = collection_indexes.fulltext_index {
-                return ft_index.search(query, limit);
-            }
+            && let Some(ref ft_index) = collection_indexes.fulltext_index
+        {
+            return ft_index.search(query, limit);
+        }
         Ok(vec![])
     }
 

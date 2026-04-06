@@ -728,30 +728,32 @@ impl DistributedCollectionOps {
         // Check partition key if provided
         if let Some(ref partition_key) = context.partition_key
             && let Some(ref bounds) = shard.metadata_bounds
-                && !bounds.may_contain_partition(partition_key) {
-                    debug!(
-                        shard_id = %shard.id,
-                        partition_key = %partition_key,
-                        "Shard pruned: partition key not in bounds"
-                    );
-                    return false;
-                }
+            && !bounds.may_contain_partition(partition_key)
+        {
+            debug!(
+                shard_id = %shard.id,
+                partition_key = %partition_key,
+                "Shard pruned: partition key not in bounds"
+            );
+            return false;
+        }
 
         // Check additional field filters
         if !context.field_filters.is_empty()
-            && let Some(ref bounds) = shard.metadata_bounds {
-                for (field, value) in &context.field_filters {
-                    if !bounds.may_contain_field_value(field, value) {
-                        debug!(
-                            shard_id = %shard.id,
-                            field = %field,
-                            value = ?value,
-                            "Shard pruned: field value not in bounds"
-                        );
-                        return false;
-                    }
+            && let Some(ref bounds) = shard.metadata_bounds
+        {
+            for (field, value) in &context.field_filters {
+                if !bounds.may_contain_field_value(field, value) {
+                    debug!(
+                        shard_id = %shard.id,
+                        field = %field,
+                        value = ?value,
+                        "Shard pruned: field value not in bounds"
+                    );
+                    return false;
                 }
             }
+        }
 
         true
     }

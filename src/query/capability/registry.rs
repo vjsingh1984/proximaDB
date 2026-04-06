@@ -202,21 +202,33 @@ impl CapabilitySet {
     /// Return the union of two capability sets.
     pub fn union(&self, other: &CapabilitySet) -> CapabilitySet {
         CapabilitySet {
-            capabilities: self.capabilities.union(&other.capabilities).cloned().collect(),
+            capabilities: self
+                .capabilities
+                .union(&other.capabilities)
+                .cloned()
+                .collect(),
         }
     }
 
     /// Return the difference of two capability sets.
     pub fn difference(&self, other: &CapabilitySet) -> CapabilitySet {
         CapabilitySet {
-            capabilities: self.capabilities.difference(&other.capabilities).cloned().collect(),
+            capabilities: self
+                .capabilities
+                .difference(&other.capabilities)
+                .cloned()
+                .collect(),
         }
     }
 
     /// Return the intersection of two capability sets.
     pub fn intersection(&self, other: &CapabilitySet) -> CapabilitySet {
         CapabilitySet {
-            capabilities: self.capabilities.intersection(&other.capabilities).cloned().collect(),
+            capabilities: self
+                .capabilities
+                .intersection(&other.capabilities)
+                .cloned()
+                .collect(),
         }
     }
 
@@ -279,7 +291,11 @@ impl fmt::Display for CapabilityCheckError {
             } => {
                 write!(f, "Unsupported capability: {}", capability)?;
                 if !available_alternatives.is_empty() {
-                    write!(f, ". Available alternatives: {}", available_alternatives.join(", "))?;
+                    write!(
+                        f,
+                        ". Available alternatives: {}",
+                        available_alternatives.join(", ")
+                    )?;
                 }
                 Ok(())
             }
@@ -324,14 +340,18 @@ impl CapabilityRegistry {
 
     /// Register capabilities for an engine or provider.
     pub fn register_capabilities(&self, name: &str, capabilities: CapabilitySet) {
-        let mut caps = self.capabilities.write()
+        let mut caps = self
+            .capabilities
+            .write()
             .expect("RwLock write lock poisoned - capability registry unavailable");
         caps.insert(name.to_string(), capabilities);
     }
 
     /// Get capabilities for an engine or provider.
     pub fn get_capabilities(&self, name: &str) -> Option<CapabilitySet> {
-        let caps = self.capabilities.read()
+        let caps = self
+            .capabilities
+            .read()
             .expect("RwLock read lock poisoned - capability registry unavailable");
         caps.get(name).cloned()
     }
@@ -342,12 +362,12 @@ impl CapabilityRegistry {
         engine_name: &str,
         required: &CapabilitySet,
     ) -> Result<(), CapabilityCheckError> {
-        let available = self
-            .get_capabilities(engine_name)
-            .ok_or_else(|| CapabilityCheckError::UnsupportedCapability {
+        let available = self.get_capabilities(engine_name).ok_or_else(|| {
+            CapabilityCheckError::UnsupportedCapability {
                 capability: engine_name.to_string(),
                 available_alternatives: vec![],
-            })?;
+            }
+        })?;
 
         if available.contains(required) {
             Ok(())
@@ -372,7 +392,9 @@ impl CapabilityRegistry {
 
     /// Get all registered engine names.
     pub fn registered_engines(&self) -> Vec<String> {
-        let caps = self.capabilities.read()
+        let caps = self
+            .capabilities
+            .read()
             .expect("RwLock read lock poisoned - capability registry unavailable");
         caps.keys().cloned().collect()
     }
@@ -386,7 +408,9 @@ impl CapabilityRegistry {
     ///
     /// Returns a list of engine names that have all the specified capabilities.
     pub fn find_engines_with_capabilities(&self, required: &CapabilitySet) -> Vec<String> {
-        let caps = self.capabilities.read()
+        let caps = self
+            .capabilities
+            .read()
             .expect("RwLock read lock poisoned - capability registry unavailable");
         caps.iter()
             .filter(|(_, engine_caps)| engine_caps.contains(required))
@@ -407,10 +431,8 @@ mod tests {
 
     #[test]
     fn test_capability_set_contains() {
-        let set1 = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-        ]);
+        let set1 =
+            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
         let set2 = CapabilitySet::from_capabilities(&[Capability::VectorSearch]);
 
         assert!(set1.contains(&set2));
@@ -431,25 +453,19 @@ mod tests {
 
     #[test]
     fn test_capability_set_difference() {
-        let set1 = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-        ]);
+        let set1 =
+            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
         let set2 = CapabilitySet::from_capabilities(&[Capability::VectorSearch]);
         let diff = set1.difference(&set2);
 
-        assert!(diff.contains(&CapabilitySet::from_capabilities(&[
-            Capability::Filter,
-        ])));
+        assert!(diff.contains(&CapabilitySet::from_capabilities(&[Capability::Filter,])));
     }
 
     #[test]
     fn test_capability_registry() {
         let registry = CapabilityRegistry::new();
-        let caps = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-        ]);
+        let caps =
+            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
 
         registry.register_capabilities("SST", caps.clone());
         let retrieved = registry.get_capabilities("SST").unwrap();
@@ -460,10 +476,8 @@ mod tests {
     #[test]
     fn test_capability_check_support() {
         let registry = CapabilityRegistry::new();
-        let caps = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-        ]);
+        let caps =
+            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
 
         registry.register_capabilities("SST", caps);
 

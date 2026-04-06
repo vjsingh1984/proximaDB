@@ -24,8 +24,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// Main CDC configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CdcConfig {
     /// Offset storage configuration
     pub offset_storage: OffsetStorageConfig,
@@ -38,7 +37,6 @@ pub struct CdcConfig {
     /// Global settings
     pub settings: CdcSettings,
 }
-
 
 impl CdcConfig {
     /// Create a new CDC configuration

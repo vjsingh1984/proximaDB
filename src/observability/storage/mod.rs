@@ -115,86 +115,88 @@ impl ObservabilityStorage {
 
         for entry in entries {
             if entry.is_observability_operation()
-                && let UnifiedWALOperation::ObservabilityOp(op) = entry.operation {
-                    match op {
-                        ObservabilityOperation::CreateNamespace {
-                            namespace,
-                            config_json,
-                        } => {
-                            if let Ok(config) =
-                                serde_json::from_str::<ObservabilityNamespaceConfig>(&config_json)
-                            {
-                                // Replay namespace creation (without WAL write)
-                                let namespace_path =
-                                    format!("{}/observability/{}", self.base_path, namespace);
-                                let namespace_storage = NamespaceStorage {
-                                    config: config.clone(),
-                                    logs: partitioned::PartitionedStorage::new(&format!(
-                                        "{}/logs",
-                                        namespace_path
-                                    ))?,
-                                    metrics: metrics::MetricStorage::new(&format!(
-                                        "{}/metrics",
-                                        namespace_path
-                                    ))?,
-                                    traces: traces::TraceStorage::new(&format!(
-                                        "{}/traces",
-                                        namespace_path
-                                    ))?,
-                                };
-                                let mut namespaces = self.namespaces.write().await;
-                                namespaces.insert(namespace, namespace_storage);
-                                recovered_namespaces += 1;
-                            }
+                && let UnifiedWALOperation::ObservabilityOp(op) = entry.operation
+            {
+                match op {
+                    ObservabilityOperation::CreateNamespace {
+                        namespace,
+                        config_json,
+                    } => {
+                        if let Ok(config) =
+                            serde_json::from_str::<ObservabilityNamespaceConfig>(&config_json)
+                        {
+                            // Replay namespace creation (without WAL write)
+                            let namespace_path =
+                                format!("{}/observability/{}", self.base_path, namespace);
+                            let namespace_storage = NamespaceStorage {
+                                config: config.clone(),
+                                logs: partitioned::PartitionedStorage::new(&format!(
+                                    "{}/logs",
+                                    namespace_path
+                                ))?,
+                                metrics: metrics::MetricStorage::new(&format!(
+                                    "{}/metrics",
+                                    namespace_path
+                                ))?,
+                                traces: traces::TraceStorage::new(&format!(
+                                    "{}/traces",
+                                    namespace_path
+                                ))?,
+                            };
+                            let mut namespaces = self.namespaces.write().await;
+                            namespaces.insert(namespace, namespace_storage);
+                            recovered_namespaces += 1;
                         }
-                        ObservabilityOperation::WriteLog { namespace, log } => {
-                            let namespaces = self.namespaces.read().await;
-                            if let Some(ns) = namespaces.get(&namespace) {
+                    }
+                    ObservabilityOperation::WriteLog { namespace, log } => {
+                        let namespaces = self.namespaces.read().await;
+                        if let Some(ns) = namespaces.get(&namespace) {
+                            let _ = ns.logs.write(&log).await;
+                            recovered_logs += 1;
+                        }
+                    }
+                    ObservabilityOperation::WriteLogs { namespace, logs } => {
+                        let namespaces = self.namespaces.read().await;
+                        if let Some(ns) = namespaces.get(&namespace) {
+                            for log in logs {
                                 let _ = ns.logs.write(&log).await;
                                 recovered_logs += 1;
                             }
                         }
-                        ObservabilityOperation::WriteLogs { namespace, logs } => {
-                            let namespaces = self.namespaces.read().await;
-                            if let Some(ns) = namespaces.get(&namespace) {
-                                for log in logs {
-                                    let _ = ns.logs.write(&log).await;
-                                    recovered_logs += 1;
-                                }
-                            }
+                    }
+                    ObservabilityOperation::WriteMetric { namespace, metric } => {
+                        let namespaces = self.namespaces.read().await;
+                        if let Some(ns) = namespaces.get(&namespace) {
+                            let _ = ns.metrics.write(&metric).await;
+                            recovered_metrics += 1;
                         }
-                        ObservabilityOperation::WriteMetric { namespace, metric } => {
-                            let namespaces = self.namespaces.read().await;
-                            if let Some(ns) = namespaces.get(&namespace) {
+                    }
+                    ObservabilityOperation::WriteMetrics { namespace, metrics } => {
+                        let namespaces = self.namespaces.read().await;
+                        if let Some(ns) = namespaces.get(&namespace) {
+                            for metric in metrics {
                                 let _ = ns.metrics.write(&metric).await;
                                 recovered_metrics += 1;
                             }
                         }
-                        ObservabilityOperation::WriteMetrics { namespace, metrics } => {
-                            let namespaces = self.namespaces.read().await;
-                            if let Some(ns) = namespaces.get(&namespace) {
-                                for metric in metrics {
-                                    let _ = ns.metrics.write(&metric).await;
-                                    recovered_metrics += 1;
-                                }
-                            }
-                        }
-                        ObservabilityOperation::WriteSpan {
-                            namespace,
-                            span_json,
-                        } => {
-                            let namespaces = self.namespaces.read().await;
-                            if let Some(ns) = namespaces.get(&namespace)
-                                && let Ok(span) = serde_json::from_str::<TraceSpan>(&span_json) {
-                                    let _ = ns.traces.write(&span).await;
-                                }
-                        }
-                        ObservabilityOperation::DeleteNamespace { namespace } => {
-                            let mut namespaces = self.namespaces.write().await;
-                            namespaces.remove(&namespace);
+                    }
+                    ObservabilityOperation::WriteSpan {
+                        namespace,
+                        span_json,
+                    } => {
+                        let namespaces = self.namespaces.read().await;
+                        if let Some(ns) = namespaces.get(&namespace)
+                            && let Ok(span) = serde_json::from_str::<TraceSpan>(&span_json)
+                        {
+                            let _ = ns.traces.write(&span).await;
                         }
                     }
+                    ObservabilityOperation::DeleteNamespace { namespace } => {
+                        let mut namespaces = self.namespaces.write().await;
+                        namespaces.remove(&namespace);
+                    }
                 }
+            }
         }
 
         info!(

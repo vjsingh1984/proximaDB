@@ -51,12 +51,11 @@ pub enum AggregationExpression {
 /// Evaluate an expression against a document, returning the computed SqlValue.
 pub fn evaluate_expression(expr: &AggregationExpression, doc: &SqlObject) -> Result<SqlValue> {
     match expr {
-        AggregationExpression::FieldRef(field) => {
-            doc.fields
-                .get(field)
-                .cloned()
-                .ok_or_else(|| anyhow!("Field '{}' not found in document", field))
-        }
+        AggregationExpression::FieldRef(field) => doc
+            .fields
+            .get(field)
+            .cloned()
+            .ok_or_else(|| anyhow!("Field '{}' not found in document", field)),
 
         AggregationExpression::Literal(val) => Ok(val.clone()),
 
@@ -284,9 +283,7 @@ pub fn execute_lookup(
         out.fields.insert(
             config.output_field.clone(),
             SqlValue {
-                value: Some(SqlValueVariant::ArrayValue(SqlArray {
-                    values: arr_values,
-                })),
+                value: Some(SqlValueVariant::ArrayValue(SqlArray { values: arr_values })),
             },
         );
 
@@ -306,10 +303,7 @@ fn to_f64(val: &SqlValue) -> Result<f64> {
         Some(SqlValueVariant::Int64Value(i)) => Ok(*i as f64),
         Some(SqlValueVariant::NumberValue(f)) => Ok(*f),
         Some(SqlValueVariant::BoolValue(b)) => Ok(if *b { 1.0 } else { 0.0 }),
-        _ => Err(anyhow!(
-            "Cannot convert value to numeric: {:?}",
-            val.value
-        )),
+        _ => Err(anyhow!("Cannot convert value to numeric: {:?}", val.value)),
     }
 }
 
@@ -419,7 +413,10 @@ mod tests {
 
         let result = evaluate_expression(&expr, &doc).unwrap();
         let val = to_f64(&result).unwrap();
-        assert!((val - 35.0).abs() < f64::EPSILON, "Expected 35.0, got {val}");
+        assert!(
+            (val - 35.0).abs() < f64::EPSILON,
+            "Expected 35.0, got {val}"
+        );
     }
 
     #[test]
@@ -702,14 +699,8 @@ mod tests {
 
         // Foreign: customers
         let customers = vec![
-            make_doc(vec![
-                ("cid", int_val(100)),
-                ("name", string_val("Alice")),
-            ]),
-            make_doc(vec![
-                ("cid", int_val(200)),
-                ("name", string_val("Bob")),
-            ]),
+            make_doc(vec![("cid", int_val(100)), ("name", string_val("Alice"))]),
+            make_doc(vec![("cid", int_val(200)), ("name", string_val("Bob"))]),
         ];
 
         let fetcher = TestFetcher {

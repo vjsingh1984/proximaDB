@@ -656,15 +656,16 @@ async fn test_concurrent_operations() {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service
-            .create_node(TEST_GRAPH_ID, node)
-            .await
-            .unwrap();
+        service.create_node(TEST_GRAPH_ID, node).await.unwrap();
     }
 
     // Verify all nodes were created
     let stats = service.get_stats(TEST_GRAPH_ID).await.unwrap();
-    assert!(stats.total_nodes >= 10, "Expected >= 10 nodes, got {}", stats.total_nodes);
+    assert!(
+        stats.total_nodes >= 10,
+        "Expected >= 10 nodes, got {}",
+        stats.total_nodes
+    );
 
     // Now create edges (nodes exist)
     for i in 1..10 {
@@ -678,10 +679,7 @@ async fn test_concurrent_operations() {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service
-            .create_edge(TEST_GRAPH_ID, edge)
-            .await
-            .unwrap();
+        service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
     }
 
     let stats = service.get_stats(TEST_GRAPH_ID).await.unwrap();

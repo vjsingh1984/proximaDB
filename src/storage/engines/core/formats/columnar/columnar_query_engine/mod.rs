@@ -18,10 +18,12 @@ pub use adaptive_filter_executor::{BranchedFilterExecutor, FilterPath};
 pub use column_projector::{ColumnProjection, ProjectionBuilder};
 pub use columnar_reader::{ParquetReader, ReaderBuilder};
 pub use filter_pushdown_engine::{FilterPushdown, PredicateBuilder};
+pub use pipeline::{
+    FilterOperator, PipelineBuilder, PipelineOperator, ScanOperator, ScoreOperator, TopKOperator,
+};
 pub use query_metrics::{QueryStatistics, StatisticsCollector};
 pub use result_cache::{CacheStrategy, QueryCache};
 pub use vectorized_executor::{DataChunk, vectorized_filter_batch};
-pub use pipeline::{PipelineBuilder, PipelineOperator, ScanOperator, FilterOperator, ScoreOperator, TopKOperator};
 
 // Re-export unified reader types for compatibility
 pub use unified_reader::{

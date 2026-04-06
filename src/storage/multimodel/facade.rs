@@ -23,8 +23,7 @@ use super::stores::{
 use super::traits::{ModelType, MultiModelStorageEngine, StoreCapabilities};
 
 /// Configuration for the multi-model storage facade
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct MultiModelFacadeConfig {
     /// Vector store configuration
     pub vector: VectorStoreConfig,
@@ -37,7 +36,6 @@ pub struct MultiModelFacadeConfig {
     /// Observability store configuration
     pub observability: ObservabilityStoreConfig,
 }
-
 
 /// MultiModelStorageFacade provides unified access to all specialized stores
 ///
@@ -304,7 +302,7 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
             ModelType::Relational => self.rdbms_store.as_ref().map(|s| s.capabilities()),
             ModelType::Observability => self.observability_store.as_ref().map(|s| s.capabilities()),
             ModelType::TimeSeries => None, // Not yet implemented
-            ModelType::Event => None, // Not yet implemented
+            ModelType::Event => None,      // Not yet implemented
         }
     }
 
@@ -314,16 +312,18 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
         // Collect vector stats from primary engine
         if let Some(store) = &self.vector_store
             && let Some(engine) = store.primary_engine()
-                && let Ok(engine_stats) = engine.get_engine_stats().await {
-                    stats.total_storage_bytes += engine_stats.total_storage_bytes;
-                }
+            && let Ok(engine_stats) = engine.get_engine_stats().await
+        {
+            stats.total_storage_bytes += engine_stats.total_storage_bytes;
+        }
 
         // Collect RDBMS stats
         if let Some(store) = &self.rdbms_store
             && let Some(engine) = store.primary_engine()
-                && let Ok(engine_stats) = engine.get_engine_stats().await {
-                    stats.total_storage_bytes += engine_stats.total_storage_bytes;
-                }
+            && let Ok(engine_stats) = engine.get_engine_stats().await
+        {
+            stats.total_storage_bytes += engine_stats.total_storage_bytes;
+        }
 
         // Collect graph stats
         if let Some(store) = &self.graph_store {
@@ -342,17 +342,19 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
             ModelType::Vector => {
                 if let Some(store) = &self.vector_store
                     && let Some(engine) = store.primary_engine()
-                        && let Ok(stats) = engine.get_engine_stats().await {
-                            return Ok(stats.total_storage_bytes);
-                        }
+                    && let Ok(stats) = engine.get_engine_stats().await
+                {
+                    return Ok(stats.total_storage_bytes);
+                }
                 Ok(0)
             }
             ModelType::Relational => {
                 if let Some(store) = &self.rdbms_store
                     && let Some(engine) = store.primary_engine()
-                        && let Ok(stats) = engine.get_engine_stats().await {
-                            return Ok(stats.total_storage_bytes);
-                        }
+                    && let Ok(stats) = engine.get_engine_stats().await
+                {
+                    return Ok(stats.total_storage_bytes);
+                }
                 Ok(0)
             }
             _ => Ok(0), // Other stores would need their own size tracking
@@ -368,13 +370,15 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
         };
 
         if let Some(store) = &self.vector_store
-            && let Some(engine) = store.primary_engine() {
-                engine.flush(flush_params.clone()).await?;
-            }
+            && let Some(engine) = store.primary_engine()
+        {
+            engine.flush(flush_params.clone()).await?;
+        }
         if let Some(store) = &self.rdbms_store
-            && let Some(engine) = store.primary_engine() {
-                engine.flush(flush_params).await?;
-            }
+            && let Some(engine) = store.primary_engine()
+        {
+            engine.flush(flush_params).await?;
+        }
 
         // Document and observability would have their own flush methods
 
@@ -385,13 +389,15 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
         let compact_params = CompactionParameters::default();
 
         if let Some(store) = &self.vector_store
-            && let Some(engine) = store.primary_engine() {
-                engine.compact(compact_params.clone()).await?;
-            }
+            && let Some(engine) = store.primary_engine()
+        {
+            engine.compact(compact_params.clone()).await?;
+        }
         if let Some(store) = &self.rdbms_store
-            && let Some(engine) = store.primary_engine() {
-                engine.compact(compact_params).await?;
-            }
+            && let Some(engine) = store.primary_engine()
+        {
+            engine.compact(compact_params).await?;
+        }
 
         Ok(())
     }

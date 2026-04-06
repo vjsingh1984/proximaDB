@@ -819,10 +819,7 @@ mod tests {
     #[test]
     fn test_p2_matrix_symmetric_distances() {
         let builder = create_builder(DistanceMetric::Euclidean);
-        let vectors = vec![
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-        ];
+        let vectors = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
         let matrix = builder.build_p2_matrix(&vectors, 2).unwrap();
         assert_eq!(matrix.num_vectors, 2);
         // 2x2 matrix = 4 distances, each u16 = 8 bytes
@@ -834,13 +831,13 @@ mod tests {
     #[test]
     fn test_p2_matrix_compression_scheme() {
         let builder = create_builder(DistanceMetric::Cosine);
-        let vectors = vec![
-            vec![1.0, 0.0, 0.0],
-            vec![0.0, 1.0, 0.0],
-        ];
+        let vectors = vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]];
         let matrix = builder.build_p2_matrix(&vectors, 3).unwrap();
         // Should use BitPacked 16-bit compression
-        assert!(matches!(matrix.compression, ProximaScheme::BitPacked { bits: 16 }));
+        assert!(matches!(
+            matrix.compression,
+            ProximaScheme::BitPacked { bits: 16 }
+        ));
     }
 
     #[test]

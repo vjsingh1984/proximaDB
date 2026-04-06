@@ -659,8 +659,7 @@ impl CrossModalReranker {
 
         for (i, record_i) in records.iter().enumerate() {
             for record_j in records.iter().skip(i + 1) {
-                total_dissimilarity +=
-                    1.0 - self.compute_record_similarity(record_i, record_j);
+                total_dissimilarity += 1.0 - self.compute_record_similarity(record_i, record_j);
                 count += 1;
             }
         }

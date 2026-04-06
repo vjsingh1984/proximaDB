@@ -45,10 +45,12 @@
 
 use std::sync::Arc;
 
-use anyhow::{Result};
-use tracing::{debug, info, warn, instrument};
+use anyhow::Result;
+use tracing::{debug, info, instrument, warn};
 
-use crate::query::capability::{Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet};
+use crate::query::capability::{
+    Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet,
+};
 use crate::query::federated::optimizer::PlanNode;
 
 /// Validation result with detailed information
@@ -145,15 +147,12 @@ impl PlanValidator {
         );
 
         // Get engine capabilities
-        let engine_caps = self
-            .registry
-            .get_capabilities(engine_name)
-            .ok_or_else(|| {
-                CapabilityCheckError::UnsupportedCapability {
-                    capability: format!("engine:{}", engine_name),
-                    available_alternatives: self.registry.list_registered_engines(),
-                }
-            })?;
+        let engine_caps = self.registry.get_capabilities(engine_name).ok_or_else(|| {
+            CapabilityCheckError::UnsupportedCapability {
+                capability: format!("engine:{}", engine_name),
+                available_alternatives: self.registry.list_registered_engines(),
+            }
+        })?;
 
         // Infer required capabilities from plan
         let required_caps = plan.infer_capabilities();
@@ -193,10 +192,7 @@ impl PlanValidator {
             );
             Ok(result)
         } else {
-            let missing_names: Vec<String> = missing
-                .iter()
-                .map(|c| format!("{:?}", c))
-                .collect();
+            let missing_names: Vec<String> = missing.iter().map(|c| format!("{:?}", c)).collect();
 
             let available_alternatives: Vec<String> = self
                 .registry
@@ -309,7 +305,10 @@ impl PlanValidator {
     /// Returns the engine name that has the most capabilities
     /// required by the plan.
     #[instrument(skip(self, plan), fields(plan_id = %plan.id))]
-    pub fn find_best_engine(&self, plan: &PlanNode) -> Result<Option<String>, CapabilityCheckError> {
+    pub fn find_best_engine(
+        &self,
+        plan: &PlanNode,
+    ) -> Result<Option<String>, CapabilityCheckError> {
         let required = self.get_required_capabilities(plan);
         let engines = self.registry.list_registered_engines();
 
@@ -464,10 +463,12 @@ mod tests {
         assert_eq!(result.engine_name, "VIPER");
         assert!(!result.missing_capabilities.is_empty());
         // VIPER doesn't have VectorSearch capability
-        assert!(result
-            .missing_capabilities
-            .iter()
-            .any(|c| c.contains("VectorSearch")));
+        assert!(
+            result
+                .missing_capabilities
+                .iter()
+                .any(|c| c.contains("VectorSearch"))
+        );
     }
 
     #[test]

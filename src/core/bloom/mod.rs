@@ -326,8 +326,7 @@ pub enum BloomStrategy {
 }
 
 /// Hash algorithm selection
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub enum HashAlgorithm {
     /// MurmurHash3 - fast and good distribution
     Murmur3,
@@ -337,7 +336,6 @@ pub enum HashAlgorithm {
     /// FNV-1a - simple and fast, good for small keys
     Fnv1a,
 }
-
 
 /// Enhanced bloom filter configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

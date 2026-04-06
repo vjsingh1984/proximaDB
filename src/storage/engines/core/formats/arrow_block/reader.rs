@@ -293,9 +293,11 @@ impl ArrowBlockReader {
             let records = self.read_block(entry.block_num as usize)?;
             for record in records {
                 if let Some(ts) = record.timestamp
-                    && ts >= start_ts && ts <= end_ts {
-                        results.push(record);
-                    }
+                    && ts >= start_ts
+                    && ts <= end_ts
+                {
+                    results.push(record);
+                }
             }
         }
 

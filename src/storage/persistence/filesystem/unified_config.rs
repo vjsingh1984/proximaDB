@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Unified cache configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UnifiedCacheConfig {
     /// Memory management settings
     pub memory: MemoryConfig,
@@ -182,7 +181,6 @@ pub enum WorkloadType {
     /// Custom configuration
     Custom(Box<UnifiedCacheConfig>),
 }
-
 
 impl Default for MemoryConfig {
     fn default() -> Self {

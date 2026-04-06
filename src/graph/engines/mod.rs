@@ -419,18 +419,48 @@ mod embedding_mode_tests {
     #[test]
     fn test_embedding_mode_parse_from_config() {
         // Test parsing from config strings
-        assert_eq!(EmbeddingMode::parse_from_config("none"), EmbeddingMode::None);
-        assert_eq!(EmbeddingMode::parse_from_config("None"), EmbeddingMode::None);
-        assert_eq!(EmbeddingMode::parse_from_config("NONE"), EmbeddingMode::None);
-        assert_eq!(EmbeddingMode::parse_from_config("cold"), EmbeddingMode::Cold);
-        assert_eq!(EmbeddingMode::parse_from_config("Cold"), EmbeddingMode::Cold);
-        assert_eq!(EmbeddingMode::parse_from_config("COLD"), EmbeddingMode::Cold);
-        assert_eq!(EmbeddingMode::parse_from_config("memory"), EmbeddingMode::Memory);
-        assert_eq!(EmbeddingMode::parse_from_config("Memory"), EmbeddingMode::Memory);
-        assert_eq!(EmbeddingMode::parse_from_config("MEMORY"), EmbeddingMode::Memory);
+        assert_eq!(
+            EmbeddingMode::parse_from_config("none"),
+            EmbeddingMode::None
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("None"),
+            EmbeddingMode::None
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("NONE"),
+            EmbeddingMode::None
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("cold"),
+            EmbeddingMode::Cold
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("Cold"),
+            EmbeddingMode::Cold
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("COLD"),
+            EmbeddingMode::Cold
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("memory"),
+            EmbeddingMode::Memory
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("Memory"),
+            EmbeddingMode::Memory
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("MEMORY"),
+            EmbeddingMode::Memory
+        );
 
         // Invalid strings should default to None
-        assert_eq!(EmbeddingMode::parse_from_config("invalid"), EmbeddingMode::None);
+        assert_eq!(
+            EmbeddingMode::parse_from_config("invalid"),
+            EmbeddingMode::None
+        );
         assert_eq!(EmbeddingMode::parse_from_config(""), EmbeddingMode::None);
     }
 

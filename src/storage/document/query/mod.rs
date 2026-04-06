@@ -365,9 +365,11 @@ impl QueryExecutor {
                     Some(SqlValue {
                         value: Some(SqlValueVariant::Int64Value(i)),
                     })
-                } else { n.as_f64().map(|f| SqlValue {
+                } else {
+                    n.as_f64().map(|f| SqlValue {
                         value: Some(SqlValueVariant::NumberValue(f)),
-                    }) }
+                    })
+                }
             }
             JsonValue::String(s) => Some(SqlValue {
                 value: Some(SqlValueVariant::StringValue(s.clone())),

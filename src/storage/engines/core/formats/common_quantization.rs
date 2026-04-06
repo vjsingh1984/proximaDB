@@ -349,9 +349,7 @@ impl UnifiedQuantizedFile {
     /// Get quantized vectors for specific level
     pub fn get_quantized_vectors(&self, level: &QuantizationLevel) -> Option<&[Vec<u8>]> {
         match level {
-            QuantizationLevel::Binary => {
-                self.quantized_data.q_binary.as_deref()
-            }
+            QuantizationLevel::Binary => self.quantized_data.q_binary.as_deref(),
             QuantizationLevel::Int8 =>
             // Convert i8 to u8 for unified interface
             {

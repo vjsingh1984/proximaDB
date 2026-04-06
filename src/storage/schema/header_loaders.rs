@@ -203,22 +203,25 @@ impl HeaderLoader for ParquetHeaderLoader {
             for kv in kv_metadata {
                 if kv.key == "proximadb.schema_version"
                     && let Some(ref value) = kv.value
-                        && let Ok(v) = value.parse::<u32>() {
-                            header.schema_version = v;
-                        }
+                    && let Ok(v) = value.parse::<u32>()
+                {
+                    header.schema_version = v;
+                }
                 if kv.key == "proximadb.schema_fingerprint"
                     && let Some(ref value) = kv.value
-                        && let Ok(v) = value.parse::<u64>() {
-                            header.schema_fingerprint = v;
-                        }
+                    && let Ok(v) = value.parse::<u64>()
+                {
+                    header.schema_fingerprint = v;
+                }
                 // Store all ProximaDB metadata
                 if kv.key.starts_with("proximadb.")
                     && let Some(ref value) = kv.value
-                        && let Some(key_suffix) = kv.key.strip_prefix("proximadb.") {
-                            header
-                                .engine_metadata
-                                .insert(key_suffix.to_string(), value.clone());
-                        }
+                    && let Some(key_suffix) = kv.key.strip_prefix("proximadb.")
+                {
+                    header
+                        .engine_metadata
+                        .insert(key_suffix.to_string(), value.clone());
+                }
             }
         }
 
@@ -479,7 +482,9 @@ impl ProximaBlocksHeaderLoader {
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     Some(ColumnValue::Int64(i))
-                } else { n.as_f64().map(ColumnValue::Float64) }
+                } else {
+                    n.as_f64().map(ColumnValue::Float64)
+                }
             }
             serde_json::Value::String(s) => Some(ColumnValue::String(s.clone())),
             _ => None,
@@ -625,9 +630,10 @@ impl HeaderLoaderRegistry {
     ) -> anyhow::Result<CachedHeader> {
         // Try format hint first
         if let Some(fmt) = format_hint
-            && let Some(loader) = self.find_loader(fmt) {
-                return loader.load_header(path).await;
-            }
+            && let Some(loader) = self.find_loader(fmt)
+        {
+            return loader.load_header(path).await;
+        }
 
         // Auto-detect from file extension
         let format = Self::detect_format_from_path(path);

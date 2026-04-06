@@ -101,9 +101,7 @@ impl QueryExecutor {
                     join_type,
                     left_key,
                     right_key,
-                } => {
-                    self.execute_join(current_results, join_type, left_key, right_key)?
-                }
+                } => self.execute_join(current_results, join_type, left_key, right_key)?,
             };
         }
 
@@ -484,40 +482,35 @@ impl QueryExecutor {
         let mut results = Vec::new();
         for node in nodes {
             // Check if the node has the indexed property within the range
-            let property_value = node
-                .properties
-                .get(index_name)
-                .and_then(|pv| {
-                    pv.value.as_ref().map(|v| match v {
-                        crate::proto::proximadb_v1::property_value::Value::DoubleValue(n) => {
-                            serde_json::Value::from(*n)
-                        }
-                        crate::proto::proximadb_v1::property_value::Value::StringValue(s) => {
-                            serde_json::Value::String(s.clone())
-                        }
-                        crate::proto::proximadb_v1::property_value::Value::IntValue(n) => {
-                            serde_json::Value::from(*n)
-                        }
-                        crate::proto::proximadb_v1::property_value::Value::BoolValue(b) => {
-                            serde_json::Value::Bool(*b)
-                        }
-                        _ => serde_json::Value::Null,
-                    })
-                });
+            let property_value = node.properties.get(index_name).and_then(|pv| {
+                pv.value.as_ref().map(|v| match v {
+                    crate::proto::proximadb_v1::property_value::Value::DoubleValue(n) => {
+                        serde_json::Value::from(*n)
+                    }
+                    crate::proto::proximadb_v1::property_value::Value::StringValue(s) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    crate::proto::proximadb_v1::property_value::Value::IntValue(n) => {
+                        serde_json::Value::from(*n)
+                    }
+                    crate::proto::proximadb_v1::property_value::Value::BoolValue(b) => {
+                        serde_json::Value::Bool(*b)
+                    }
+                    _ => serde_json::Value::Null,
+                })
+            });
 
             if let Some(val) = property_value {
                 let above_start = match start_key {
-                    Some(sk) => {
-                        self.json_cmp(&val, sk)
-                            .is_some_and(|o| o != std::cmp::Ordering::Less)
-                    }
+                    Some(sk) => self
+                        .json_cmp(&val, sk)
+                        .is_some_and(|o| o != std::cmp::Ordering::Less),
                     None => true,
                 };
                 let below_end = match end_key {
-                    Some(ek) => {
-                        self.json_cmp(&val, ek)
-                            .is_some_and(|o| o != std::cmp::Ordering::Greater)
-                    }
+                    Some(ek) => self
+                        .json_cmp(&val, ek)
+                        .is_some_and(|o| o != std::cmp::Ordering::Greater),
                     None => true,
                 };
 
@@ -527,7 +520,10 @@ impl QueryExecutor {
                     row.insert(
                         "labels".to_string(),
                         serde_json::Value::Array(
-                            node.labels.iter().map(|l| serde_json::Value::String(l.clone())).collect(),
+                            node.labels
+                                .iter()
+                                .map(|l| serde_json::Value::String(l.clone()))
+                                .collect(),
                         ),
                     );
                     let props: serde_json::Map<String, serde_json::Value> = node
@@ -554,7 +550,10 @@ impl QueryExecutor {
                             })
                         })
                         .collect();
-                    row.insert("properties".to_string(), serde_json::Value::Object(props.clone()));
+                    row.insert(
+                        "properties".to_string(),
+                        serde_json::Value::Object(props.clone()),
+                    );
                     row.insert(
                         "node".to_string(),
                         serde_json::json!({
@@ -703,9 +702,7 @@ impl QueryExecutor {
 mod tests {
     use super::*;
     use crate::graph::GraphOperationsService;
-    use crate::graph::query::planner::{
-        CostEstimate, JoinType, PlanStep, PlanStepType, QueryPlan,
-    };
+    use crate::graph::query::planner::{CostEstimate, JoinType, PlanStep, PlanStepType, QueryPlan};
     use crate::utils::Uuid;
     use std::time::SystemTime;
 
@@ -1038,7 +1035,9 @@ mod tests {
     fn test_inner_join() {
         let executor = QueryExecutor::new(Arc::new(GraphOperationsService::new()));
         let data = make_join_data();
-        let result = executor.execute_join(data, &JoinType::Inner, "dept_id", "id").unwrap();
+        let result = executor
+            .execute_join(data, &JoinType::Inner, "dept_id", "id")
+            .unwrap();
         assert_eq!(result.len(), 2);
     }
 
@@ -1046,8 +1045,12 @@ mod tests {
     fn test_left_outer_join() {
         let executor = QueryExecutor::new(Arc::new(GraphOperationsService::new()));
         let data = make_join_data();
-        let result = executor.execute_join(data, &JoinType::LeftOuter, "dept_id", "id").unwrap();
-        let has_carol = result.iter().any(|r| r.get("name") == Some(&serde_json::json!("Carol")));
+        let result = executor
+            .execute_join(data, &JoinType::LeftOuter, "dept_id", "id")
+            .unwrap();
+        let has_carol = result
+            .iter()
+            .any(|r| r.get("name") == Some(&serde_json::json!("Carol")));
         assert!(has_carol, "Left outer should keep unmatched left rows");
     }
 
@@ -1055,19 +1058,35 @@ mod tests {
     fn test_right_outer_join() {
         let executor = QueryExecutor::new(Arc::new(GraphOperationsService::new()));
         let data = make_join_data();
-        let result = executor.execute_join(data, &JoinType::RightOuter, "dept_id", "id").unwrap();
-        let has_marketing = result.iter().any(|r| r.get("right_dept_name") == Some(&serde_json::json!("Marketing")));
-        assert!(has_marketing, "Right outer should include unmatched right rows");
+        let result = executor
+            .execute_join(data, &JoinType::RightOuter, "dept_id", "id")
+            .unwrap();
+        let has_marketing = result
+            .iter()
+            .any(|r| r.get("right_dept_name") == Some(&serde_json::json!("Marketing")));
+        assert!(
+            has_marketing,
+            "Right outer should include unmatched right rows"
+        );
     }
 
     #[test]
     fn test_full_outer_join() {
         let executor = QueryExecutor::new(Arc::new(GraphOperationsService::new()));
         let data = make_join_data();
-        let result = executor.execute_join(data, &JoinType::FullOuter, "dept_id", "id").unwrap();
-        let has_carol = result.iter().any(|r| r.get("name") == Some(&serde_json::json!("Carol")));
-        let has_marketing = result.iter().any(|r| r.get("right_dept_name") == Some(&serde_json::json!("Marketing")));
+        let result = executor
+            .execute_join(data, &JoinType::FullOuter, "dept_id", "id")
+            .unwrap();
+        let has_carol = result
+            .iter()
+            .any(|r| r.get("name") == Some(&serde_json::json!("Carol")));
+        let has_marketing = result
+            .iter()
+            .any(|r| r.get("right_dept_name") == Some(&serde_json::json!("Marketing")));
         assert!(has_carol, "Full outer should keep unmatched left rows");
-        assert!(has_marketing, "Full outer should include unmatched right rows");
+        assert!(
+            has_marketing,
+            "Full outer should include unmatched right rows"
+        );
     }
 }

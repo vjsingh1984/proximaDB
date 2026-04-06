@@ -43,9 +43,7 @@ pub enum LogRecord {
         participants: Vec<String>,
     },
     /// Transaction committed
-    Commit {
-        tx_id: TransactionId,
-    },
+    Commit { tx_id: TransactionId },
     /// Transaction aborted
     Abort {
         tx_id: TransactionId,
@@ -105,7 +103,8 @@ impl TransactionLog for FileTransactionLog {
     }
 
     fn read_all(&self) -> Result<Vec<LogRecord>> {
-        let file = File::open(&self.path).map_err(|e| ProximaDBError::Storage(StorageError::DiskIO(e)))?;
+        let file =
+            File::open(&self.path).map_err(|e| ProximaDBError::Storage(StorageError::DiskIO(e)))?;
 
         let reader = BufReader::new(file);
         let mut records = Vec::new();

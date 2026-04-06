@@ -465,12 +465,13 @@ impl ColumnarStrategy {
                 {
                     // Extract column from aggregate if simple (e.g., SUM(price))
                     if let Some(start) = col.find('(')
-                        && let Some(end) = col.find(')') {
-                            let inner = col[start + 1..end].trim();
-                            if inner != "*" && !inner.contains(' ') {
-                                return Some(inner.to_string());
-                            }
+                        && let Some(end) = col.find(')')
+                    {
+                        let inner = col[start + 1..end].trim();
+                        if inner != "*" && !inner.contains(' ') {
+                            return Some(inner.to_string());
                         }
+                    }
                     return None;
                 }
 

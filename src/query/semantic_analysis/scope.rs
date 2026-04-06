@@ -92,13 +92,14 @@ impl Scope {
         // Search all symbols in current scope
         for (table_key, symbol) in &self.symbols {
             if let Symbol::Table { columns, .. } = symbol
-                && let Some(column) = columns.get(column_name) {
-                    if found_column.is_none() {
-                        found_column = Some(column.clone());
-                    }
-                    found_count += 1;
-                    table_names.push(table_key.clone());
+                && let Some(column) = columns.get(column_name)
+            {
+                if found_column.is_none() {
+                    found_column = Some(column.clone());
                 }
+                found_count += 1;
+                table_names.push(table_key.clone());
+            }
         }
 
         // Also search in parent scope if exists

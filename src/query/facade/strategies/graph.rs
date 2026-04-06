@@ -151,10 +151,7 @@ impl GraphStrategy {
             if let Some(bracket_end) = bracket_rest.find(']') {
                 let edge_type = &bracket_rest[..bracket_end];
                 // Handle type with properties like :KNOWS {weight: 1}
-                let type_name = edge_type
-                    .split([' ', '{'])
-                    .next()
-                    .unwrap_or(edge_type);
+                let type_name = edge_type.split([' ', '{']).next().unwrap_or(edge_type);
                 if !type_name.is_empty() {
                     types.push(type_name.to_string());
                 }

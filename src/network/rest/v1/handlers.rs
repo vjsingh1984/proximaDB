@@ -1534,8 +1534,8 @@ pub async fn comprehensive_health_check(
     query: Query<health::HealthParams>,
 ) -> ApiResult<Json<health::HealthResponse>> {
     let health_state = health::HealthState::new(state.unified_handlers.clone());
-    health::health_check(axum::extract::State(health_state), query)
-        .await}
+    health::health_check(axum::extract::State(health_state), query).await
+}
 
 /// Liveness check handler
 ///
@@ -1544,8 +1544,8 @@ pub async fn liveness_check(
     State(state): State<AppState>,
 ) -> ApiResult<Json<health::LivenessResponse>> {
     let health_state = health::HealthState::new(state.unified_handlers.clone());
-    health::liveness_check(axum::extract::State(health_state))
-        .await}
+    health::liveness_check(axum::extract::State(health_state)).await
+}
 
 /// Readiness check handler
 ///
@@ -2162,7 +2162,9 @@ mod tests {
     #[test]
     fn test_sql_value_to_json_string() {
         let val = proximadb_v1::SqlValue {
-            value: Some(proximadb_v1::sql_value::Value::StringValue("hello".to_string())),
+            value: Some(proximadb_v1::sql_value::Value::StringValue(
+                "hello".to_string(),
+            )),
         };
         let json = sql_value_to_json(&val);
         assert_eq!(json, serde_json::json!("hello"));
@@ -2245,7 +2247,9 @@ mod tests {
         fields.insert(
             "name".to_string(),
             proximadb_v1::SqlValue {
-                value: Some(proximadb_v1::sql_value::Value::StringValue("Alice".to_string())),
+                value: Some(proximadb_v1::sql_value::Value::StringValue(
+                    "Alice".to_string(),
+                )),
             },
         );
         fields.insert(
@@ -2316,8 +2320,8 @@ mod tests {
             "vector": [0.1, 0.2, 0.3, 0.4, 0.5],
             "top_k": 25
         });
-        let simple_req = parse_search_request(simple_json)
-            .expect("simple format should parse successfully");
+        let simple_req =
+            parse_search_request(simple_json).expect("simple format should parse successfully");
         assert_eq!(simple_req.collection_id, "my_vectors");
         assert_eq!(simple_req.queries.len(), 1);
         assert_eq!(simple_req.queries[0].vector.len(), 5);
@@ -2338,8 +2342,8 @@ mod tests {
             ],
             "top_k": 50
         });
-        let proto_req = parse_search_request(proto_json)
-            .expect("proto format should parse successfully");
+        let proto_req =
+            parse_search_request(proto_json).expect("proto format should parse successfully");
         assert_eq!(proto_req.collection_id, "proto_vectors");
         assert_eq!(proto_req.queries.len(), 2);
         assert_eq!(proto_req.queries[0].vector, vec![1.0, 2.0, 3.0]);
@@ -2386,8 +2390,8 @@ mod tests {
                 }
             ]
         });
-        let proto_req = parse_batch_request(proto_json)
-            .expect("proto batch format should parse successfully");
+        let proto_req =
+            parse_batch_request(proto_json).expect("proto batch format should parse successfully");
         assert_eq!(proto_req.collection_id, "proto_batch");
         assert_eq!(proto_req.vectors.len(), 1);
         assert_eq!(proto_req.vectors[0].id, "vec_a");
@@ -2439,8 +2443,8 @@ mod tests {
 
         let json_str = serde_json::to_string(&response)
             .expect("VectorOperationResponse should serialize to JSON");
-        let parsed: serde_json::Value = serde_json::from_str(&json_str)
-            .expect("serialized JSON should parse back");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("serialized JSON should parse back");
 
         assert_eq!(parsed["success"], true);
         assert_eq!(parsed["operation"], 1);
@@ -2459,22 +2463,34 @@ mod tests {
         // Completely invalid JSON type (number, not object)
         let invalid_json = serde_json::json!(12345);
         let result = parse_search_request(invalid_json);
-        assert!(result.is_err(), "numeric JSON should fail to parse as search request");
+        assert!(
+            result.is_err(),
+            "numeric JSON should fail to parse as search request"
+        );
 
         // Array instead of object
         let array_json = serde_json::json!([1, 2, 3]);
         let result = parse_search_request(array_json);
-        assert!(result.is_err(), "array JSON should fail to parse as search request");
+        assert!(
+            result.is_err(),
+            "array JSON should fail to parse as search request"
+        );
 
         // Boolean instead of object
         let bool_json = serde_json::json!(true);
         let result = parse_search_request(bool_json);
-        assert!(result.is_err(), "boolean JSON should fail to parse as search request");
+        assert!(
+            result.is_err(),
+            "boolean JSON should fail to parse as search request"
+        );
 
         // Null JSON
         let null_json = serde_json::json!(null);
         let result = parse_search_request(null_json);
-        assert!(result.is_err(), "null JSON should fail to parse as search request");
+        assert!(
+            result.is_err(),
+            "null JSON should fail to parse as search request"
+        );
 
         // Valid object but with wrong vector type (strings instead of numbers)
         let wrong_vector = serde_json::json!({
@@ -2485,7 +2501,10 @@ mod tests {
         // Should succeed but with empty vector since non-numeric values are filtered
         assert!(result.is_ok());
         let req = result.unwrap();
-        assert!(req.queries[0].vector.is_empty(), "non-numeric vector values should be filtered out");
+        assert!(
+            req.queries[0].vector.is_empty(),
+            "non-numeric vector values should be filtered out"
+        );
     }
 
     /// Empty query vector is handled correctly (parsed but empty)
@@ -2496,8 +2515,8 @@ mod tests {
             "vector": [],
             "top_k": 10
         });
-        let result = parse_search_request(json)
-            .expect("empty vector search should parse successfully");
+        let result =
+            parse_search_request(json).expect("empty vector search should parse successfully");
         assert_eq!(result.collection_id, "empty_vec_test");
         assert!(result.queries[0].vector.is_empty());
         assert_eq!(result.top_k, 10);
@@ -2531,9 +2550,12 @@ mod tests {
                 {"value": {"Int64Value": 20}}
             ]
         });
-        let req: SqlQueryRequest = serde_json::from_value(json)
-            .expect("full SqlQueryRequest should deserialize");
-        assert_eq!(req.query, "SELECT id, metadata FROM vectors WHERE category = 'electronics' ORDER BY score LIMIT 20");
+        let req: SqlQueryRequest =
+            serde_json::from_value(json).expect("full SqlQueryRequest should deserialize");
+        assert_eq!(
+            req.query,
+            "SELECT id, metadata FROM vectors WHERE category = 'electronics' ORDER BY score LIMIT 20"
+        );
         assert_eq!(req.collection, Some("products".to_string()));
         assert_eq!(req.timeout_ms, Some(10000));
         assert_eq!(req.seeding, Some("per_seed".to_string()));
@@ -2597,11 +2619,14 @@ mod tests {
         let empty_query = serde_json::json!({
             "query": ""
         });
-        let req: SqlQueryRequest = serde_json::from_value(empty_query)
-            .expect("empty query should still deserialize");
+        let req: SqlQueryRequest =
+            serde_json::from_value(empty_query).expect("empty query should still deserialize");
         assert_eq!(req.query, "");
         // Handler-level validation: query.trim().is_empty() returns true
-        assert!(req.query.trim().is_empty(), "empty query should be detected by handler validation");
+        assert!(
+            req.query.trim().is_empty(),
+            "empty query should be detected by handler validation"
+        );
 
         // Whitespace-only query
         let whitespace_query = serde_json::json!({
@@ -2609,7 +2634,10 @@ mod tests {
         });
         let req: SqlQueryRequest = serde_json::from_value(whitespace_query)
             .expect("whitespace query should still deserialize");
-        assert!(req.query.trim().is_empty(), "whitespace-only query should be detected by handler validation");
+        assert!(
+            req.query.trim().is_empty(),
+            "whitespace-only query should be detected by handler validation"
+        );
 
         // Missing required 'query' field entirely should fail deserialization
         let missing_query = serde_json::json!({
@@ -2617,7 +2645,10 @@ mod tests {
             "timeout_ms": 5000
         });
         let result = serde_json::from_value::<SqlQueryRequest>(missing_query);
-        assert!(result.is_err(), "missing 'query' field should fail deserialization");
+        assert!(
+            result.is_err(),
+            "missing 'query' field should fail deserialization"
+        );
     }
 
     // ============================================================
@@ -2638,8 +2669,8 @@ mod tests {
                 "description": "A test collection for unit testing"
             }
         });
-        let req: CollectionRequest = serde_json::from_value(json)
-            .expect("CollectionRequest (create) should deserialize");
+        let req: CollectionRequest =
+            serde_json::from_value(json).expect("CollectionRequest (create) should deserialize");
         assert_eq!(req.operation, CollectionOperation::CollectionCreate as i32);
         assert_eq!(req.collection_id, Some("new_collection".to_string()));
         assert!(req.collection_config.is_some());
@@ -2648,7 +2679,10 @@ mod tests {
         assert_eq!(config.dimension, 128);
         assert_eq!(config.tags.len(), 2);
         assert_eq!(config.tags[0], "test");
-        assert_eq!(config.description, Some("A test collection for unit testing".to_string()));
+        assert_eq!(
+            config.description,
+            Some("A test collection for unit testing".to_string())
+        );
 
         // Minimal create request (only operation and name)
         let minimal_json = serde_json::json!({
@@ -2689,8 +2723,8 @@ mod tests {
             processing_time_us: 250,
         };
 
-        let json_str = serde_json::to_string(&response)
-            .expect("CollectionResponse should serialize to JSON");
+        let json_str =
+            serde_json::to_string(&response).expect("CollectionResponse should serialize to JSON");
         let parsed: serde_json::Value = serde_json::from_str(&json_str)
             .expect("serialized CollectionResponse should parse back");
 
@@ -2698,7 +2732,10 @@ mod tests {
         assert_eq!(parsed["collection"]["id"], "col_123");
         assert_eq!(parsed["collection"]["config"]["name"], "test_collection");
         assert_eq!(parsed["collection"]["config"]["dimension"], 128);
-        assert_eq!(parsed["operation"], CollectionOperation::CollectionCreate as i32);
+        assert_eq!(
+            parsed["operation"],
+            CollectionOperation::CollectionCreate as i32
+        );
         assert_eq!(parsed["affected_count"], 1);
         assert_eq!(parsed["processing_time_us"], 250);
 
@@ -2769,15 +2806,19 @@ mod tests {
             processing_time_us: 500,
         };
 
-        let json_str = serde_json::to_string(&response)
-            .expect("list collections response should serialize");
-        let parsed: serde_json::Value = serde_json::from_str(&json_str)
-            .expect("serialized list response should parse back");
+        let json_str =
+            serde_json::to_string(&response).expect("list collections response should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("serialized list response should parse back");
 
         assert_eq!(parsed["success"], true);
-        assert_eq!(parsed["operation"], CollectionOperation::CollectionList as i32);
+        assert_eq!(
+            parsed["operation"],
+            CollectionOperation::CollectionList as i32
+        );
         assert_eq!(parsed["total_count"], 3);
-        let collections = parsed["collections"].as_array()
+        let collections = parsed["collections"]
+            .as_array()
             .expect("collections should be an array");
         assert_eq!(collections.len(), 3);
         assert_eq!(collections[0]["id"], "col_1");
@@ -2801,10 +2842,10 @@ mod tests {
             processing_time_us: 50,
         };
 
-        let empty_json = serde_json::to_string(&empty_response)
-            .expect("empty list response should serialize");
-        let empty_parsed: serde_json::Value = serde_json::from_str(&empty_json)
-            .expect("empty list should parse back");
+        let empty_json =
+            serde_json::to_string(&empty_response).expect("empty list response should serialize");
+        let empty_parsed: serde_json::Value =
+            serde_json::from_str(&empty_json).expect("empty list should parse back");
         assert_eq!(empty_parsed["collections"].as_array().unwrap().len(), 0);
         assert_eq!(empty_parsed["total_count"], 0);
     }
@@ -2822,21 +2863,30 @@ mod tests {
             migration_config: Default::default(),
         };
 
-        assert_eq!(delete_request.operation, CollectionOperation::CollectionDelete as i32);
-        assert_eq!(delete_request.collection_id, Some("col_to_delete".to_string()));
+        assert_eq!(
+            delete_request.operation,
+            CollectionOperation::CollectionDelete as i32
+        );
+        assert_eq!(
+            delete_request.collection_id,
+            Some("col_to_delete".to_string())
+        );
         assert!(delete_request.collection_config.is_none());
 
         // Verify it serializes to JSON
         let json_str = serde_json::to_string(&delete_request)
             .expect("delete CollectionRequest should serialize");
-        let parsed: serde_json::Value = serde_json::from_str(&json_str)
-            .expect("serialized delete request should parse back");
-        assert_eq!(parsed["operation"], CollectionOperation::CollectionDelete as i32);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("serialized delete request should parse back");
+        assert_eq!(
+            parsed["operation"],
+            CollectionOperation::CollectionDelete as i32
+        );
         assert_eq!(parsed["collection_id"], "col_to_delete");
 
         // Verify deserialization round-trip
-        let deserialized: CollectionRequest = serde_json::from_str(&json_str)
-            .expect("delete request should round-trip through JSON");
+        let deserialized: CollectionRequest =
+            serde_json::from_str(&json_str).expect("delete request should round-trip through JSON");
         assert_eq!(deserialized.operation, delete_request.operation);
         assert_eq!(deserialized.collection_id, delete_request.collection_id);
 
@@ -2847,7 +2897,10 @@ mod tests {
 
         // Verify invalid operation value is rejected
         let invalid_op = CollectionOperation::try_from(999);
-        assert!(invalid_op.is_err(), "invalid operation value 999 should fail enum conversion");
+        assert!(
+            invalid_op.is_err(),
+            "invalid operation value 999 should fail enum conversion"
+        );
     }
 
     // ============================================================
@@ -2867,12 +2920,15 @@ mod tests {
             "rrf_k": 100,
             "min_bm25_score": 0.5
         });
-        let full_req: HybridSearchRequest = serde_json::from_value(full_json)
-            .expect("full HybridSearchRequest should deserialize");
+        let full_req: HybridSearchRequest =
+            serde_json::from_value(full_json).expect("full HybridSearchRequest should deserialize");
         assert_eq!(full_req.collection, "hybrid_col");
         assert_eq!(full_req.vector.as_ref().unwrap().len(), 4);
         assert!((full_req.vector.as_ref().unwrap()[0] - 0.1).abs() < 1e-6);
-        assert_eq!(full_req.text_query, Some("machine learning algorithms".to_string()));
+        assert_eq!(
+            full_req.text_query,
+            Some("machine learning algorithms".to_string())
+        );
         assert_eq!(full_req.top_k, 20);
         assert!((full_req.vector_weight - 0.6).abs() < 0.001);
         assert_eq!(full_req.rrf_k, 100);
@@ -2923,7 +2979,7 @@ mod tests {
                 HybridSearchHit {
                     id: "doc_b".to_string(),
                     combined_score: 0.035,
-                    vector_score: None,       // BM25-only hit
+                    vector_score: None, // BM25-only hit
                     bm25_score: Some(6.2),
                     vector_rank: None,
                     bm25_rank: Some(1),
@@ -2944,10 +3000,10 @@ mod tests {
             mode: "hybrid".to_string(),
         };
 
-        let json_str = serde_json::to_string(&response)
-            .expect("HybridSearchResponse should serialize");
-        let parsed: serde_json::Value = serde_json::from_str(&json_str)
-            .expect("serialized response should parse back");
+        let json_str =
+            serde_json::to_string(&response).expect("HybridSearchResponse should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("serialized response should parse back");
 
         // Verify top-level fields
         assert_eq!(parsed["success"], true);
@@ -2967,16 +3023,28 @@ mod tests {
         // doc_b: BM25-only (vector_score and vector_rank should be absent due to skip_serializing_if)
         let doc_b = &parsed["results"][1];
         assert_eq!(doc_b["id"], "doc_b");
-        assert!(doc_b.get("vector_score").is_none(), "BM25-only hit should omit vector_score");
-        assert!(doc_b.get("vector_rank").is_none(), "BM25-only hit should omit vector_rank");
+        assert!(
+            doc_b.get("vector_score").is_none(),
+            "BM25-only hit should omit vector_score"
+        );
+        assert!(
+            doc_b.get("vector_rank").is_none(),
+            "BM25-only hit should omit vector_rank"
+        );
         assert!(doc_b.get("bm25_score").is_some());
         assert!(doc_b.get("bm25_rank").is_some());
 
         // doc_c: Vector-only (bm25_score and bm25_rank should be absent)
         let doc_c = &parsed["results"][2];
         assert_eq!(doc_c["id"], "doc_c");
-        assert!(doc_c.get("bm25_score").is_none(), "vector-only hit should omit bm25_score");
-        assert!(doc_c.get("bm25_rank").is_none(), "vector-only hit should omit bm25_rank");
+        assert!(
+            doc_c.get("bm25_score").is_none(),
+            "vector-only hit should omit bm25_score"
+        );
+        assert!(
+            doc_c.get("bm25_rank").is_none(),
+            "vector-only hit should omit bm25_rank"
+        );
         assert!(doc_c.get("vector_score").is_some());
         assert!(doc_c.get("vector_rank").is_some());
         assert_eq!(doc_c["matched_terms"].as_array().unwrap().len(), 0);
@@ -2995,8 +3063,8 @@ mod tests {
                 {"id": "doc4", "text": "Distributed systems and consensus algorithms"}
             ]
         });
-        let req: HybridIndexRequest = serde_json::from_value(json)
-            .expect("HybridIndexRequest should deserialize");
+        let req: HybridIndexRequest =
+            serde_json::from_value(json).expect("HybridIndexRequest should deserialize");
         assert_eq!(req.collection, "index_col");
         assert_eq!(req.documents.len(), 4);
         assert_eq!(req.documents[0].id, "doc1");
@@ -3011,10 +3079,10 @@ mod tests {
             documents_indexed: 4,
             total_documents: 10,
         };
-        let resp_json = serde_json::to_string(&response)
-            .expect("HybridIndexResponse should serialize");
-        let resp_parsed: serde_json::Value = serde_json::from_str(&resp_json)
-            .expect("serialized index response should parse back");
+        let resp_json =
+            serde_json::to_string(&response).expect("HybridIndexResponse should serialize");
+        let resp_parsed: serde_json::Value =
+            serde_json::from_str(&resp_json).expect("serialized index response should parse back");
         assert_eq!(resp_parsed["success"], true);
         assert_eq!(resp_parsed["collection"], "index_col");
         assert_eq!(resp_parsed["documents_indexed"], 4);

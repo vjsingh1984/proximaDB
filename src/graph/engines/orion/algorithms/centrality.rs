@@ -127,7 +127,8 @@ impl ClosenessCentrality {
             let neighbors = csr_out.get_neighbors(current_idx).unwrap_or(&[]);
 
             for &neighbor_idx in neighbors {
-                if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor_idx) {
+                if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor_idx)
+                {
                     e.insert(current_distance + 1);
                     queue.push_back(neighbor_idx);
                 }
@@ -335,7 +336,8 @@ impl HarmonicCentrality {
             let neighbors = csr_out.get_neighbors(current_idx).unwrap_or(&[]);
 
             for &neighbor_idx in neighbors {
-                if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor_idx) {
+                if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor_idx)
+                {
                     e.insert(current_distance + 1);
                     queue.push_back(neighbor_idx);
                 }
@@ -499,9 +501,10 @@ impl GraphAlgorithm for BetweennessCentrality {
     type Output = CentralityScores;
 
     fn execute(&self, _input: NoInput) -> Result<CentralityScores, ProximaDBError> {
-        let csr_out = self.engine.csr_outgoing.read().map_err(|_| {
-            ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
-        })?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
         let node_count = csr_out.node_count();
         if node_count == 0 {
             return Ok(HashMap::new());
@@ -592,9 +595,10 @@ impl ParallelAlgorithm for BetweennessCentrality {
         _input: NoInput,
         _thread_pool: &rayon::ThreadPool,
     ) -> Result<CentralityScores, ProximaDBError> {
-        let csr_out = self.engine.csr_outgoing.read().map_err(|_| {
-            ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
-        })?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
         let node_count = csr_out.node_count();
         if node_count == 0 {
             return Ok(HashMap::new());
@@ -608,7 +612,10 @@ impl ParallelAlgorithm for BetweennessCentrality {
         let partial: Vec<Vec<f64>> = (0..node_count)
             .into_par_iter()
             .map(|s| {
-                let csr = self.engine.csr_outgoing.read()
+                let csr = self
+                    .engine
+                    .csr_outgoing
+                    .read()
                     .expect("RwLock read lock poisoned - CSR data unavailable");
                 let n = csr.node_count();
                 let mut local_b = vec![0.0f64; n];
@@ -752,6 +759,9 @@ mod tests {
         let engine = Arc::new(OrionGraphEngine::new());
         let bc = BetweennessCentrality::new(engine, true);
         assert_eq!(bc.name(), "BetweennessCentrality");
-        assert_eq!(bc.estimated_complexity(), AlgorithmComplexity::QuadraticVertices);
+        assert_eq!(
+            bc.estimated_complexity(),
+            AlgorithmComplexity::QuadraticVertices
+        );
     }
 }

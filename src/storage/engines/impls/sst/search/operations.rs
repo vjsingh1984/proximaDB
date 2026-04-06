@@ -148,13 +148,14 @@ impl SearchOperations {
         for file_path in file_paths {
             // Check if vector exists in this file using bloom filter
             if let Ok(exists) = self.check_vector_exists_in_file(file_path, vector_id).await
-                && exists {
-                    // Perform detailed lookup in this file
-                    if let Ok(result) = self.lookup_vector_in_file(file_path, vector_id).await {
-                        debug!("✅ SearchOps: Found vector {} in {}", vector_id, file_path);
-                        return Ok(Some(result));
-                    }
+                && exists
+            {
+                // Perform detailed lookup in this file
+                if let Ok(result) = self.lookup_vector_in_file(file_path, vector_id).await {
+                    debug!("✅ SearchOps: Found vector {} in {}", vector_id, file_path);
+                    return Ok(Some(result));
                 }
+            }
         }
 
         debug!("❌ SearchOps: Vector {} not found in any file", vector_id);

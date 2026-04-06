@@ -1073,9 +1073,10 @@ impl GraphProfiler {
     /// Record a timing checkpoint within an active profiling session.
     pub fn record_timing(&self, session_id: &str, checkpoint: &str, duration: Duration) {
         if let Ok(mut profiles) = self.active_profiles.write()
-            && let Some(session) = profiles.get_mut(session_id) {
-                session.timings.insert(checkpoint.to_string(), duration);
-            }
+            && let Some(session) = profiles.get_mut(session_id)
+        {
+            session.timings.insert(checkpoint.to_string(), duration);
+        }
     }
 
     /// Retrieve the most recent completed profiling summaries, up to the given limit.

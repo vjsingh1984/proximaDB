@@ -179,7 +179,8 @@ impl OrionPersistence {
             // Extract path component for WAL writer (strip file:// prefix if present)
             let wal_path_str = if wal_url.starts_with("file://") {
                 wal_url
-                    .strip_prefix("file://").map_or_else(|| wal_url.clone(), |s| s.to_string())
+                    .strip_prefix("file://")
+                    .map_or_else(|| wal_url.clone(), |s| s.to_string())
             } else {
                 wal_url.clone()
             };
@@ -255,7 +256,12 @@ impl OrionPersistence {
             .collect::<HashMap<_, _>>();
 
         // Clone data needed for snapshot - guards are dropped when block ends
-        let (csr_outgoing_offsets, csr_outgoing_targets, csr_incoming_offsets, csr_incoming_sources) = {
+        let (
+            csr_outgoing_offsets,
+            csr_outgoing_targets,
+            csr_incoming_offsets,
+            csr_incoming_sources,
+        ) = {
             let csr_outgoing = Self::read_lock(&engine.csr_outgoing, "CSR outgoing")?;
             let csr_incoming = Self::read_lock(&engine.csr_incoming, "CSR incoming")?;
             let csr_outgoing_offsets = csr_outgoing.offsets.clone();
@@ -904,29 +910,22 @@ impl OrionPersistence {
         if let Some(ref wal_path) = self.wal_path
             && wal_path.exists()
         {
-                match std::fs::read_dir(wal_path) {
-                    Ok(entries) => {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_file()
-                                && let Err(e) = std::fs::remove_file(&path)
-                            {
-                                tracing::warn!(
-                                    "Failed to truncate WAL segment {:?}: {}",
-                                    path,
-                                    e
-                                );
-                            }
+            match std::fs::read_dir(wal_path) {
+                Ok(entries) => {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file()
+                            && let Err(e) = std::fs::remove_file(&path)
+                        {
+                            tracing::warn!("Failed to truncate WAL segment {:?}: {}", path, e);
                         }
-                        info!(
-                            "WAL truncated after checkpoint for graph {}",
-                            self.graph_id
-                        );
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to read WAL directory for truncation: {}", e);
-                    }
+                    info!("WAL truncated after checkpoint for graph {}", self.graph_id);
                 }
+                Err(e) => {
+                    tracing::warn!("Failed to read WAL directory for truncation: {}", e);
+                }
+            }
         }
 
         Ok(snapshot_path)

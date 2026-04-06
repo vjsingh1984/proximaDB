@@ -470,7 +470,6 @@ async fn execute_component_with_context_full(
     let elapsed = start.elapsed();
 
     // Apply join predicates if dependencies exist
-    
 
     match raw_result {
         Ok(mut r) => {

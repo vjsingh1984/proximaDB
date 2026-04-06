@@ -1125,7 +1125,10 @@ mod tests {
             .collect();
         // TD-032: "embedding" column now appears as a native Arrow FixedSizeList<Float32>
         // column instead of being embedded inside the "document" JSON string
-        assert_eq!(field_names, vec!["id", "document", "embedding", "right_id", "score"]);
+        assert_eq!(
+            field_names,
+            vec!["id", "document", "embedding", "right_id", "score"]
+        );
         assert_eq!(
             vector_engine.recorded_queries(),
             vec![vec![0.1, 0.2], vec![0.3, 0.4]]
@@ -1147,7 +1150,8 @@ mod tests {
         let msg = error.to_string();
         assert!(
             msg.contains("Scan execution is not") && msg.contains("users"),
-            "Expected scan error for 'users' but got: {}", msg
+            "Expected scan error for 'users' but got: {}",
+            msg
         );
     }
 }

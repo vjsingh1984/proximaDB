@@ -1202,9 +1202,10 @@ impl SharedServices {
 
         // Apply hybrid runtime config if provided
         if let Some(cfg) = opt_config
-            && let Some(ref hybrid) = cfg.hybrid {
-                unified_handlers_instance.set_hybrid_runtime(hybrid.clone());
-            }
+            && let Some(ref hybrid) = cfg.hybrid
+        {
+            unified_handlers_instance.set_hybrid_runtime(hybrid.clone());
+        }
         let unified_handlers = Arc::new(unified_handlers_instance);
         debug!("✅ SharedServices::new - UnifiedHandlers created with shared graph services");
 
@@ -2776,10 +2777,7 @@ mod tests {
         // Arrow IPC port
         assert_eq!(config.arrow_ipc_config.port, 5680);
         assert!(config.arrow_ipc_config.enable_arrow_ipc);
-        assert_eq!(
-            config.arrow_ipc_config.max_message_size,
-            512 * 1024 * 1024
-        ); // 512MB
+        assert_eq!(config.arrow_ipc_config.max_message_size, 512 * 1024 * 1024); // 512MB
         assert!(!config.arrow_ipc_config.compression);
 
         // PostgreSQL port

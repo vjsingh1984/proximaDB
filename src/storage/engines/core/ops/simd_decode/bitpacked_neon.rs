@@ -247,10 +247,7 @@ fn decode_8bit_to_i64_neon(input: &[u8], output: &mut [i64]) -> Result<usize> {
             let u64_3 = vmovl_u32(vget_high_u32(u32_hi));
 
             // Store as i64
-            vst1q_s64(
-                output.as_mut_ptr().add(base),
-                vreinterpretq_s64_u64(u64_0),
-            );
+            vst1q_s64(output.as_mut_ptr().add(base), vreinterpretq_s64_u64(u64_0));
             vst1q_s64(
                 output.as_mut_ptr().add(base + 2),
                 vreinterpretq_s64_u64(u64_1),
@@ -432,10 +429,7 @@ fn decode_8bit_to_i32_neon(input: &[u8], output: &mut [i32]) -> Result<usize> {
             let u32_hi = vmovl_u16(vget_high_u16(u16_vals));
 
             // Store as i32
-            vst1q_s32(
-                output.as_mut_ptr().add(base),
-                vreinterpretq_s32_u32(u32_lo),
-            );
+            vst1q_s32(output.as_mut_ptr().add(base), vreinterpretq_s32_u32(u32_lo));
             vst1q_s32(
                 output.as_mut_ptr().add(base + 4),
                 vreinterpretq_s32_u32(u32_hi),

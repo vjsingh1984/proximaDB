@@ -19,8 +19,7 @@ use tracing::{debug, info, warn};
 
 use crate::metrics::collectors::DocumentMetricsCollector;
 use crate::proto::proximadb_v1::{
-    DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject, SqlValue,
-    UpdateOperation,
+    DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject, SqlValue, UpdateOperation,
 };
 use crate::storage::persistence::write_ahead_log::unified_operations::{
     DocumentOperation, UnifiedWALOperation, UnifiedWALWriter,
@@ -200,79 +199,78 @@ impl DocumentService {
 
         for entry in entries {
             if entry.is_document_operation()
-                && let UnifiedWALOperation::DocumentOp(op) = entry.operation {
-                    match op {
-                        DocumentOperation::InsertDocument {
-                            collection_id,
-                            document,
-                        } => {
-                            // Replay insert
-                            let mut documents = self.documents.write().await;
-                            let collection_docs =
-                                documents.entry(collection_id).or_default();
-                            collection_docs.insert(document.id.clone(), document);
-                            recovered_docs += 1;
-                        }
-                        DocumentOperation::UpdateDocument {
-                            collection_id,
-                            document_id,
-                            new_version,
-                            ..
-                        } => {
-                            // Update version (simplified recovery - full update replay would need stored doc)
-                            let mut documents = self.documents.write().await;
-                            if let Some(collection_docs) = documents.get_mut(&collection_id)
-                                && let Some(doc) = collection_docs.get_mut(&document_id) {
-                                    doc.version = new_version;
-                                }
-                        }
-                        DocumentOperation::DeleteDocument {
-                            collection_id,
-                            document_id,
-                        } => {
-                            // Replay delete
-                            let mut documents = self.documents.write().await;
-                            if let Some(collection_docs) = documents.get_mut(&collection_id) {
-                                collection_docs.remove(&document_id);
-                            }
-                        }
-                        DocumentOperation::BatchDocuments {
-                            collection_id,
-                            documents: docs,
-                        } => {
-                            // Replay batch insert
-                            let mut doc_store = self.documents.write().await;
-                            let collection_docs =
-                                doc_store.entry(collection_id).or_default();
-                            for doc in docs {
-                                collection_docs.insert(doc.id.clone(), doc);
-                                recovered_docs += 1;
-                            }
-                        }
-                        DocumentOperation::CreateCollection {
-                            collection_id,
-                            config_json,
-                        } => {
-                            // Replay collection creation
-                            if let Ok(config) =
-                                serde_json::from_str::<DocumentCollectionConfig>(&config_json)
-                            {
-                                let collection =
-                                    DocumentCollection::new(collection_id.clone(), config);
-                                let mut collections = self.collections.write().await;
-                                collections.insert(collection_id, collection);
-                                recovered_collections += 1;
-                            }
-                        }
-                        DocumentOperation::DeleteCollection { collection_id } => {
-                            // Replay collection deletion
-                            let mut collections = self.collections.write().await;
-                            collections.remove(&collection_id);
-                            let mut documents = self.documents.write().await;
-                            documents.remove(&collection_id);
+                && let UnifiedWALOperation::DocumentOp(op) = entry.operation
+            {
+                match op {
+                    DocumentOperation::InsertDocument {
+                        collection_id,
+                        document,
+                    } => {
+                        // Replay insert
+                        let mut documents = self.documents.write().await;
+                        let collection_docs = documents.entry(collection_id).or_default();
+                        collection_docs.insert(document.id.clone(), document);
+                        recovered_docs += 1;
+                    }
+                    DocumentOperation::UpdateDocument {
+                        collection_id,
+                        document_id,
+                        new_version,
+                        ..
+                    } => {
+                        // Update version (simplified recovery - full update replay would need stored doc)
+                        let mut documents = self.documents.write().await;
+                        if let Some(collection_docs) = documents.get_mut(&collection_id)
+                            && let Some(doc) = collection_docs.get_mut(&document_id)
+                        {
+                            doc.version = new_version;
                         }
                     }
+                    DocumentOperation::DeleteDocument {
+                        collection_id,
+                        document_id,
+                    } => {
+                        // Replay delete
+                        let mut documents = self.documents.write().await;
+                        if let Some(collection_docs) = documents.get_mut(&collection_id) {
+                            collection_docs.remove(&document_id);
+                        }
+                    }
+                    DocumentOperation::BatchDocuments {
+                        collection_id,
+                        documents: docs,
+                    } => {
+                        // Replay batch insert
+                        let mut doc_store = self.documents.write().await;
+                        let collection_docs = doc_store.entry(collection_id).or_default();
+                        for doc in docs {
+                            collection_docs.insert(doc.id.clone(), doc);
+                            recovered_docs += 1;
+                        }
+                    }
+                    DocumentOperation::CreateCollection {
+                        collection_id,
+                        config_json,
+                    } => {
+                        // Replay collection creation
+                        if let Ok(config) =
+                            serde_json::from_str::<DocumentCollectionConfig>(&config_json)
+                        {
+                            let collection = DocumentCollection::new(collection_id.clone(), config);
+                            let mut collections = self.collections.write().await;
+                            collections.insert(collection_id, collection);
+                            recovered_collections += 1;
+                        }
+                    }
+                    DocumentOperation::DeleteCollection { collection_id } => {
+                        // Replay collection deletion
+                        let mut collections = self.collections.write().await;
+                        collections.remove(&collection_id);
+                        let mut documents = self.documents.write().await;
+                        documents.remove(&collection_id);
+                    }
                 }
+            }
         }
 
         info!(
@@ -761,9 +759,7 @@ impl DocumentService {
         // Store document in memory (backed by WAL for durability)
         {
             let mut documents = self.documents.write().await;
-            let collection_docs = documents
-                .entry(collection.to_string())
-                .or_default();
+            let collection_docs = documents.entry(collection.to_string()).or_default();
             collection_docs.insert(doc_id.clone(), record.clone());
         }
 
@@ -821,17 +817,19 @@ impl DocumentService {
         // Retrieve from in-memory store
         let documents = self.documents.read().await;
         if let Some(collection_docs) = documents.get(collection)
-            && let Some(record) = collection_docs.get(id) {
-                let mut result = record.clone();
+            && let Some(record) = collection_docs.get(id)
+        {
+            let mut result = record.clone();
 
-                // Apply projection if specified
-                if let Some(fields) = projection
-                    && !fields.is_empty() {
-                        result.document = self.apply_projection(&result.document, &fields);
-                    }
-
-                return Ok(Some(result));
+            // Apply projection if specified
+            if let Some(fields) = projection
+                && !fields.is_empty()
+            {
+                result.document = self.apply_projection(&result.document, &fields);
             }
+
+            return Ok(Some(result));
+        }
 
         Ok(None)
     }
@@ -886,14 +884,15 @@ impl DocumentService {
 
         // Check version for optimistic locking
         if let Some(expected) = expected_version
-            && record.version != expected {
-                self.record_update_metrics(start, true).await;
-                return Err(anyhow!(
-                    "Version mismatch: expected {}, got {}",
-                    expected,
-                    record.version
-                ));
-            }
+            && record.version != expected
+        {
+            self.record_update_metrics(start, true).await;
+            return Err(anyhow!(
+                "Version mismatch: expected {}, got {}",
+                expected,
+                record.version
+            ));
+        }
 
         // Apply updates
         for update in &updates {
@@ -1550,7 +1549,10 @@ impl DocumentService {
 
         // Check if pipeline contains lookup stages
         let has_lookup = pipeline.iter().any(|stage| {
-            matches!(&stage.stage, Some(crate::proto::proximadb_v1::aggregation_stage::Stage::Lookup(_)))
+            matches!(
+                &stage.stage,
+                Some(crate::proto::proximadb_v1::aggregation_stage::Stage::Lookup(_))
+            )
         });
 
         if has_lookup {
@@ -1641,7 +1643,11 @@ impl DocumentService {
             match &stage.stage {
                 Some(Stage::Lookup(lookup_stage)) => {
                     working_set = executor.process_lookup(&working_set, lookup_stage, &fetcher)?;
-                    debug!("After lookup stage {}: {} documents", stage_idx, working_set.len());
+                    debug!(
+                        "After lookup stage {}: {} documents",
+                        stage_idx,
+                        working_set.len()
+                    );
                 }
                 Some(_) => {
                     // Use the standard process_stage for non-lookup stages
@@ -1883,13 +1889,20 @@ impl LookupFetcher for DocumentServiceLookupFetcher {
 
             let result = self.service.query_documents(collection, params).await?;
 
-            Ok(result.documents.into_iter().map(|doc| doc.document).collect())
+            Ok(result
+                .documents
+                .into_iter()
+                .map(|doc| doc.document)
+                .collect())
         })
     }
 }
 
 /// Helper to create an equality filter for a field
-fn create_field_eq_filter(field_path: &str, value: SqlValue) -> crate::proto::proximadb_v1::DocFilterCondition {
+fn create_field_eq_filter(
+    field_path: &str,
+    value: SqlValue,
+) -> crate::proto::proximadb_v1::DocFilterCondition {
     use crate::proto::proximadb_v1::DocFilterOperator;
 
     crate::proto::proximadb_v1::DocFilterCondition {
@@ -1904,8 +1917,8 @@ fn create_field_eq_filter(field_path: &str, value: SqlValue) -> crate::proto::pr
 mod tests {
     use super::*;
     use crate::proto::proximadb_v1::{
-        sql_value, DocFilterCondition, DocFilterOperator, DocumentCollectionConfig, DocumentFilter,
-        DocumentUpdate, SqlObject, SqlValue, UpdateOperation,
+        DocFilterCondition, DocFilterOperator, DocumentCollectionConfig, DocumentFilter,
+        DocumentUpdate, SqlObject, SqlValue, UpdateOperation, sql_value,
     };
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
@@ -1952,10 +1965,7 @@ mod tests {
             })
         }
 
-        async fn do_compact(
-            &self,
-            _params: &CompactionParameters,
-        ) -> Result<CompactionResult> {
+        async fn do_compact(&self, _params: &CompactionParameters) -> Result<CompactionResult> {
             Ok(CompactionResult {
                 success: true,
                 collections_affected: Vec::new(),
@@ -1971,9 +1981,7 @@ mod tests {
             })
         }
 
-        async fn collect_engine_metrics(
-            &self,
-        ) -> Result<HashMap<String, serde_json::Value>> {
+        async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
             Ok(HashMap::new())
         }
 
@@ -2100,7 +2108,9 @@ mod tests {
         let title_val = fetched.document.fields.get("title").expect("title field");
         assert_eq!(
             title_val.value,
-            Some(sql_value::Value::StringValue("Rust Programming".to_string()))
+            Some(sql_value::Value::StringValue(
+                "Rust Programming".to_string()
+            ))
         );
 
         let year_val = fetched.document.fields.get("year").expect("year field");

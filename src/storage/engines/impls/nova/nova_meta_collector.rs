@@ -271,26 +271,27 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
     ) -> Result<()> {
         // Extract vector column
         if let Some(vector_col) = batch.column_by_name("vector")
-            && let Some(float_array) = vector_col.as_any().downcast_ref::<Float32Array>() {
-                // Detect dimension from first batch
-                if self.dimension.is_none() && !float_array.is_empty() {
-                    // Assume vectors are stored flat, dimension = total_values / num_rows
-                    let dimension = float_array.len() / batch.num_rows();
-                    self.dimension = Some(dimension);
+            && let Some(float_array) = vector_col.as_any().downcast_ref::<Float32Array>()
+        {
+            // Detect dimension from first batch
+            if self.dimension.is_none() && !float_array.is_empty() {
+                // Assume vectors are stored flat, dimension = total_values / num_rows
+                let dimension = float_array.len() / batch.num_rows();
+                self.dimension = Some(dimension);
 
-                    // Initialize current row group if needed
-                    if self.current_row_group.is_none() {
-                        self.current_row_group =
-                            Some(RowGroupBuilder::new(row_group_index, dimension));
-                    }
+                // Initialize current row group if needed
+                if self.current_row_group.is_none() {
+                    self.current_row_group = Some(RowGroupBuilder::new(row_group_index, dimension));
                 }
-
-                // Update statistics
-                if let Some(ref mut builder) = self.current_row_group
-                    && let Some(dim) = self.dimension {
-                        builder.update(float_array, dim);
-                    }
             }
+
+            // Update statistics
+            if let Some(ref mut builder) = self.current_row_group
+                && let Some(dim) = self.dimension
+            {
+                builder.update(float_array, dim);
+            }
+        }
 
         Ok(())
     }

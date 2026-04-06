@@ -387,7 +387,8 @@ impl ProximaRecordServiceImpl {
             TypedVal::UuidValue(uuid) => {
                 // Convert UUID bytes to string for storage
                 if uuid.len() == 16 {
-                    let uuid_str = uuid::Uuid::from_slice(uuid).map_or_else(|_| hex::encode(uuid), |u| u.to_string());
+                    let uuid_str = uuid::Uuid::from_slice(uuid)
+                        .map_or_else(|_| hex::encode(uuid), |u| u.to_string());
                     Value::StringValue(uuid_str)
                 } else {
                     Value::BytesValue(uuid.clone())
@@ -588,7 +589,8 @@ impl ProximaRecordServiceImpl {
                     }
                     proximadb_v2::typed_value::Value::UuidValue(uuid) => {
                         let uuid_str = if uuid.len() == 16 {
-                            uuid::Uuid::from_slice(uuid).map_or_else(|_| hex::encode(uuid), |u| u.to_string())
+                            uuid::Uuid::from_slice(uuid)
+                                .map_or_else(|_| hex::encode(uuid), |u| u.to_string())
                         } else {
                             hex::encode(uuid)
                         };
@@ -1280,17 +1282,18 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
                 // Record backpressure event if not NONE
                 if backpressure.level != BackpressureLevel::BackpressureNone as i32
-                    && let Ok(level) = BackpressureLevel::try_from(backpressure.level) {
-                        metrics.record_backpressure(level);
+                    && let Ok(level) = BackpressureLevel::try_from(backpressure.level)
+                {
+                    metrics.record_backpressure(level);
 
-                        // Log significant backpressure events
-                        if backpressure.level >= BackpressureLevel::BackpressureHigh as i32 {
-                            warn!(
-                                "V2 gRPC: BatchWriteStream - high backpressure: level={:?}, buffer={}%, delay={}ms",
-                                level, backpressure.buffer_percent, backpressure.suggested_delay_ms
-                            );
-                        }
+                    // Log significant backpressure events
+                    if backpressure.level >= BackpressureLevel::BackpressureHigh as i32 {
+                        warn!(
+                            "V2 gRPC: BatchWriteStream - high backpressure: level={:?}, buffer={}%, delay={}ms",
+                            level, backpressure.buffer_percent, backpressure.suggested_delay_ms
+                        );
                     }
+                }
 
                 // Prepare acknowledgment response
                 let response = BatchWriteStreamResponse {
@@ -1377,15 +1380,16 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         }
 
         // Generate schema ID
-        let schema_id = req
-            .schema
-            .as_ref().map_or_else(|| format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4()), |s| {
+        let schema_id = req.schema.as_ref().map_or_else(
+            || format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4()),
+            |s| {
                 if s.schema_id.is_empty() {
                     format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4())
                 } else {
                     s.schema_id.clone()
                 }
-            });
+            },
+        );
 
         // For now, we don't persist the schema separately - it's stored in collection config
         // A full implementation would update the collection's record_schema config

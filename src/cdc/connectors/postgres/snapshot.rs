@@ -93,8 +93,8 @@ impl SnapshotHandler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::config::SlotBehavior;
+    use super::*;
     use std::time::Duration;
 
     fn test_table() -> TableConfig {

@@ -155,10 +155,7 @@ impl MultiModelPlan {
                 Operator::Join { .. } => {
                     has_join = true;
                     if !has_scan {
-                        errors.push(format!(
-                            "Operator {}: Join before any Scan operator",
-                            idx
-                        ));
+                        errors.push(format!("Operator {}: Join before any Scan operator", idx));
                     }
                 }
                 Operator::Aggregate { .. } => {
@@ -185,9 +182,16 @@ impl MultiModelPlan {
         }
 
         // Check for invalid operator sequences
-        for (idx, (current, next)) in self.operators.iter().zip(self.operators.iter().skip(1)).enumerate() {
+        for (idx, (current, next)) in self
+            .operators
+            .iter()
+            .zip(self.operators.iter().skip(1))
+            .enumerate()
+        {
             // Check if aggregate comes after join (potentially inefficient)
-            if matches!(current, Operator::Join { .. }) && matches!(next, Operator::Aggregate { .. }) {
+            if matches!(current, Operator::Join { .. })
+                && matches!(next, Operator::Aggregate { .. })
+            {
                 warnings.push(format!(
                     "Operator {}: Aggregate immediately after Join - consider reordering",
                     idx
@@ -207,7 +211,11 @@ impl MultiModelPlan {
         use crate::core::search::FilterExpression::*;
 
         match expression {
-            Comparison { field, operator, value } => {
+            Comparison {
+                field,
+                operator,
+                value,
+            } => {
                 if field.is_empty() {
                     return Err(anyhow::anyhow!("Filter has empty field name"));
                 }
@@ -304,7 +312,10 @@ impl MultiModelPlan {
         // 3. Add projection operators early in the pipeline
         // 4. Remove unnecessary columns as early as possible
 
-        trace!("Projection pushdown optimization: {} projections", pushdown_count);
+        trace!(
+            "Projection pushdown optimization: {} projections",
+            pushdown_count
+        );
         pushdown_count
     }
 
@@ -345,7 +356,11 @@ impl MultiModelPlan {
             Operator::Project { columns } => Some(ComputeOperator::Project {
                 columns: columns.clone(),
             }),
-            Operator::Sort { column, ascending, limit } => Some(ComputeOperator::Sort {
+            Operator::Sort {
+                column,
+                ascending,
+                limit,
+            } => Some(ComputeOperator::Sort {
                 column: column.clone(),
                 ascending: *ascending,
                 limit: *limit,
@@ -355,9 +370,7 @@ impl MultiModelPlan {
                 sort_column: sort_column.clone(),
             }),
             // Federated operators don't map to compute operators
-            Operator::Join { .. } | Operator::Aggregate { .. } | Operator::Union { .. } => {
-                None
-            }
+            Operator::Join { .. } | Operator::Aggregate { .. } | Operator::Union { .. } => None,
         }
     }
 }
@@ -630,7 +643,9 @@ pub trait OperatorContract {
 impl OperatorContract for Operator {
     fn validate(&self) -> Result<()> {
         match self {
-            Operator::Scan { data_model, source, .. } => {
+            Operator::Scan {
+                data_model, source, ..
+            } => {
                 if source.is_empty() {
                     return Err(anyhow::anyhow!("Scan operator has empty source"));
                 }
@@ -651,7 +666,10 @@ impl OperatorContract for Operator {
                         }
                     }
                     FilterExpression::Not(expr) => {
-                        if matches!(expr.as_ref(), FilterExpression::And(_) | FilterExpression::Or(_)) {
+                        if matches!(
+                            expr.as_ref(),
+                            FilterExpression::And(_) | FilterExpression::Or(_)
+                        ) {
                             return Err(anyhow::anyhow!("Not(And/Or) not supported"));
                         }
                     }
@@ -683,7 +701,11 @@ impl OperatorContract for Operator {
                 debug!("Validated TopK operator: k={}, column={}", k, sort_column);
                 Ok(())
             }
-            Operator::Join { join_type, condition, .. } => {
+            Operator::Join {
+                join_type,
+                condition,
+                ..
+            } => {
                 match condition {
                     JoinCondition::On(left, right) => {
                         if left.is_empty() || right.is_empty() {
@@ -704,7 +726,11 @@ impl OperatorContract for Operator {
                 debug!("Validated Join operator: {:?}", join_type);
                 Ok(())
             }
-            Operator::Aggregate { group_by, aggregates, .. } => {
+            Operator::Aggregate {
+                group_by,
+                aggregates,
+                ..
+            } => {
                 if group_by.is_empty() && aggregates.is_empty() {
                     return Err(anyhow::anyhow!(
                         "Aggregate operator has no group_by or aggregates"
@@ -741,12 +767,17 @@ impl OperatorContract for Operator {
             Operator::TopK { sort_column, .. } => vec![sort_column.clone()],
             Operator::Join { condition, .. } => match condition {
                 JoinCondition::On(left, right) => vec![left.clone(), right.clone()],
-                JoinCondition::OnMultiple(pairs) => {
-                    pairs.iter().flat_map(|(l, r)| vec![l.clone(), r.clone()]).collect()
-                }
+                JoinCondition::OnMultiple(pairs) => pairs
+                    .iter()
+                    .flat_map(|(l, r)| vec![l.clone(), r.clone()])
+                    .collect(),
                 JoinCondition::Expression(expr) => extract_columns_from_filter(expr),
             },
-            Operator::Aggregate { group_by, aggregates, .. } => {
+            Operator::Aggregate {
+                group_by,
+                aggregates,
+                ..
+            } => {
                 let mut cols = group_by.clone();
                 cols.extend(aggregates.iter().map(|a| a.column.clone()));
                 cols
@@ -760,13 +791,17 @@ impl OperatorContract for Operator {
             Operator::Scan { columns, .. } => columns.clone().unwrap_or_default(),
             Operator::Filter { .. } => vec![], // Filter preserves all columns
             Operator::Project { columns } => columns.clone(),
-            Operator::Sort { .. } => vec![],    // Sort preserves all columns
-            Operator::TopK { .. } => vec![],    // TopK preserves all columns
+            Operator::Sort { .. } => vec![], // Sort preserves all columns
+            Operator::TopK { .. } => vec![], // TopK preserves all columns
             Operator::Join { alias, .. } => {
                 // Output columns depend on join schema - placeholder
                 alias.clone().map(|a| vec![a]).unwrap_or_default()
             }
-            Operator::Aggregate { group_by, aggregates, .. } => {
+            Operator::Aggregate {
+                group_by,
+                aggregates,
+                ..
+            } => {
                 let mut cols = group_by.clone();
                 cols.extend(aggregates.iter().filter_map(|a| a.alias.clone()));
                 cols
@@ -781,7 +816,9 @@ impl OperatorContract for Operator {
             Operator::Filter { .. } => input_rows as f64 * 0.5, // Assume 50% selectivity
             Operator::Project { .. } => input_rows as f64 * 0.1, // Cheap - just column selection
             Operator::Sort { .. } => input_rows as f64 * (input_rows as f64).log2(), // O(n log n)
-            Operator::TopK { k, .. } => input_rows as f64 + (*k as f64 * (input_rows as f64).log2()), // n + k log n
+            Operator::TopK { k, .. } => {
+                input_rows as f64 + (*k as f64 * (input_rows as f64).log2())
+            } // n + k log n
             Operator::Join { .. } => input_rows as f64 * input_rows as f64, // O(n*m) worst case
             Operator::Aggregate { .. } => input_rows as f64 * 1.5, // Grouping overhead
             Operator::Union { .. } => input_rows as f64, // Just concatenation
@@ -793,9 +830,10 @@ impl OperatorContract for Operator {
 fn extract_columns_from_filter(expression: &FilterExpression) -> Vec<String> {
     match expression {
         FilterExpression::Comparison { field, .. } => vec![field.clone()],
-        FilterExpression::And(exprs) | FilterExpression::Or(exprs) => {
-            exprs.iter().flat_map(|e| extract_columns_from_filter(e)).collect()
-        }
+        FilterExpression::And(exprs) | FilterExpression::Or(exprs) => exprs
+            .iter()
+            .flat_map(|e| extract_columns_from_filter(e))
+            .collect(),
         FilterExpression::Not(expr) => extract_columns_from_filter(expr),
     }
 }

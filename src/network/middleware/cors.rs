@@ -405,14 +405,20 @@ mod tests {
         let production = CorsConfig::production();
         assert_eq!(default.enabled, production.enabled);
         assert_eq!(default.development_mode, production.development_mode);
-        assert_eq!(default.allowed_origins.len(), production.allowed_origins.len());
+        assert_eq!(
+            default.allowed_origins.len(),
+            production.allowed_origins.len()
+        );
         assert_eq!(default.allow_credentials, production.allow_credentials);
     }
 
     #[test]
     fn test_allow_origins_multiple() {
-        let config = CorsConfig::production()
-            .allow_origins(vec!["https://a.com", "https://b.com", "https://c.com"]);
+        let config = CorsConfig::production().allow_origins(vec![
+            "https://a.com",
+            "https://b.com",
+            "https://c.com",
+        ]);
         assert_eq!(config.allowed_origins.len(), 3);
         assert!(config.is_origin_allowed("https://a.com"));
         assert!(config.is_origin_allowed("https://b.com"));
@@ -517,8 +523,7 @@ mod tests {
 
     #[test]
     fn test_create_cors_layer_production_with_origins() {
-        let config = CorsConfig::production()
-            .allow_origin("https://app.example.com");
+        let config = CorsConfig::production().allow_origin("https://app.example.com");
         let _layer = create_cors_layer(&config);
     }
 

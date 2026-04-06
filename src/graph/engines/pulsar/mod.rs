@@ -232,7 +232,10 @@ impl PulsarGraphEngine {
     ///
     /// **Alternative**: Use ORION with application-level sharding for production.
     /// **Documentation**: See `/docs/graph/PULSAR_STATUS.md` for complete details.
-    #[deprecated(since = "0.2.0", note = "PULSAR is experimental. Use ORION with application-level sharding for production.")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "PULSAR is experimental. Use ORION with application-level sharding for production."
+    )]
     pub fn new(config: PulsarConfig) -> Result<Self> {
         tracing::warn!(
             "⚠️  PULSAR EXPERIMENTAL WARNING ⚠️ \
@@ -278,7 +281,10 @@ impl PulsarGraphEngine {
     ///     "file:///tmp/proximadb".to_string(),
     /// ).await?;
     /// ```
-    #[deprecated(since = "0.2.0", note = "PULSAR persistence is experimental. Use ORION with application-level sharding for production.")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "PULSAR persistence is experimental. Use ORION with application-level sharding for production."
+    )]
     pub async fn with_persistence(
         config: PulsarConfig,
         graph_id: String,

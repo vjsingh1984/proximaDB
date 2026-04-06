@@ -359,13 +359,12 @@ impl MultiModelTransactionManager {
                 drop(lock_table);
 
                 // Check for deadlock
-                if self.config.deadlock_detection
-                    && self.detect_deadlock(tx_id, resource) {
-                        self.stats.write().total_deadlocks += 1;
-                        return Err(ProximaDBError::DeadlockDetected {
-                            transaction: tx_id.clone(),
-                        });
-                    }
+                if self.config.deadlock_detection && self.detect_deadlock(tx_id, resource) {
+                    self.stats.write().total_deadlocks += 1;
+                    return Err(ProximaDBError::DeadlockDetected {
+                        transaction: tx_id.clone(),
+                    });
+                }
 
                 std::thread::sleep(Duration::from_millis(10));
                 continue;
@@ -408,9 +407,10 @@ impl MultiModelTransactionManager {
 
         // For serializable transactions, check for conflicts
         if ctx.isolation_level == IsolationLevel::Serializable
-            && let Err(e) = self.validate_transaction(tx_id) {
-                return self.abort_with_reason(tx_id, &e.to_string()).await;
-            }
+            && let Err(e) = self.validate_transaction(tx_id)
+        {
+            return self.abort_with_reason(tx_id, &e.to_string()).await;
+        }
 
         // Acquire commit lock for serialization
         let _guard = self.commit_lock.lock().await;
@@ -483,10 +483,11 @@ impl MultiModelTransactionManager {
 
             // Update participant state
             if let Some(tx_participants) = self.participants.write().get_mut(tx_id)
-                && let Some(p) = tx_participants.get_mut(store_id) {
-                    p.prepared = vote;
-                    p.vote = Some(vote);
-                }
+                && let Some(p) = tx_participants.get_mut(store_id)
+            {
+                p.prepared = vote;
+                p.vote = Some(vote);
+            }
 
             if !vote {
                 all_prepared = false;
@@ -548,14 +549,15 @@ impl MultiModelTransactionManager {
         let start = Instant::now();
 
         if let Ok(ctx) = self.get_transaction(tx_id)
-            && ctx.state().can_rollback() {
-                ctx.set_state(TransactionState::RollingBack);
+            && ctx.state().can_rollback()
+        {
+            ctx.set_state(TransactionState::RollingBack);
 
-                // Rollback all participants
-                self.rollback_all_participants(tx_id).await?;
+            // Rollback all participants
+            self.rollback_all_participants(tx_id).await?;
 
-                ctx.set_state(TransactionState::Aborted);
-            }
+            ctx.set_state(TransactionState::Aborted);
+        }
 
         let result = self.build_result(tx_id, false, Some(reason.to_string()), start);
         self.cleanup_transaction(tx_id);
@@ -704,19 +706,20 @@ impl MultiModelTransactionManager {
 
             for lock in locks {
                 if let Some(entry) = lock_table.get_mut(&lock.resource_id)
-                    && entry.lock.transaction_id == *tx_id {
-                        // Grant lock to first waiter if any
-                        if let Some((waiter_id, mode, _)) = entry.waiters.pop() {
-                            entry.lock = Lock {
-                                transaction_id: waiter_id,
-                                resource_id: lock.resource_id.clone(),
-                                mode,
-                                acquired_at: Instant::now(),
-                            };
-                        } else {
-                            lock_table.remove(&lock.resource_id);
-                        }
+                    && entry.lock.transaction_id == *tx_id
+                {
+                    // Grant lock to first waiter if any
+                    if let Some((waiter_id, mode, _)) = entry.waiters.pop() {
+                        entry.lock = Lock {
+                            transaction_id: waiter_id,
+                            resource_id: lock.resource_id.clone(),
+                            mode,
+                            acquired_at: Instant::now(),
+                        };
+                    } else {
+                        lock_table.remove(&lock.resource_id);
                     }
+                }
             }
         }
 

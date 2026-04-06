@@ -635,10 +635,12 @@ impl PITRManager {
             // Also delete points older than max age
             for (id, point) in points.iter() {
                 let age = now.signed_duration_since(point.created_at);
-                if age > max_age && !point.tags.contains(&"protected".to_string())
-                    && !points_to_delete.contains(id) {
-                        points_to_delete.push(*id);
-                    }
+                if age > max_age
+                    && !point.tags.contains(&"protected".to_string())
+                    && !points_to_delete.contains(id)
+                {
+                    points_to_delete.push(*id);
+                }
             }
         }
 

@@ -152,10 +152,7 @@ impl FullTextIndex {
         let mut schema_builder = Schema::builder();
         let new_id_field = schema_builder.add_text_field("_id", STORED);
 
-        let existing = self
-            .text_fields
-            .read()
-            .unwrap_or_else(|p| p.into_inner());
+        let existing = self.text_fields.read().unwrap_or_else(|p| p.into_inner());
         for (existing_path, _) in existing.iter() {
             schema_builder.add_text_field(existing_path, TEXT);
         }
@@ -168,7 +165,11 @@ impl FullTextIndex {
             // Persistent: remove old index files and create with new schema.
             // Callers must reindex documents after adding a field.
             if dir.exists() {
-                for entry in std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok) {
+                for entry in std::fs::read_dir(dir)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Result::ok)
+                {
                     let _ = std::fs::remove_file(entry.path());
                 }
             }
@@ -188,10 +189,7 @@ impl FullTextIndex {
 
         // Rebuild text_fields map with fields from the new schema
         let mut new_text_fields = HashMap::new();
-        let old_fields = self
-            .text_fields
-            .read()
-            .unwrap_or_else(|p| p.into_inner());
+        let old_fields = self.text_fields.read().unwrap_or_else(|p| p.into_inner());
         for (p, _) in old_fields.iter() {
             if let Ok(f) = new_schema.get_field(p) {
                 new_text_fields.insert(p.clone(), f);
@@ -202,17 +200,11 @@ impl FullTextIndex {
 
         // Swap all internals
         self.index = new_index;
-        *self
-            .writer
-            .write()
-            .unwrap_or_else(|p| p.into_inner()) = new_writer;
+        *self.writer.write().unwrap_or_else(|p| p.into_inner()) = new_writer;
         self.reader = new_reader;
         self.schema = new_schema;
         self.id_field = new_id_field;
-        *self
-            .text_fields
-            .write()
-            .unwrap_or_else(|p| p.into_inner()) = new_text_fields;
+        *self.text_fields.write().unwrap_or_else(|p| p.into_inner()) = new_text_fields;
 
         Ok(())
     }
@@ -300,9 +292,10 @@ impl FullTextIndex {
         for (score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher.doc(doc_address)?;
             if let Some(id_value) = doc.get_first(self.id_field)
-                && let Some(id) = id_value.as_str() {
-                    results.push((id.to_string(), score));
-                }
+                && let Some(id) = id_value.as_str()
+            {
+                results.push((id.to_string(), score));
+            }
         }
 
         Ok(results)

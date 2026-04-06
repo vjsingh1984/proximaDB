@@ -509,10 +509,11 @@ impl Catalog for NativeCatalog {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
                 if path.extension().is_some_and(|ext| ext == "json")
-                    && let Some(stem) = path.file_stem() {
-                        let name = stem.to_string_lossy().to_string();
-                        identifiers.push(TableIdentifier::new(namespace.to_vec(), name));
-                    }
+                    && let Some(stem) = path.file_stem()
+                {
+                    let name = stem.to_string_lossy().to_string();
+                    identifiers.push(TableIdentifier::new(namespace.to_vec(), name));
+                }
             }
         }
 

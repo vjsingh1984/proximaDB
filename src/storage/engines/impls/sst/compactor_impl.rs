@@ -93,8 +93,7 @@ impl PartialOrd for MergeEntry {
 }
 
 /// Sorting strategy for compacted records
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub enum CompactionSortStrategy {
     /// Sort by record ID (default for SSTable binary search)
     #[default]
@@ -120,7 +119,6 @@ impl std::fmt::Debug for CompactionSortStrategy {
         }
     }
 }
-
 
 /// Zero-copy SST compactor that works directly with VectorRecord
 pub struct SstCompactor {
@@ -591,14 +589,15 @@ impl SstCompactor {
             if let Some((_, iter)) = active_iterators
                 .iter_mut()
                 .find(|(idx, _)| *idx == entry.file_index)
-                && let Some(next_record) = iter.next() {
-                    let rec = next_record?;
-                    heap.push(Reverse(MergeEntry {
-                        timestamp: rec.timestamp.unwrap_or(0) as u32,
-                        record: rec,
-                        file_index: entry.file_index,
-                    }));
-                }
+                && let Some(next_record) = iter.next()
+            {
+                let rec = next_record?;
+                heap.push(Reverse(MergeEntry {
+                    timestamp: rec.timestamp.unwrap_or(0) as u32,
+                    record: rec,
+                    file_index: entry.file_index,
+                }));
+            }
         }
 
         // Separate append-only records (no ID) from versioned records
@@ -933,9 +932,7 @@ impl SstCompactor {
                 debug!("🔍 SST_COMPACTOR: Using ArrowBlockWriter for Arrow format");
 
                 // Infer dimension from first record
-                let dimension = records
-                    .first()
-                    .map_or(128, |r| r.vector.len() as u32);
+                let dimension = records.first().map_or(128, |r| r.vector.len() as u32);
 
                 // Ensure parent directory exists
                 let path = std::path::Path::new(output_path);
@@ -1018,25 +1015,26 @@ impl SstCompactor {
 
         for level in 0..max_level {
             if let Some(files) = level_files.get(&level)
-                && files.len() >= 4 {
-                    // Compact when 4+ files at a level
-                    let output_file = format!(
-                        "level_{}_compacted_{}.sstable",
+                && files.len() >= 4
+            {
+                // Compact when 4+ files at a level
+                let output_file = format!(
+                    "level_{}_compacted_{}.sstable",
+                    level + 1,
+                    chrono::Utc::now().timestamp_millis()
+                );
+
+                let stats = self
+                    .compact_files(
+                        files.clone(),
+                        output_file,
                         level + 1,
-                        chrono::Utc::now().timestamp_millis()
-                    );
+                        None, // Compression config: inherits collection-level setting
+                    )
+                    .await?;
 
-                    let stats = self
-                        .compact_files(
-                            files.clone(),
-                            output_file,
-                            level + 1,
-                            None, // Compression config: inherits collection-level setting
-                        )
-                        .await?;
-
-                    all_stats.push(stats);
-                }
+                all_stats.push(stats);
+            }
         }
 
         Ok(all_stats)
@@ -1225,7 +1223,10 @@ mod tests {
         // Expired record removal: records with expires_at < now are
         // filtered during compaction merge. Validates TTL behavior.
         // Full test requires SstEngine fixture — validated in integration tests.
-        assert!(true, "Expired record removal validated in integration tests");
+        assert!(
+            true,
+            "Expired record removal validated in integration tests"
+        );
     }
 
     #[tokio::test]

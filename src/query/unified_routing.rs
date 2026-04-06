@@ -342,9 +342,7 @@ pub fn create_router_with_context(context: PlanContext) -> UnifiedQueryRouter {
 mod tests {
     use super::*;
     use crate::query::unified::ast::DataModel;
-    use crate::query::unified::uql::{
-        DataSource, SelectStatement, UQLStatement,
-    };
+    use crate::query::unified::uql::{DataSource, SelectStatement, UQLStatement};
 
     #[test]
     fn test_create_router() {

@@ -202,28 +202,29 @@ impl PhysicalOperator for ExpandOperator {
         loop {
             // Expand current node's edges
             if let Some(ref mut iter) = self.edge_iterator
-                && let Some((edge, target_node)) = iter.next() {
-                    // Create result tuple by extending input tuple
-                    let mut result = self
-                        .current_input
-                        .as_ref()
-                        .ok_or_else(|| {
-                            ProximaDBError::Internal(
-                                "No current input tuple available in expand operator".to_string(),
-                            )
-                        })?
-                        .clone();
+                && let Some((edge, target_node)) = iter.next()
+            {
+                // Create result tuple by extending input tuple
+                let mut result = self
+                    .current_input
+                    .as_ref()
+                    .ok_or_else(|| {
+                        ProximaDBError::Internal(
+                            "No current input tuple available in expand operator".to_string(),
+                        )
+                    })?
+                    .clone();
 
-                    // Add edge binding (if requested)
-                    if let Some(ref edge_var) = self.edge_variable {
-                        result.set(edge_var.clone(), QueryValue::Edge(edge));
-                    }
-
-                    // Add target node binding
-                    result.set(self.to_variable.clone(), QueryValue::Node(target_node));
-
-                    return Ok(Some(result));
+                // Add edge binding (if requested)
+                if let Some(ref edge_var) = self.edge_variable {
+                    result.set(edge_var.clone(), QueryValue::Edge(edge));
                 }
+
+                // Add target node binding
+                result.set(self.to_variable.clone(), QueryValue::Node(target_node));
+
+                return Ok(Some(result));
+            }
 
             // Get next input tuple
             if let Some(input_tuple) = self.input.next()? {

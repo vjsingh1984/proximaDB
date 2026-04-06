@@ -580,16 +580,17 @@ impl UnifiedQueryOptimizer {
         Option<ExecutionAction>,
     ) {
         if let Some(rl_planner) = get_rl_planner()
-            && rl_planner.is_enabled() {
-                let state = rl_planner.extract_state(context);
-                let action = rl_planner.select_action(&state).await;
-                trace!(
-                    "🎯 RL planner selected action for collection {}: {}",
-                    context.collection.id,
-                    action.describe()
-                );
-                return (Some(state), Some(action));
-            }
+            && rl_planner.is_enabled()
+        {
+            let state = rl_planner.extract_state(context);
+            let action = rl_planner.select_action(&state).await;
+            trace!(
+                "🎯 RL planner selected action for collection {}: {}",
+                context.collection.id,
+                action.describe()
+            );
+            return (Some(state), Some(action));
+        }
         (None, None)
     }
 
@@ -598,10 +599,11 @@ impl UnifiedQueryOptimizer {
         // Modify execution steps based on RL action
         for step in &mut plan.execution_steps {
             if let ExecutionStep::VectorSearch {
-                    execution_method,
-                    candidates,
-                    ..
-                } = step {
+                execution_method,
+                candidates,
+                ..
+            } = step
+            {
                 // Apply index strategy from action
                 if let Some(ref strategy) = action.index_strategy {
                     *execution_method = match strategy {
@@ -1124,8 +1126,7 @@ pub enum FilterPushdownOperation {
 }
 
 /// Optimization goals
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OptimizationGoal {
     /// Maximize search recall at the expense of speed
     MaximizeRecall,
@@ -1143,7 +1144,6 @@ pub enum OptimizationGoal {
     /// Balance speed and recall without strict resource constraints
     BalancedSpeedRecall,
 }
-
 
 impl std::fmt::Display for OptimizationGoal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1729,7 +1729,9 @@ impl UnifiedQueryOptimizer {
             .collection
             .stats
             .as_ref()
-            .map_or(context.total_vectors.max(10000), |s| s.vector_count as usize);
+            .map_or(context.total_vectors.max(10000), |s| {
+                s.vector_count as usize
+            });
 
         // Analyze filters and compute selectivity
         let (filters, combined_selectivity) = if let Some(filter_expr) = context.filter_params {

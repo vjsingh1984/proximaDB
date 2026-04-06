@@ -24,8 +24,7 @@ use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Version continuity enforcement mode for MVCC
-#[derive(Debug, Clone, Copy)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum VersionContinuityMode {
     /// Strict: Versions must be exactly contiguous (0, 1, 2, ...)
     #[default]
@@ -35,7 +34,6 @@ pub enum VersionContinuityMode {
     /// Disabled: No version continuity checking (legacy mode)
     Disabled,
 }
-
 
 /// Result of unified compaction operation
 #[derive(Debug)]
@@ -547,13 +545,14 @@ impl UnifiedColumnarCompaction {
             for row_idx in 0..batch.num_rows() {
                 // Skip expired records
                 if let Some(expires_at) = expires_at_array
-                    && expires_at.is_valid(row_idx) {
-                        let expiry = expires_at.value(row_idx);
-                        if expiry > 0 && expiry < current_time {
-                            expired_count += 1;
-                            continue;
-                        }
+                    && expires_at.is_valid(row_idx)
+                {
+                    let expiry = expires_at.value(row_idx);
+                    if expiry > 0 && expiry < current_time {
+                        expired_count += 1;
+                        continue;
                     }
+                }
 
                 // Skip null IDs
                 if id_array.is_null(row_idx) {
@@ -561,22 +560,20 @@ impl UnifiedColumnarCompaction {
                 }
 
                 let id = id_array.value(row_idx);
-                let version = version_array
-                    .map_or(0, |v| {
-                        if v.is_valid(row_idx) {
-                            v.value(row_idx)
-                        } else {
-                            0
-                        }
-                    });
-                let timestamp = timestamp_array
-                    .map_or(0, |t| {
-                        if t.is_valid(row_idx) {
-                            t.value(row_idx)
-                        } else {
-                            0
-                        }
-                    });
+                let version = version_array.map_or(0, |v| {
+                    if v.is_valid(row_idx) {
+                        v.value(row_idx)
+                    } else {
+                        0
+                    }
+                });
+                let timestamp = timestamp_array.map_or(0, |t| {
+                    if t.is_valid(row_idx) {
+                        t.value(row_idx)
+                    } else {
+                        0
+                    }
+                });
 
                 // Check version continuity
                 if !self.check_version_continuity(id, version, &latest_records) {
@@ -741,22 +738,23 @@ impl UnifiedColumnarCompaction {
 
         // Enable bloom filters for ID and filterable columns
         if let Some(collection) = collection_config
-            && let Some(config) = &collection.config {
-                let filterable_cols = &config.filterable_columns;
-                // ID column always gets bloom filter
+            && let Some(config) = &collection.config
+        {
+            let filterable_cols = &config.filterable_columns;
+            // ID column always gets bloom filter
+            props_builder = props_builder.set_column_bloom_filter_enabled(
+                parquet::schema::types::ColumnPath::from(FIELD_ID),
+                true,
+            );
+
+            // Add bloom filters for each filterable column
+            for col in filterable_cols {
                 props_builder = props_builder.set_column_bloom_filter_enabled(
-                    parquet::schema::types::ColumnPath::from(FIELD_ID),
+                    parquet::schema::types::ColumnPath::from(col.name.as_str()),
                     true,
                 );
-
-                // Add bloom filters for each filterable column
-                for col in filterable_cols {
-                    props_builder = props_builder.set_column_bloom_filter_enabled(
-                        parquet::schema::types::ColumnPath::from(col.name.as_str()),
-                        true,
-                    );
-                }
             }
+        }
 
         let writer_properties = props_builder.build();
 
@@ -821,31 +819,32 @@ impl UnifiedColumnarCompaction {
     ) -> Result<RecordBatch> {
         // Try to find a filterable column to sort by
         if let Some(collection) = collection_config
-            && let Some(config) = &collection.config {
-                let filterable_cols = &config.filterable_columns;
-                if let Some(first_col) = filterable_cols.first() {
-                    // Check if this column exists in the batch
-                    if let Some(column) = batch.column_by_name(&first_col.name) {
-                        // Sort by this column
-                        let sort_options = SortOptions {
-                            descending: false,
-                            nulls_first: false,
-                        };
-                        let indices = sort_to_indices(column, Some(sort_options), None)?;
+            && let Some(config) = &collection.config
+        {
+            let filterable_cols = &config.filterable_columns;
+            if let Some(first_col) = filterable_cols.first() {
+                // Check if this column exists in the batch
+                if let Some(column) = batch.column_by_name(&first_col.name) {
+                    // Sort by this column
+                    let sort_options = SortOptions {
+                        descending: false,
+                        nulls_first: false,
+                    };
+                    let indices = sort_to_indices(column, Some(sort_options), None)?;
 
-                        // Take all columns using the sorted indices
-                        let mut sorted_columns = Vec::new();
-                        for i in 0..batch.num_columns() {
-                            let sorted = take(batch.column(i).as_ref(), &indices, None)?;
-                            sorted_columns.push(sorted);
-                        }
-
-                        debug!("Sorted batch by filterable column: {}", first_col.name);
-                        return RecordBatch::try_new(batch.schema(), sorted_columns)
-                            .context("Failed to create sorted batch");
+                    // Take all columns using the sorted indices
+                    let mut sorted_columns = Vec::new();
+                    for i in 0..batch.num_columns() {
+                        let sorted = take(batch.column(i).as_ref(), &indices, None)?;
+                        sorted_columns.push(sorted);
                     }
+
+                    debug!("Sorted batch by filterable column: {}", first_col.name);
+                    return RecordBatch::try_new(batch.schema(), sorted_columns)
+                        .context("Failed to create sorted batch");
                 }
             }
+        }
 
         // No filterable column found or configured, return as-is
         Ok(batch.clone())

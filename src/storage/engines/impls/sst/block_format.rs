@@ -90,8 +90,7 @@ use crate::storage::engines::core::formats::arrow_block::{
 };
 
 /// Block format selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BlockFormat {
     /// ProximaDB's native ProximaBlocks format
     #[default]
@@ -117,7 +116,6 @@ impl BlockFormat {
         }
     }
 }
-
 
 /// Adapter for writing blocks in different formats
 pub struct BlockFormatWriter {
@@ -252,9 +250,18 @@ mod tests {
             BlockFormat::parse_block_format("ProximaBlocks"),
             BlockFormat::ProximaBlocks
         );
-        assert_eq!(BlockFormat::parse_block_format("ArrowBlock"), BlockFormat::ArrowBlock);
-        assert_eq!(BlockFormat::parse_block_format("arrow"), BlockFormat::ArrowBlock);
-        assert_eq!(BlockFormat::parse_block_format("unknown"), BlockFormat::ProximaBlocks);
+        assert_eq!(
+            BlockFormat::parse_block_format("ArrowBlock"),
+            BlockFormat::ArrowBlock
+        );
+        assert_eq!(
+            BlockFormat::parse_block_format("arrow"),
+            BlockFormat::ArrowBlock
+        );
+        assert_eq!(
+            BlockFormat::parse_block_format("unknown"),
+            BlockFormat::ProximaBlocks
+        );
     }
 
     #[test]

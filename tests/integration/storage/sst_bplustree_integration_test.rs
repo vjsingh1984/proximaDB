@@ -37,7 +37,10 @@ async fn test_bplustree_write_read_cycle() {
     }
 
     let (output_path, stats) = writer.flush_to_disk().await.unwrap();
-    println!("Wrote SST: {} ({} records)", output_path, stats.records_written);
+    println!(
+        "Wrote SST: {} ({} records)",
+        output_path, stats.records_written
+    );
 
     // Read and verify B+ tree exists
     let reader = SstQueryEngine::new(&sst_path);
@@ -50,7 +53,11 @@ async fn test_bplustree_write_read_cycle() {
 
     // Verify tree structure
     assert!(tree.leaves.len() > 0, "B+ tree should have leaves");
-    assert_eq!(tree.root.len(), tree.leaves.len(), "Root should have entry for each leaf");
+    assert_eq!(
+        tree.root.len(),
+        tree.leaves.len(),
+        "Root should have entry for each leaf"
+    );
 
     // Verify all records are covered
     let total_entries: usize = tree.leaves.iter().map(|l| l.len).sum();
@@ -115,7 +122,11 @@ async fn test_bplustree_range_lookup() {
 
     // Test small range
     let entries = index.range_entries("vec_00010", "vec_00020");
-    assert_eq!(entries.len(), 11, "Should find 11 entries (inclusive range)");
+    assert_eq!(
+        entries.len(),
+        11,
+        "Should find 11 entries (inclusive range)"
+    );
 
     // Test large range
     let entries = index.range_entries("vec_00000", "vec_00099");
@@ -127,7 +138,10 @@ async fn test_bplustree_range_lookup() {
 
     // Verify entries are in order
     for window in entries.windows(2) {
-        assert!(window[0].key <= window[1].key, "Range results should be sorted");
+        assert!(
+            window[0].key <= window[1].key,
+            "Range results should be sorted"
+        );
     }
 }
 
@@ -188,7 +202,10 @@ async fn test_bplustree_empty_file() {
     // The behavior depends on implementation - either success or expected error
     match result {
         Ok((path, stats)) => {
-            println!("Empty SST created: {} ({} records)", path, stats.records_written);
+            println!(
+                "Empty SST created: {} ({} records)",
+                path, stats.records_written
+            );
             assert_eq!(stats.records_written, 0);
         }
         Err(e) => {
@@ -221,8 +238,14 @@ async fn test_bplustree_large_fanout() {
     let tree = index.bplus_tree.as_ref().unwrap();
 
     // With 1000 entries and fanout 128, should have ~8 leaves
-    assert!(tree.leaves.len() <= 10, "Should have reasonable number of leaves");
-    assert!(tree.leaves.len() >= 7, "Should have at least ceil(1000/128) leaves");
+    assert!(
+        tree.leaves.len() <= 10,
+        "Should have reasonable number of leaves"
+    );
+    assert!(
+        tree.leaves.len() >= 7,
+        "Should have at least ceil(1000/128) leaves"
+    );
 
     // Test random lookups are still fast (structure verification)
     for i in (0..1000).step_by(100) {

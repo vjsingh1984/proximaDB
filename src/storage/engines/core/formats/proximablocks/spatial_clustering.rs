@@ -708,9 +708,8 @@ where
     clustered.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Step 4: Extract sorted blocks, entries, and codes
-    let (codes, blocks, index_entries): (Vec<SpatialCode>, Vec<B>, Vec<I>) = clustered
-        .into_iter()
-        .fold(
+    let (codes, blocks, index_entries): (Vec<SpatialCode>, Vec<B>, Vec<I>) =
+        clustered.into_iter().fold(
             (Vec::new(), Vec::new(), Vec::new()),
             |(mut codes, mut blocks, mut entries), (code, block, entry)| {
                 codes.push(code);
@@ -1037,17 +1036,15 @@ where
     clustered.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Step 6: Extract sorted blocks, entries, and codes
-    let (codes, blocks, index_entries): (Vec<u64>, Vec<B>, Vec<I>) = clustered
-        .into_iter()
-        .fold(
-            (Vec::new(), Vec::new(), Vec::new()),
-            |(mut codes, mut blocks, mut entries), (code, block, entry)| {
-                codes.push(code);
-                blocks.push(block);
-                entries.push(entry);
-                (codes, blocks, entries)
-            },
-        );
+    let (codes, blocks, index_entries): (Vec<u64>, Vec<B>, Vec<I>) = clustered.into_iter().fold(
+        (Vec::new(), Vec::new(), Vec::new()),
+        |(mut codes, mut blocks, mut entries), (code, block, entry)| {
+            codes.push(code);
+            blocks.push(block);
+            entries.push(entry);
+            (codes, blocks, entries)
+        },
+    );
 
     (blocks, index_entries, codes)
 }

@@ -259,10 +259,10 @@ impl TieringPolicyEngine {
                 && let Some(task) = self
                     .create_migration_task(&collection, &id, &metadata, action)
                     .await
-                {
-                    tasks.push(task);
-                    migrations_triggered += 1;
-                }
+            {
+                tasks.push(task);
+                migrations_triggered += 1;
+            }
         }
 
         let duration = start.elapsed();
@@ -307,9 +307,10 @@ impl TieringPolicyEngine {
             }
 
             if let Some(ref tenant) = metadata.tenant_id
-                && !policy.applies_to_tenant(tenant) {
-                    continue;
-                }
+                && !policy.applies_to_tenant(tenant)
+            {
+                continue;
+            }
 
             // Evaluate rules
             for rule in &policy.rules {
@@ -436,9 +437,9 @@ impl TieringPolicyEngine {
                 && let Some(task) = self
                     .create_migration_task(collection, &id, &metadata, action)
                     .await
-                {
-                    tasks.push(task);
-                }
+            {
+                tasks.push(task);
+            }
         }
 
         // Submit tasks

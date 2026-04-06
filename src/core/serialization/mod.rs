@@ -50,8 +50,7 @@ impl Default for VectorSerializationConfig {
 }
 
 /// Compression algorithms supported for vector data
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 pub enum CompressionAlgorithm {
     /// No compression
     #[default]
@@ -90,7 +89,6 @@ pub enum CompressionAlgorithm {
     /// - Metadata columns: BROTLI (maximum compression for cold data)
     Mixed,
 }
-
 
 /// Vector serialization format marker
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

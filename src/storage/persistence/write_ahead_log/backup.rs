@@ -337,9 +337,7 @@ impl BackupCoordinator {
             wal_entries_count: 0,
             collections_count: 0,
             parent_backup_id: parent_backup.as_ref().map(|p| p.backup_id.clone()),
-            chain_depth: parent_backup
-                .as_ref()
-                .map_or(0, |p| p.chain_depth + 1),
+            chain_depth: parent_backup.as_ref().map_or(0, |p| p.chain_depth + 1),
             collections: HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -645,13 +643,14 @@ impl BackupCoordinator {
                 .cloned();
             if let Some(ref last_id) = last_incr
                 && let Ok(last_backup) = self.get_backup_metadata(last_id).await
-                    && last_backup.chain_depth >= self.config.max_incremental_chain_length {
-                        info!(
-                            "📋 Incremental chain length ({}) exceeded max ({}), creating full backup",
-                            last_backup.chain_depth, self.config.max_incremental_chain_length
-                        );
-                        return Ok(BackupType::Full);
-                    }
+                && last_backup.chain_depth >= self.config.max_incremental_chain_length
+            {
+                info!(
+                    "📋 Incremental chain length ({}) exceeded max ({}), creating full backup",
+                    last_backup.chain_depth, self.config.max_incremental_chain_length
+                );
+                return Ok(BackupType::Full);
+            }
         }
 
         Ok(options.backup_type)

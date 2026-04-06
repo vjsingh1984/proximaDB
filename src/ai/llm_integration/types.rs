@@ -299,8 +299,7 @@ pub struct LLMRequestContext {
 }
 
 /// Priority levels for LLM requests
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RequestPriority {
     /// Low priority, can be delayed
     Low,
@@ -525,7 +524,6 @@ impl Default for GoogleVertexConfig {
         }
     }
 }
-
 
 impl LLMRequestContext {
     /// Create a new request context with the given request ID.

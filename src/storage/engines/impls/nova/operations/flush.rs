@@ -97,7 +97,7 @@ impl NovaFlushOperations {
                     enabled: Some(true),
                     enable_progressive_search: Some(true),
                     binary_filter_selectivity: Some(0.1), // Keep 10% after binary stage
-                    int8_ranking_selectivity: Some(0.3), // Keep 30% after INT8 stage
+                    int8_ranking_selectivity: Some(0.3),  // Keep 30% after INT8 stage
                     ..Default::default()
                 }
             },

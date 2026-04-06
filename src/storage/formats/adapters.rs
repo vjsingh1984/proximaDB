@@ -110,8 +110,8 @@ impl<E: UnifiedStorageEngine> InternalFormatAdapter<E> {
             StorageEngineStrategy::Raptor => FormatType::Raptor,
             StorageEngineStrategy::TimeSeries => FormatType::Sst, // TimeSeries uses Arrow format
             StorageEngineStrategy::Hybrid => FormatType::Sst,     // Default to SST for hybrid
-            StorageEngineStrategy::Cedar => FormatType::Sst,      // CEDAR uses SST-like block format
-            StorageEngineStrategy::Chrono => FormatType::Sst,     // CHRONO uses time-partitioned blocks
+            StorageEngineStrategy::Cedar => FormatType::Sst, // CEDAR uses SST-like block format
+            StorageEngineStrategy::Chrono => FormatType::Sst, // CHRONO uses time-partitioned blocks
         }
     }
 }

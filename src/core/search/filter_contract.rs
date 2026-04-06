@@ -163,8 +163,11 @@ pub trait CandidateSet: Send + Sync + Debug {
     /// Apply a filter contract to this candidate set
     ///
     /// Returns a new candidate set with only the candidates that pass the filter.
-    fn filter(&self, contract: &dyn FilterContract, metadata_lookup: &dyn MetadataLookup)
-        -> Result<Box<dyn CandidateSet>>;
+    fn filter(
+        &self,
+        contract: &dyn FilterContract,
+        metadata_lookup: &dyn MetadataLookup,
+    ) -> Result<Box<dyn CandidateSet>>;
 
     /// Take the top K candidates from this set
     ///
@@ -322,42 +325,50 @@ impl FilterContract for NormalizedFilter {
             obj.iter()
                 .map(|(k, v)| {
                     let sql_value = match v {
-                        serde_json::Value::Null => {
-                            crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(0))
-                            }
-                        }
-                        serde_json::Value::Bool(b) => {
-                            crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b))
-                            }
-                        }
+                        serde_json::Value::Null => crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(0)),
+                        },
+                        serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
+                                *b,
+                            )),
+                        },
                         serde_json::Value::Number(n) => {
                             if let Some(i) = n.as_i64() {
                                 crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i))
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
+                                    ),
                                 }
                             } else if let Some(f) = n.as_f64() {
                                 crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f))
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                            f,
+                                        ),
+                                    ),
                                 }
                             } else {
                                 crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(0))
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::NullValue(0),
+                                    ),
                                 }
                             }
                         }
-                        serde_json::Value::String(s) => {
-                            crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone()))
-                            }
-                        }
+                        serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                s.clone(),
+                            )),
+                        },
                         _ => {
                             // For complex types, convert to JSON string
                             crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    v.to_string()
-                                ))
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                        v.to_string(),
+                                    ),
+                                ),
                             }
                         }
                     };
@@ -368,7 +379,10 @@ impl FilterContract for NormalizedFilter {
             return Ok(false); // Non-object metadata doesn't match filters
         };
 
-        Ok(sql_value_filter::evaluate_filter(&self.expression, &metadata_map))
+        Ok(sql_value_filter::evaluate_filter(
+            &self.expression,
+            &metadata_map,
+        ))
     }
 
     fn evaluate_batch(&self, metadata_batch: &[serde_json::Value]) -> Result<BooleanArray> {
@@ -499,10 +513,8 @@ impl CandidateSet for MemoryCandidateSet {
         };
 
         // Convert Vec<Option<Value>> to Vec<Value> for batch evaluation
-        let metadata_values: Vec<serde_json::Value> = metadata_batch
-            .into_iter()
-            .filter_map(|v| v)
-            .collect();
+        let metadata_values: Vec<serde_json::Value> =
+            metadata_batch.into_iter().filter_map(|v| v).collect();
 
         // Evaluate filter for each candidate
         let filter_results = contract.evaluate_batch(&metadata_values)?;
@@ -539,7 +551,11 @@ impl CandidateSet for MemoryCandidateSet {
             .collect();
 
         // Sort by score (descending) and take top K
-        indexed.sort_by(|a, b| b.1 .0.partial_cmp(a.1 .0).unwrap_or(std::cmp::Ordering::Equal));
+        indexed.sort_by(|a, b| {
+            b.1.0
+                .partial_cmp(a.1.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let top_candidates: Vec<String> = indexed
             .iter()
@@ -695,8 +711,10 @@ mod tests {
 
     #[test]
     fn test_memory_candidate_set_intersect() {
-        let set1 = MemoryCandidateSet::from_ids(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
-        let set2 = MemoryCandidateSet::from_ids(vec!["b".to_string(), "c".to_string(), "d".to_string()]);
+        let set1 =
+            MemoryCandidateSet::from_ids(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        let set2 =
+            MemoryCandidateSet::from_ids(vec!["b".to_string(), "c".to_string(), "d".to_string()]);
 
         let intersection = set1.intersect(&set2).unwrap();
         assert_eq!(intersection.len(), 2); // b, c
@@ -704,7 +722,12 @@ mod tests {
 
     #[test]
     fn test_memory_candidate_set_top_k() {
-        let ids = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        let ids = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
         let scores = vec![0.1, 0.9, 0.5, 0.3];
 
         let candidates = MemoryCandidateSet::from_ids(ids);

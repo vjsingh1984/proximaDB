@@ -184,7 +184,12 @@ impl FilteredHNSWIndex {
     }
 
     /// Insert a vector into the HNSW index
-    pub fn insert(&mut self, id: String, vector: Vec<f32>, metadata: serde_json::Value) -> Result<()> {
+    pub fn insert(
+        &mut self,
+        id: String,
+        vector: Vec<f32>,
+        metadata: serde_json::Value,
+    ) -> Result<()> {
         if vector.len() != self.dimension {
             return Err(anyhow::anyhow!(
                 "Vector dimension {} does not match index dimension {}",
@@ -222,8 +227,7 @@ impl FilteredHNSWIndex {
 
         debug!(
             "Executing filtered HNSW search with top_k={}, ef={}",
-            params.top_k,
-            params.ef
+            params.top_k, params.ef
         );
 
         // Adjust ef based on filter selectivity if adaptive
@@ -304,7 +308,8 @@ impl FilteredHNSWIndex {
 
             if entry_passes {
                 // Calculate similarity to query
-                let similarity = self.calculate_similarity(&params.query_vector, &entry_node.vector);
+                let similarity =
+                    self.calculate_similarity(&params.query_vector, &entry_node.vector);
                 candidates.push(SearchResult {
                     id: entry_node.id.clone(),
                     score: similarity,
@@ -507,11 +512,13 @@ mod tests {
             query_vector: vec![0.1; 128],
             top_k: 10,
             ef: 100,
-            filter: Some(Arc::from(normalize_filter(crate::core::search::FilterExpression::Comparison {
-                field: "status".to_string(),
-                operator: ComparisonOperator::Equals,
-                value: serde_json::json!("active"),
-            }))),
+            filter: Some(Arc::from(normalize_filter(
+                crate::core::search::FilterExpression::Comparison {
+                    field: "status".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    value: serde_json::json!("active"),
+                },
+            ))),
             enable_early_pruning: true,
             adaptive_ef: true,
         };
@@ -529,11 +536,13 @@ mod tests {
             query_vector: vec![0.1; 128],
             top_k: 10,
             ef: 100,
-            filter: Some(Arc::from(normalize_filter(crate::core::search::FilterExpression::Comparison {
-                field: "score".to_string(),
-                operator: ComparisonOperator::GreaterThan,
-                value: serde_json::json!(0.0),
-            }))),
+            filter: Some(Arc::from(normalize_filter(
+                crate::core::search::FilterExpression::Comparison {
+                    field: "score".to_string(),
+                    operator: ComparisonOperator::GreaterThan,
+                    value: serde_json::json!(0.0),
+                },
+            ))),
             enable_early_pruning: true,
             adaptive_ef: true,
         };

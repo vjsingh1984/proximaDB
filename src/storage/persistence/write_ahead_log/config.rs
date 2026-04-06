@@ -176,8 +176,7 @@ pub enum DurabilityLevel {
 }
 
 /// WAL strategy type selection
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum WriteBufferStrategyType {
     /// Modern Avro batch strategy with zero-copy optimization
     AvroBatch,
@@ -187,7 +186,6 @@ pub enum WriteBufferStrategyType {
     /// Modern Proto batch strategy for proto-first architecture
     ProtoBatch,
 }
-
 
 impl std::fmt::Display for WriteBufferStrategyType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -255,8 +253,7 @@ pub struct MemTableConfig {
 }
 
 /// Memtable strategy type selection
-#[derive(Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum MemTableType {
     /// Skip List - High write throughput, ordered data (RocksDB/LevelDB default)
     SkipList,
@@ -268,7 +265,6 @@ pub enum MemTableType {
     /// Hash Map - Write-heavy, unordered ingestion, point lookups only
     HashMap,
 }
-
 
 impl Default for MemTableConfig {
     fn default() -> Self {
@@ -591,8 +587,7 @@ impl Default for CloudBackupConfig {
 }
 
 /// Cloud backup strategy
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum CloudBackupStrategy {
     /// Real-time backup on every write
     RealTime,
@@ -604,7 +599,6 @@ pub enum CloudBackupStrategy {
     /// Backup on demand only
     OnDemand,
 }
-
 
 /// Backup frequency configuration
 #[derive(Debug, Clone)]

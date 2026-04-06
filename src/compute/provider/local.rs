@@ -645,8 +645,7 @@ impl LocalComputeProvider {
 impl Default for LocalComputeProvider {
     #[allow(clippy::expect_used)] // Default impl cannot return Result, panic on error is acceptable
     fn default() -> Self {
-        Self::new()
-            .expect("Failed to create default LocalComputeProvider")
+        Self::new().expect("Failed to create default LocalComputeProvider")
     }
 }
 

@@ -275,9 +275,9 @@ impl UnifiedSWIFTReader {
                     serde_json::Value::String(s) => Some(
                         crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()),
                     ),
-                    serde_json::Value::Number(n) => n.as_f64().map(
-                        crate::proto::proximadb_v1::metadata_item::Value::NumberValue,
-                    ),
+                    serde_json::Value::Number(n) => n
+                        .as_f64()
+                        .map(crate::proto::proximadb_v1::metadata_item::Value::NumberValue),
                     _ => None,
                 },
             };
@@ -341,14 +341,16 @@ impl StrategyAwareReader for UnifiedSWIFTReader {
             }
 
             // Recreate cached filesystem if strategy changed to cached
-            if self.strategy.should_use_cache() && self.cached_filesystem.is_none()
-                && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
-                    self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
-                        base_fs,
-                        self.collection_id.clone(),
-                        "swift".to_string(),
-                    )));
-                }
+            if self.strategy.should_use_cache()
+                && self.cached_filesystem.is_none()
+                && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://")
+            {
+                self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
+                    base_fs,
+                    self.collection_id.clone(),
+                    "swift".to_string(),
+                )));
+            }
         }
     }
 }

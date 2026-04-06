@@ -471,23 +471,22 @@ impl ParquetReader {
                         }
                     } else if let Some(bool_array) =
                         column.as_any().downcast_ref::<arrow::array::BooleanArray>()
-                        && !bool_array.is_null(row) {
-                            let value = bool_array.value(row);
-                            debug!(
-                                "🔍 DEBUG: Found bool metadata {}={} for row {}",
-                                column_name, value, row
-                            );
-                            metadata.insert(
-                                column_name.to_string(),
-                                crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(
-                                            value,
-                                        ),
-                                    ),
-                                },
-                            );
-                        }
+                        && !bool_array.is_null(row)
+                    {
+                        let value = bool_array.value(row);
+                        debug!(
+                            "🔍 DEBUG: Found bool metadata {}={} for row {}",
+                            column_name, value, row
+                        );
+                        metadata.insert(
+                            column_name.to_string(),
+                            crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(value),
+                                ),
+                            },
+                        );
+                    }
                 }
             }
 

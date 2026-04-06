@@ -224,9 +224,10 @@ impl KeyManager {
         };
 
         if let Some(version) = versions.get(&current_id)
-            && let Some(expires_at) = version.expires_at {
-                return now() >= expires_at;
-            }
+            && let Some(expires_at) = version.expires_at
+        {
+            return now() >= expires_at;
+        }
 
         false
     }

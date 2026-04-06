@@ -38,9 +38,8 @@ use std::hash::{Hash, Hasher};
 use tracing::info;
 
 use crate::proto::explain::v1::{
-    ExplainPlan, ExplainPlanRequest, ExplainPlanResponse, ExplainFormat,
-    PlanNode, PlanMetadata, ExecutionStats, NodeType,
-    NodeDetails, ExplainWarning,
+    ExecutionStats, ExplainFormat, ExplainPlan, ExplainPlanRequest, ExplainPlanResponse,
+    ExplainWarning, NodeDetails, NodeType, PlanMetadata, PlanNode,
 };
 
 /// Plan context for explain operations
@@ -187,7 +186,9 @@ impl ExplainPlanBuilder {
 
     /// Should analyze (execute) the query
     fn should_analyze(&self) -> bool {
-        self.request.options.as_ref()
+        self.request
+            .options
+            .as_ref()
             .map(|opts| opts.analyze)
             .unwrap_or(false)
     }
@@ -235,7 +236,11 @@ fn create_placeholder_plan_nodes(query: &str) -> Vec<PlanNode> {
                 scan: Some(crate::proto::explain::v1::ScanDetails {
                     collection_name: "test_collection".to_string(),
                     collection_id: "col_123".to_string(),
-                    columns: vec!["id".to_string(), "vector".to_string(), "metadata".to_string()],
+                    columns: vec![
+                        "id".to_string(),
+                        "vector".to_string(),
+                        "metadata".to_string(),
+                    ],
                     filter_pushed_down: String::new(),
                     estimated_bytes: 1024000,
                     is_parallel: true,
@@ -277,16 +282,10 @@ pub fn format_explain_plan(plan: &ExplainPlan, format: ExplainFormat) -> String 
     match format {
         ExplainFormat::ExplainFormatJson => {
             format!("{:#?}", plan)
-        },
-        ExplainFormat::ExplainFormatText => {
-            format_explain_plan_text(plan)
-        },
-        ExplainFormat::ExplainFormatGraphviz => {
-            format_explain_plan_graphviz(plan)
-        },
-        _ => {
-            "Unsupported format".to_string()
         }
+        ExplainFormat::ExplainFormatText => format_explain_plan_text(plan),
+        ExplainFormat::ExplainFormatGraphviz => format_explain_plan_graphviz(plan),
+        _ => "Unsupported format".to_string(),
     }
 }
 
@@ -300,8 +299,10 @@ fn format_explain_plan_text(plan: &ExplainPlan) -> String {
     output.push_str("\nPlan Nodes:\n");
 
     for node in &plan.plan_nodes {
-        output.push_str(&format!("  {} (cost={:.2}, rows={})\n",
-                               node.display_name, node.estimated_cost, node.estimated_rows));
+        output.push_str(&format!(
+            "  {} (cost={:.2}, rows={})\n",
+            node.display_name, node.estimated_cost, node.estimated_rows
+        ));
         output.push_str(&format!("    -> {}\n", node.description));
 
         if let Some(ref details) = node.node_details {
@@ -346,8 +347,10 @@ fn format_explain_plan_graphviz(plan: &ExplainPlan) -> String {
     output.push_str("\n");
 
     for node in &plan.plan_nodes {
-        let label = format!("{}\\nCost: {:.2}\\nRows: {}",
-                           node.display_name, node.estimated_cost, node.estimated_rows);
+        let label = format!(
+            "{}\\nCost: {:.2}\\nRows: {}",
+            node.display_name, node.estimated_cost, node.estimated_rows
+        );
         output.push_str(&format!("  \"{}\" [label=\"{}\"];\n", node.node_id, label));
     }
 

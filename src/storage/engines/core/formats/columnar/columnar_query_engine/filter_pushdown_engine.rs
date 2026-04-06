@@ -21,25 +21,37 @@ fn extract_stats_min_max(stats: &Statistics, col_type: PhysicalType) -> Option<(
 
     match col_type {
         PhysicalType::INT32 => {
-            if min_bytes.len() < 4 || max_bytes.len() < 4 { return None; }
-            let min_val = i32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]) as f64;
-            let max_val = i32::from_le_bytes([max_bytes[0], max_bytes[1], max_bytes[2], max_bytes[3]]) as f64;
+            if min_bytes.len() < 4 || max_bytes.len() < 4 {
+                return None;
+            }
+            let min_val =
+                i32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]) as f64;
+            let max_val =
+                i32::from_le_bytes([max_bytes[0], max_bytes[1], max_bytes[2], max_bytes[3]]) as f64;
             Some((min_val, max_val))
         }
         PhysicalType::INT64 => {
-            if min_bytes.len() < 8 || max_bytes.len() < 8 { return None; }
+            if min_bytes.len() < 8 || max_bytes.len() < 8 {
+                return None;
+            }
             let min_val = i64::from_le_bytes(min_bytes[..8].try_into().ok()?) as f64;
             let max_val = i64::from_le_bytes(max_bytes[..8].try_into().ok()?) as f64;
             Some((min_val, max_val))
         }
         PhysicalType::FLOAT => {
-            if min_bytes.len() < 4 || max_bytes.len() < 4 { return None; }
-            let min_val = f32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]) as f64;
-            let max_val = f32::from_le_bytes([max_bytes[0], max_bytes[1], max_bytes[2], max_bytes[3]]) as f64;
+            if min_bytes.len() < 4 || max_bytes.len() < 4 {
+                return None;
+            }
+            let min_val =
+                f32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]) as f64;
+            let max_val =
+                f32::from_le_bytes([max_bytes[0], max_bytes[1], max_bytes[2], max_bytes[3]]) as f64;
             Some((min_val, max_val))
         }
         PhysicalType::DOUBLE => {
-            if min_bytes.len() < 8 || max_bytes.len() < 8 { return None; }
+            if min_bytes.len() < 8 || max_bytes.len() < 8 {
+                return None;
+            }
             let min_val = f64::from_le_bytes(min_bytes[..8].try_into().ok()?);
             let max_val = f64::from_le_bytes(max_bytes[..8].try_into().ok()?);
             Some((min_val, max_val))

@@ -508,9 +508,10 @@ impl RetentionManager {
             }
 
             if let Some(ref tenant) = metadata.tenant_id
-                && !policy.applies_to_tenant(tenant) {
-                    continue;
-                }
+                && !policy.applies_to_tenant(tenant)
+            {
+                continue;
+            }
 
             for rule in &policy.rules {
                 if let Some(action) = rule.evaluate(metadata) {
@@ -655,10 +656,11 @@ impl RetentionManager {
                     if let RetentionCondition::AgeGreaterThan(ttl) = &rule.condition {
                         // Calculate time until expiry
                         if let Some(time_remaining) = ttl.checked_sub(metadata.age)
-                            && time_remaining <= within {
-                                expiring.push(metadata);
-                                break;
-                            }
+                            && time_remaining <= within
+                        {
+                            expiring.push(metadata);
+                            break;
+                        }
                     }
                 }
             }

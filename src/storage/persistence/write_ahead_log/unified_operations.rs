@@ -365,7 +365,8 @@ impl UnifiedWALWriter {
         if max_seq > 0 {
             tracing::info!(
                 "WAL recovery: found {} segments, resuming from sequence {}",
-                segment_count, max_seq
+                segment_count,
+                max_seq
             );
         } else {
             tracing::debug!("WAL writer initialized fresh for path: {}", base_path);
@@ -420,11 +421,7 @@ impl UnifiedWALWriter {
         self.current_segment_data.extend_from_slice(&serialized);
 
         // If requires immediate fsync, flush to disk
-        if entry
-            .metadata
-            .as_ref()
-            .is_some_and(|m| m.requires_fsync)
-        {
+        if entry.metadata.as_ref().is_some_and(|m| m.requires_fsync) {
             self.flush_current_segment().await?;
         }
 
@@ -454,27 +451,28 @@ impl UnifiedWALWriter {
     /// Flush current segment to disk
     async fn flush_current_segment(&mut self) -> anyhow::Result<()> {
         if let Some(ref path) = self.current_segment_path
-            && !self.current_segment_data.is_empty() {
-                let url = format!("file://{}", path);
-                let fs = self.filesystem.get_filesystem(&url)?;
+            && !self.current_segment_data.is_empty()
+        {
+            let url = format!("file://{}", path);
+            let fs = self.filesystem.get_filesystem(&url)?;
 
-                // Read existing data if file exists
-                let mut full_data = if fs.exists(&url).await? {
-                    fs.read(&url).await?
-                } else {
-                    Vec::new()
-                };
+            // Read existing data if file exists
+            let mut full_data = if fs.exists(&url).await? {
+                fs.read(&url).await?
+            } else {
+                Vec::new()
+            };
 
-                // Append new data
-                full_data.extend_from_slice(&self.current_segment_data);
+            // Append new data
+            full_data.extend_from_slice(&self.current_segment_data);
 
-                // Write back atomically
-                fs.write(&url, &full_data, None).await?;
-                fs.sync_file(&url).await?;
+            // Write back atomically
+            fs.write(&url, &full_data, None).await?;
+            fs.sync_file(&url).await?;
 
-                // Clear buffer after successful write
-                self.current_segment_data.clear();
-            }
+            // Clear buffer after successful write
+            self.current_segment_data.clear();
+        }
         Ok(())
     }
 

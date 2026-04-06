@@ -171,7 +171,6 @@ impl Clone for MetadataFilter {
     }
 }
 
-
 /// Interface for metadata storage operations
 #[async_trait]
 pub trait MetadataStoreInterface: Send + Sync {

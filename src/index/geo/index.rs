@@ -263,14 +263,15 @@ impl GeoIndex {
                     }
 
                     if let Some(entry) = entries.get(id)
-                        && bbox.contains(&entry.point) {
-                            seen.insert(id.clone());
-                            results.push(GeoQueryResult {
-                                id: entry.id.clone(),
-                                point: entry.point,
-                                distance_km: None,
-                            });
-                        }
+                        && bbox.contains(&entry.point)
+                    {
+                        seen.insert(id.clone());
+                        results.push(GeoQueryResult {
+                            id: entry.id.clone(),
+                            point: entry.point,
+                            distance_km: None,
+                        });
+                    }
                 }
             }
         }

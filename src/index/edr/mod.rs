@@ -94,7 +94,8 @@ impl EdrIndex {
     pub fn new(config: EdrIndexConfig) -> Result<Self> {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(config.distance_metric));
         let document_store = EdrDocumentStore::new(config.num_document_vectors);
-        let query_expansion = QueryExpansion::new(config.distance_metric, config.num_query_expansions);
+        let query_expansion =
+            QueryExpansion::new(config.distance_metric, config.num_query_expansions);
         let scorer = LateInteractionScorer::new(config.distance_metric);
 
         let stats = IndexStats {
@@ -144,11 +145,10 @@ impl EdrIndex {
         // Step 3: Late interaction scoring
         let mut results = Vec::new();
         for (doc_id, doc_vectors) in candidates {
-            let score = self.scorer.compute_late_interaction_score(
-                &expanded_queries,
-                &doc_vectors,
-                self.config.top_k,
-            ).await?;
+            let score = self
+                .scorer
+                .compute_late_interaction_score(&expanded_queries, &doc_vectors, self.config.top_k)
+                .await?;
 
             results.push((doc_id, score));
         }
@@ -244,7 +244,10 @@ mod tests {
         // Add a document with single vector (matches default num_document_vectors: 1)
         let vectors = vec![vec![1.0, 0.0, 0.0]];
 
-        index.add_document("doc1".to_string(), vectors).await.unwrap();
+        index
+            .add_document("doc1".to_string(), vectors)
+            .await
+            .unwrap();
         assert_eq!(index.stats().vector_count, 1);
     }
 
@@ -264,9 +267,18 @@ mod tests {
         let doc2_vectors = vec![vec![0.0, 1.0, 0.0]];
         let doc3_vectors = vec![vec![0.0, 0.0, 1.0]];
 
-        index.add_document("doc1".to_string(), doc1_vectors).await.unwrap();
-        index.add_document("doc2".to_string(), doc2_vectors).await.unwrap();
-        index.add_document("doc3".to_string(), doc3_vectors).await.unwrap();
+        index
+            .add_document("doc1".to_string(), doc1_vectors)
+            .await
+            .unwrap();
+        index
+            .add_document("doc2".to_string(), doc2_vectors)
+            .await
+            .unwrap();
+        index
+            .add_document("doc3".to_string(), doc3_vectors)
+            .await
+            .unwrap();
 
         // Perform search
         let query = vec![1.0, 0.0, 0.0];

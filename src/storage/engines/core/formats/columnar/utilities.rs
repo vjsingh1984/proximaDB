@@ -318,12 +318,13 @@ impl ColumnarUtilities {
             .map(|(dim, _)| *dim);
 
         if let Some(dim) = most_common_dimension
-            && dim >= 512 {
-                recommendations.push(format!(
-                    "Consider PQ with more segments for {}-dimensional vectors",
-                    dim
-                ));
-            }
+            && dim >= 512
+        {
+            recommendations.push(format!(
+                "Consider PQ with more segments for {}-dimensional vectors",
+                dim
+            ));
+        }
 
         Ok(CompressionRecommendation {
             overall_compression_ratio: overall_ratio,

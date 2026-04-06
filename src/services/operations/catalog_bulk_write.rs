@@ -233,30 +233,32 @@ impl CatalogBulkWriteService {
         result.write_latency_us = write_start.elapsed().as_micros() as u64;
 
         // Auto-create vector index if needed
-        if self.config.auto_create_indexes && result.table_created
-            && let Some(vector_col) = self.find_vector_column(&table_schema) {
-                let index = CatalogIndex::new(
-                    format!("{}_vector_idx", table_id.name),
-                    vec![vector_col.clone()],
-                    self.config.default_index_type,
-                );
+        if self.config.auto_create_indexes
+            && result.table_created
+            && let Some(vector_col) = self.find_vector_column(&table_schema)
+        {
+            let index = CatalogIndex::new(
+                format!("{}_vector_idx", table_id.name),
+                vec![vector_col.clone()],
+                self.config.default_index_type,
+            );
 
-                match catalog.create_index(&table_id, index).await {
-                    Ok(_) => {
-                        result.index_created = true;
-                        info!(
-                            table = %table_fqn,
-                            column = %vector_col,
-                            "Auto-created vector index"
-                        );
-                    }
-                    Err(e) => {
-                        result
-                            .warnings
-                            .push(format!("Failed to auto-create index: {}", e));
-                    }
+            match catalog.create_index(&table_id, index).await {
+                Ok(_) => {
+                    result.index_created = true;
+                    info!(
+                        table = %table_fqn,
+                        column = %vector_col,
+                        "Auto-created vector index"
+                    );
+                }
+                Err(e) => {
+                    result
+                        .warnings
+                        .push(format!("Failed to auto-create index: {}", e));
                 }
             }
+        }
 
         // Update statistics
         if self.config.update_statistics {

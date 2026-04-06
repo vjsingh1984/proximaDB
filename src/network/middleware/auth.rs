@@ -26,8 +26,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 /// Authentication configuration
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct AuthConfig {
     /// Enable authentication (if false, all requests pass through)
     pub enabled: bool,
@@ -36,7 +35,6 @@ pub struct AuthConfig {
     /// Whether to require authentication for health endpoints
     pub require_auth_for_health: bool,
 }
-
 
 /// User information associated with an API key
 #[derive(Debug, Clone)]

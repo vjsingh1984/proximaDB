@@ -250,14 +250,14 @@ impl CollectionStateManager {
                 progress: ref mut p,
                 ..
             } = *state
-            {
-                *p = progress;
-                debug!(
-                    "📊 Transition progress for {}: {:.1}%",
-                    collection_id,
-                    progress * 100.0
-                );
-            }
+        {
+            *p = progress;
+            debug!(
+                "📊 Transition progress for {}: {:.1}%",
+                collection_id,
+                progress * 100.0
+            );
+        }
         Ok(())
     }
 

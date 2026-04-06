@@ -433,10 +433,9 @@ impl WalSubscriber {
             last.elapsed() >= Duration::from_millis(self.config.checkpoint_interval_ms)
         };
 
-        if should_checkpoint
-            && let Err(e) = self.checkpoint().await {
-                tracing::error!("Checkpoint failed: {}", e);
-            }
+        if should_checkpoint && let Err(e) = self.checkpoint().await {
+            tracing::error!("Checkpoint failed: {}", e);
+        }
     }
 
     /// Checkpoint current position

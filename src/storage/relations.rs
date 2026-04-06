@@ -377,18 +377,19 @@ impl RelationsStore for InMemoryRelationsStore {
         let mut relations = Vec::new();
 
         if let Some(forward) = self.forward_edges.get(&key)
-            && let Some(edges) = forward.get(relation_type) {
-                for edge in edges {
-                    relations.push(Relation {
-                        source_entity_id: entity_id.to_string(),
-                        target_entity_id: edge.entity_id.clone(),
-                        relation_type: relation_type.to_string(),
-                        weight: edge.weight,
-                        created_at_ms: edge.created_at as i64 * 1000,
-                        properties: edge.properties.clone(),
-                    });
-                }
+            && let Some(edges) = forward.get(relation_type)
+        {
+            for edge in edges {
+                relations.push(Relation {
+                    source_entity_id: entity_id.to_string(),
+                    target_entity_id: edge.entity_id.clone(),
+                    relation_type: relation_type.to_string(),
+                    weight: edge.weight,
+                    created_at_ms: edge.created_at as i64 * 1000,
+                    properties: edge.properties.clone(),
+                });
             }
+        }
 
         Ok(relations)
     }
@@ -418,16 +419,18 @@ impl RelationsStore for InMemoryRelationsStore {
         // Remove from forward edges
         let forward_key = Self::edge_key(collection_id, source_id);
         if let Some(mut forward) = self.forward_edges.get_mut(&forward_key)
-            && let Some(edges) = forward.get_mut(relation_type) {
-                edges.retain(|e| e.entity_id != target_id);
-            }
+            && let Some(edges) = forward.get_mut(relation_type)
+        {
+            edges.retain(|e| e.entity_id != target_id);
+        }
 
         // Remove from reverse edges
         let reverse_key = Self::edge_key(collection_id, target_id);
         if let Some(mut reverse) = self.reverse_edges.get_mut(&reverse_key)
-            && let Some(edges) = reverse.get_mut(relation_type) {
-                edges.retain(|e| e.entity_id != source_id);
-            }
+            && let Some(edges) = reverse.get_mut(relation_type)
+        {
+            edges.retain(|e| e.entity_id != source_id);
+        }
 
         // Deferred: Remove from persistent storage
 

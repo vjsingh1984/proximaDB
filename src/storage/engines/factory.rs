@@ -1087,7 +1087,10 @@ mod tests {
         {
             let result =
                 StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Swift).await;
-            assert!(result.is_err(), "SWIFT should fail without experimental-engines feature");
+            assert!(
+                result.is_err(),
+                "SWIFT should fail without experimental-engines feature"
+            );
             let err_msg = format!("{}", result.err().unwrap());
             assert!(
                 err_msg.contains("experimental"),
@@ -1097,7 +1100,10 @@ mod tests {
 
             let result =
                 StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Raptor).await;
-            assert!(result.is_err(), "RAPTOR should fail without experimental-engines feature");
+            assert!(
+                result.is_err(),
+                "RAPTOR should fail without experimental-engines feature"
+            );
             let err_msg = format!("{}", result.err().unwrap());
             assert!(
                 err_msg.contains("experimental"),

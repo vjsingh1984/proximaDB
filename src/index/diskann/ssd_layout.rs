@@ -310,11 +310,12 @@ impl SsdLayoutOptimizer {
         // Verify bidirectional consistency
         for (old_id, new_pos) in &ordering.old_to_new {
             if let Some(reverse_id) = ordering.new_to_old.get(new_pos)
-                && reverse_id != old_id {
-                    return Err(ProximaDBError::Internal(
-                        "Inconsistent bidirectional mapping".to_string(),
-                    ));
-                }
+                && reverse_id != old_id
+            {
+                return Err(ProximaDBError::Internal(
+                    "Inconsistent bidirectional mapping".to_string(),
+                ));
+            }
         }
 
         Ok(())

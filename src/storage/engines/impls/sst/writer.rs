@@ -675,9 +675,19 @@ impl SstableWriter {
                 .map(|e| 4 + e.serialize().unwrap_or_default().len()) // Include 4-byte length prefix!
                 .sum::<usize>() as u32,
             total_records: processed_count as u64,
-            min_timestamp: vector_records.iter().filter_map(|r| r.timestamp).map(|t| t as u64).min().unwrap_or(0),
-            max_timestamp: vector_records.iter().filter_map(|r| r.timestamp).map(|t| t as u64).max().unwrap_or(0),
-            compression_ratio: 70,   // Estimated compression ratio
+            min_timestamp: vector_records
+                .iter()
+                .filter_map(|r| r.timestamp)
+                .map(|t| t as u64)
+                .min()
+                .unwrap_or(0),
+            max_timestamp: vector_records
+                .iter()
+                .filter_map(|r| r.timestamp)
+                .map(|t| t as u64)
+                .max()
+                .unwrap_or(0),
+            compression_ratio: 70, // Estimated compression ratio
             reserved: [0; 7],
         };
 
@@ -685,7 +695,9 @@ impl SstableWriter {
         let mut block_headers = Vec::new();
         for block in data_blocks.iter() {
             // Compute min/max key hashes for block-level pruning
-            let key_hashes: Vec<u64> = block.records.iter()
+            let key_hashes: Vec<u64> = block
+                .records
+                .iter()
                 .map(|r| {
                     use std::hash::{Hash, Hasher};
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -794,8 +806,8 @@ impl SstableWriter {
                 let block_total_size = 4 + serialized_block.len(); // length prefix + data
 
                 // Account for cache line padding
-                let aligned_size = serialized_block.len().div_ceil(CACHE_LINE_SIZE)
-                    * CACHE_LINE_SIZE;
+                let aligned_size =
+                    serialized_block.len().div_ceil(CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
                 let padding = aligned_size - serialized_block.len();
                 let total_with_padding = if padding > 0 && padding < CACHE_LINE_SIZE {
                     block_total_size + padding
@@ -846,8 +858,7 @@ impl SstableWriter {
 
         for (i, serialized_block) in serialized_blocks.iter().enumerate() {
             // Align to cache line boundaries for better CPU performance
-            let aligned_size = serialized_block.len().div_ceil(CACHE_LINE_SIZE)
-                * CACHE_LINE_SIZE;
+            let aligned_size = serialized_block.len().div_ceil(CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
             let padding = aligned_size - serialized_block.len();
 
             // Write block length prefix (actual data size, not padded)
@@ -1743,9 +1754,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sstable_write_read_format() {
-        use crate::storage::persistence::filesystem::FilesystemConfig;
         use crate::proto::proximadb_v1::VectorRecord as VR;
         use crate::storage::engines::impls::sst::{SstEntry, SstMetadata};
+        use crate::storage::persistence::filesystem::FilesystemConfig;
         use crate::storage::persistence::filesystem::FilesystemFactory;
         use tempfile::TempDir;
 
@@ -1795,10 +1806,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_sstable_format_inspection() {
-        use crate::storage::persistence::filesystem::FilesystemConfig;
         use crate::proto::proximadb_v1::{SqlValue, VectorRecord as VR};
-        use crate::storage::engines::impls::sst::{SstEntry, SstMetadata};
         use crate::storage::engines::impls::sst::readers::sst_query_engine::SstDirectReader;
+        use crate::storage::engines::impls::sst::{SstEntry, SstMetadata};
+        use crate::storage::persistence::filesystem::FilesystemConfig;
         use crate::storage::persistence::filesystem::FilesystemFactory;
         use tempfile::TempDir;
         use tracing::debug;
@@ -1829,12 +1840,9 @@ mod tests {
             metadata_map.insert(
                 "category".to_string(),
                 SqlValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::sql_value::Value::StringValue(format!(
-                            "cat_{}",
-                            i % 2
-                        )),
-                    ),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        format!("cat_{}", i % 2),
+                    )),
                 },
             );
 

@@ -255,7 +255,7 @@ impl ParquetReconstructor {
                 data: seek.data,
                 compression: self.detect_compression(&seek.range)?,
                 uncompressed_size: seek.range.length, // Approximation
-                row_count: 0,                                  // Will be determined during parsing
+                row_count: 0,                         // Will be determined during parsing
                 storage: None,
             };
 

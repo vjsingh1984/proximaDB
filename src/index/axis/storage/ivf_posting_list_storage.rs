@@ -165,11 +165,10 @@ impl PostingListStorage {
                     base_path, collection_id, cluster_id
                 );
 
-                let config =
-                    crate::storage::persistence::filesystem::FilesystemConfig {
-                        default_fs: Some(path.clone()),
-                        ..Default::default()
-                    };
+                let config = crate::storage::persistence::filesystem::FilesystemConfig {
+                    default_fs: Some(path.clone()),
+                    ..Default::default()
+                };
                 let filesystem = Arc::new(
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -301,11 +300,10 @@ impl PostingListStorage {
                     base_path, collection_id, cluster_id
                 );
 
-                let config =
-                    crate::storage::persistence::filesystem::FilesystemConfig {
-                        default_fs: Some(path.clone()),
-                        ..Default::default()
-                    };
+                let config = crate::storage::persistence::filesystem::FilesystemConfig {
+                    default_fs: Some(path.clone()),
+                    ..Default::default()
+                };
                 let filesystem = Arc::new(
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -457,28 +455,30 @@ impl TieredPostingListManager {
 
         // Try disk if available
         if let Some(ref disk) = self.disk_storage
-            && let Some(list) = disk.get(cluster_id).await? {
-                // Promote to memory
-                self.memory_storage.put(cluster_id, list.clone()).await?;
-                self.access_tracker
-                    .insert(cluster_id, std::time::SystemTime::now());
-                info!("Promoted posting list {} from disk to memory", cluster_id);
-                return Ok(Some(list));
-            }
+            && let Some(list) = disk.get(cluster_id).await?
+        {
+            // Promote to memory
+            self.memory_storage.put(cluster_id, list.clone()).await?;
+            self.access_tracker
+                .insert(cluster_id, std::time::SystemTime::now());
+            info!("Promoted posting list {} from disk to memory", cluster_id);
+            return Ok(Some(list));
+        }
 
         // Try cloud if available
         if let Some(ref cloud) = self.cloud_storage
-            && let Some(list) = cloud.get(cluster_id).await? {
-                // Promote to memory (and optionally disk)
-                self.memory_storage.put(cluster_id, list.clone()).await?;
-                if let Some(ref disk) = self.disk_storage {
-                    disk.put(cluster_id, list.clone()).await?;
-                }
-                self.access_tracker
-                    .insert(cluster_id, std::time::SystemTime::now());
-                info!("Promoted posting list {} from cloud to mem", cluster_id);
-                return Ok(Some(list));
+            && let Some(list) = cloud.get(cluster_id).await?
+        {
+            // Promote to memory (and optionally disk)
+            self.memory_storage.put(cluster_id, list.clone()).await?;
+            if let Some(ref disk) = self.disk_storage {
+                disk.put(cluster_id, list.clone()).await?;
             }
+            self.access_tracker
+                .insert(cluster_id, std::time::SystemTime::now());
+            info!("Promoted posting list {} from cloud to mem", cluster_id);
+            return Ok(Some(list));
+        }
 
         Ok(None)
     }

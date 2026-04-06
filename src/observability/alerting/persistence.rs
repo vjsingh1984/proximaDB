@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use super::history::{AlertHistoryEntry, HistoryFilter};
 use super::rules::AlertRule;
-use super::{ActiveAlert, Alert, AlertSeverity};
 use super::rules::RuleCondition;
+use super::{ActiveAlert, Alert, AlertSeverity};
 
 /// Trait for durable alert state persistence.
 #[async_trait]
@@ -59,7 +59,10 @@ enum SerializableCondition {
     Between(f64, f64),
     Outside(f64, f64),
     RateOfChange(f64),
-    Composite { operator: String, conditions: Vec<SerializableCondition> },
+    Composite {
+        operator: String,
+        conditions: Vec<SerializableCondition>,
+    },
 }
 
 impl From<&RuleCondition> for SerializableCondition {
@@ -74,7 +77,10 @@ impl From<&RuleCondition> for SerializableCondition {
             RuleCondition::Between(a, b) => SerializableCondition::Between(*a, *b),
             RuleCondition::Outside(a, b) => SerializableCondition::Outside(*a, *b),
             RuleCondition::RateOfChange(v) => SerializableCondition::RateOfChange(*v),
-            RuleCondition::Composite { operator, conditions } => {
+            RuleCondition::Composite {
+                operator,
+                conditions,
+            } => {
                 let op_str = match operator {
                     super::rules::LogicalOp::And => "and",
                     super::rules::LogicalOp::Or => "or",
@@ -102,15 +108,24 @@ impl TryFrom<SerializableCondition> for RuleCondition {
             SerializableCondition::Between(a, b) => RuleCondition::Between(a, b),
             SerializableCondition::Outside(a, b) => RuleCondition::Outside(a, b),
             SerializableCondition::RateOfChange(v) => RuleCondition::RateOfChange(v),
-            SerializableCondition::Composite { operator, conditions } => {
+            SerializableCondition::Composite {
+                operator,
+                conditions,
+            } => {
                 let op = match operator.as_str() {
                     "and" => super::rules::LogicalOp::And,
                     "or" => super::rules::LogicalOp::Or,
                     "not" => super::rules::LogicalOp::Not,
                     _ => return Err(anyhow!("unknown logical operator: {}", operator)),
                 };
-                let conds: Result<Vec<_>> = conditions.into_iter().map(RuleCondition::try_from).collect();
-                RuleCondition::Composite { operator: op, conditions: conds? }
+                let conds: Result<Vec<_>> = conditions
+                    .into_iter()
+                    .map(RuleCondition::try_from)
+                    .collect();
+                RuleCondition::Composite {
+                    operator: op,
+                    conditions: conds?,
+                }
             }
         })
     }
@@ -355,9 +370,9 @@ impl SerializableAlertState {
 
 #[cfg(test)]
 mod tests {
+    use super::super::history::HistorySeverity;
     use super::*;
     use tempfile::TempDir;
-    use super::super::history::HistorySeverity;
 
     #[tokio::test]
     async fn test_rule_persistence_roundtrip() {

@@ -479,10 +479,11 @@ impl HyperparameterTuner {
 
                 // Update best before consuming scores
                 if let Some((config, score)) = scores.first()
-                    && *score > best_score {
-                        best_score = *score;
-                        best_params = config.clone();
-                    }
+                    && *score > best_score
+                {
+                    best_score = *score;
+                    best_params = config.clone();
+                }
 
                 let k = (n_i as f64 / eta).floor() as usize;
                 configs = scores
@@ -1661,7 +1662,11 @@ mod tests {
     fn test_gaussian_kernel_large_input() {
         // For large inputs, kernel should be very close to zero
         let result = GaussianKDE::gaussian_kernel(10.0);
-        assert!(result < 1e-20, "Kernel at x=10 should be near zero, got {}", result);
+        assert!(
+            result < 1e-20,
+            "Kernel at x=10 should be near zero, got {}",
+            result
+        );
     }
 
     #[test]
@@ -1728,7 +1733,11 @@ mod tests {
     #[test]
     fn test_hnsw_params_expected_count() {
         let params = ProximaDBHyperparameters::hnsw_params();
-        assert_eq!(params.len(), 3, "HNSW should have M, ef_construction, ef_search");
+        assert_eq!(
+            params.len(),
+            3,
+            "HNSW should have M, ef_construction, ef_search"
+        );
     }
 
     #[test]
@@ -1798,7 +1807,10 @@ mod tests {
             assert!(choices.contains(&"None".to_string()));
             assert!(choices.contains(&"Binary".to_string()));
             assert!(choices.contains(&"INT8".to_string()));
-            assert!(choices.len() >= 4, "Should have at least 4 quantization choices");
+            assert!(
+                choices.len() >= 4,
+                "Should have at least 4 quantization choices"
+            );
         } else {
             panic!("quantization_level should have Categorical search space");
         }
@@ -1807,10 +1819,7 @@ mod tests {
     #[test]
     fn test_quantization_params_codebook_size() {
         let params = ProximaDBHyperparameters::quantization_params();
-        let cb_param = params
-            .iter()
-            .find(|p| p.name == "codebook_size")
-            .unwrap();
+        let cb_param = params.iter().find(|p| p.name == "codebook_size").unwrap();
         if let SearchSpace::Discrete { min, max, step } = &cb_param.search_space {
             assert_eq!(*min, 128);
             assert_eq!(*max, 1024);
@@ -1927,10 +1936,16 @@ mod tests {
 
         // Check that the first point is at min and last is at max
         if let Some(ParameterValue::Float(first)) = grid[0].get("lr") {
-            assert!((*first - 0.001).abs() < 1e-6, "First grid point should be near min");
+            assert!(
+                (*first - 0.001).abs() < 1e-6,
+                "First grid point should be near min"
+            );
         }
         if let Some(ParameterValue::Float(last)) = grid[4].get("lr") {
-            assert!((*last - 1.0).abs() < 1e-6, "Last grid point should be near max");
+            assert!(
+                (*last - 1.0).abs() < 1e-6,
+                "Last grid point should be near max"
+            );
         }
     }
 }

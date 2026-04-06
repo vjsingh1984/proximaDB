@@ -184,7 +184,6 @@ pub enum DeserializationFormat {
     Raw,
 }
 
-
 /// Commit strategy for offset management
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -200,7 +199,6 @@ pub enum CommitStrategy {
     /// Manual commits (application controlled)
     Manual,
 }
-
 
 /// Dead letter queue configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

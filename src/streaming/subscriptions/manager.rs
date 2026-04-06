@@ -181,9 +181,10 @@ impl SubscriptionManager {
 
         // Check per-collection limit
         if let Some(ids) = self.collection_index.get(&collection)
-            && ids.len() >= self.config.max_per_collection {
-                return Err(SubscriptionError::TooManyPerCollection(collection));
-            }
+            && ids.len() >= self.config.max_per_collection
+        {
+            return Err(SubscriptionError::TooManyPerCollection(collection));
+        }
 
         // Create channel for updates
         let (tx, rx) = mpsc::channel(self.config.update_buffer_size);
@@ -206,14 +207,15 @@ impl SubscriptionManager {
 
         // Check for fingerprint sharing (deduplication opportunity)
         if let Some(fp_subs) = self.fingerprint_index.get(&fingerprint)
-            && fp_subs.len() > 1 {
-                self.metrics.dedup_hits.fetch_add(1, Ordering::Relaxed);
-                debug!(
-                    "Subscription {} shares fingerprint with {} others",
-                    id,
-                    fp_subs.len() - 1
-                );
-            }
+            && fp_subs.len() > 1
+        {
+            self.metrics.dedup_hits.fetch_add(1, Ordering::Relaxed);
+            debug!(
+                "Subscription {} shares fingerprint with {} others",
+                id,
+                fp_subs.len() - 1
+            );
+        }
 
         // Store subscription
         self.subscriptions.insert(id.clone(), subscription);

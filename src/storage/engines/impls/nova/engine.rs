@@ -789,16 +789,20 @@ impl NovaEngine {
         let filterable_columns = params
             .collection_config
             .as_ref()
-            .and_then(|c| c.config.as_ref()).map_or_else(|| {
-                vec![crate::proto::proximadb_v1::FilterableColumnSpec {
-                    name: FIELD_ID.to_string(),
-                    data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString
-                        as i32,
-                    indexed: true,
-                    supports_range: false,
-                    estimated_cardinality: Some(1000000),
-                }]
-            }, |cfg| cfg.filterable_columns.clone());
+            .and_then(|c| c.config.as_ref())
+            .map_or_else(
+                || {
+                    vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+                        name: FIELD_ID.to_string(),
+                        data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString
+                            as i32,
+                        indexed: true,
+                        supports_range: false,
+                        estimated_cardinality: Some(1000000),
+                    }]
+                },
+                |cfg| cfg.filterable_columns.clone(),
+            );
 
         // Configure writer with NOVA-specific settings
         // Include both ID and filterable columns in bloom filters
@@ -1439,14 +1443,15 @@ impl UnifiedStorageEngine for NovaEngine {
         {
             // Try to get from vector cache first
             if let Some(vector_cache) = orchestrator.get_vector_cache()
-                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
-                    // Track cache hit for access pattern learning
-                    orchestrator.pattern_tracker().track_access_async(
-                        cache_key.clone(),
-                        crate::storage::cache::orchestrator::CacheType::VectorData,
-                    );
-                    return Ok(Some(cached_vector));
-                }
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await
+            {
+                // Track cache hit for access pattern learning
+                orchestrator.pattern_tracker().track_access_async(
+                    cache_key.clone(),
+                    crate::storage::cache::orchestrator::CacheType::VectorData,
+                );
+                return Ok(Some(cached_vector));
+            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(
@@ -1606,8 +1611,14 @@ impl UnifiedStorageEngine for NovaEngine {
     fn supports_feature(&self, feature: &str) -> bool {
         matches!(
             feature,
-            "id_lookup" | "similarity_search" | "columnar_search" | "quantization"
-                | "compression" | "batch_operations" | "predicate_pushdown" | "projection"
+            "id_lookup"
+                | "similarity_search"
+                | "columnar_search"
+                | "quantization"
+                | "compression"
+                | "batch_operations"
+                | "predicate_pushdown"
+                | "projection"
         )
     }
 }

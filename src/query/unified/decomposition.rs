@@ -156,36 +156,35 @@ impl QueryDecomposer {
     fn extract_vector_component(&self, query: &str) -> Result<Option<QueryComponent>> {
         // Check for VECTOR_SIMILAR
         if let Some(vector_similar) = self.patterns.vector_similar.as_ref()
-            && let Some(caps) = vector_similar.captures(query) {
-                let _field = caps
-                    .get(1)
-                    .map_or("embedding", |m| m.as_str().trim());
-                let threshold = caps.get(3).and_then(|m| m.as_str().parse::<f32>().ok());
+            && let Some(caps) = vector_similar.captures(query)
+        {
+            let _field = caps.get(1).map_or("embedding", |m| m.as_str().trim());
+            let threshold = caps.get(3).and_then(|m| m.as_str().parse::<f32>().ok());
 
-                // Extract collection from FROM clause
-                let collection = self
-                    .extract_collection(query)
-                    // TD-007: unwrap_or with safe default - "default" collection for unspecified queries
-                    .unwrap_or("default".to_string());
+            // Extract collection from FROM clause
+            let collection = self
+                .extract_collection(query)
+                // TD-007: unwrap_or with safe default - "default" collection for unspecified queries
+                .unwrap_or("default".to_string());
 
-                // Extract top_k from LIMIT
-                // TD-007: unwrap_or with safe default - 10 is reasonable default for result limit
-                let top_k = self.extract_limit(query).unwrap_or(10);
+            // Extract top_k from LIMIT
+            // TD-007: unwrap_or with safe default - 10 is reasonable default for result limit
+            let top_k = self.extract_limit(query).unwrap_or(10);
 
-                return Ok(Some(QueryComponent {
-                    model: DataModel::Vector,
-                    operation: ModelOperation::VectorSearch(VectorSearchExpr {
-                        collection,
-                        query_vector: vec![], // Will be filled from parameters
-                        top_k,
-                        threshold,
-                        metric: self.infer_distance_metric(query),
-                        params: VectorSearchParams::default(),
-                    }),
-                    filters: vec![],
-                    dependencies: vec![],
-                }));
-            }
+            return Ok(Some(QueryComponent {
+                model: DataModel::Vector,
+                operation: ModelOperation::VectorSearch(VectorSearchExpr {
+                    collection,
+                    query_vector: vec![], // Will be filled from parameters
+                    top_k,
+                    threshold,
+                    metric: self.infer_distance_metric(query),
+                    params: VectorSearchParams::default(),
+                }),
+                filters: vec![],
+                dependencies: vec![],
+            }));
+        }
 
         // Check for ORDER BY VECTOR_DISTANCE
         if self
@@ -256,73 +255,75 @@ impl QueryDecomposer {
     ) -> Result<Option<QueryComponent>> {
         // Check for GRAPH_TRAVERSE
         if let Some(graph_traverse) = self.patterns.graph_traverse.as_ref()
-            && let Some(caps) = graph_traverse.captures(query) {
-                let graph_name = caps
-                    .get(1)
-                    .map_or("default".to_string(), |m| m.as_str().trim().to_string());
-                let edge_type = caps
-                    .get(2)
-                    .map_or("*".to_string(), |m| m.as_str().to_string());
-                let max_depth = caps
-                    .get(3)
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-                    // TD-007: unwrap_or with safe default - depth 2 is reasonable for graph traversal
-                    .unwrap_or(2);
+            && let Some(caps) = graph_traverse.captures(query)
+        {
+            let graph_name = caps
+                .get(1)
+                .map_or("default".to_string(), |m| m.as_str().trim().to_string());
+            let edge_type = caps
+                .get(2)
+                .map_or("*".to_string(), |m| m.as_str().to_string());
+            let max_depth = caps
+                .get(3)
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+                // TD-007: unwrap_or with safe default - depth 2 is reasonable for graph traversal
+                .unwrap_or(2);
 
-                // Check if this depends on a previous component
-                let dependencies = if prev_component_count > 0 && query.contains("JOIN") {
-                    vec![ComponentDependency {
-                        component_index: prev_component_count - 1,
-                        join_field: "id".to_string(),
-                        join_type: JoinType::Inner,
-                    }]
-                } else {
-                    vec![]
-                };
+            // Check if this depends on a previous component
+            let dependencies = if prev_component_count > 0 && query.contains("JOIN") {
+                vec![ComponentDependency {
+                    component_index: prev_component_count - 1,
+                    join_field: "id".to_string(),
+                    join_type: JoinType::Inner,
+                }]
+            } else {
+                vec![]
+            };
 
-                return Ok(Some(QueryComponent {
-                    model: DataModel::Graph,
-                    operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
-                        graph_name,
-                        start_nodes: StartNodeSpec::Label("*".to_string()),
-                        edge_types: vec![edge_type],
-                        direction: TraversalDirection::Outgoing,
-                        max_depth,
-                        min_depth: 1,
-                        node_filters: vec![],
-                        edge_filters: vec![],
-                        return_paths: query.to_lowercase().contains("path"),
-                    }),
-                    filters: vec![],
-                    dependencies,
-                }));
-            }
+            return Ok(Some(QueryComponent {
+                model: DataModel::Graph,
+                operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
+                    graph_name,
+                    start_nodes: StartNodeSpec::Label("*".to_string()),
+                    edge_types: vec![edge_type],
+                    direction: TraversalDirection::Outgoing,
+                    max_depth,
+                    min_depth: 1,
+                    node_filters: vec![],
+                    edge_filters: vec![],
+                    return_paths: query.to_lowercase().contains("path"),
+                }),
+                filters: vec![],
+                dependencies,
+            }));
+        }
 
         // Check for GRAPH_CONNECTED
         if let Some(graph_connected) = self.patterns.graph_connected.as_ref()
-            && let Some(caps) = graph_connected.captures(query) {
-                let graph_name = "default".to_string(); // Would need to infer from context
-                let edge_type = caps
-                    .get(2)
-                    .map_or("*".to_string(), |m| m.as_str().to_string());
+            && let Some(caps) = graph_connected.captures(query)
+        {
+            let graph_name = "default".to_string(); // Would need to infer from context
+            let edge_type = caps
+                .get(2)
+                .map_or("*".to_string(), |m| m.as_str().to_string());
 
-                return Ok(Some(QueryComponent {
-                    model: DataModel::Graph,
-                    operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
-                        graph_name,
-                        start_nodes: StartNodeSpec::Label("*".to_string()),
-                        edge_types: vec![edge_type],
-                        direction: TraversalDirection::Both,
-                        max_depth: 1,
-                        min_depth: 1,
-                        node_filters: vec![],
-                        edge_filters: vec![],
-                        return_paths: false,
-                    }),
-                    filters: vec![],
-                    dependencies: vec![],
-                }));
-            }
+            return Ok(Some(QueryComponent {
+                model: DataModel::Graph,
+                operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
+                    graph_name,
+                    start_nodes: StartNodeSpec::Label("*".to_string()),
+                    edge_types: vec![edge_type],
+                    direction: TraversalDirection::Both,
+                    max_depth: 1,
+                    min_depth: 1,
+                    node_filters: vec![],
+                    edge_filters: vec![],
+                    return_paths: false,
+                }),
+                filters: vec![],
+                dependencies: vec![],
+            }));
+        }
 
         Ok(None)
     }
@@ -331,76 +332,78 @@ impl QueryDecomposer {
     fn extract_observability_component(&self, query: &str) -> Result<Option<QueryComponent>> {
         // Check for LOG_QUERY
         if let Some(log_query) = self.patterns.log_query.as_ref()
-            && let Some(caps) = log_query.captures(query) {
-                let namespace = caps
-                    .get(1)
-                    .map_or("default".to_string(), |m| m.as_str().to_string());
+            && let Some(caps) = log_query.captures(query)
+        {
+            let namespace = caps
+                .get(1)
+                .map_or("default".to_string(), |m| m.as_str().to_string());
 
-                let now = current_time_nanos();
-                let hour_ago = now - 3_600_000_000_000; // 1 hour in nanoseconds
+            let now = current_time_nanos();
+            let hour_ago = now - 3_600_000_000_000; // 1 hour in nanoseconds
 
-                return Ok(Some(QueryComponent {
-                    model: DataModel::Observability,
-                    operation: ModelOperation::LogQuery(LogQueryExpr {
-                        namespace,
-                        start_time_ns: hour_ago,
-                        end_time_ns: now,
-                        query: None,
-                        severities: vec![],
-                        services: vec![],
-                        // TD-007: unwrap_or with safe default - 100 is reasonable for log query limit
-                        limit: self.extract_limit(query).unwrap_or(100),
-                    }),
-                    filters: vec![],
-                    dependencies: vec![],
-                }));
-            }
+            return Ok(Some(QueryComponent {
+                model: DataModel::Observability,
+                operation: ModelOperation::LogQuery(LogQueryExpr {
+                    namespace,
+                    start_time_ns: hour_ago,
+                    end_time_ns: now,
+                    query: None,
+                    severities: vec![],
+                    services: vec![],
+                    // TD-007: unwrap_or with safe default - 100 is reasonable for log query limit
+                    limit: self.extract_limit(query).unwrap_or(100),
+                }),
+                filters: vec![],
+                dependencies: vec![],
+            }));
+        }
 
         // Check for METRIC_AGG
         if let Some(metric_query) = self.patterns.metric_query.as_ref()
-            && let Some(caps) = metric_query.captures(query) {
-                let namespace = caps
-                    .get(1)
-                    .map_or("default".to_string(), |m| m.as_str().to_string());
-                let metric_name = caps
-                    .get(2)
-                    .map_or("*".to_string(), |m| m.as_str().to_string());
-                let agg_type = caps
-                    .get(3)
-                    .map_or("AVG".to_string(), |m| m.as_str().to_uppercase());
+            && let Some(caps) = metric_query.captures(query)
+        {
+            let namespace = caps
+                .get(1)
+                .map_or("default".to_string(), |m| m.as_str().to_string());
+            let metric_name = caps
+                .get(2)
+                .map_or("*".to_string(), |m| m.as_str().to_string());
+            let agg_type = caps
+                .get(3)
+                .map_or("AVG".to_string(), |m| m.as_str().to_uppercase());
 
-                let now = current_time_nanos();
-                let hour_ago = now - 3_600_000_000_000;
+            let now = current_time_nanos();
+            let hour_ago = now - 3_600_000_000_000;
 
-                let aggregation = match agg_type.as_str() {
-                    "SUM" => MetricAggregation::Sum,
-                    "AVG" => MetricAggregation::Avg,
-                    "MIN" => MetricAggregation::Min,
-                    "MAX" => MetricAggregation::Max,
-                    "COUNT" => MetricAggregation::Count,
-                    "P50" => MetricAggregation::P50,
-                    "P90" => MetricAggregation::P90,
-                    "P95" => MetricAggregation::P95,
-                    "P99" => MetricAggregation::P99,
-                    "RATE" => MetricAggregation::Rate,
-                    _ => MetricAggregation::Avg,
-                };
+            let aggregation = match agg_type.as_str() {
+                "SUM" => MetricAggregation::Sum,
+                "AVG" => MetricAggregation::Avg,
+                "MIN" => MetricAggregation::Min,
+                "MAX" => MetricAggregation::Max,
+                "COUNT" => MetricAggregation::Count,
+                "P50" => MetricAggregation::P50,
+                "P90" => MetricAggregation::P90,
+                "P95" => MetricAggregation::P95,
+                "P99" => MetricAggregation::P99,
+                "RATE" => MetricAggregation::Rate,
+                _ => MetricAggregation::Avg,
+            };
 
-                return Ok(Some(QueryComponent {
-                    model: DataModel::Observability,
-                    operation: ModelOperation::MetricQuery(MetricQueryExpr {
-                        namespace,
-                        metric_name,
-                        start_time_ns: hour_ago,
-                        end_time_ns: now,
-                        aggregation,
-                        group_by: vec![],
-                        label_filters: HashMap::new(),
-                    }),
-                    filters: vec![],
-                    dependencies: vec![],
-                }));
-            }
+            return Ok(Some(QueryComponent {
+                model: DataModel::Observability,
+                operation: ModelOperation::MetricQuery(MetricQueryExpr {
+                    namespace,
+                    metric_name,
+                    start_time_ns: hour_ago,
+                    end_time_ns: now,
+                    aggregation,
+                    group_by: vec![],
+                    label_filters: HashMap::new(),
+                }),
+                filters: vec![],
+                dependencies: vec![],
+            }));
+        }
 
         Ok(None)
     }
@@ -493,17 +496,18 @@ impl QueryDecomposer {
         let select_pattern = Regex::new(r"(?i)SELECT\s+(.+?)\s+FROM").ok();
         if let Some(pattern) = select_pattern
             && let Some(caps) = pattern.captures(query)
-                && let Some(fields) = caps.get(1) {
-                    let fields_str = fields.as_str().trim();
-                    if fields_str == "*" {
-                        return vec![];
-                    }
-                    return fields_str
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                }
+            && let Some(fields) = caps.get(1)
+        {
+            let fields_str = fields.as_str().trim();
+            if fields_str == "*" {
+                return vec![];
+            }
+            return fields_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
         vec![]
     }
 

@@ -110,12 +110,10 @@ impl From<ApiError> for tonic::Status {
                 tonic::Status::invalid_argument(format!("Invalid vector: {}", msg))
             }
             ApiError::Conflict(msg) => tonic::Status::aborted(msg),
-            ApiError::UnsupportedCapability(msg) => {
-                tonic::Status::invalid_argument(format!(
-                    "Capability not supported: {}. Please check storage engine capabilities.",
-                    msg
-                ))
-            }
+            ApiError::UnsupportedCapability(msg) => tonic::Status::invalid_argument(format!(
+                "Capability not supported: {}. Please check storage engine capabilities.",
+                msg
+            )),
         }
     }
 }
@@ -138,7 +136,9 @@ impl IntoResponse for ApiError {
             ApiError::DimensionMismatch { .. } => (StatusCode::BAD_REQUEST, "dimension_mismatch"),
             ApiError::InvalidVector(_) => (StatusCode::BAD_REQUEST, "invalid_vector"),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
-            ApiError::UnsupportedCapability(_) => (StatusCode::BAD_REQUEST, "unsupported_capability"),
+            ApiError::UnsupportedCapability(_) => {
+                (StatusCode::BAD_REQUEST, "unsupported_capability")
+            }
         };
 
         // Check if this is a capability error and use enhanced formatting
@@ -160,7 +160,8 @@ impl IntoResponse for ApiError {
                     "message": self.to_string(),
                     "code": status.as_u16()
                 }
-            })).into_response()
+            }))
+            .into_response()
         };
 
         (status, body).into_response()
@@ -247,7 +248,6 @@ impl From<crate::query::capability::CapabilityCheckError> for ApiError {
     }
 }
 
-
 /// Convert ProtocolError to ApiError for unified error handling
 impl From<crate::core::error::ProtocolError> for ApiError {
     fn from(err: crate::core::error::ProtocolError) -> Self {
@@ -311,9 +311,13 @@ impl From<crate::core::errors::ProximaDBError> for ApiError {
             E::PermissionDenied(msg) => ApiError::Forbidden(msg),
             E::Timeout(secs) => ApiError::DeadlineExceeded(format!("Timed out after {}s", secs)),
             E::CapacityExceeded { message } => ApiError::ResourceExhausted(message),
-            E::TransactionConflict { transaction, conflicting_with } => {
-                ApiError::Conflict(format!("{} conflicts with {}", transaction, conflicting_with))
-            }
+            E::TransactionConflict {
+                transaction,
+                conflicting_with,
+            } => ApiError::Conflict(format!(
+                "{} conflicts with {}",
+                transaction, conflicting_with
+            )),
             other => ApiError::Internal(other.to_string()),
         }
     }

@@ -213,19 +213,20 @@ impl CircuitBreaker {
     fn check_state_transition(&self) {
         let state = *self.state.read();
         if state == CircuitState::Open
-            && let Some(last_failure) = *self.last_failure_time.read() {
-                let timeout = Duration::from_secs(self.config.timeout_secs);
-                if last_failure.elapsed() >= timeout {
-                    // Transition to half-open
-                    *self.state.write() = CircuitState::HalfOpen;
-                    self.success_count.store(0, Ordering::Relaxed);
-                    self.half_open_requests.store(0, Ordering::Relaxed);
-                    tracing::info!(
-                        circuit_breaker = %self.config.name,
-                        "Circuit breaker half-open - testing recovery"
-                    );
-                }
+            && let Some(last_failure) = *self.last_failure_time.read()
+        {
+            let timeout = Duration::from_secs(self.config.timeout_secs);
+            if last_failure.elapsed() >= timeout {
+                // Transition to half-open
+                *self.state.write() = CircuitState::HalfOpen;
+                self.success_count.store(0, Ordering::Relaxed);
+                self.half_open_requests.store(0, Ordering::Relaxed);
+                tracing::info!(
+                    circuit_breaker = %self.config.name,
+                    "Circuit breaker half-open - testing recovery"
+                );
             }
+        }
     }
 
     /// Execute an async operation with circuit breaker protection

@@ -209,11 +209,10 @@ impl FederatedParser {
         }
 
         // Check for JOIN with different model types
-        if sql_upper.contains("JOIN") && sql_upper.contains("LATERAL")
-            && !extensions.is_empty() {
-                is_cross_model_join = true;
-                query_type = QueryType::Federated;
-            }
+        if sql_upper.contains("JOIN") && sql_upper.contains("LATERAL") && !extensions.is_empty() {
+            is_cross_model_join = true;
+            query_type = QueryType::Federated;
+        }
 
         Ok(FederatedQuery {
             sql: sql.to_string(),
@@ -336,9 +335,10 @@ impl FederatedParser {
             let mut end_pos = after_from.len();
             for keyword in end_keywords {
                 if let Some(pos) = after_from.to_uppercase().find(keyword)
-                    && pos < end_pos {
-                        end_pos = pos;
-                    }
+                    && pos < end_pos
+                {
+                    end_pos = pos;
+                }
             }
 
             let from_clause = after_from[..end_pos].trim();

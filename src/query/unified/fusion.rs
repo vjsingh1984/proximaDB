@@ -13,8 +13,7 @@ use super::{QueryMetrics, QueryResult, UnifiedRecord};
 use crate::core::error::VectorDBError;
 
 /// Strategy for fusing results from multiple query components
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum FusionStrategy {
     /// Only return records that appear in ALL component results (AND logic)
     #[default]
@@ -38,7 +37,6 @@ pub enum FusionStrategy {
     /// Custom fusion using a provided function
     Custom(String), // Stores function name, actual logic in executor
 }
-
 
 /// Result fuser that combines sub-query results
 pub struct ResultFuser {

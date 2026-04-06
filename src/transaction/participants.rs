@@ -204,9 +204,12 @@ impl TransactionParticipant for VectorEngineParticipant {
         if let Some(ref writer) = self.durable_writer {
             for op in &operations {
                 writer(op).map_err(|e| {
-                    ProximaDBError::Storage(crate::core::error::StorageError::TransactionCommitFailed(
-                        format!("durable commit failed for {}: {}", self.id, e),
-                    ))
+                    ProximaDBError::Storage(
+                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                            "durable commit failed for {}: {}",
+                            self.id, e
+                        )),
+                    )
                 })?;
                 match op {
                     BufferedOperation::Insert { id, .. } => {
@@ -291,7 +294,9 @@ impl TransactionParticipant for DocumentEngineParticipant {
     async fn prepare(&self, tx_id: TransactionId) -> Result<Vote> {
         debug!("Document engine {} preparing tx {}", self.id, tx_id);
         let healthy = *self.healthy.read().await;
-        if !healthy { return Ok(Vote::No); }
+        if !healthy {
+            return Ok(Vote::No);
+        }
         let _operations = self.buffer.get_operations(tx_id).await;
         Ok(Vote::Yes)
     }
@@ -302,9 +307,12 @@ impl TransactionParticipant for DocumentEngineParticipant {
         if let Some(ref writer) = self.durable_writer {
             for op in &operations {
                 writer(op).map_err(|e| {
-                    ProximaDBError::Storage(crate::core::error::StorageError::TransactionCommitFailed(
-                        format!("durable commit failed for {}: {}", self.id, e),
-                    ))
+                    ProximaDBError::Storage(
+                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                            "durable commit failed for {}: {}",
+                            self.id, e
+                        )),
+                    )
                 })?;
             }
         }
@@ -318,9 +326,15 @@ impl TransactionParticipant for DocumentEngineParticipant {
         Ok(())
     }
 
-    fn participant_id(&self) -> &str { &self.id }
-    async fn is_healthy(&self) -> bool { *self.healthy.read().await }
-    fn supports_durable_commit(&self) -> bool { self.durable_writer.is_some() }
+    fn participant_id(&self) -> &str {
+        &self.id
+    }
+    async fn is_healthy(&self) -> bool {
+        *self.healthy.read().await
+    }
+    fn supports_durable_commit(&self) -> bool {
+        self.durable_writer.is_some()
+    }
 }
 
 /// Graph storage engine transaction participant
@@ -360,7 +374,9 @@ impl TransactionParticipant for GraphEngineParticipant {
     async fn prepare(&self, tx_id: TransactionId) -> Result<Vote> {
         debug!("Graph engine {} preparing tx {}", self.id, tx_id);
         let healthy = *self.healthy.read().await;
-        if !healthy { return Ok(Vote::No); }
+        if !healthy {
+            return Ok(Vote::No);
+        }
         let _operations = self.buffer.get_operations(tx_id).await;
         Ok(Vote::Yes)
     }
@@ -371,9 +387,12 @@ impl TransactionParticipant for GraphEngineParticipant {
         if let Some(ref writer) = self.durable_writer {
             for op in &operations {
                 writer(op).map_err(|e| {
-                    ProximaDBError::Storage(crate::core::error::StorageError::TransactionCommitFailed(
-                        format!("durable commit failed for {}: {}", self.id, e),
-                    ))
+                    ProximaDBError::Storage(
+                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                            "durable commit failed for {}: {}",
+                            self.id, e
+                        )),
+                    )
                 })?;
             }
         }
@@ -387,9 +406,15 @@ impl TransactionParticipant for GraphEngineParticipant {
         Ok(())
     }
 
-    fn participant_id(&self) -> &str { &self.id }
-    async fn is_healthy(&self) -> bool { *self.healthy.read().await }
-    fn supports_durable_commit(&self) -> bool { self.durable_writer.is_some() }
+    fn participant_id(&self) -> &str {
+        &self.id
+    }
+    async fn is_healthy(&self) -> bool {
+        *self.healthy.read().await
+    }
+    fn supports_durable_commit(&self) -> bool {
+        self.durable_writer.is_some()
+    }
 }
 
 /// Time-series storage engine transaction participant
@@ -429,7 +454,9 @@ impl TransactionParticipant for TimeSeriesEngineParticipant {
     async fn prepare(&self, tx_id: TransactionId) -> Result<Vote> {
         debug!("Time-series engine {} preparing tx {}", self.id, tx_id);
         let healthy = *self.healthy.read().await;
-        if !healthy { return Ok(Vote::No); }
+        if !healthy {
+            return Ok(Vote::No);
+        }
         let _operations = self.buffer.get_operations(tx_id).await;
         Ok(Vote::Yes)
     }
@@ -440,9 +467,12 @@ impl TransactionParticipant for TimeSeriesEngineParticipant {
         if let Some(ref writer) = self.durable_writer {
             for op in &operations {
                 writer(op).map_err(|e| {
-                    ProximaDBError::Storage(crate::core::error::StorageError::TransactionCommitFailed(
-                        format!("durable commit failed for {}: {}", self.id, e),
-                    ))
+                    ProximaDBError::Storage(
+                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                            "durable commit failed for {}: {}",
+                            self.id, e
+                        )),
+                    )
                 })?;
             }
         }
@@ -456,9 +486,15 @@ impl TransactionParticipant for TimeSeriesEngineParticipant {
         Ok(())
     }
 
-    fn participant_id(&self) -> &str { &self.id }
-    async fn is_healthy(&self) -> bool { *self.healthy.read().await }
-    fn supports_durable_commit(&self) -> bool { self.durable_writer.is_some() }
+    fn participant_id(&self) -> &str {
+        &self.id
+    }
+    async fn is_healthy(&self) -> bool {
+        *self.healthy.read().await
+    }
+    fn supports_durable_commit(&self) -> bool {
+        self.durable_writer.is_some()
+    }
 }
 
 #[cfg(test)]

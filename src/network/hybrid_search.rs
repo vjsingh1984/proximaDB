@@ -266,8 +266,9 @@ fn prost_value_to_sql_value(value: &prost_types::Value) -> proximadb_v1::SqlValu
 fn sql_value_to_json(value: &proximadb_v1::SqlValue) -> JsonValue {
     match value.value.as_ref() {
         Some(SqlValueKind::StringValue(value)) => JsonValue::String(value.clone()),
-        Some(SqlValueKind::NumberValue(value)) => JsonNumber::from_f64(*value)
-            .map_or(JsonValue::Null, JsonValue::Number),
+        Some(SqlValueKind::NumberValue(value)) => {
+            JsonNumber::from_f64(*value).map_or(JsonValue::Null, JsonValue::Number)
+        }
         Some(SqlValueKind::BoolValue(value)) => JsonValue::Bool(*value),
         Some(SqlValueKind::Int64Value(value)) => JsonValue::Number((*value).into()),
         Some(SqlValueKind::BytesValue(value)) => JsonValue::Array(

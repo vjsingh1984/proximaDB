@@ -872,9 +872,10 @@ impl SchemaEvolutionService {
             .issues
             .iter()
             .any(|i| i.severity == IssueSeverity::Warning)
-            && result.compatibility_level == CompatibilityLevel::Full {
-                result.compatibility_level = CompatibilityLevel::Backward;
-            }
+            && result.compatibility_level == CompatibilityLevel::Full
+        {
+            result.compatibility_level = CompatibilityLevel::Backward;
+        }
 
         result
     }
@@ -912,9 +913,7 @@ impl SchemaEvolutionService {
             .write()
             .map_err(|e| anyhow!("Lock error: {}", e))?;
 
-        let versions = history
-            .entry(collection_name.to_string())
-            .or_default();
+        let versions = history.entry(collection_name.to_string()).or_default();
 
         // Deactivate previous versions
         for v in versions.iter_mut() {

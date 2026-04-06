@@ -406,7 +406,10 @@ impl RaptorEngine {
     /// **Documentation**: See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md`
     ///
     /// For adaptive workloads, use production engines with appropriate configuration.
-    #[deprecated(since = "0.2.0", note = "RAPTOR engine is deprecated. Use SST, VIPER, HELIX, or NOVA instead.")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "RAPTOR engine is deprecated. Use SST, VIPER, HELIX, or NOVA instead."
+    )]
     pub async fn new() -> Result<Self> {
         tracing::warn!(
             "⚠️  RAPTOR ENGINE DEPRECATION WARNING ⚠️ \
@@ -927,12 +930,26 @@ impl RaptorEngine {
         // Use Matrix Trinity for candidate selection
         let candidates: Vec<OptimizedSearchRecord> = if self.config.enable_clustering {
             // Use clustered search with Matrix Trinity
-            self.clustered_search(query, k * 2, selected_rowgroups.clone(), distance_metric, storage_path, collection_id)
-                .await?
+            self.clustered_search(
+                query,
+                k * 2,
+                selected_rowgroups.clone(),
+                distance_metric,
+                storage_path,
+                collection_id,
+            )
+            .await?
         } else {
             // Clustered search with pruning
-            self.clustered_search(query, k * 2, selected_rowgroups.clone(), distance_metric, storage_path, collection_id)
-                .await?
+            self.clustered_search(
+                query,
+                k * 2,
+                selected_rowgroups.clone(),
+                distance_metric,
+                storage_path,
+                collection_id,
+            )
+            .await?
         };
 
         debug!(
@@ -944,9 +961,10 @@ impl RaptorEngine {
         let mut results = Vec::new();
         for candidate in candidates {
             if let Some(ref filter) = filter
-                && !self.matches_filter(&candidate, filter).await {
-                    continue;
-                }
+                && !self.matches_filter(&candidate, filter).await
+            {
+                continue;
+            }
             results.push(candidate);
             if results.len() >= k {
                 break;
@@ -1262,15 +1280,16 @@ impl RaptorEngine {
             debug!("SELECT_ROWGROUPS: No clusters found, using centroid-based selection");
             for rg_id in rowgroup_manager.row_group_ids() {
                 if let Some(rowgroup) = rowgroup_manager.row_group(&rg_id)
-                    && let Some(centroid) = &rowgroup.centroid {
-                        // Calculate distance using distance computation engine
-                        let compute = UnifiedDistanceCompute::default();
-                        let distance = compute.distance(query, centroid);
-                        if distance < 0.5 {
-                            // Threshold for similarity
-                            selected.push(rowgroup.id as u32);
-                        }
+                    && let Some(centroid) = &rowgroup.centroid
+                {
+                    // Calculate distance using distance computation engine
+                    let compute = UnifiedDistanceCompute::default();
+                    let distance = compute.distance(query, centroid);
+                    if distance < 0.5 {
+                        // Threshold for similarity
+                        selected.push(rowgroup.id as u32);
                     }
+                }
             }
             debug!(
                 "SELECT_ROWGROUPS: Selected {} rowgroups from centroids",
@@ -2399,14 +2418,15 @@ impl UnifiedStorageEngine for RaptorEngine {
         {
             // Try to get from vector cache first
             if let Some(vector_cache) = orchestrator.get_vector_cache()
-                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
-                    // Track cache hit for access pattern learning
-                    orchestrator.pattern_tracker().track_access_async(
-                        cache_key.clone(),
-                        crate::storage::cache::orchestrator::CacheType::VectorData,
-                    );
-                    return Ok(Some(cached_vector));
-                }
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await
+            {
+                // Track cache hit for access pattern learning
+                orchestrator.pattern_tracker().track_access_async(
+                    cache_key.clone(),
+                    crate::storage::cache::orchestrator::CacheType::VectorData,
+                );
+                return Ok(Some(cached_vector));
+            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(
@@ -2581,9 +2601,7 @@ impl UnifiedStorageEngine for RaptorEngine {
                                             vector_id,
                                             i
                                         );
-                                        return Ok(Some(
-                                            self.reconstruct_vector_record(batch, i)?,
-                                        ));
+                                        return Ok(Some(self.reconstruct_vector_record(batch, i)?));
                                     }
                                 }
                             }
@@ -3062,7 +3080,10 @@ mod tests {
 
         // With threshold 0.5, far centroid should be filtered out in many metrics
         // This validates the fix: previously distance was always 0.0
-        assert!(close_dist > 0.0, "Close centroid distance should still be non-zero");
+        assert!(
+            close_dist > 0.0,
+            "Close centroid distance should still be non-zero"
+        );
     }
 
     // ========== NEW TESTS ==========
@@ -3071,7 +3092,10 @@ mod tests {
     fn test_raptor_config_defaults() {
         use super::RaptorConfig;
         let config = RaptorConfig::default();
-        assert_eq!(config.rowgroup_size, super::super::constants::clustering::DEFAULT_ROWGROUP_SIZE);
+        assert_eq!(
+            config.rowgroup_size,
+            super::super::constants::clustering::DEFAULT_ROWGROUP_SIZE
+        );
         assert!(config.enable_simd);
         assert!(config.enable_clustering);
         assert!(config.use_component_boosting);

@@ -1,12 +1,12 @@
-use anyhow::{Result, anyhow, Context};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
+use super::{AuthCredentials, IdentityProvider};
 use crate::security::unified_rbac::{AuthMethod, UnifiedUserContext};
-use super::{IdentityProvider, AuthCredentials};
 
 /// OIDC Discovery document (subset of fields we need)
 #[allow(dead_code)]
@@ -106,7 +106,10 @@ impl OidcProvider {
     fn decode_jwt_claims(token: &str) -> Result<JwtClaims> {
         let parts: Vec<&str> = token.split('.').collect();
         if parts.len() != 3 {
-            return Err(anyhow!("Invalid JWT: expected 3 parts, got {}", parts.len()));
+            return Err(anyhow!(
+                "Invalid JWT: expected 3 parts, got {}",
+                parts.len()
+            ));
         }
 
         use base64::Engine;
@@ -116,8 +119,8 @@ impl OidcProvider {
             .decode(parts[1])
             .context("Failed to base64-decode JWT payload")?;
 
-        let claims: JwtClaims = serde_json::from_slice(&payload_bytes)
-            .context("Failed to parse JWT claims")?;
+        let claims: JwtClaims =
+            serde_json::from_slice(&payload_bytes).context("Failed to parse JWT claims")?;
 
         Ok(claims)
     }
@@ -193,9 +196,9 @@ impl IdentityProvider for OidcProvider {
                 metadata.insert("issuer".to_string(), self.issuer.clone());
 
                 let session_id = uuid::Uuid::new_v4().to_string();
-                let expires_at = claims.exp.map(|e| {
-                    chrono::DateTime::from_timestamp(e, 0).unwrap_or_else(Utc::now)
-                });
+                let expires_at = claims
+                    .exp
+                    .map(|e| chrono::DateTime::from_timestamp(e, 0).unwrap_or_else(Utc::now));
 
                 info!("OIDC authentication successful for user: {}", claims.sub);
 
@@ -268,9 +271,7 @@ mod tests {
             "roles": ["admin", "editor"]
         }));
 
-        let result = provider
-            .authenticate(&AuthCredentials::Token(token))
-            .await;
+        let result = provider.authenticate(&AuthCredentials::Token(token)).await;
 
         assert!(result.is_ok());
         let ctx = result.unwrap();
@@ -294,9 +295,7 @@ mod tests {
             "exp": past_exp
         }));
 
-        let result = provider
-            .authenticate(&AuthCredentials::Token(token))
-            .await;
+        let result = provider.authenticate(&AuthCredentials::Token(token)).await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("expired"));
@@ -337,7 +336,12 @@ mod tests {
 
         let result = provider.authenticate(&AuthCredentials::Token(token)).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Audience mismatch"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Audience mismatch")
+        );
     }
 
     #[tokio::test]
@@ -354,7 +358,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_oidc_health_check() {
-        let provider = OidcProvider::new("https://accounts.example.com".to_string(), "app".to_string());
+        let provider = OidcProvider::new(
+            "https://accounts.example.com".to_string(),
+            "app".to_string(),
+        );
         assert!(provider.health_check().await);
     }
 }

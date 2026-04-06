@@ -307,20 +307,21 @@ impl ConsolidatedRBACManager {
         {
             let cache = self.permission_cache.read().await;
             if let Some(user_cache) = cache.get(user_id)
-                && let Some(entry) = user_cache.get(permission) {
-                    let now = Utc::now();
-                    let ttl = Duration::from_secs(self.config.permission_cache_ttl_minutes * 60);
+                && let Some(entry) = user_cache.get(permission)
+            {
+                let now = Utc::now();
+                let ttl = Duration::from_secs(self.config.permission_cache_ttl_minutes * 60);
 
-                    if now
-                        .signed_duration_since(entry.cached_at)
-                        .to_std()
-                        .unwrap_or(Duration::ZERO)
-                        < ttl
-                    {
-                        debug!("Cache hit for user '{}': {:?}", user_id, permission);
-                        return Ok(entry.allowed);
-                    }
+                if now
+                    .signed_duration_since(entry.cached_at)
+                    .to_std()
+                    .unwrap_or(Duration::ZERO)
+                    < ttl
+                {
+                    debug!("Cache hit for user '{}': {:?}", user_id, permission);
+                    return Ok(entry.allowed);
                 }
+            }
         }
 
         // Cache miss - perform actual check
@@ -331,9 +332,7 @@ impl ConsolidatedRBACManager {
         // Update cache
         {
             let mut cache = self.permission_cache.write().await;
-            let user_cache = cache
-                .entry(user_id.to_string())
-                .or_default();
+            let user_cache = cache.entry(user_id.to_string()).or_default();
             user_cache.insert(
                 permission.clone(),
                 PermissionCacheEntry {
@@ -601,9 +600,10 @@ impl ConsolidatedRBACManager {
         // Check tenant-specific roles first
         if let Some(tenant_id) = tenant_id
             && let Some(tenant_roles) = self.tenant_roles.get(tenant_id)
-                && let Some(role) = tenant_roles.get(role_name) {
-                    return Ok(Some(role.permissions.clone()));
-                }
+            && let Some(role) = tenant_roles.get(role_name)
+        {
+            return Ok(Some(role.permissions.clone()));
+        }
 
         // Check system-wide roles
         if let Some(role) = self.system_roles.get(role_name) {
@@ -767,9 +767,8 @@ impl ConsolidatedRBACManager {
         permission: &UnifiedPermission,
     ) -> Result<()> {
         // Get or create user role assignment
-        let mut assignment = self
-            .user_role_assignments
-            .get(user_id).map_or_else(|| UserRoleAssignment {
+        let mut assignment = self.user_role_assignments.get(user_id).map_or_else(
+            || UserRoleAssignment {
                 user_id: user_id.to_string(),
                 tenant_id: None,
                 roles: HashSet::new(),
@@ -777,7 +776,9 @@ impl ConsolidatedRBACManager {
                 assigned_at: Utc::now(),
                 assigned_by: "system".to_string(),
                 expires_at: None,
-            }, |a| a.clone());
+            },
+            |a| a.clone(),
+        );
 
         // Add the direct permission
         assignment.direct_permissions.insert(permission.clone());
@@ -1054,10 +1055,8 @@ mod tests {
         ];
 
         // Each variant should produce a distinct Debug string
-        let debug_strings: HashSet<String> = permissions
-            .iter()
-            .map(|p| format!("{:?}", p))
-            .collect();
+        let debug_strings: HashSet<String> =
+            permissions.iter().map(|p| format!("{:?}", p)).collect();
         assert_eq!(
             debug_strings.len(),
             permissions.len(),
@@ -1105,7 +1104,10 @@ mod tests {
         let age = Utc::now()
             .signed_duration_since(denied_entry.cached_at)
             .num_seconds();
-        assert!(age >= 299, "cache entry age should be approximately 300 seconds");
+        assert!(
+            age >= 299,
+            "cache entry age should be approximately 300 seconds"
+        );
     }
 
     #[test]
@@ -1126,9 +1128,15 @@ mod tests {
         };
 
         assert!(result.allowed);
-        assert!(result.reason.is_none(), "allowed result should have no denial reason");
+        assert!(
+            result.reason.is_none(),
+            "allowed result should have no denial reason"
+        );
         assert_eq!(result.permissions.len(), 1);
-        let ctx = result.tenant_context.as_ref().expect("should have tenant context");
+        let ctx = result
+            .tenant_context
+            .as_ref()
+            .expect("should have tenant context");
         assert_eq!(ctx.tenant_id, "tenant_1");
         assert_eq!(ctx.compliance_frameworks.len(), 2);
     }
@@ -1145,7 +1153,10 @@ mod tests {
         assert!(!result.allowed);
         assert!(result.permissions.is_empty());
         assert!(result.tenant_context.is_none());
-        let reason = result.reason.as_ref().expect("denied result should carry a reason");
+        let reason = result
+            .reason
+            .as_ref()
+            .expect("denied result should carry a reason");
         assert!(
             reason.contains("Insufficient permissions"),
             "reason should describe the denial"
@@ -1185,7 +1196,10 @@ mod tests {
             .await
             .expect("should not fail");
         // default_deny=false and no assignment => allowed
-        assert!(result.allowed, "Vector Read should be allowed with default_deny=false");
+        assert!(
+            result.allowed,
+            "Vector Read should be allowed with default_deny=false"
+        );
 
         // Graph + Delete should map to CollectionDelete
         let result = rbac

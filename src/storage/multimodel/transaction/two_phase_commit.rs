@@ -199,7 +199,9 @@ impl TwoPhaseTransaction {
 
     /// Add a participant
     pub fn add_participant(&mut self, participant_type: ParticipantType) {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.participants.entry(participant_type) {
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            self.participants.entry(participant_type)
+        {
             e.insert(ParticipantState::new(participant_type));
             self.log(format!("Added participant: {:?}", participant_type));
         }

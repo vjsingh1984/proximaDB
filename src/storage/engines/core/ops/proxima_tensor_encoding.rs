@@ -128,13 +128,14 @@ pub fn decode_sparse_tensor(
     let dimension = u32::from_le_bytes(dim_bytes) as usize;
 
     if let Some(expected) = expected_dimension
-        && dimension != expected {
-            return Err(anyhow::anyhow!(
-                "Dimension mismatch: expected {}, got {}",
-                expected,
-                dimension
-            ));
-        }
+        && dimension != expected
+    {
+        return Err(anyhow::anyhow!(
+            "Dimension mismatch: expected {}, got {}",
+            expected,
+            dimension
+        ));
+    }
 
     let mut count_bytes = [0u8; 4];
     cursor.read_exact(&mut count_bytes)?;

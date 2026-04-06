@@ -50,10 +50,16 @@ fn compare_sql_values(
 ) -> std::cmp::Ordering {
     use crate::proto::proximadb_v1::sql_value::Value as V;
     match (a.value.as_ref(), b.value.as_ref()) {
-        (Some(V::NumberValue(a)), Some(V::NumberValue(b))) => a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(V::NumberValue(a)), Some(V::NumberValue(b))) => {
+            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+        }
         (Some(V::Int64Value(a)), Some(V::Int64Value(b))) => a.cmp(b),
-        (Some(V::Int64Value(a)), Some(V::NumberValue(b))) => (*a as f64).partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
-        (Some(V::NumberValue(a)), Some(V::Int64Value(b))) => a.partial_cmp(&(*b as f64)).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(V::Int64Value(a)), Some(V::NumberValue(b))) => (*a as f64)
+            .partial_cmp(b)
+            .unwrap_or(std::cmp::Ordering::Equal),
+        (Some(V::NumberValue(a)), Some(V::Int64Value(b))) => a
+            .partial_cmp(&(*b as f64))
+            .unwrap_or(std::cmp::Ordering::Equal),
         (Some(V::StringValue(a)), Some(V::StringValue(b))) => a.cmp(b),
         (Some(V::BoolValue(a)), Some(V::BoolValue(b))) => a.cmp(b),
         _ => std::cmp::Ordering::Equal, // Incomparable types treated as equal (conservative)
@@ -967,86 +973,97 @@ impl RaptorReader {
 
             // Extract quantized vector (optional)
             if let Some(quant_array) = quantized_vector_array
-                && !quant_array.is_null(row_idx) {
-                    let quant_list = quant_array.value(row_idx);
-                    if let Some(_u8_array) =
-                        quant_list.as_primitive_opt::<arrow_array::types::UInt8Type>()
-                    {
-                        // quantized_vector removed - internalized in storage
-                        // Store quantized data internally if needed
-                    }
+                && !quant_array.is_null(row_idx)
+            {
+                let quant_list = quant_array.value(row_idx);
+                if let Some(_u8_array) =
+                    quant_list.as_primitive_opt::<arrow_array::types::UInt8Type>()
+                {
+                    // quantized_vector removed - internalized in storage
+                    // Store quantized data internally if needed
                 }
+            }
 
             // Extract timestamp fields (optional)
             if let Some(ts_array) = timestamp_array
-                && !ts_array.is_null(row_idx) {
-                    record.timestamp = Some(ts_array.value(row_idx) as i64);
-                }
+                && !ts_array.is_null(row_idx)
+            {
+                record.timestamp = Some(ts_array.value(row_idx) as i64);
+            }
 
             if let Some(upd_array) = updated_at_array
-                && !upd_array.is_null(row_idx) {
-                    record.updated_at = Some(upd_array.value(row_idx) as i64);
-                }
+                && !upd_array.is_null(row_idx)
+            {
+                record.updated_at = Some(upd_array.value(row_idx) as i64);
+            }
 
             if let Some(exp_array) = expires_at_array
-                && !exp_array.is_null(row_idx) {
-                    record.expires_at = Some(exp_array.value(row_idx) as i64);
-                }
+                && !exp_array.is_null(row_idx)
+            {
+                record.expires_at = Some(exp_array.value(row_idx) as i64);
+            }
 
             if let Some(ver_array) = version_array
-                && !ver_array.is_null(row_idx) {
-                    record.version = Some(ver_array.value(row_idx));
-                }
+                && !ver_array.is_null(row_idx)
+            {
+                record.version = Some(ver_array.value(row_idx));
+            }
 
             // Extract metadata (JSON string → HashMap)
             if let Some(meta_array) = metadata_array
-                && !meta_array.is_null(row_idx) {
-                    let json_str = meta_array.value(row_idx);
-                    if let Ok(metadata_map) = serde_json::from_str::<
-                        std::collections::HashMap<String, serde_json::Value>,
-                    >(json_str)
-                    {
-                        for (key, value) in metadata_map {
-                            let sql_value = match value {
-                                serde_json::Value::String(s) => {
-                                    crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
-                                    }
-                                }
-                                serde_json::Value::Number(n) => {
-                                    // Convert all numbers to f64 since we only have NumberValue(f64) in the proto
-                                    crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                && !meta_array.is_null(row_idx)
+            {
+                let json_str = meta_array.value(row_idx);
+                if let Ok(metadata_map) = serde_json::from_str::<
+                    std::collections::HashMap<String, serde_json::Value>,
+                >(json_str)
+                {
+                    for (key, value) in metadata_map {
+                        let sql_value = match value {
+                            serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                ),
+                            },
+                            serde_json::Value::Number(n) => {
+                                // Convert all numbers to f64 since we only have NumberValue(f64) in the proto
+                                crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                             n.as_f64().unwrap_or(0.0),
-                                        )),
-                                    }
+                                        ),
+                                    ),
                                 }
-                                serde_json::Value::Bool(b) => {
-                                    crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
-                                    }
-                                }
-                                _ => crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            }
+                            serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
+                                ),
+                            },
+                            _ => crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                         value.to_string(),
-                                    )),
-                                },
-                            };
+                                    ),
+                                ),
+                            },
+                        };
 
-                            record.metadata.insert(key, sql_value);
-                        }
+                        record.metadata.insert(key, sql_value);
                     }
                 }
+            }
 
             // Extract source content (binary)
             if let Some(source_array) = source_content_array
-                && !source_array.is_null(row_idx) {
-                    let source_bytes = source_array.value(row_idx);
-                    // Convert bytes to source string
-                    if let Ok(source_string) = String::from_utf8(source_bytes.to_vec()) {
-                        record.source = Some(source_string);
-                    }
+                && !source_array.is_null(row_idx)
+            {
+                let source_bytes = source_array.value(row_idx);
+                // Convert bytes to source string
+                if let Ok(source_string) = String::from_utf8(source_bytes.to_vec()) {
+                    record.source = Some(source_string);
                 }
+            }
 
             records.push(record);
         }
@@ -1295,13 +1312,11 @@ impl RaptorReader {
             .find(|(rg_id, _)| *rg_id == rowgroup_id)
             .map(|(_, c)| c.clone());
 
-        let query_to_centroid = centroid
-            .as_ref()
-            .map_or(0.0, |c| {
-                distance_compute
-                    .calculate_distance(query, c, metric)
-                    .raw_value
-            });
+        let query_to_centroid = centroid.as_ref().map_or(0.0, |c| {
+            distance_compute
+                .calculate_distance(query, c, metric)
+                .raw_value
+        });
 
         // Step 2: Use P×K filtering with triangle inequality
         // Track filtering statistics
@@ -1587,13 +1602,11 @@ impl RaptorReader {
             .find(|(rg_id, _)| *rg_id == rowgroup_id)
             .map(|(_, c)| c.clone());
 
-        let query_to_centroid = centroid
-            .as_ref()
-            .map_or(0.0, |c| {
-                distance_compute
-                    .calculate_distance(query, c, metric)
-                    .raw_value
-            });
+        let query_to_centroid = centroid.as_ref().map_or(0.0, |c| {
+            distance_compute
+                .calculate_distance(query, c, metric)
+                .raw_value
+        });
 
         // Step 2: Use P×K filtering with triangle inequality
         let total_vectors = vectors.len();
@@ -2659,28 +2672,30 @@ impl RaptorReader {
 
         // Find the vector by ID in the batch
         if let Some(id_array) = batch.column_by_name("id")
-            && let Some(vector_array) = batch.column_by_name("vector") {
-                use arrow_array::{ListArray, StringArray};
+            && let Some(vector_array) = batch.column_by_name("vector")
+        {
+            use arrow_array::{ListArray, StringArray};
 
-                if let Some(ids) = id_array.as_any().downcast_ref::<StringArray>() {
-                    for i in 0..ids.len() {
-                        if !ids.is_null(i) && ids.value(i) == vector_id {
-                            // Found the ID, extract the vector
-                            if let Some(vectors) = vector_array.as_any().downcast_ref::<ListArray>()
-                                && let Some(vector_values) = vectors
-                                    .value(i)
-                                    .as_any()
-                                    .downcast_ref::<arrow_array::Float32Array>(
-                                ) {
-                                    let vector: Vec<f32> = (0..vector_values.len())
-                                        .map(|j| vector_values.value(j))
-                                        .collect();
-                                    return Ok(vector);
-                                }
+            if let Some(ids) = id_array.as_any().downcast_ref::<StringArray>() {
+                for i in 0..ids.len() {
+                    if !ids.is_null(i) && ids.value(i) == vector_id {
+                        // Found the ID, extract the vector
+                        if let Some(vectors) = vector_array.as_any().downcast_ref::<ListArray>()
+                            && let Some(vector_values) = vectors
+                                .value(i)
+                                .as_any()
+                                .downcast_ref::<arrow_array::Float32Array>(
+                            )
+                        {
+                            let vector: Vec<f32> = (0..vector_values.len())
+                                .map(|j| vector_values.value(j))
+                                .collect();
+                            return Ok(vector);
                         }
                     }
                 }
             }
+        }
 
         Err(anyhow::anyhow!(
             "Vector '{}' not found in row group {}",
@@ -3515,11 +3530,7 @@ impl RaptorReader {
                 for j in (i + 1)..centroids.len() {
                     let dist = self
                         .distance_compute
-                        .calculate_distance(
-                            centroid_i,
-                            &centroids[j],
-                            &DistanceMetric::Euclidean,
-                        )
+                        .calculate_distance(centroid_i, &centroids[j], &DistanceMetric::Euclidean)
                         .raw_value;
 
                     distances[i][j] = dist;
@@ -4113,15 +4124,19 @@ impl RaptorReader {
 #[cfg(test)]
 #[cfg(feature = "experimental-engines")]
 mod tests {
-    use super::*;
     use super::compare_sql_values;
+    use super::*;
     use crate::proto::proximadb_v1::SqlValue;
     use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
 
     #[test]
     fn test_compare_sql_values_numbers() {
-        let a = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
-        let b = SqlValue { value: Some(SqlVal::NumberValue(2.0)) };
+        let a = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        let b = SqlValue {
+            value: Some(SqlVal::NumberValue(2.0)),
+        };
         assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Less);
         assert_eq!(compare_sql_values(&b, &a), std::cmp::Ordering::Greater);
         assert_eq!(compare_sql_values(&a, &a), std::cmp::Ordering::Equal);
@@ -4129,33 +4144,54 @@ mod tests {
 
     #[test]
     fn test_compare_sql_values_int64() {
-        let a = SqlValue { value: Some(SqlVal::Int64Value(10)) };
-        let b = SqlValue { value: Some(SqlVal::Int64Value(20)) };
+        let a = SqlValue {
+            value: Some(SqlVal::Int64Value(10)),
+        };
+        let b = SqlValue {
+            value: Some(SqlVal::Int64Value(20)),
+        };
         assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Less);
         assert_eq!(compare_sql_values(&b, &a), std::cmp::Ordering::Greater);
     }
 
     #[test]
     fn test_compare_sql_values_strings() {
-        let a = SqlValue { value: Some(SqlVal::StringValue("apple".to_string())) };
-        let b = SqlValue { value: Some(SqlVal::StringValue("banana".to_string())) };
+        let a = SqlValue {
+            value: Some(SqlVal::StringValue("apple".to_string())),
+        };
+        let b = SqlValue {
+            value: Some(SqlVal::StringValue("banana".to_string())),
+        };
         assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Less);
     }
 
     #[test]
     fn test_compare_sql_values_cross_numeric_types() {
-        let int_val = SqlValue { value: Some(SqlVal::Int64Value(5)) };
-        let float_val = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
-        assert_eq!(compare_sql_values(&int_val, &float_val), std::cmp::Ordering::Less);
+        let int_val = SqlValue {
+            value: Some(SqlVal::Int64Value(5)),
+        };
+        let float_val = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&int_val, &float_val),
+            std::cmp::Ordering::Less
+        );
     }
 
     #[test]
     fn test_predicate_eq_within_range() {
-        use super::super::common::{ColumnStats, ColumnEncoding};
+        use super::super::common::{ColumnEncoding, ColumnStats};
 
-        let min = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
-        let max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
-        let value = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
 
         // Value 5.0 is within [1.0, 10.0] — Eq should pass
         assert!(
@@ -4166,9 +4202,15 @@ mod tests {
 
     #[test]
     fn test_predicate_eq_outside_range() {
-        let min = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
-        let max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
-        let value = SqlValue { value: Some(SqlVal::NumberValue(15.0)) };
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(15.0)),
+        };
 
         // Value 15.0 is outside [1.0, 10.0] — Eq should fail
         assert!(
@@ -4179,17 +4221,20 @@ mod tests {
 
     #[test]
     fn test_predicate_lt_pruning() {
-        let min = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
-        let value = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
 
         // Lt: min < value should be false (min=10 is NOT < value=5)
-        assert_ne!(
-            compare_sql_values(&min, &value),
-            std::cmp::Ordering::Less
-        );
+        assert_ne!(compare_sql_values(&min, &value), std::cmp::Ordering::Less);
 
         // Lt: min < value should be true (min=1 IS < value=5)
-        let low_min = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
+        let low_min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
         assert_eq!(
             compare_sql_values(&low_min, &value),
             std::cmp::Ordering::Less
@@ -4198,8 +4243,12 @@ mod tests {
 
     #[test]
     fn test_predicate_gt_pruning() {
-        let max = SqlValue { value: Some(SqlVal::NumberValue(3.0)) };
-        let value = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(3.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
 
         // Gt: max > value should be false (max=3 is NOT > value=5)
         assert_ne!(
@@ -4208,7 +4257,9 @@ mod tests {
         );
 
         // Gt: max > value should be true (max=10 IS > value=5)
-        let high_max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        let high_max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
         assert_eq!(
             compare_sql_values(&high_max, &value),
             std::cmp::Ordering::Greater
@@ -4228,16 +4279,28 @@ mod tests {
     #[test]
     fn test_compare_sql_values_null_vs_number() {
         let null_val = SqlValue { value: None };
-        let num_val = SqlValue { value: Some(SqlVal::NumberValue(42.0)) };
+        let num_val = SqlValue {
+            value: Some(SqlVal::NumberValue(42.0)),
+        };
         // Null vs typed value is incomparable, treated as Equal (conservative)
-        assert_eq!(compare_sql_values(&null_val, &num_val), std::cmp::Ordering::Equal);
-        assert_eq!(compare_sql_values(&num_val, &null_val), std::cmp::Ordering::Equal);
+        assert_eq!(
+            compare_sql_values(&null_val, &num_val),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_sql_values(&num_val, &null_val),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
     fn test_compare_sql_values_bool_ordering() {
-        let f = SqlValue { value: Some(SqlVal::BoolValue(false)) };
-        let t = SqlValue { value: Some(SqlVal::BoolValue(true)) };
+        let f = SqlValue {
+            value: Some(SqlVal::BoolValue(false)),
+        };
+        let t = SqlValue {
+            value: Some(SqlVal::BoolValue(true)),
+        };
         assert_eq!(compare_sql_values(&f, &t), std::cmp::Ordering::Less);
         assert_eq!(compare_sql_values(&t, &f), std::cmp::Ordering::Greater);
         assert_eq!(compare_sql_values(&t, &t), std::cmp::Ordering::Equal);
@@ -4246,27 +4309,51 @@ mod tests {
     #[test]
     fn test_compare_sql_values_int64_to_number_coercion() {
         // Int64(100) vs Number(99.5)
-        let int_val = SqlValue { value: Some(SqlVal::Int64Value(100)) };
-        let float_val = SqlValue { value: Some(SqlVal::NumberValue(99.5)) };
-        assert_eq!(compare_sql_values(&int_val, &float_val), std::cmp::Ordering::Greater);
+        let int_val = SqlValue {
+            value: Some(SqlVal::Int64Value(100)),
+        };
+        let float_val = SqlValue {
+            value: Some(SqlVal::NumberValue(99.5)),
+        };
+        assert_eq!(
+            compare_sql_values(&int_val, &float_val),
+            std::cmp::Ordering::Greater
+        );
 
         // Reverse direction: Number vs Int64
-        assert_eq!(compare_sql_values(&float_val, &int_val), std::cmp::Ordering::Less);
+        assert_eq!(
+            compare_sql_values(&float_val, &int_val),
+            std::cmp::Ordering::Less
+        );
     }
 
     #[test]
     fn test_compare_sql_values_int64_equal_as_float() {
         // Int64(5) vs Number(5.0) should be Equal
-        let int_val = SqlValue { value: Some(SqlVal::Int64Value(5)) };
-        let float_val = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
-        assert_eq!(compare_sql_values(&int_val, &float_val), std::cmp::Ordering::Equal);
-        assert_eq!(compare_sql_values(&float_val, &int_val), std::cmp::Ordering::Equal);
+        let int_val = SqlValue {
+            value: Some(SqlVal::Int64Value(5)),
+        };
+        let float_val = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&int_val, &float_val),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_sql_values(&float_val, &int_val),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
     fn test_compare_sql_values_negative_numbers() {
-        let neg = SqlValue { value: Some(SqlVal::NumberValue(-10.0)) };
-        let pos = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        let neg = SqlValue {
+            value: Some(SqlVal::NumberValue(-10.0)),
+        };
+        let pos = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
         assert_eq!(compare_sql_values(&neg, &pos), std::cmp::Ordering::Less);
         assert_eq!(compare_sql_values(&pos, &neg), std::cmp::Ordering::Greater);
     }
@@ -4274,57 +4361,105 @@ mod tests {
     #[test]
     fn test_compare_sql_values_incompatible_types() {
         // String vs Number: incomparable, treated as Equal
-        let str_val = SqlValue { value: Some(SqlVal::StringValue("abc".to_string())) };
-        let num_val = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
-        assert_eq!(compare_sql_values(&str_val, &num_val), std::cmp::Ordering::Equal);
+        let str_val = SqlValue {
+            value: Some(SqlVal::StringValue("abc".to_string())),
+        };
+        let num_val = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&str_val, &num_val),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
     fn test_compare_sql_values_nan_handling() {
         // NaN comparisons should not panic; partial_cmp returns None -> Equal
-        let nan_val = SqlValue { value: Some(SqlVal::NumberValue(f64::NAN)) };
-        let normal = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
+        let nan_val = SqlValue {
+            value: Some(SqlVal::NumberValue(f64::NAN)),
+        };
+        let normal = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
         // NaN compared to anything should be Equal (fallback behavior)
-        assert_eq!(compare_sql_values(&nan_val, &normal), std::cmp::Ordering::Equal);
-        assert_eq!(compare_sql_values(&nan_val, &nan_val), std::cmp::Ordering::Equal);
+        assert_eq!(
+            compare_sql_values(&nan_val, &normal),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_sql_values(&nan_val, &nan_val),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
     fn test_compare_sql_values_infinity() {
-        let pos_inf = SqlValue { value: Some(SqlVal::NumberValue(f64::INFINITY)) };
-        let neg_inf = SqlValue { value: Some(SqlVal::NumberValue(f64::NEG_INFINITY)) };
-        let normal = SqlValue { value: Some(SqlVal::NumberValue(100.0)) };
-        assert_eq!(compare_sql_values(&pos_inf, &normal), std::cmp::Ordering::Greater);
-        assert_eq!(compare_sql_values(&neg_inf, &normal), std::cmp::Ordering::Less);
-        assert_eq!(compare_sql_values(&neg_inf, &pos_inf), std::cmp::Ordering::Less);
+        let pos_inf = SqlValue {
+            value: Some(SqlVal::NumberValue(f64::INFINITY)),
+        };
+        let neg_inf = SqlValue {
+            value: Some(SqlVal::NumberValue(f64::NEG_INFINITY)),
+        };
+        let normal = SqlValue {
+            value: Some(SqlVal::NumberValue(100.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&pos_inf, &normal),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_sql_values(&neg_inf, &normal),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_sql_values(&neg_inf, &pos_inf),
+            std::cmp::Ordering::Less
+        );
     }
 
     #[test]
     fn test_predicate_lte_pruning() {
-        let min = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
-        let value = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
         // Lte: value <= max is true when value equals the bound
         assert!(compare_sql_values(&value, &min) != std::cmp::Ordering::Greater);
 
-        let small_val = SqlValue { value: Some(SqlVal::NumberValue(3.0)) };
+        let small_val = SqlValue {
+            value: Some(SqlVal::NumberValue(3.0)),
+        };
         assert!(compare_sql_values(&small_val, &min) != std::cmp::Ordering::Greater);
 
-        let large_val = SqlValue { value: Some(SqlVal::NumberValue(7.0)) };
+        let large_val = SqlValue {
+            value: Some(SqlVal::NumberValue(7.0)),
+        };
         // 7.0 > 5.0, so Lte should fail
         assert!(compare_sql_values(&large_val, &min) == std::cmp::Ordering::Greater);
     }
 
     #[test]
     fn test_predicate_gte_pruning() {
-        let max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
-        let value = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
         // Gte: value >= min is true when value equals the bound
         assert!(compare_sql_values(&value, &max) != std::cmp::Ordering::Less);
 
-        let large_val = SqlValue { value: Some(SqlVal::NumberValue(15.0)) };
+        let large_val = SqlValue {
+            value: Some(SqlVal::NumberValue(15.0)),
+        };
         assert!(compare_sql_values(&large_val, &max) != std::cmp::Ordering::Less);
 
-        let small_val = SqlValue { value: Some(SqlVal::NumberValue(3.0)) };
+        let small_val = SqlValue {
+            value: Some(SqlVal::NumberValue(3.0)),
+        };
         // 3.0 < 10.0, so Gte should fail
         assert!(compare_sql_values(&small_val, &max) == std::cmp::Ordering::Less);
     }
@@ -4332,76 +4467,122 @@ mod tests {
     #[test]
     fn test_predicate_between_range_check() {
         // Between: min <= value <= max
-        let min = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
-        let max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
 
         // Value inside range
-        let inside = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+        let inside = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
         assert!(
             compare_sql_values(&inside, &min) != std::cmp::Ordering::Less
                 && compare_sql_values(&inside, &max) != std::cmp::Ordering::Greater
         );
 
         // Value at min boundary
-        let at_min = SqlValue { value: Some(SqlVal::NumberValue(1.0)) };
+        let at_min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
         assert!(
             compare_sql_values(&at_min, &min) != std::cmp::Ordering::Less
                 && compare_sql_values(&at_min, &max) != std::cmp::Ordering::Greater
         );
 
         // Value at max boundary
-        let at_max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        let at_max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
         assert!(
             compare_sql_values(&at_max, &min) != std::cmp::Ordering::Less
                 && compare_sql_values(&at_max, &max) != std::cmp::Ordering::Greater
         );
 
         // Value below range
-        let below = SqlValue { value: Some(SqlVal::NumberValue(0.0)) };
+        let below = SqlValue {
+            value: Some(SqlVal::NumberValue(0.0)),
+        };
         assert!(compare_sql_values(&below, &min) == std::cmp::Ordering::Less);
 
         // Value above range
-        let above = SqlValue { value: Some(SqlVal::NumberValue(11.0)) };
+        let above = SqlValue {
+            value: Some(SqlVal::NumberValue(11.0)),
+        };
         assert!(compare_sql_values(&above, &max) == std::cmp::Ordering::Greater);
     }
 
     #[test]
     fn test_predicate_not_equal_detection() {
         // NotEqual: value != target means we keep rowgroup if range includes other values
-        let val_a = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
-        let val_b = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+        let val_a = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        let val_b = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
         // Equal values
-        assert_eq!(compare_sql_values(&val_a, &val_b), std::cmp::Ordering::Equal);
+        assert_eq!(
+            compare_sql_values(&val_a, &val_b),
+            std::cmp::Ordering::Equal
+        );
 
         // If min == max == value, NotEqual should prune the rowgroup
         // If min != max, there might be other values, so keep it
-        let min = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
-        let max = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
-        let target = SqlValue { value: Some(SqlVal::NumberValue(5.0)) };
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        let target = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
         let can_prune = compare_sql_values(&min, &target) == std::cmp::Ordering::Equal
             && compare_sql_values(&max, &target) == std::cmp::Ordering::Equal;
         assert!(can_prune, "Should prune when min=max=target for NotEqual");
 
         // When range is wider, cannot prune
-        let wide_max = SqlValue { value: Some(SqlVal::NumberValue(10.0)) };
+        let wide_max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
         let cannot_prune = compare_sql_values(&min, &target) == std::cmp::Ordering::Equal
             && compare_sql_values(&wide_max, &target) == std::cmp::Ordering::Equal;
-        assert!(!cannot_prune, "Should NOT prune when max != target for NotEqual");
+        assert!(
+            !cannot_prune,
+            "Should NOT prune when max != target for NotEqual"
+        );
     }
 
     #[test]
     fn test_compare_sql_values_empty_strings() {
-        let empty = SqlValue { value: Some(SqlVal::StringValue(String::new())) };
-        let non_empty = SqlValue { value: Some(SqlVal::StringValue("a".to_string())) };
-        assert_eq!(compare_sql_values(&empty, &non_empty), std::cmp::Ordering::Less);
-        assert_eq!(compare_sql_values(&empty, &empty), std::cmp::Ordering::Equal);
+        let empty = SqlValue {
+            value: Some(SqlVal::StringValue(String::new())),
+        };
+        let non_empty = SqlValue {
+            value: Some(SqlVal::StringValue("a".to_string())),
+        };
+        assert_eq!(
+            compare_sql_values(&empty, &non_empty),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_sql_values(&empty, &empty),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]
     fn test_scan_strategy_default_is_filtering() {
         let strategy = ScanStrategy::default();
         match strategy {
-            ScanStrategy::Filtering { target_ids, predicates, max_rowgroups } => {
+            ScanStrategy::Filtering {
+                target_ids,
+                predicates,
+                max_rowgroups,
+            } => {
                 assert!(target_ids.is_none());
                 assert!(predicates.is_none());
                 assert!(max_rowgroups.is_none());

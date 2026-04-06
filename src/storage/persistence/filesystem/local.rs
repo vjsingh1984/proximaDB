@@ -107,7 +107,8 @@ impl LocalFileSystem {
             Err(_e) => {
                 // Try alternative methods to understand the environment
                 if let Ok(exe_path) = std::env::current_exe()
-                    && let Some(_exe_dir) = exe_path.parent() {}
+                    && let Some(_exe_dir) = exe_path.parent()
+                {}
 
                 // Check environment variables
                 if let Ok(_pwd) = std::env::var("PWD") {}
@@ -302,7 +303,8 @@ impl LocalFileSystem {
             Err(_e) => {
                 // Try alternative methods to understand the environment
                 if let Ok(exe_path) = std::env::current_exe()
-                    && let Some(_exe_dir) = exe_path.parent() {}
+                    && let Some(_exe_dir) = exe_path.parent()
+                {}
 
                 // Check environment variables
                 if let Ok(_pwd) = std::env::var("PWD") {}
@@ -349,7 +351,9 @@ impl LocalFileSystem {
         let to_datetime = |time: std::io::Result<std::time::SystemTime>| {
             time.ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos()))
+                .and_then(|d| {
+                    chrono::DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos())
+                })
         };
 
         FileMetadata {
@@ -453,11 +457,7 @@ impl FileSystem for LocalFileSystem {
 
         // Create memory map
         // Safety: We're creating a read-only mmap which is safe for concurrent access
-        let mmap = unsafe {
-            MmapOptions::new()
-                .map(&file)
-                .map_err(FilesystemError::Io)?
-        };
+        let mmap = unsafe { MmapOptions::new().map(&file).map_err(FilesystemError::Io)? };
 
         tracing::debug!(
             "Created memory map for file: {} (size: {} bytes)",
@@ -478,11 +478,12 @@ impl FileSystem for LocalFileSystem {
 
         // Create parent directories if requested
         if options.as_ref().is_some_and(|o| o.create_dirs)
-            && let Some(parent) = resolved_path.parent() {
-                fs::create_dir_all(parent)
-                    .await
-                    .map_err(FilesystemError::Io)?;
-            }
+            && let Some(parent) = resolved_path.parent()
+        {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(FilesystemError::Io)?;
+        }
 
         // Check if file exists and handle overwrite option
         if !options.as_ref().is_none_or(|o| o.overwrite) && resolved_path.exists() {
@@ -697,10 +698,7 @@ impl FileSystem for LocalFileSystem {
             }
             Err(e) => {
                 // Get current position for debugging
-                let current_pos = file
-                    .stream_position()
-                    .await
-                    .map_err(FilesystemError::Io)?;
+                let current_pos = file.stream_position().await.map_err(FilesystemError::Io)?;
                 tracing::error!(
                     "LocalFS read_exact failed: path={}, offset={}, bytes_to_read={}, current_pos={}, file_size={}, error={:?}",
                     path,
@@ -769,8 +767,10 @@ impl FileSystem for LocalFileSystem {
             let entry_url = if path.starts_with("file://./") || path.starts_with("./") {
                 // For relative URLs, preserve the relative nature
                 if let Some(root_dir) = &self.config.root_dir {
-                    let relative_from_root = entry_path
-                        .strip_prefix(root_dir).map_or_else(|_| entry_path.display().to_string(), |p| p.to_string_lossy().to_string());
+                    let relative_from_root = entry_path.strip_prefix(root_dir).map_or_else(
+                        |_| entry_path.display().to_string(),
+                        |p| p.to_string_lossy().to_string(),
+                    );
                     format!("file://./{}", relative_from_root)
                 } else {
                     // No root_dir, but path is relative - preserve relative nature

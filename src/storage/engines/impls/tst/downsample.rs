@@ -114,10 +114,7 @@ impl Downsampler {
 
         // Group by symbol
         for bar in bars {
-            by_symbol
-                .entry(&bar.symbol)
-                .or_default()
-                .push(bar);
+            by_symbol.entry(&bar.symbol).or_default().push(bar);
         }
 
         let mut result = Vec::new();

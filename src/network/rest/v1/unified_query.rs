@@ -485,7 +485,8 @@ fn transform_query_result_to_response(
             .map(|(i, row)| UnifiedRecordResponse {
                 id: row
                     .get("id")
-                    .and_then(|v| v.as_str()).map_or_else(|| format!("row_{}", i), |s| s.to_string()),
+                    .and_then(|v| v.as_str())
+                    .map_or_else(|| format!("row_{}", i), |s| s.to_string()),
                 source_model: "unified".to_string(),
                 data: row,
                 score: None,
@@ -927,9 +928,10 @@ fn convert_arrow_to_records(
                         id = s.clone();
                     }
                 } else if (field.name() == "score" || field.name() == "distance")
-                    && let serde_json::Value::Number(n) = &value {
-                        score = n.as_f64();
-                    }
+                    && let serde_json::Value::Number(n) = &value
+                {
+                    score = n.as_f64();
+                }
 
                 data.insert(field.name().clone(), value);
             }
@@ -983,24 +985,30 @@ fn extract_value_from_array(array: &dyn arrow::array::Array, row_idx: usize) -> 
     }
 
     match array.data_type() {
-        DataType::Utf8 => array
-            .as_any()
-            .downcast_ref::<StringArray>().map_or_else(|| serde_json::Value::String("<invalid UTF8 array>".to_string()), |arr| serde_json::Value::String(arr.value(row_idx).to_string())),
-        DataType::Float32 => array
-            .as_any()
-            .downcast_ref::<Float32Array>().map_or_else(|| serde_json::Value::String("<invalid Float32 array>".to_string()), |arr| serde_json::json!(arr.value(row_idx))),
-        DataType::Float64 => array
-            .as_any()
-            .downcast_ref::<Float64Array>().map_or_else(|| serde_json::Value::String("<invalid Float64 array>".to_string()), |arr| serde_json::json!(arr.value(row_idx))),
-        DataType::Int32 => array
-            .as_any()
-            .downcast_ref::<Int32Array>().map_or_else(|| serde_json::Value::String("<invalid Int32 array>".to_string()), |arr| serde_json::json!(arr.value(row_idx))),
-        DataType::Int64 => array
-            .as_any()
-            .downcast_ref::<Int64Array>().map_or_else(|| serde_json::Value::String("<invalid Int64 array>".to_string()), |arr| serde_json::json!(arr.value(row_idx))),
-        DataType::Boolean => array
-            .as_any()
-            .downcast_ref::<BooleanArray>().map_or_else(|| serde_json::Value::String("<invalid Boolean array>".to_string()), |arr| serde_json::json!(arr.value(row_idx))),
+        DataType::Utf8 => array.as_any().downcast_ref::<StringArray>().map_or_else(
+            || serde_json::Value::String("<invalid UTF8 array>".to_string()),
+            |arr| serde_json::Value::String(arr.value(row_idx).to_string()),
+        ),
+        DataType::Float32 => array.as_any().downcast_ref::<Float32Array>().map_or_else(
+            || serde_json::Value::String("<invalid Float32 array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
+        DataType::Float64 => array.as_any().downcast_ref::<Float64Array>().map_or_else(
+            || serde_json::Value::String("<invalid Float64 array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
+        DataType::Int32 => array.as_any().downcast_ref::<Int32Array>().map_or_else(
+            || serde_json::Value::String("<invalid Int32 array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
+        DataType::Int64 => array.as_any().downcast_ref::<Int64Array>().map_or_else(
+            || serde_json::Value::String("<invalid Int64 array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
+        DataType::Boolean => array.as_any().downcast_ref::<BooleanArray>().map_or_else(
+            || serde_json::Value::String("<invalid Boolean array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
         _ => serde_json::Value::String(format!("<unsupported type: {:?}>", array.data_type())),
     }
 }
@@ -1355,7 +1363,6 @@ pub enum ExecutionStrategy {
     Auto,
 }
 
-
 /// Response for distributed query execution
 #[derive(Debug, Serialize)]
 pub struct DistributedQueryResponse {
@@ -1571,11 +1578,7 @@ async fn execute_prepared_statement(
     let start = Instant::now();
 
     // Convert JSON values to ParameterValues
-    let params: Vec<ParameterValue> = request
-        .params
-        .iter()
-        .map(json_to_parameter_value)
-        .collect();
+    let params: Vec<ParameterValue> = request.params.iter().map(json_to_parameter_value).collect();
 
     // Get the substituted SQL
     let sql = state
@@ -1889,13 +1892,12 @@ mod tests {
             request.query,
             "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2]', 10)"
         );
-        let qv = request.query_vector.expect("query_vector should be present");
+        let qv = request
+            .query_vector
+            .expect("query_vector should be present");
         assert_eq!(qv.len(), 3);
         assert!((qv[0] - 0.1).abs() < f32::EPSILON);
-        assert_eq!(
-            request.fusion_strategy.as_deref(),
-            Some("rrf")
-        );
+        assert_eq!(request.fusion_strategy.as_deref(), Some("rrf"));
         assert_eq!(request.limit, Some(50));
 
         // Minimal request (only required field)
@@ -1963,7 +1965,9 @@ mod tests {
         assert!(json["records"][1]["metadata"].is_object());
         assert!(
             json["records"][0].get("metadata").is_none()
-                || json["records"][0]["metadata"].as_object().map_or(false, |m| m.is_empty()),
+                || json["records"][0]["metadata"]
+                    .as_object()
+                    .map_or(false, |m| m.is_empty()),
             "empty metadata should be skipped or empty"
         );
         assert!((json["metrics"]["total_time_ms"].as_f64().unwrap() - 12.5).abs() < f64::EPSILON);
@@ -2074,8 +2078,8 @@ mod tests {
         let explain_input = serde_json::json!({
             "query": "SELECT * FROM VECTOR_SEARCH('products', '[0.5]', 5) JOIN GRAPH_QUERY('MATCH (n) RETURN n')"
         });
-        let req: ExecuteQueryRequest =
-            serde_json::from_value(explain_input).expect("explain input should parse as ExecuteQueryRequest");
+        let req: ExecuteQueryRequest = serde_json::from_value(explain_input)
+            .expect("explain input should parse as ExecuteQueryRequest");
         assert!(req.query.contains("VECTOR_SEARCH"));
         assert!(req.query.contains("GRAPH_QUERY"));
     }

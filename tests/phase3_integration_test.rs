@@ -44,8 +44,7 @@ mod streaming_flush_tests {
     use super::*;
     use proximadb::proto::proximadb_v1::VectorRecord;
     use proximadb::streaming::{
-        BackpressureLevel, FlushRetryConfig, SessionConfig, StreamConfig,
-        StreamCoordinator,
+        BackpressureLevel, FlushRetryConfig, SessionConfig, StreamConfig, StreamCoordinator,
     };
 
     /// Helper to create test vectors
@@ -1315,7 +1314,7 @@ mod mtls_tests {
 // =============================================================================
 
 mod catalog_tests {
-    
+
     use proximadb::catalog::CatalogManager;
 
     fn temp_catalog_dir(name: &str) -> std::path::PathBuf {

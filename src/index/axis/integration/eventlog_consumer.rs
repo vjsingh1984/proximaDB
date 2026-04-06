@@ -613,7 +613,11 @@ impl AxisEventLogConsumer {
         let index_algorithm = collection
             .config
             .as_ref()
-            .and_then(|c| c.index_configs.first()).map_or_else(|| "None".to_string(), |i| format!("Algorithm({})", i.algorithm));
+            .and_then(|c| c.index_configs.first())
+            .map_or_else(
+                || "None".to_string(),
+                |i| format!("Algorithm({})", i.algorithm),
+            );
 
         debug!(
             "[AXIS Consumer] Determining extraction mode for collection {}:\n  Quantization Enabled: {:?}\n  Index Algorithm: {}",
@@ -624,8 +628,6 @@ impl AxisEventLogConsumer {
         // HNSW typically needs FP32 for accuracy
         // IVF can work with quantized data
         // PQ indexes prefer quantized data
-
-        
 
         if has_quantization != Some(Some(true)) {
             // No quantization, must use FP32

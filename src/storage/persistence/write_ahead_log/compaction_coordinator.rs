@@ -338,30 +338,32 @@ impl CompactionCoordinator {
 
         // Don't trigger if already in progress
         if let Some(s) = state
-            && s.compaction_in_progress {
-                return Ok(false);
-            }
+            && s.compaction_in_progress
+        {
+            return Ok(false);
+        }
 
         // Check time constraint
         if let Some(s) = state
-            && let Some(last_compaction) = s.last_compaction {
-                let elapsed = Utc::now().signed_duration_since(last_compaction);
-                if elapsed.num_seconds()
-                    < self
-                        .config
+            && let Some(last_compaction) = s.last_compaction
+        {
+            let elapsed = Utc::now().signed_duration_since(last_compaction);
+            if elapsed.num_seconds()
+                < self
+                    .config
+                    .as_ref()
+                    .map_or(60, |c| c.min_compaction_interval_secs) as i64
+            {
+                debug!(
+                    "🔧 CompactionCoordinator: Too soon for compaction ({}s < {}s)",
+                    elapsed.num_seconds(),
+                    self.config
                         .as_ref()
-                        .map_or(60, |c| c.min_compaction_interval_secs) as i64
-                {
-                    debug!(
-                        "🔧 CompactionCoordinator: Too soon for compaction ({}s < {}s)",
-                        elapsed.num_seconds(),
-                        self.config
-                            .as_ref()
-                            .map_or(60, |c| c.min_compaction_interval_secs)
-                    );
-                    return Ok(false);
-                }
+                        .map_or(60, |c| c.min_compaction_interval_secs)
+                );
+                return Ok(false);
             }
+        }
 
         // Check active compaction limit
         let active_count = self.active_compactions.lock().await.len();
@@ -434,24 +436,17 @@ impl CompactionCoordinator {
             info!(
                 "🚀 CompactionCoordinator: Compaction needed for {}: files={}/{} (actual={}), size={}MB/{}MB, flushes={}/{}",
                 collection_id,
-                state
-                    .as_ref()
-                    .map_or(0, |s| s.files_needing_compaction),
+                state.as_ref().map_or(0, |s| s.files_needing_compaction),
                 self.config
                     .as_ref()
                     .map_or(10, |c| c.max_files_before_compaction),
                 actual_file_count,
-                state
-                    .as_ref()
-                    .map_or(0, |s| s.uncompacted_size_bytes)
-                    / (1024 * 1024),
+                state.as_ref().map_or(0, |s| s.uncompacted_size_bytes) / (1024 * 1024),
                 self.config
                     .as_ref()
                     .map_or(1024 * 1024 * 1024, |c| c.max_size_before_compaction)
                     / (1024 * 1024),
-                state
-                    .as_ref()
-                    .map_or(0, |s| s.flushes_since_compaction),
+                state.as_ref().map_or(0, |s| s.flushes_since_compaction),
                 self.config
                     .as_ref()
                     .map_or(5, |c| c.max_flushes_before_compaction)
@@ -483,7 +478,8 @@ impl CompactionCoordinator {
         let preferred_engine = {
             let states = self.collection_states.read().await;
             states
-                .get(&collection_id).map_or_else(|| "VIPER".to_string(), |s| s.preferred_engine.clone())
+                .get(&collection_id)
+                .map_or_else(|| "VIPER".to_string(), |s| s.preferred_engine.clone())
         };
 
         // Create compaction task
@@ -731,13 +727,14 @@ impl CompactionCoordinator {
                 state.compaction_in_progress = false;
 
                 if let Ok(compaction_result) = result
-                    && compaction_result.success {
-                        // Reset compaction metrics on success
-                        state.files_needing_compaction = 0;
-                        state.uncompacted_size_bytes = 0;
-                        state.flushes_since_compaction = 0;
-                        state.last_compaction = Some(Utc::now());
-                    }
+                    && compaction_result.success
+                {
+                    // Reset compaction metrics on success
+                    state.files_needing_compaction = 0;
+                    state.uncompacted_size_bytes = 0;
+                    state.flushes_since_compaction = 0;
+                    state.last_compaction = Some(Utc::now());
+                }
             }
         }
 

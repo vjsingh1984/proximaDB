@@ -52,9 +52,9 @@ use super::ast::{
     CompiledPattern, EdgeDirection, EdgePattern, FoundPath, MatchResult, NodePattern, PathElement,
     PathPattern, PropertyConstraint, PropertyProjection, ReturnSpec, VariableBinding, WhereClause,
 };
-use super::{QueryContext, QueryResult};
-use super::cypher_ast::{CypherStatement, CypherClause, MatchClause, ReturnClause};
+use super::cypher_ast::{CypherClause, CypherStatement, MatchClause, ReturnClause};
 use super::cypher_parser::CypherParser;
+use super::{QueryContext, QueryResult};
 use crate::core::error::ProximaDBError;
 use crate::graph::{Edge, GraphMemoryPool, Node, NodeId};
 use regex::Regex;
@@ -447,9 +447,10 @@ impl PatternMatcher {
         let mut matching_nodes = Vec::new();
         for node_id in candidates {
             if let Some(node) = memory_pool.get_node(&node_id)
-                && self.node_matches_properties(&node, &node_pattern.properties)? {
-                    matching_nodes.push(node);
-                }
+                && self.node_matches_properties(&node, &node_pattern.properties)?
+            {
+                matching_nodes.push(node);
+            }
         }
 
         Ok(matching_nodes)
@@ -484,9 +485,10 @@ impl PatternMatcher {
 
             // Check edge type
             if !edge_pattern.edge_types.is_empty()
-                && !edge_pattern.edge_types.contains(&edge.edge_type) {
-                    continue;
-                }
+                && !edge_pattern.edge_types.contains(&edge.edge_type)
+            {
+                continue;
+            }
 
             // Check edge properties
             if !self.edge_matches_properties(edge, &edge_pattern.properties)? {
@@ -567,9 +569,10 @@ impl PatternMatcher {
                 }
 
                 if !path_pattern.edge_types.is_empty()
-                    && !path_pattern.edge_types.contains(&edge.edge_type) {
-                        continue;
-                    }
+                    && !path_pattern.edge_types.contains(&edge.edge_type)
+                {
+                    continue;
+                }
 
                 // Get target node
                 if let Some(target_node) = memory_pool.get_node(&edge.to_node_id) {
@@ -808,9 +811,10 @@ impl PatternMatcher {
                 constraint,
             } => {
                 if let Some(VariableBinding::Node(node)) = bindings.get(variable)
-                    && let Some(prop_value) = node.properties.get(property) {
-                        return self.evaluate_property_constraint(prop_value, constraint);
-                    }
+                    && let Some(prop_value) = node.properties.get(property)
+                {
+                    return self.evaluate_property_constraint(prop_value, constraint);
+                }
                 Ok(false)
             }
             WhereClause::And(left, right) => {
@@ -990,9 +994,10 @@ impl PatternMatcher {
                     for result in &results {
                         if let Some(binding) = result.bindings.get(variable)
                             && let Some(value) = self.get_binding_property(binding, property)
-                                && let Some(Value::IntValue(n)) = value.value {
-                                    sum += n;
-                                }
+                            && let Some(Value::IntValue(n)) = value.value
+                        {
+                            sum += n;
+                        }
                     }
                     aggregates.insert(
                         alias.clone(),
@@ -1007,10 +1012,11 @@ impl PatternMatcher {
                     for result in &results {
                         if let Some(binding) = result.bindings.get(variable)
                             && let Some(value) = self.get_binding_property(binding, property)
-                                && let Some(Value::IntValue(n)) = value.value {
-                                    sum += n;
-                                    count += 1;
-                                }
+                            && let Some(Value::IntValue(n)) = value.value
+                        {
+                            sum += n;
+                            count += 1;
+                        }
                     }
                     let avg = if count > 0 { sum / count } else { 0 };
                     aggregates.insert(
@@ -1025,10 +1031,11 @@ impl PatternMatcher {
                     for result in &results {
                         if let Some(binding) = result.bindings.get(variable)
                             && let Some(value) = self.get_binding_property(binding, property)
-                                && let Some(Value::IntValue(n)) = value.value
-                                    && (min.is_none() || Some(n) < min) {
-                                        min = Some(n);
-                                    }
+                            && let Some(Value::IntValue(n)) = value.value
+                            && (min.is_none() || Some(n) < min)
+                        {
+                            min = Some(n);
+                        }
                     }
                     aggregates.insert(
                         alias.clone(),
@@ -1042,10 +1049,11 @@ impl PatternMatcher {
                     for result in &results {
                         if let Some(binding) = result.bindings.get(variable)
                             && let Some(value) = self.get_binding_property(binding, property)
-                                && let Some(Value::IntValue(n)) = value.value
-                                    && (max.is_none() || Some(n) > max) {
-                                        max = Some(n);
-                                    }
+                            && let Some(Value::IntValue(n)) = value.value
+                            && (max.is_none() || Some(n) > max)
+                        {
+                            max = Some(n);
+                        }
                     }
                     aggregates.insert(
                         alias.clone(),
@@ -1074,26 +1082,25 @@ impl PatternMatcher {
                     PropertyProjection::Property { variable, property } => {
                         // Property access (e.g., "WITH n.name AS name")
                         if let Some(binding) = result.bindings.get(variable)
-                            && let Some(value) = self.get_binding_property(binding, property) {
-                                // Create a new binding for the projected value
-                                new_bindings.insert(
-                                    alias.clone(),
-                                    VariableBinding::Node(std::sync::Arc::new(
-                                        crate::graph::Node {
-                                            id: format!("{}_{}", variable, property),
-                                            labels: vec![],
-                                            properties: {
-                                                let mut props = std::collections::HashMap::new();
-                                                props.insert("value".to_string(), value);
-                                                props
-                                            },
-                                            embedding: None,
-                                            created_at_ms: 0,
-                                            updated_at_ms: 0,
-                                        },
-                                    )),
-                                );
-                            }
+                            && let Some(value) = self.get_binding_property(binding, property)
+                        {
+                            // Create a new binding for the projected value
+                            new_bindings.insert(
+                                alias.clone(),
+                                VariableBinding::Node(std::sync::Arc::new(crate::graph::Node {
+                                    id: format!("{}_{}", variable, property),
+                                    labels: vec![],
+                                    properties: {
+                                        let mut props = std::collections::HashMap::new();
+                                        props.insert("value".to_string(), value);
+                                        props
+                                    },
+                                    embedding: None,
+                                    created_at_ms: 0,
+                                    updated_at_ms: 0,
+                                })),
+                            );
+                        }
                     }
                     PropertyProjection::Count
                     | PropertyProjection::Sum { .. }
@@ -1400,16 +1407,18 @@ impl PatternCompiler {
     /// Try to parse using the full Cypher recursive-descent parser
     fn try_cypher_parser(&self, pattern_str: &str) -> QueryResult<CompiledPattern> {
         // Convert anyhow::Error to VectorDBError
-        let statement = CypherParser::parse(pattern_str).map_err(|e| {
-            ProximaDBError::Internal(format!("Cypher parser error: {}", e))
-        })?;
+        let statement = CypherParser::parse(pattern_str)
+            .map_err(|e| ProximaDBError::Internal(format!("Cypher parser error: {}", e)))?;
 
         // Convert CypherStatement AST to CompiledPattern
         self.convert_cypher_statement(&statement)
     }
 
     /// Convert a CypherStatement AST to CompiledPattern
-    fn convert_cypher_statement(&self, statement: &CypherStatement) -> QueryResult<CompiledPattern> {
+    fn convert_cypher_statement(
+        &self,
+        statement: &CypherStatement,
+    ) -> QueryResult<CompiledPattern> {
         let mut compiled = CompiledPattern {
             nodes: Vec::new(),
             edges: Vec::new(),
@@ -1484,9 +1493,10 @@ impl PatternCompiler {
             for element in &pattern_path.elements {
                 match element {
                     PatternElement::Node(node) => {
-                        let var = node.variable.clone().unwrap_or_else(|| {
-                            format!("_anon_{}", compiled.nodes.len())
-                        });
+                        let var = node
+                            .variable
+                            .clone()
+                            .unwrap_or_else(|| format!("_anon_{}", compiled.nodes.len()));
                         node_vars.push(var.clone());
 
                         let mut properties = HashMap::new();
@@ -1515,10 +1525,12 @@ impl PatternCompiler {
 
                         // Build EdgePattern with from/to variables
                         // For now, use placeholder node variables
-                        let from_var = node_vars.get(node_vars.len().saturating_sub(2))
+                        let from_var = node_vars
+                            .get(node_vars.len().saturating_sub(2))
                             .cloned()
                             .unwrap_or_else(|| "_unknown".to_string());
-                        let to_var = node_vars.get(node_vars.len().saturating_sub(1))
+                        let to_var = node_vars
+                            .get(node_vars.len().saturating_sub(1))
                             .cloned()
                             .unwrap_or_else(|| "_unknown".to_string());
 
@@ -1544,7 +1556,10 @@ impl PatternCompiler {
     }
 
     /// Convert a WhereClause from Cypher AST to WhereClause
-    fn convert_where_clause(&self, wc: &crate::graph::query::cypher_ast::WhereClause) -> QueryResult<WhereClause> {
+    fn convert_where_clause(
+        &self,
+        wc: &crate::graph::query::cypher_ast::WhereClause,
+    ) -> QueryResult<WhereClause> {
         use crate::graph::query::ast::WhereClause as AstWhereClause;
 
         // Convert Expression to simple WhereClause representation
@@ -1602,14 +1617,20 @@ impl PatternCompiler {
     }
 
     /// Convert a CypherValue to serde_json::Value
-    fn convert_cypher_value_to_json(&self, val: &crate::graph::query::cypher_ast::CypherValue) -> QueryResult<serde_json::Value> {
+    fn convert_cypher_value_to_json(
+        &self,
+        val: &crate::graph::query::cypher_ast::CypherValue,
+    ) -> QueryResult<serde_json::Value> {
         use crate::graph::query::cypher_ast::CypherValue;
 
         Ok(match val {
             CypherValue::String(s) => serde_json::Value::String(s.clone()),
             CypherValue::Integer(n) => serde_json::Value::Number(serde_json::Number::from(*n)),
-            CypherValue::Float(f) => serde_json::Value::Number(serde_json::Number::from_f64(*f)
-                .ok_or_else(|| ProximaDBError::Internal(format!("Invalid float value: {}", f)))?),
+            CypherValue::Float(f) => {
+                serde_json::Value::Number(serde_json::Number::from_f64(*f).ok_or_else(|| {
+                    ProximaDBError::Internal(format!("Invalid float value: {}", f))
+                })?)
+            }
             CypherValue::Boolean(b) => serde_json::Value::Bool(*b),
             CypherValue::Null => serde_json::Value::Null,
             CypherValue::List(items) => {
@@ -1620,12 +1641,13 @@ impl PatternCompiler {
                 serde_json::Value::Array(items_vec?)
             }
             CypherValue::Map(entries) => {
-                let map = serde_json::Map::from_iter(
-                    entries.iter().map(|(k, v)| {
-                        (k.clone(), self.convert_cypher_value_to_json(v)
-                            .expect("Failed to convert Cypher value to JSON"))
-                    })
-                );
+                let map = serde_json::Map::from_iter(entries.iter().map(|(k, v)| {
+                    (
+                        k.clone(),
+                        self.convert_cypher_value_to_json(v)
+                            .expect("Failed to convert Cypher value to JSON"),
+                    )
+                }));
                 serde_json::Value::Object(map)
             }
         })

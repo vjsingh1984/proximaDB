@@ -164,12 +164,13 @@ impl CompactionScheduler {
         // Check collection rate limit
         let last_compaction = self.last_compaction.read().await;
         if let Some(last) = last_compaction.get(&plan.collection_id)
-            && last.elapsed() < self.config.min_collection_interval {
-                return Err(anyhow::anyhow!(
-                    "Collection {} was compacted recently, waiting for cooldown",
-                    plan.collection_id
-                ));
-            }
+            && last.elapsed() < self.config.min_collection_interval
+        {
+            return Err(anyhow::anyhow!(
+                "Collection {} was compacted recently, waiting for cooldown",
+                plan.collection_id
+            ));
+        }
         drop(last_compaction);
 
         // Calculate cost estimate (find by strategy name or engine compatibility)

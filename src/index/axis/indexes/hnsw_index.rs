@@ -185,9 +185,7 @@ impl AxisHnswIndex {
         // USING UTILS: Validate dimension
         validation::validate_dimension(dimension)?;
 
-        let coll_str = collection_id
-            .as_ref()
-            .map_or("<unnamed>", |s| s.as_str());
+        let coll_str = collection_id.as_ref().map_or("<unnamed>", |s| s.as_str());
         info!(
             "Creating AXIS HNSW index for collection '{}': M={}, ef_construction={}, ef={}, dim={}, repr={:?}",
             coll_str, config.m, config.ef_construction, config.ef, dimension, extraction_mode
@@ -275,12 +273,16 @@ impl AxisHnswIndex {
         loop {
             let current = self.rng_state.load(AtomicOrdering::Relaxed);
             let next = current.wrapping_mul(1664525).wrapping_add(1013904223);
-            if self.rng_state.compare_exchange_weak(
-                current,
-                next,
-                AtomicOrdering::Relaxed,
-                AtomicOrdering::Relaxed,
-            ).is_ok() {
+            if self
+                .rng_state
+                .compare_exchange_weak(
+                    current,
+                    next,
+                    AtomicOrdering::Relaxed,
+                    AtomicOrdering::Relaxed,
+                )
+                .is_ok()
+            {
                 return (next >> 32) as u32;
             }
         }
@@ -311,16 +313,15 @@ impl AxisHnswIndex {
             for &ep in entry_points {
                 if let Some(external_id) = self.id_mapping.external(ep)
                     && let Some(view) = vectors_lock.get(&external_id)
-                        && let Some(vector_data) = view.as_f32() {
-                            let dist = self.distance_computer.distance_with_metric(
-                                query,
-                                vector_data,
-                                &metric,
-                            );
-                            visited.insert(ep);
-                            candidates.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
-                            dynamic_candidates.push((OrderedFloat(dist), ep));
-                        }
+                    && let Some(vector_data) = view.as_f32()
+                {
+                    let dist =
+                        self.distance_computer
+                            .distance_with_metric(query, vector_data, &metric);
+                    visited.insert(ep);
+                    candidates.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
+                    dynamic_candidates.push((OrderedFloat(dist), ep));
+                }
             }
         }
 
@@ -328,9 +329,11 @@ impl AxisHnswIndex {
         while let Some(std::cmp::Reverse((curr_dist, curr_node))) = candidates.pop() {
             // Early termination: if current distance is worse than worst in dynamic_candidates
             if let Some((worst_dist, _)) = dynamic_candidates.peek()
-                && curr_dist.0 > worst_dist.0 && dynamic_candidates.len() >= ef {
-                    break;
-                }
+                && curr_dist.0 > worst_dist.0
+                && dynamic_candidates.len() >= ef
+            {
+                break;
+            }
 
             // Compute distances inline to avoid vector cloning (zero-copy optimization)
             if let Some(neighbors) = self.layers.get(&(layer, curr_node)) {
@@ -344,32 +347,28 @@ impl AxisHnswIndex {
                         visited.insert(neighbor);
                         if let Some(external_id) = self.id_mapping.external(neighbor)
                             && let Some(view) = vectors_lock.get(&external_id)
-                                && let Some(vector_data) = view.as_f32() {
-                                    let dist = self.distance_computer.distance_with_metric(
-                                        query,
-                                        vector_data,
-                                        &metric,
-                                    );
+                            && let Some(vector_data) = view.as_f32()
+                        {
+                            let dist = self.distance_computer.distance_with_metric(
+                                query,
+                                vector_data,
+                                &metric,
+                            );
 
-                                    if dynamic_candidates.len() < ef {
-                                        candidates.push(std::cmp::Reverse((
-                                            OrderedFloat(dist),
-                                            neighbor,
-                                        )));
-                                        dynamic_candidates.push((OrderedFloat(dist), neighbor));
-                                    } else if let Some((worst_dist, _)) = dynamic_candidates.peek()
-                                        && dist < worst_dist.0 {
-                                            candidates.push(std::cmp::Reverse((
-                                                OrderedFloat(dist),
-                                                neighbor,
-                                            )));
-                                            dynamic_candidates.push((OrderedFloat(dist), neighbor));
+                            if dynamic_candidates.len() < ef {
+                                candidates.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                                dynamic_candidates.push((OrderedFloat(dist), neighbor));
+                            } else if let Some((worst_dist, _)) = dynamic_candidates.peek()
+                                && dist < worst_dist.0
+                            {
+                                candidates.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                                dynamic_candidates.push((OrderedFloat(dist), neighbor));
 
-                                            if dynamic_candidates.len() > ef {
-                                                dynamic_candidates.pop();
-                                            }
-                                        }
+                                if dynamic_candidates.len() > ef {
+                                    dynamic_candidates.pop();
                                 }
+                            }
+                        }
                     }
                 }
             }
@@ -453,10 +452,11 @@ impl AxisHnswIndex {
             for &neighbor in &connections {
                 if let Some(neighbor_external) = self.id_mapping.external(neighbor)
                     && let Some(view) = vectors_lock.get(&neighbor_external)
-                        && let Some(neighbor_vec) = view.as_f32() {
-                            neighbor_ids.push(neighbor);
-                            neighbor_vectors.push(neighbor_vec.to_vec());
-                        }
+                    && let Some(neighbor_vec) = view.as_f32()
+                {
+                    neighbor_ids.push(neighbor);
+                    neighbor_vectors.push(neighbor_vec.to_vec());
+                }
             }
         }
 
@@ -469,10 +469,8 @@ impl AxisHnswIndex {
         );
 
         // Build neighbor_distances from batch results
-        let mut neighbor_distances: Vec<(usize, f32)> = neighbor_ids
-            .into_iter()
-            .zip(distances)
-            .collect();
+        let mut neighbor_distances: Vec<(usize, f32)> =
+            neighbor_ids.into_iter().zip(distances).collect();
 
         // Sort by distance and keep only the closest max_m
         neighbor_distances.sort_by(|a, b| {
@@ -776,8 +774,7 @@ impl AxisHnswIndex {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .len();
-        let size_aware_ef = ((collection_size as f64).sqrt() as usize)
-            .clamp(50, 500); // Clamp ef for small/large collections
+        let size_aware_ef = ((collection_size as f64).sqrt() as usize).clamp(50, 500); // Clamp ef for small/large collections
         let search_ef = self.config.ef.max(size_aware_ef).max(top_k);
 
         tracing::debug!(

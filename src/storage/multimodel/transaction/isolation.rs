@@ -10,8 +10,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 /// Transaction isolation level
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum IsolationLevel {
     /// Read uncommitted - can see uncommitted changes from other transactions
     ReadUncommitted,
@@ -23,7 +22,6 @@ pub enum IsolationLevel {
     /// Serializable - full isolation, transactions appear to run serially
     Serializable,
 }
-
 
 impl IsolationLevel {
     /// Get display name
@@ -186,21 +184,24 @@ impl WriteSet {
         // Check if any writes in self conflict with writes or deletes in other
         for (store_type, ids) in &self.writes {
             if let Some(other_writes) = other.writes.get(store_type)
-                && !ids.is_disjoint(other_writes) {
-                    return true;
-                }
+                && !ids.is_disjoint(other_writes)
+            {
+                return true;
+            }
             if let Some(other_deletes) = other.deletes.get(store_type)
-                && !ids.is_disjoint(other_deletes) {
-                    return true;
-                }
+                && !ids.is_disjoint(other_deletes)
+            {
+                return true;
+            }
         }
 
         // Check if any deletes in self conflict with writes in other
         for (store_type, ids) in &self.deletes {
             if let Some(other_writes) = other.writes.get(store_type)
-                && !ids.is_disjoint(other_writes) {
-                    return true;
-                }
+                && !ids.is_disjoint(other_writes)
+            {
+                return true;
+            }
         }
 
         false
@@ -390,17 +391,18 @@ impl IsolationManager {
 
         // Add to commit history
         if let Some(ws) = write_set
-            && !ws.is_empty() {
-                let mut history = self.commit_history.write().await;
-                history.push((transaction_id.to_string(), now, ws));
+            && !ws.is_empty()
+        {
+            let mut history = self.commit_history.write().await;
+            history.push((transaction_id.to_string(), now, ws));
 
-                // Trim history if too large
-                let history_len = history.len();
-                if history_len > self.max_history_size {
-                    let drain_count = history_len - self.max_history_size;
-                    history.drain(0..drain_count);
-                }
+            // Trim history if too large
+            let history_len = history.len();
+            if history_len > self.max_history_size {
+                let drain_count = history_len - self.max_history_size;
+                history.drain(0..drain_count);
             }
+        }
 
         // Remove snapshot
         {

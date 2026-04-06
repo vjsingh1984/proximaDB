@@ -430,9 +430,10 @@ impl ZeroCopyMetadataCache {
             let file_name = entry.file_name();
             if let Some(name_str) = file_name.to_str()
                 && name_str.contains(&collection_prefix)
-                    && let Err(e) = fs::remove_file(entry.path()).await {
-                        warn!(path = ?entry.path(), error = %e, "Failed to remove cache file");
-                    }
+                && let Err(e) = fs::remove_file(entry.path()).await
+            {
+                warn!(path = ?entry.path(), error = %e, "Failed to remove cache file");
+            }
         }
 
         {

@@ -43,7 +43,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     fn get_filesystem(&self) -> Option<Arc<FilesystemFactory>>;
 
     /// Set storage engine for delegated flush/compaction operations
-    fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>, collection_id: &str);
+    fn set_storage_engine(
+        &self,
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        collection_id: &str,
+    );
 
     /// Write Write Buffer batch to cloud storage with URL-based routing
     async fn write_batch_to_cloud(
@@ -461,9 +465,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     async fn drop_collection(&self, collection_id: &str) -> Result<()> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
-            wal_behavior
-                .drop_collection(collection_id)
-                .await?;
+            wal_behavior.drop_collection(collection_id).await?;
             Ok(())
         } else {
             Err(anyhow::anyhow!("Write buffer behavior not available"))

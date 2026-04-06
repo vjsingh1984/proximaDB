@@ -147,29 +147,30 @@ impl MetadataSorter {
     fn extract_metadata_value(&self, record: &VectorRecord, key: &str) -> SortableValue {
         // Find the metadata item in the HashMap
         if let Some(sql_value) = record.metadata.get(key)
-            && let Some(value) = &sql_value.value {
-                match value {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                        return SortableValue::from_string(s);
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                        // Check if it's an integer
-                        if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
-                            return SortableValue::Number(*n as i64);
-                        } else {
-                            // Store floats as string for consistent ordering
-                            return SortableValue::Float(n.to_string());
-                        }
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                        // Convert bool to string for sorting
-                        return SortableValue::String(b.to_string());
-                    }
-                    _ => {
-                        return SortableValue::Null;
+            && let Some(value) = &sql_value.value
+        {
+            match value {
+                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                    return SortableValue::from_string(s);
+                }
+                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
+                    // Check if it's an integer
+                    if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
+                        return SortableValue::Number(*n as i64);
+                    } else {
+                        // Store floats as string for consistent ordering
+                        return SortableValue::Float(n.to_string());
                     }
                 }
+                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                    // Convert bool to string for sorting
+                    return SortableValue::String(b.to_string());
+                }
+                _ => {
+                    return SortableValue::Null;
+                }
             }
+        }
 
         // Default value if key not found
         SortableValue::Null

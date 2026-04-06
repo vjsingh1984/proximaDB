@@ -23,8 +23,7 @@ use std::sync::Arc;
 use crate::proto::proximadb_v1::{MetadataItem, SqlValue, VectorRecord, VectorSearchRequest};
 
 /// Write mode for Arrow IPC operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum WriteMode {
     /// Use WAL for durability (30-50K vectors/sec)
     #[default]
@@ -32,7 +31,6 @@ pub enum WriteMode {
     /// Direct engine write bypassing WAL (100-200K vectors/sec)
     Direct,
 }
-
 
 /// Metadata extracted from FlightDescriptor
 #[derive(Debug, Clone)]
@@ -764,8 +762,8 @@ mod tests {
             cmd: Default::default(),
         };
 
-        let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
-            .expect("Failed to parse descriptor");
+        let metadata =
+            ArrowProtoCodec::parse_descriptor(&descriptor).expect("Failed to parse descriptor");
         assert_eq!(metadata.collection_id, "my_collection");
         assert_eq!(metadata.write_mode, WriteMode::WAL);
         assert!(!metadata.trigger_compaction);
@@ -901,8 +899,8 @@ mod tests {
             .expect("Failed to encode to batch");
 
         // Decode back
-        let decoded = ArrowProtoCodec::batch_to_vector_records(&batch)
-            .expect("Failed to decode from batch");
+        let decoded =
+            ArrowProtoCodec::batch_to_vector_records(&batch).expect("Failed to decode from batch");
 
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].id, "rt_1");
@@ -921,10 +919,7 @@ mod tests {
 
         // Verify round-trip: build a RecordBatch from document schema, read it back
         let id_array = StringArray::from(vec!["doc_1", "doc_2"]);
-        let doc_array = StringArray::from(vec![
-            r#"{"title":"Hello"}"#,
-            r#"{"title":"World"}"#,
-        ]);
+        let doc_array = StringArray::from(vec![r#"{"title":"Hello"}"#, r#"{"title":"World"}"#]);
         let version_array = Int64Array::from(vec![1i64, 2]);
         let collection_array = StringArray::from(vec!["col_a", "col_a"]);
         let updated_array = Int64Array::from(vec![1000i64, 2000]);
@@ -985,11 +980,7 @@ mod tests {
         // Verify empty batch list conversion works without panic
         let result = ArrowProtoCodec::batches_to_vector_records(vec![]);
         assert!(result.is_ok());
-        assert!(
-            result
-                .expect("Should succeed for empty batches")
-                .is_empty()
-        );
+        assert!(result.expect("Should succeed for empty batches").is_empty());
 
         // Verify empty batch list to flight data doesn't panic
         let result = ArrowProtoCodec::batches_to_flight_data_with_compression(&[], None);

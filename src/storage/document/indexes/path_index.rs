@@ -178,12 +178,14 @@ impl PathIndex {
                 .read()
                 .map_err(|e| anyhow::anyhow!("RwLock for tree is poisoned: {}", e))?;
             if let Some(existing) = tree.get(&key)
-                && !existing.is_empty() && !existing.contains(doc_id) {
-                    return Err(anyhow::anyhow!(
-                        "Duplicate key violation on unique index for path {}",
-                        self.path
-                    ));
-                }
+                && !existing.is_empty()
+                && !existing.contains(doc_id)
+            {
+                return Err(anyhow::anyhow!(
+                    "Duplicate key violation on unique index for path {}",
+                    self.path
+                ));
+            }
         }
 
         // Insert into tree

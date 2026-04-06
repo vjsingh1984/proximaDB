@@ -7,6 +7,6 @@ pub mod filtered;
 
 // Re-export filtered search types
 pub use filtered::{
-    FilteredHNSWIndex, HNSWFilteredResult, HNSWFilteredSearchParams, HNSWIndexStats,
-    HNSWConnection, HNSWNode,
+    FilteredHNSWIndex, HNSWConnection, HNSWFilteredResult, HNSWFilteredSearchParams,
+    HNSWIndexStats, HNSWNode,
 };

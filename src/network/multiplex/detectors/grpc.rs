@@ -87,9 +87,10 @@ impl ProtocolDetector for GrpcDetector {
         // Check Content-Type first (most reliable)
         if let Some(content_type) = headers.get(header::CONTENT_TYPE)
             && let Ok(ct) = content_type.to_str()
-                && Self::is_grpc_content_type(ct) {
-                    return Some(DetectionResult::certain(DetectedProtocol::Grpc));
-                }
+            && Self::is_grpc_content_type(ct)
+        {
+            return Some(DetectionResult::certain(DetectedProtocol::Grpc));
+        }
 
         // Check for grpc-timeout header (gRPC-specific)
         if headers.contains_key("grpc-timeout") {
@@ -99,12 +100,13 @@ impl ProtocolDetector for GrpcDetector {
         // Check for te: trailers header (required for gRPC)
         if let Some(te) = headers.get("te")
             && let Ok(te_str) = te.to_str()
-                && te_str.contains("trailers") {
-                    // Combined with HTTP/2, this is likely gRPC
-                    if request.version() == Version::HTTP_2 {
-                        return Some(DetectionResult::new(DetectedProtocol::Grpc, 0.85));
-                    }
-                }
+            && te_str.contains("trailers")
+        {
+            // Combined with HTTP/2, this is likely gRPC
+            if request.version() == Version::HTTP_2 {
+                return Some(DetectionResult::new(DetectedProtocol::Grpc, 0.85));
+            }
+        }
 
         // Check path pattern
         let path = request.uri().path();

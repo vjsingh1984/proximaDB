@@ -105,14 +105,16 @@ impl StrategyAwareReader for UnifiedVIPERReader {
     fn set_strategy(&mut self, strategy: ReadAccessStrategy) {
         self.strategy = strategy;
         // Update cached filesystem if needed
-        if self.strategy.should_use_cache() && self.cached_filesystem.is_none()
-            && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
-                self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
-                    base_fs,
-                    self.collection_id.clone(),
-                    "viper".to_string(),
-                )));
-            }
+        if self.strategy.should_use_cache()
+            && self.cached_filesystem.is_none()
+            && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://")
+        {
+            self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
+                base_fs,
+                self.collection_id.clone(),
+                "viper".to_string(),
+            )));
+        }
     }
 }
 

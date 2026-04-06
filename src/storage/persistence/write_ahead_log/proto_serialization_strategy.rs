@@ -123,7 +123,7 @@ impl ProtoSerializationStrategy {
 }
 
 impl Default for ProtoSerializationStrategy {
-    #[allow(clippy::panic)]  // Intentional - Default not supported, must use new()
+    #[allow(clippy::panic)] // Intentional - Default not supported, must use new()
     fn default() -> Self {
         panic!("ProtoSerializationStrategy requires configuration - use new() instead")
     }
@@ -154,7 +154,11 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         None // Filesystem is managed by disk_manager
     }
 
-    fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>, collection_id: &str) {
+    fn set_storage_engine(
+        &self,
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        collection_id: &str,
+    ) {
         let mut engine_guard = self.storage_engine.blocking_write();
         *engine_guard = Some(storage_engine.clone());
 
@@ -587,10 +591,7 @@ impl ProtoSerializationStrategy {
                 collection_id
             );
 
-            tracing::debug!(
-                "Background flush signaled for collection {}",
-                collection_id
-            );
+            tracing::debug!("Background flush signaled for collection {}", collection_id);
         });
     }
 
@@ -609,7 +610,7 @@ impl ProtoSerializationStrategy {
             success: true,
             collections_affected: affected_collections,
             entries_flushed: Some(0), // Per-entry counting requires engine instrumentation
-            bytes_written: Some(0), // Byte tracking requires engine-level instrumentation
+            bytes_written: Some(0),   // Byte tracking requires engine-level instrumentation
             files_created: Some(0),
             file_paths: vec![],
             duration_ms: Some(0),
@@ -664,9 +665,10 @@ impl ProtoSerializationStrategy {
             }
 
             if let Some(max_files) = limit
-                && files_processed >= max_files {
-                    break;
-                }
+                && files_processed >= max_files
+            {
+                break;
+            }
 
             let file_path = format!("{}/{}", collection_wal_dir, entry.name);
 

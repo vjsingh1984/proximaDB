@@ -334,9 +334,20 @@ fn parse_path_chain(input: &str) -> IResult<&str, (Vec<NodePattern>, Vec<EdgePat
             break;
         }
 
-        match preceded(multispace0::<&str, nom::error::Error<&str>>, parse_edge_pattern)(rest) {
-            Ok((after_edge, (is_incoming, edge_var, edge_types, edge_props, is_outgoing, _var_length))) => {
-                match preceded(multispace0::<&str, nom::error::Error<&str>>, parse_node_pattern)(after_edge) {
+        match preceded(
+            multispace0::<&str, nom::error::Error<&str>>,
+            parse_edge_pattern,
+        )(rest)
+        {
+            Ok((
+                after_edge,
+                (is_incoming, edge_var, edge_types, edge_props, is_outgoing, _var_length),
+            )) => {
+                match preceded(
+                    multispace0::<&str, nom::error::Error<&str>>,
+                    parse_node_pattern,
+                )(after_edge)
+                {
                     Ok((after_node, next_node)) => {
                         let prev_node = nodes.last().expect("at least one node exists");
 

@@ -172,8 +172,7 @@ pub struct ProximaMetadata {
 }
 
 /// Quantized section for hierarchical storage
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct QuantizedSection {
     pub binary_vectors: Option<Vec<Vec<u8>>>,
     pub int8_vectors: Option<Vec<Vec<i8>>>,
@@ -312,8 +311,7 @@ pub struct ProximaDataBlock {
 
 /// Block metadata for Proxima encoded blocks
 /// Shared between SST and SWIFT engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProximaBlockMetadata {
     /// Basic information
     pub record_count: u32,
@@ -1082,7 +1080,7 @@ impl ProximaDataBlock {
     /// Kept as stub to avoid breaking old code references
     #[deprecated(since = "0.1.5", note = "Use ProximaCodec::global() for all encoding")]
     #[allow(dead_code)]
-    #[allow(clippy::panic)]  // Intentional panic for obsolete API - prevents compilation of deprecated code
+    #[allow(clippy::panic)] // Intentional panic for obsolete API - prevents compilation of deprecated code
     fn get_simd_encoder(_engine_profile: super::engine_profile::EngineProfile) -> ! {
         panic!("get_simd_encoder is obsolete - use ProximaCodec::global() instead")
     }
@@ -1095,7 +1093,7 @@ impl ProximaDataBlock {
         note = "Use serialize_with_config() which now uses ProximaCodec"
     )]
     #[allow(dead_code)]
-    #[allow(clippy::panic)]  // Intentional panic for obsolete API - prevents compilation of deprecated code
+    #[allow(clippy::panic)] // Intentional panic for obsolete API - prevents compilation of deprecated code
     fn apply_simd_encoding(
         &mut self,
         _vectors: &[Vec<f32>],
@@ -1202,10 +1200,7 @@ impl ProximaDataBlock {
         };
 
         // Calculate timestamp range
-        let timestamps: Vec<i64> = records
-            .iter()
-            .map(|r| r.timestamp.unwrap_or(0))
-            .collect();
+        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0)).collect();
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
         } else {
@@ -1373,10 +1368,7 @@ impl ProximaDataBlock {
         };
 
         // Calculate timestamp range
-        let timestamps: Vec<i64> = records
-            .iter()
-            .map(|r| r.timestamp.unwrap_or(0))
-            .collect();
+        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0)).collect();
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
         } else {
@@ -1610,8 +1602,6 @@ impl ProximaDataBlock {
     /// Choose optimal encoding based on detected pattern
     fn choose_optimal_encoding_marker(records: &[VectorRecord]) -> u8 {
         let pattern = Self::detect_vector_pattern(records);
-
-        
 
         match pattern {
             VectorDataPattern::Empty => 0x00, // Raw encoding
@@ -2235,11 +2225,12 @@ impl ProximaDataBlock {
 
         for source in &ordered_sources {
             if let Some(src) = source
-                && !source_lookup.contains_key(&Some(src.clone())) {
-                    let dict_index = source_dictionary.len() as u32;
-                    source_dictionary.push(src.clone());
-                    source_lookup.insert(Some(src.clone()), dict_index);
-                }
+                && !source_lookup.contains_key(&Some(src.clone()))
+            {
+                let dict_index = source_dictionary.len() as u32;
+                source_dictionary.push(src.clone());
+                source_lookup.insert(Some(src.clone()), dict_index);
+            }
         }
 
         debug!(
@@ -2518,60 +2509,59 @@ impl ProximaDataBlock {
 
         // Try to get type from collection config for filterable columns
         if let Some(config) = collection_config
-            && let Some(cfg) = config.config.as_ref() {
-                // Check if this key is a declared filterable column
-                if let Some(col_spec) = cfg.filterable_columns.iter().find(|c| c.name == key_name) {
-                    // Use declared type from config (single source of truth!)
-                    // Payload excludes the type tag - read actual values from payload
-                    return match col_spec.data_type() {
-                        FilterableDataType::FilterableInteger => {
-                            let i = if payload.len() >= 8 {
-                                i64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
-                            } else {
-                                0
-                            };
-                            SqlValue {
-                                value: Some(Value::Int64Value(i)),
-                            }
+            && let Some(cfg) = config.config.as_ref()
+        {
+            // Check if this key is a declared filterable column
+            if let Some(col_spec) = cfg.filterable_columns.iter().find(|c| c.name == key_name) {
+                // Use declared type from config (single source of truth!)
+                // Payload excludes the type tag - read actual values from payload
+                return match col_spec.data_type() {
+                    FilterableDataType::FilterableInteger => {
+                        let i = if payload.len() >= 8 {
+                            i64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
+                        } else {
+                            0
+                        };
+                        SqlValue {
+                            value: Some(Value::Int64Value(i)),
                         }
-                        FilterableDataType::FilterableFloat => {
-                            let f = if payload.len() >= 8 {
-                                f64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
-                            } else {
-                                0.0
-                            };
-                            SqlValue {
-                                value: Some(Value::NumberValue(f)),
-                            }
+                    }
+                    FilterableDataType::FilterableFloat => {
+                        let f = if payload.len() >= 8 {
+                            f64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
+                        } else {
+                            0.0
+                        };
+                        SqlValue {
+                            value: Some(Value::NumberValue(f)),
                         }
-                        FilterableDataType::FilterableBoolean => SqlValue {
-                            value: Some(Value::BoolValue(
-                                payload.first().is_some_and(|&b| b != 0),
-                            )),
-                        },
-                        FilterableDataType::FilterableString => {
-                            let s = String::from_utf8_lossy(payload).to_string();
-                            SqlValue {
-                                value: Some(Value::StringValue(s)),
-                            }
+                    }
+                    FilterableDataType::FilterableBoolean => SqlValue {
+                        value: Some(Value::BoolValue(payload.first().is_some_and(|&b| b != 0))),
+                    },
+                    FilterableDataType::FilterableString => {
+                        let s = String::from_utf8_lossy(payload).to_string();
+                        SqlValue {
+                            value: Some(Value::StringValue(s)),
                         }
-                        FilterableDataType::FilterableDatetime => {
-                            let ts = if payload.len() >= 8 {
-                                i64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
-                            } else {
-                                0
-                            };
-                            SqlValue {
-                                value: Some(Value::Int64Value(ts)),
-                            }
+                    }
+                    FilterableDataType::FilterableDatetime => {
+                        let ts = if payload.len() >= 8 {
+                            i64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
+                        } else {
+                            0
+                        };
+                        SqlValue {
+                            value: Some(Value::Int64Value(ts)),
                         }
-                        _ => {
-                            // Unknown type, fall back to heuristic (which handles type tags)
-                            Self::deserialize_metadata_value_heuristic(val_bytes)
-                        }
-                    };
-                }
+                    }
+                    _ => {
+                        // Unknown type, fall back to heuristic (which handles type tags)
+                        Self::deserialize_metadata_value_heuristic(val_bytes)
+                    }
+                };
             }
+        }
 
         // Not a filterable column or no config available: use heuristic
         // The heuristic function handles type tags internally
@@ -2648,12 +2638,12 @@ impl ProximaDataBlock {
             if let Ok(s) = std::str::from_utf8(val_bytes)
                 && s.chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-                {
-                    // Looks like a string identifier (e.g., "inactive", "category")
-                    return SqlValue {
-                        value: Some(Value::StringValue(s.to_string())),
-                    };
-                }
+            {
+                // Looks like a string identifier (e.g., "inactive", "category")
+                return SqlValue {
+                    value: Some(Value::StringValue(s.to_string())),
+                };
+            }
             // Default to f64 for numeric data
             let num = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
             SqlValue {
@@ -5577,7 +5567,6 @@ impl Default for AccessPattern {
     }
 }
 
-
 impl Default for BlockMetadataStats {
     fn default() -> Self {
         Self {
@@ -5588,7 +5577,6 @@ impl Default for BlockMetadataStats {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -6026,7 +6014,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::panic)]  // Test panic for failure assertion
+    #[allow(clippy::panic)] // Test panic for failure assertion
     fn test_serialize_with_bloom_sync() {
         use crate::proto::proximadb_v1::VectorRecord;
 

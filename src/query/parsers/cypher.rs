@@ -441,19 +441,22 @@ impl CypherLexer {
         }
 
         // Decimal part
-        if self.position < chars.len() && chars[self.position] == '.'
-            && self.position + 1 < chars.len() && chars[self.position + 1].is_ascii_digit() {
-                is_float = true;
-                num_str.push('.');
+        if self.position < chars.len()
+            && chars[self.position] == '.'
+            && self.position + 1 < chars.len()
+            && chars[self.position + 1].is_ascii_digit()
+        {
+            is_float = true;
+            num_str.push('.');
+            self.position += 1;
+            self.column += 1;
+
+            while self.position < chars.len() && chars[self.position].is_ascii_digit() {
+                num_str.push(chars[self.position]);
                 self.position += 1;
                 self.column += 1;
-
-                while self.position < chars.len() && chars[self.position].is_ascii_digit() {
-                    num_str.push(chars[self.position]);
-                    self.position += 1;
-                    self.column += 1;
-                }
             }
+        }
 
         // Exponent part
         if self.position < chars.len()
@@ -1058,12 +1061,15 @@ fn parse_edge_types(input: &str) -> ParseResult<'_, Vec<String>> {
 /// Parse edge specification: [variable:TYPE {props}]
 fn parse_edge_spec(
     input: &str,
-) -> ParseResult<'_, (
-    Option<String>,                      // variable
-    Vec<String>,                         // edge types
-    HashMap<String, PropertyConstraint>, // properties
-    Option<(u32, u32)>,                  // variable length
-)> {
+) -> ParseResult<
+    '_,
+    (
+        Option<String>,                      // variable
+        Vec<String>,                         // edge types
+        HashMap<String, PropertyConstraint>, // properties
+        Option<(u32, u32)>,                  // variable length
+    ),
+> {
     map(
         delimited(
             char('['),
@@ -1090,14 +1096,17 @@ fn parse_edge_spec(
 /// Parse full edge pattern: <-[spec]- or -[spec]-> or -[spec]-
 fn parse_edge_pattern_full(
     input: &str,
-) -> ParseResult<'_, (
-    bool,                                // is incoming
-    Option<String>,                      // variable
-    Vec<String>,                         // edge types
-    HashMap<String, PropertyConstraint>, // properties
-    bool,                                // is outgoing
-    Option<(u32, u32)>,                  // variable length
-)> {
+) -> ParseResult<
+    '_,
+    (
+        bool,                                // is incoming
+        Option<String>,                      // variable
+        Vec<String>,                         // edge types
+        HashMap<String, PropertyConstraint>, // properties
+        bool,                                // is outgoing
+        Option<(u32, u32)>,                  // variable length
+    ),
+> {
     map(
         tuple((parse_edge_left, parse_edge_spec, parse_edge_right)),
         |(left, (var, types, props, var_len), right)| (left, var, types, props, right, var_len),
@@ -1771,7 +1780,9 @@ fn parse_match_clause(input: &str) -> ParseResult<'_, (Vec<NodePattern>, Vec<Edg
 }
 
 /// Parse OPTIONAL MATCH clause
-fn parse_optional_match_clause(input: &str) -> ParseResult<'_, (Vec<NodePattern>, Vec<EdgePattern>)> {
+fn parse_optional_match_clause(
+    input: &str,
+) -> ParseResult<'_, (Vec<NodePattern>, Vec<EdgePattern>)> {
     preceded(
         tuple((
             tag_no_case("OPTIONAL"),
@@ -1832,12 +1843,15 @@ fn parse_create_node_spec(input: &str) -> ParseResult<'_, CreateNodeSpec> {
 /// Parse CREATE edge spec
 fn parse_create_edge_spec(
     input: &str,
-) -> ParseResult<'_, (
-    Option<String>,                     // variable
-    Option<String>,                     // edge type
-    HashMap<String, serde_json::Value>, // properties
-    EdgeDirection,
-)> {
+) -> ParseResult<
+    '_,
+    (
+        Option<String>,                     // variable
+        Option<String>,                     // edge type
+        HashMap<String, serde_json::Value>, // properties
+        EdgeDirection,
+    ),
+> {
     map(
         tuple((
             parse_edge_left,

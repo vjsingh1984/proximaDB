@@ -1714,9 +1714,10 @@ impl IvfClusteringBuilder {
     fn vector_by_id(&self, vector_id: &str) -> Vec<f32> {
         // Look up vector by ID from the node mapping
         if let Some(&node_idx) = self.id_to_node.get(vector_id)
-            && (node_idx as usize) < self.vectors.len() {
-                return self.vectors[node_idx as usize].clone();
-            }
+            && (node_idx as usize) < self.vectors.len()
+        {
+            return self.vectors[node_idx as usize].clone();
+        }
 
         // Fallback: return zero vector if not found
         // This shouldn't happen in normal operation
@@ -2724,9 +2725,10 @@ impl RaptorWriter {
             // Flush page when it reaches configured row page size (default 1000 for optimal HNSW I/O)
             // This minimizes wasted reads: at k=10, reads 1000 vectors for 10 results (1% efficiency)
             if let Some(ref page) = self.current_row_page
-                && page.rows.len() >= self.config.rowgroup_size {
-                    self.flush_row_page().await?;
-                }
+                && page.rows.len() >= self.config.rowgroup_size
+            {
+                self.flush_row_page().await?;
+            }
         }
         Ok(())
     }
@@ -2745,7 +2747,10 @@ impl RaptorWriter {
             // Quantize vector using unified engine
             let quantized_batch = self
                 .quantization_engine
-                .quantize_batch(std::slice::from_ref(&vector.vector), Some(std::slice::from_ref(&id)))
+                .quantize_batch(
+                    std::slice::from_ref(&vector.vector),
+                    Some(std::slice::from_ref(&id)),
+                )
                 .await?;
             let quantized = quantized_batch
                 .into_iter()
@@ -2757,17 +2762,20 @@ impl RaptorWriter {
 
             // Get binary sketch for progressive search (1-bit per dimension)
             // Fall back to computing it directly if not available from quantization engine
-            let binary_data = quantized.filter.map_or_else(|| {
-                // Compute binary sketch: 1 bit per dimension (sign-based)
-                let dim = vector.vector.len();
-                let mut binary = vec![0u8; dim.div_ceil(8)];
-                for (i, &val) in vector.vector.iter().enumerate() {
-                    if val > 0.0 {
-                        binary[i / 8] |= 1 << (i % 8);
+            let binary_data = quantized.filter.map_or_else(
+                || {
+                    // Compute binary sketch: 1 bit per dimension (sign-based)
+                    let dim = vector.vector.len();
+                    let mut binary = vec![0u8; dim.div_ceil(8)];
+                    for (i, &val) in vector.vector.iter().enumerate() {
+                        if val > 0.0 {
+                            binary[i / 8] |= 1 << (i % 8);
+                        }
                     }
-                }
-                binary
-            }, |q| q.data);
+                    binary
+                },
+                |q| q.data,
+            );
 
             (int8_data, binary_data)
         };
@@ -4115,28 +4123,30 @@ impl RaptorWriter {
 
         // Also encode IDs from RecordBatch
         if let Some(id_col) = batch.column_by_name("id")
-            && let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
-                use arrow_array::Array;
-                for i in 0..id_array.len() {
-                    if !id_array.is_null(i) {
-                        let id = id_array.value(i);
-                        let id_bytes = id.as_bytes();
-                        encoded_data.write_all(&(id_bytes.len() as u32).to_le_bytes())?;
-                        encoded_data.write_all(id_bytes)?;
-                    } else {
-                        encoded_data.write_all(&0u32.to_le_bytes())?;
-                    }
+            && let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>()
+        {
+            use arrow_array::Array;
+            for i in 0..id_array.len() {
+                if !id_array.is_null(i) {
+                    let id = id_array.value(i);
+                    let id_bytes = id.as_bytes();
+                    encoded_data.write_all(&(id_bytes.len() as u32).to_le_bytes())?;
+                    encoded_data.write_all(id_bytes)?;
+                } else {
+                    encoded_data.write_all(&0u32.to_le_bytes())?;
                 }
             }
+        }
 
         // Encode timestamps if present
         if let Some(ts_col) = batch.column_by_name("timestamp")
-            && let Some(ts_array) = ts_col.as_any().downcast_ref::<arrow_array::Int64Array>() {
-                for i in 0..ts_array.len() {
-                    let timestamp = ts_array.value(i);
-                    encoded_data.write_all(&timestamp.to_le_bytes())?;
-                }
+            && let Some(ts_array) = ts_col.as_any().downcast_ref::<arrow_array::Int64Array>()
+        {
+            for i in 0..ts_array.len() {
+                let timestamp = ts_array.value(i);
+                encoded_data.write_all(&timestamp.to_le_bytes())?;
             }
+        }
 
         Ok(encoded_data)
     }
@@ -4148,17 +4158,17 @@ impl RaptorWriter {
             && let Some(float_array) = vector_col
                 .as_any()
                 .downcast_ref::<arrow_array::Float32Array>()
-            {
-                // Assuming vectors are stored flat with known dimension
-                let dimension = self.config.dimension;
-                let num_vectors = float_array.len() / dimension;
+        {
+            // Assuming vectors are stored flat with known dimension
+            let dimension = self.config.dimension;
+            let num_vectors = float_array.len() / dimension;
 
-                for i in 0..num_vectors {
-                    let start = i * dimension;
-                    let end = start + dimension;
-                    vectors.push(float_array.values()[start..end].to_vec());
-                }
+            for i in 0..num_vectors {
+                let start = i * dimension;
+                let end = start + dimension;
+                vectors.push(float_array.values()[start..end].to_vec());
             }
+        }
 
         Ok(vectors)
     }
@@ -4382,9 +4392,10 @@ impl RaptorWriter {
     fn get_rowgroup_cluster_id(&self, rowgroup_id: u16) -> u16 {
         // Look up from existing rowgroups if available
         if let Some(rg) = self.row_groups.iter().find(|rg| rg.id == rowgroup_id)
-            && let Some(ref stats) = rg.centroid_stats {
-                return stats.cluster_id as u16;
-            }
+            && let Some(ref stats) = rg.centroid_stats
+        {
+            return stats.cluster_id as u16;
+        }
         // Fallback: use rowgroup_id as cluster_id
         // In practice, cluster assignments should be tracked properly
         rowgroup_id
@@ -4476,8 +4487,8 @@ impl RaptorWriter {
             size: compressed.len() as u64,
             num_entries: self.ivf_builder.nodes.len() as u32,
             num_bits: self.ivf_builder.nodes.len() * 10, // Estimate: 10 bits per entry
-            num_hashes: 7,             // Standard for 1% false positive rate
-            false_positive_rate: 0.01, // Default 1% false positive rate
+            num_hashes: 7,                               // Standard for 1% false positive rate
+            false_positive_rate: 0.01,                   // Default 1% false positive rate
         })
     }
 
@@ -4654,20 +4665,20 @@ impl RaptorWriter {
                 }
             }),
             vector_centroid_matrices: vector_centroid_matrices.map_or_else(Vec::new, |matrices| {
-                    matrices
-                        .into_iter()
-                        .map(|m| VectorCentroidMatrixRef {
-                            rowgroup_id: m.rowgroup_id,
-                            num_vectors: m.num_vectors,
-                            num_centroids: m.num_centroids,
-                            file_offset: 0,     // Will be set when writing to disk
-                            compressed_size: 0, // Will be set when writing to disk
-                            uncompressed_size: m.num_vectors * m.num_centroids * 4, // P×K×4 bytes
-                            compression_algorithm: "zstd".to_string(),
-                            encoding_metadata: m.compression_metadata,
-                        })
-                        .collect()
-                }),
+                matrices
+                    .into_iter()
+                    .map(|m| VectorCentroidMatrixRef {
+                        rowgroup_id: m.rowgroup_id,
+                        num_vectors: m.num_vectors,
+                        num_centroids: m.num_centroids,
+                        file_offset: 0,     // Will be set when writing to disk
+                        compressed_size: 0, // Will be set when writing to disk
+                        uncompressed_size: m.num_vectors * m.num_centroids * 4, // P×K×4 bytes
+                        compression_algorithm: "zstd".to_string(),
+                        encoding_metadata: m.compression_metadata,
+                    })
+                    .collect()
+            }),
             total_centroids: columnar_centroids.count, // K centroids = K rowgroups
             version: 1,
             checksum: 0, // Deferred: Compute actual checksum
@@ -5417,7 +5428,7 @@ impl RaptorWriter {
             size: compressed.len() as u64,
             num_entries: self.bloom_builder.ids.len() as u32,
             num_bits: self.bloom_builder.ids.len() * 10, // 10 bits per ID
-            num_hashes: 7, // Optimal for 1% false positive rate
+            num_hashes: 7,                               // Optimal for 1% false positive rate
             false_positive_rate: self.bloom_builder.target_false_positive_rate,
         })
     }
@@ -5444,7 +5455,7 @@ impl RaptorWriter {
 #[cfg(test)]
 #[cfg(feature = "experimental-engines")]
 mod tests {
-    use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlVal, SqlArray, SqlObject};
+    use crate::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue, sql_value::Value as SqlVal};
 
     #[test]
     fn test_array_value_serialization_roundtrip() {
@@ -5452,15 +5463,23 @@ mod tests {
 
         let array = SqlArray {
             values: vec![
-                SqlValue { value: Some(SqlVal::StringValue("hello".to_string())) },
-                SqlValue { value: Some(SqlVal::NumberValue(42.0)) },
-                SqlValue { value: Some(SqlVal::BoolValue(true)) },
+                SqlValue {
+                    value: Some(SqlVal::StringValue("hello".to_string())),
+                },
+                SqlValue {
+                    value: Some(SqlVal::NumberValue(42.0)),
+                },
+                SqlValue {
+                    value: Some(SqlVal::BoolValue(true)),
+                },
             ],
         };
 
         // Encode
         let mut buf = Vec::new();
-        array.encode(&mut buf).expect("ArrayValue encoding should succeed");
+        array
+            .encode(&mut buf)
+            .expect("ArrayValue encoding should succeed");
         assert!(!buf.is_empty(), "Encoded array should not be empty");
 
         // Decode
@@ -5480,8 +5499,18 @@ mod tests {
 
         let object = SqlObject {
             fields: vec![
-                ("name".to_string(), SqlValue { value: Some(SqlVal::StringValue("test".to_string())) }),
-                ("count".to_string(), SqlValue { value: Some(SqlVal::Int64Value(99)) }),
+                (
+                    "name".to_string(),
+                    SqlValue {
+                        value: Some(SqlVal::StringValue("test".to_string())),
+                    },
+                ),
+                (
+                    "count".to_string(),
+                    SqlValue {
+                        value: Some(SqlVal::Int64Value(99)),
+                    },
+                ),
             ]
             .into_iter()
             .collect(),
@@ -5489,11 +5518,14 @@ mod tests {
 
         // Encode
         let mut buf = Vec::new();
-        object.encode(&mut buf).expect("ObjectValue encoding should succeed");
+        object
+            .encode(&mut buf)
+            .expect("ObjectValue encoding should succeed");
         assert!(!buf.is_empty(), "Encoded object should not be empty");
 
         // Decode
-        let decoded = SqlObject::decode(buf.as_slice()).expect("ObjectValue decoding should succeed");
+        let decoded =
+            SqlObject::decode(buf.as_slice()).expect("ObjectValue decoding should succeed");
         assert_eq!(decoded.fields.len(), 2);
         assert_eq!(
             decoded.fields.get("name").and_then(|v| v.value.as_ref()),
@@ -5520,8 +5552,12 @@ mod tests {
     fn test_metadata_array_to_json() {
         let array = SqlArray {
             values: vec![
-                SqlValue { value: Some(SqlVal::StringValue("a".to_string())) },
-                SqlValue { value: Some(SqlVal::NumberValue(1.0)) },
+                SqlValue {
+                    value: Some(SqlVal::StringValue("a".to_string())),
+                },
+                SqlValue {
+                    value: Some(SqlVal::NumberValue(1.0)),
+                },
             ],
         };
 
@@ -5536,17 +5572,30 @@ mod tests {
         use prost::Message;
 
         let inner = SqlObject {
-            fields: vec![
-                ("nested_key".to_string(), SqlValue { value: Some(SqlVal::Int64Value(123)) }),
-            ]
+            fields: vec![(
+                "nested_key".to_string(),
+                SqlValue {
+                    value: Some(SqlVal::Int64Value(123)),
+                },
+            )]
             .into_iter()
             .collect(),
         };
 
         let outer = SqlObject {
             fields: vec![
-                ("name".to_string(), SqlValue { value: Some(SqlVal::StringValue("outer".to_string())) }),
-                ("inner".to_string(), SqlValue { value: Some(SqlVal::ObjectValue(inner.clone())) }),
+                (
+                    "name".to_string(),
+                    SqlValue {
+                        value: Some(SqlVal::StringValue("outer".to_string())),
+                    },
+                ),
+                (
+                    "inner".to_string(),
+                    SqlValue {
+                        value: Some(SqlVal::ObjectValue(inner.clone())),
+                    },
+                ),
             ]
             .into_iter()
             .collect(),
@@ -5588,7 +5637,9 @@ mod tests {
     fn test_null_value_serialization_roundtrip() {
         use prost::Message;
 
-        let null_val = SqlValue { value: Some(SqlVal::NullValue(0)) };
+        let null_val = SqlValue {
+            value: Some(SqlVal::NullValue(0)),
+        };
         let mut buf = Vec::new();
         null_val.encode(&mut buf).unwrap();
         let decoded = SqlValue::decode(buf.as_slice()).unwrap();
@@ -5601,9 +5652,15 @@ mod tests {
 
         let array = SqlArray {
             values: vec![
-                SqlValue { value: Some(SqlVal::StringValue("value".to_string())) },
-                SqlValue { value: Some(SqlVal::NullValue(0)) },
-                SqlValue { value: Some(SqlVal::NumberValue(3.14)) },
+                SqlValue {
+                    value: Some(SqlVal::StringValue("value".to_string())),
+                },
+                SqlValue {
+                    value: Some(SqlVal::NullValue(0)),
+                },
+                SqlValue {
+                    value: Some(SqlVal::NumberValue(3.14)),
+                },
             ],
         };
 
@@ -5611,20 +5668,27 @@ mod tests {
         array.encode(&mut buf).unwrap();
         let decoded = SqlArray::decode(buf.as_slice()).unwrap();
         assert_eq!(decoded.values.len(), 3);
-        assert!(matches!(decoded.values[1].value, Some(SqlVal::NullValue(_))));
+        assert!(matches!(
+            decoded.values[1].value,
+            Some(SqlVal::NullValue(_))
+        ));
     }
 
     #[test]
     fn test_large_int64_value_roundtrip() {
         use prost::Message;
 
-        let val = SqlValue { value: Some(SqlVal::Int64Value(i64::MAX)) };
+        let val = SqlValue {
+            value: Some(SqlVal::Int64Value(i64::MAX)),
+        };
         let mut buf = Vec::new();
         val.encode(&mut buf).unwrap();
         let decoded = SqlValue::decode(buf.as_slice()).unwrap();
         assert_eq!(decoded.value, Some(SqlVal::Int64Value(i64::MAX)));
 
-        let val_min = SqlValue { value: Some(SqlVal::Int64Value(i64::MIN)) };
+        let val_min = SqlValue {
+            value: Some(SqlVal::Int64Value(i64::MIN)),
+        };
         let mut buf2 = Vec::new();
         val_min.encode(&mut buf2).unwrap();
         let decoded2 = SqlValue::decode(buf2.as_slice()).unwrap();
@@ -5636,7 +5700,9 @@ mod tests {
         use prost::Message;
 
         for special in [f64::INFINITY, f64::NEG_INFINITY, 0.0, -0.0] {
-            let val = SqlValue { value: Some(SqlVal::NumberValue(special)) };
+            let val = SqlValue {
+                value: Some(SqlVal::NumberValue(special)),
+            };
             let mut buf = Vec::new();
             val.encode(&mut buf).unwrap();
             let decoded = SqlValue::decode(buf.as_slice()).unwrap();
@@ -5658,7 +5724,9 @@ mod tests {
 
         let empty: Vec<u8> = vec![];
         let encoded = base64::engine::general_purpose::STANDARD.encode(&empty);
-        let decoded = base64::engine::general_purpose::STANDARD.decode(&encoded).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&encoded)
+            .unwrap();
         assert_eq!(decoded, empty);
     }
 
@@ -5669,7 +5737,9 @@ mod tests {
         // Simulate a 1KB metadata payload
         let payload: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
         let encoded = base64::engine::general_purpose::STANDARD.encode(&payload);
-        let decoded = base64::engine::general_purpose::STANDARD.decode(&encoded).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&encoded)
+            .unwrap();
         assert_eq!(decoded.len(), 1024);
         assert_eq!(decoded, payload);
     }

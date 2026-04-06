@@ -55,8 +55,7 @@ pub struct MemoryPoolConfig {
 }
 
 /// Engine-specific SIMD settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EngineSettings {
     /// HELIX engine settings
     pub helix: HelixSettings,
@@ -190,7 +189,6 @@ impl Default for MemoryPoolConfig {
         }
     }
 }
-
 
 impl Default for HelixSettings {
     fn default() -> Self {

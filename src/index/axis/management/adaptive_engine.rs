@@ -212,8 +212,7 @@ pub struct StrategyConfigTemplate {
 }
 
 /// Conditions for strategy applicability
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ApplicabilityConditions {
     /// Minimum number of vectors for this strategy to apply.
     pub min_vector_count: Option<u64>,
@@ -729,4 +728,3 @@ impl PerformancePredictor {
         })
     }
 }
-

@@ -8,9 +8,7 @@ use super::providers::{
     AWSBedrockClient, AnthropicClient, AzureOpenAIClient, CohereClient, HuggingFaceClient,
     LLMClient, OllamaClient, OpenAIClient, VLLMClient,
 };
-use super::types::{
-    LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse,
-};
+use super::types::{LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -84,31 +82,34 @@ impl LLMIntegrationEngine {
 
         // Initialize Azure OpenAI provider if configured
         if let Some(ref azure_config) = config.azure_openai_config
-            && !azure_config.api_key.is_empty() && !azure_config.endpoint.is_empty() {
-                match AzureOpenAIClient::new(azure_config.clone()).await {
-                    Ok(client) => {
-                        providers.insert(LLMProvider::AzureOpenAI, Arc::new(client));
-                        info!("Azure OpenAI provider initialized successfully");
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize Azure OpenAI provider: {}", e);
-                    }
+            && !azure_config.api_key.is_empty()
+            && !azure_config.endpoint.is_empty()
+        {
+            match AzureOpenAIClient::new(azure_config.clone()).await {
+                Ok(client) => {
+                    providers.insert(LLMProvider::AzureOpenAI, Arc::new(client));
+                    info!("Azure OpenAI provider initialized successfully");
+                }
+                Err(e) => {
+                    warn!("Failed to initialize Azure OpenAI provider: {}", e);
                 }
             }
+        }
 
         // Initialize AWS Bedrock provider if configured
         if let Some(ref bedrock_config) = config.aws_bedrock_config
-            && !bedrock_config.model_id.is_empty() {
-                match AWSBedrockClient::new(bedrock_config.clone()).await {
-                    Ok(client) => {
-                        providers.insert(LLMProvider::AWSBedrock, Arc::new(client));
-                        info!("AWS Bedrock provider initialized successfully");
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize AWS Bedrock provider: {}", e);
-                    }
+            && !bedrock_config.model_id.is_empty()
+        {
+            match AWSBedrockClient::new(bedrock_config.clone()).await {
+                Ok(client) => {
+                    providers.insert(LLMProvider::AWSBedrock, Arc::new(client));
+                    info!("AWS Bedrock provider initialized successfully");
+                }
+                Err(e) => {
+                    warn!("Failed to initialize AWS Bedrock provider: {}", e);
                 }
             }
+        }
 
         // Initialize Ollama provider if configured
         if let Some(ref ollama_config) = config.ollama_config {
@@ -138,17 +139,18 @@ impl LLMIntegrationEngine {
 
         // Initialize HuggingFace provider if configured
         if let Some(ref hf_config) = config.huggingface_config
-            && !hf_config.api_key.is_empty() {
-                match HuggingFaceClient::new(hf_config.clone()).await {
-                    Ok(client) => {
-                        providers.insert(LLMProvider::HuggingFace, Arc::new(client));
-                        info!("HuggingFace provider initialized successfully");
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize HuggingFace provider: {}", e);
-                    }
+            && !hf_config.api_key.is_empty()
+        {
+            match HuggingFaceClient::new(hf_config.clone()).await {
+                Ok(client) => {
+                    providers.insert(LLMProvider::HuggingFace, Arc::new(client));
+                    info!("HuggingFace provider initialized successfully");
+                }
+                Err(e) => {
+                    warn!("Failed to initialize HuggingFace provider: {}", e);
                 }
             }
+        }
 
         // Ensure at least one provider is available
         if providers.is_empty() {

@@ -1007,10 +1007,7 @@ mod tests {
 
     #[test]
     fn test_centroid_tree_dimension_mismatch_error() {
-        let centroids = vec![
-            vec![1.0, 2.0, 3.0],
-            vec![1.0, 2.0],
-        ];
+        let centroids = vec![vec![1.0, 2.0, 3.0], vec![1.0, 2.0]];
         let result = CentroidTree::build(&centroids, 8);
         assert!(result.is_err());
     }
@@ -1402,10 +1399,7 @@ mod tests {
 
     #[test]
     fn test_centroid_tree_l2_distance_accuracy() {
-        let centroids = vec![
-            vec![0.0, 0.0, 0.0],
-            vec![3.0, 4.0, 0.0],
-        ];
+        let centroids = vec![vec![0.0, 0.0, 0.0], vec![3.0, 4.0, 0.0]];
         let tree = CentroidTree::build(&centroids, 8).unwrap();
         let result_under = tree.prune(&[0.0, 0.0, 0.0], 4.9);
         let result_over = tree.prune(&[0.0, 0.0, 0.0], 5.1);

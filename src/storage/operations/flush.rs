@@ -151,7 +151,9 @@ struct SstFlushCoordinator {
 
 impl SstFlushCoordinator {
     fn new() -> Result<Self> {
-        Ok(Self { active_count: AtomicUsize::new(0) })
+        Ok(Self {
+            active_count: AtomicUsize::new(0),
+        })
     }
 
     async fn execute_flush(&self, collection_id: &str) -> Result<SstFlushResult> {
@@ -185,7 +187,9 @@ struct ViperFlushCoordinator {
 
 impl ViperFlushCoordinator {
     fn new() -> Result<Self> {
-        Ok(Self { active_count: AtomicUsize::new(0) })
+        Ok(Self {
+            active_count: AtomicUsize::new(0),
+        })
     }
 
     async fn execute_flush(&self, collection_id: &str) -> Result<ViperFlushResult> {
@@ -216,7 +220,9 @@ struct HelixFlushCoordinator {
 
 impl HelixFlushCoordinator {
     fn new() -> Result<Self> {
-        Ok(Self { active_count: AtomicUsize::new(0) })
+        Ok(Self {
+            active_count: AtomicUsize::new(0),
+        })
     }
 
     async fn execute_flush(&self, collection_id: &str) -> Result<HelixFlushResult> {
@@ -292,8 +298,10 @@ impl FlushMetrics {
         result: &SstFlushResult,
     ) {
         self.total_flushes.fetch_add(1, Ordering::Relaxed);
-        self.total_bytes_written.fetch_add(result.bytes_written, Ordering::Relaxed);
-        self.total_duration_us.fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
+        self.total_bytes_written
+            .fetch_add(result.bytes_written, Ordering::Relaxed);
+        self.total_duration_us
+            .fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
     }
 
     async fn record_viper_flush(
@@ -303,8 +311,10 @@ impl FlushMetrics {
         result: &ViperFlushResult,
     ) {
         self.total_flushes.fetch_add(1, Ordering::Relaxed);
-        self.total_bytes_written.fetch_add(result.bytes_written, Ordering::Relaxed);
-        self.total_duration_us.fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
+        self.total_bytes_written
+            .fetch_add(result.bytes_written, Ordering::Relaxed);
+        self.total_duration_us
+            .fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
     }
 
     async fn record_helix_flush(
@@ -314,8 +324,10 @@ impl FlushMetrics {
         result: &HelixFlushResult,
     ) {
         self.total_flushes.fetch_add(1, Ordering::Relaxed);
-        self.total_bytes_written.fetch_add(result.bytes_written, Ordering::Relaxed);
-        self.total_duration_us.fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
+        self.total_bytes_written
+            .fetch_add(result.bytes_written, Ordering::Relaxed);
+        self.total_duration_us
+            .fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
     }
 
     async fn get_total_flushes(&self) -> u64 {

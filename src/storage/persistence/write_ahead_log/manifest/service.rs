@@ -790,22 +790,20 @@ impl GlobalManifestService {
                     .strip_prefix("manifest_")
                     .and_then(|s| s.strip_suffix(".jsonl"))
                     .and_then(|s| s.split('_').nth(1))
-                    && let Ok(max_lsn) = max_lsn_str.parse::<u64>()
-                        && max_lsn < safe_to_delete_before_lsn {
-                            // Delete this segment
-                            match fs.delete(&entry.url).await {
-                                Ok(_) => {
-                                    debug!("🗑️  Deleted old manifest segment: {}", entry.url);
-                                    deleted_count += 1;
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "⚠️  Failed to delete manifest segment {}: {}",
-                                        entry.url, e
-                                    );
-                                }
-                            }
-                        }
+                && let Ok(max_lsn) = max_lsn_str.parse::<u64>()
+                && max_lsn < safe_to_delete_before_lsn
+            {
+                // Delete this segment
+                match fs.delete(&entry.url).await {
+                    Ok(_) => {
+                        debug!("🗑️  Deleted old manifest segment: {}", entry.url);
+                        deleted_count += 1;
+                    }
+                    Err(e) => {
+                        warn!("⚠️  Failed to delete manifest segment {}: {}", entry.url, e);
+                    }
+                }
+            }
         }
 
         if deleted_count > 0 {

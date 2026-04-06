@@ -227,15 +227,17 @@ impl GeoQueryBuilder {
                 // Apply min distance filter
                 if let Some(min_km) = self.min_distance_km
                     && let Some(dist) = r.distance_km
-                        && dist < min_km {
-                            return false;
-                        }
+                    && dist < min_km
+                {
+                    return false;
+                }
                 // Apply max distance filter
                 if let Some(max_km) = self.max_distance_km
                     && let Some(dist) = r.distance_km
-                        && dist > max_km {
-                            return false;
-                        }
+                    && dist > max_km
+                {
+                    return false;
+                }
                 true
             })
             .collect();

@@ -242,10 +242,7 @@ impl DiskANNIndex {
             id: self.id.clone(),
             dimension: self.dimension,
             num_vectors: self.num_vectors,
-            max_degree: self
-                .vamana_graph
-                .as_ref()
-                .map_or(0, |g| g.max_degree),
+            max_degree: self.vamana_graph.as_ref().map_or(0, |g| g.max_degree),
             is_built: self.vamana_graph.is_some(),
         }
     }

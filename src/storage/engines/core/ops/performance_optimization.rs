@@ -44,13 +44,14 @@ impl Default for MemoryPoolConfig {
 static MEMORY_POOL_CONFIG: Lazy<MemoryPoolConfig> = Lazy::new(|| {
     // Try to read from environment or config
     if let Ok(size_str) = std::env::var("PROXIMADB_MEMORY_POOL_SIZE_MB")
-        && let Ok(size) = size_str.parse::<usize>() {
-            tracing::info!("Using memory pool size from environment: {}MB", size);
-            return MemoryPoolConfig {
-                pool_size_mb: Some(size),
-                use_smart_defaults: false,
-            };
-        }
+        && let Ok(size) = size_str.parse::<usize>()
+    {
+        tracing::info!("Using memory pool size from environment: {}MB", size);
+        return MemoryPoolConfig {
+            pool_size_mb: Some(size),
+            use_smart_defaults: false,
+        };
+    }
     MemoryPoolConfig::default()
 });
 
@@ -312,21 +313,22 @@ impl UniversalPerformanceOptimizer {
         // Try local file memory mapping first (works for file:// URLs)
         if file_url.starts_with("file://")
             && let Some(local_path) = file_url.strip_prefix("file://")
-                && let Ok(file) = File::open(local_path) {
-                    let mmap = Arc::new(unsafe { MmapOptions::new().map(&file)? });
+            && let Ok(file) = File::open(local_path)
+        {
+            let mmap = Arc::new(unsafe { MmapOptions::new().map(&file)? });
 
-                    // Cache for future access
-                    {
-                        let mut cache = self.mmap_cache.write().await;
-                        cache.insert(file_url.to_string(), Arc::clone(&mmap));
-                    }
+            // Cache for future access
+            {
+                let mut cache = self.mmap_cache.write().await;
+                cache.insert(file_url.to_string(), Arc::clone(&mmap));
+            }
 
-                    // Update access patterns
-                    self.update_access_stats(file_url, file.metadata()?.len())
-                        .await;
+            // Update access patterns
+            self.update_access_stats(file_url, file.metadata()?.len())
+                .await;
 
-                    return Ok(Some(mmap));
-                }
+            return Ok(Some(mmap));
+        }
 
         // For cloud storage, fall back to regular I/O (memory mapping not supported)
         // This will use the data cache instead
@@ -593,10 +595,11 @@ impl UniversalPerformanceOptimizer {
                 for file_url in local_files {
                     if let Some(local_path) = file_url.strip_prefix("file://")
                         && let Ok(file) = File::open(local_path)
-                            && let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
-                                let mut cache = mmap_cache.write().await;
-                                cache.insert(file_url, Arc::new(mmap));
-                            }
+                        && let Ok(mmap) = unsafe { MmapOptions::new().map(&file) }
+                    {
+                        let mut cache = mmap_cache.write().await;
+                        cache.insert(file_url, Arc::new(mmap));
+                    }
                 }
             });
         }
@@ -606,10 +609,11 @@ impl UniversalPerformanceOptimizer {
             tokio::spawn(async move {
                 for file_url in cloud_files {
                     if let Ok(filesystem) = filesystem_factory.get_filesystem(&file_url)
-                        && let Ok(data) = filesystem.read(&file_url).await {
-                            let mut cache = data_cache.write().await;
-                            cache.insert(file_url, Arc::new(data));
-                        }
+                        && let Ok(data) = filesystem.read(&file_url).await
+                    {
+                        let mut cache = data_cache.write().await;
+                        cache.insert(file_url, Arc::new(data));
+                    }
                 }
             });
         }

@@ -207,9 +207,10 @@ impl super::GraphOperationsService {
             );
         }
         if let Some(stats) = &mut response.stats
-            && stats.max_depth_reached > config.max_depth.unwrap_or(u32::MAX) {
-                debug!("Traversal limited by max_depth: {:?}", config.max_depth);
-            }
+            && stats.max_depth_reached > config.max_depth.unwrap_or(u32::MAX)
+        {
+            debug!("Traversal limited by max_depth: {:?}", config.max_depth);
+        }
         Ok(response)
     }
 
@@ -286,22 +287,23 @@ impl super::GraphOperationsService {
         };
 
         if let Some(kk) = k
-            && kk > 1 {
-                if let Some(eng) = orion_engine {
-                    let paths =
-                        k_shortest_paths(eng, start_node_id, target_node_id, kk as usize, config)
-                            .await?;
-                    return Ok(paths.first().cloned());
-                } else {
-                    let res = crate::graph::engines::generic_traversal::dijkstra_generic(
-                        engine.as_ref(),
-                        start_node_id,
-                        target_node_id,
-                        config.edge_types.as_deref(),
-                    )?;
-                    return Ok(res);
-                }
+            && kk > 1
+        {
+            if let Some(eng) = orion_engine {
+                let paths =
+                    k_shortest_paths(eng, start_node_id, target_node_id, kk as usize, config)
+                        .await?;
+                return Ok(paths.first().cloned());
+            } else {
+                let res = crate::graph::engines::generic_traversal::dijkstra_generic(
+                    engine.as_ref(),
+                    start_node_id,
+                    target_node_id,
+                    config.edge_types.as_deref(),
+                )?;
+                return Ok(res);
             }
+        }
 
         let result = match algorithm
             .unwrap_or(crate::proto::proximadb_v1::ShortestPathAlgorithm::Dijkstra)

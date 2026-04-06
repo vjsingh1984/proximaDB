@@ -760,9 +760,10 @@ impl ArrowFileExportHandler {
 
                 // Check limit
                 if let Some(max) = limit
-                    && files.len() >= max {
-                        return Ok(files);
-                    }
+                    && files.len() >= max
+                {
+                    return Ok(files);
+                }
             }
         }
 
@@ -935,13 +936,14 @@ impl ArrowFileExportHandler {
         // Try ArrowBlockReader first (for ProximaDB-formatted files with sidecar index)
         let idx_path = format!("{}.idx", path.display());
         if Path::new(&idx_path).exists()
-            && let Ok(reader) = ArrowBlockReader::open(path) {
-                return Ok((
-                    reader.num_blocks() as usize,
-                    reader.total_records(),
-                    reader.metadata().dimension,
-                ));
-            }
+            && let Ok(reader) = ArrowBlockReader::open(path)
+        {
+            return Ok((
+                reader.num_blocks() as usize,
+                reader.total_records(),
+                reader.metadata().dimension,
+            ));
+        }
 
         // Fall back to standard Arrow IPC reader
         let file = fs::File::open(path).context("Failed to open Arrow file")?;
@@ -956,10 +958,7 @@ impl ArrowFileExportHandler {
         }
 
         // Get dimension from collection config
-        let dimension = collection
-            .config
-            .as_ref()
-            .map_or(0, |c| c.dimension);
+        let dimension = collection.config.as_ref().map_or(0, |c| c.dimension);
 
         Ok((num_batches, total_records, dimension))
     }
@@ -1046,9 +1045,10 @@ impl ArrowFileExportHandler {
 
                 // Get dimension from first non-empty vector
                 if dimension == 0
-                    && let Some(first_record) = block.records.first() {
-                        dimension = first_record.vector.len() as u32;
-                    }
+                    && let Some(first_record) = block.records.first()
+                {
+                    dimension = first_record.vector.len() as u32;
+                }
             }
 
             // Move to next block (with cache-line alignment padding)
@@ -1058,10 +1058,7 @@ impl ArrowFileExportHandler {
 
         // Fall back to collection config for dimension if not found
         if dimension == 0 {
-            dimension = collection
-                .config
-                .as_ref()
-                .map_or(0, |c| c.dimension);
+            dimension = collection.config.as_ref().map_or(0, |c| c.dimension);
         }
 
         debug!(
@@ -1094,14 +1091,15 @@ impl ArrowFileExportHandler {
         // Try ArrowBlockReader first (for ProximaDB-formatted files with sidecar index)
         let idx_path = format!("{}.idx", file_path);
         if Path::new(&idx_path).exists()
-            && let Ok(_reader) = ArrowBlockReader::open(path) {
-                // ArrowBlockReader returns VectorRecords, so we fall back to standard IPC reader
-                // for direct RecordBatch streaming (no conversion needed)
-                debug!(
-                    "Found ArrowBlockReader index, using standard IPC reader for {}",
-                    file_path
-                );
-            }
+            && let Ok(_reader) = ArrowBlockReader::open(path)
+        {
+            // ArrowBlockReader returns VectorRecords, so we fall back to standard IPC reader
+            // for direct RecordBatch streaming (no conversion needed)
+            debug!(
+                "Found ArrowBlockReader index, using standard IPC reader for {}",
+                file_path
+            );
+        }
 
         // Use standard Arrow IPC reader for direct RecordBatch streaming
         let file = fs::File::open(path).context("Failed to open Arrow file")?;
@@ -1217,9 +1215,10 @@ impl ArrowFileExportHandler {
             if let Ok(block) = ProximaDataBlock::deserialize(block_data, None) {
                 // Get dimension from first non-empty vector
                 if dimension == 0
-                    && let Some(first_record) = block.records.first() {
-                        dimension = first_record.vector.len() as i32;
-                    }
+                    && let Some(first_record) = block.records.first()
+                {
+                    dimension = first_record.vector.len() as i32;
+                }
                 all_records.extend(block.records);
             }
 
@@ -1404,9 +1403,10 @@ impl ArrowFileExportHandler {
                 total_records += block.records.len() as u64;
 
                 if dimension == 0
-                    && let Some(first_record) = block.records.first() {
-                        dimension = first_record.vector.len() as u32;
-                    }
+                    && let Some(first_record) = block.records.first()
+                {
+                    dimension = first_record.vector.len() as u32;
+                }
             }
 
             let aligned_size = block_len.div_ceil(64) * 64;

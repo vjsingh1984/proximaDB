@@ -877,8 +877,8 @@ impl MongoDBParser {
                 continue; // Already handled above
             }
 
-            let operator =
-                MongoOperator::parse_operator(key).ok_or_else(|| anyhow!("Unknown operator: {}", key))?;
+            let operator = MongoOperator::parse_operator(key)
+                .ok_or_else(|| anyhow!("Unknown operator: {}", key))?;
 
             match operator {
                 MongoOperator::ElemMatch => {
@@ -1068,28 +1068,23 @@ impl MongoDBParser {
                     }
 
                     if let JsonValue::Object(acc_obj) = acc_value
-                        && let Some((acc_op, acc_expr)) = acc_obj.iter().next() {
-                            let accumulator = match acc_op.as_str() {
-                                "$sum" => GroupAccumulator::Sum(MongoDBValue::from_json(acc_expr)),
-                                "$avg" => GroupAccumulator::Avg(MongoDBValue::from_json(acc_expr)),
-                                "$min" => GroupAccumulator::Min(MongoDBValue::from_json(acc_expr)),
-                                "$max" => GroupAccumulator::Max(MongoDBValue::from_json(acc_expr)),
-                                "$first" => {
-                                    GroupAccumulator::First(MongoDBValue::from_json(acc_expr))
-                                }
-                                "$last" => {
-                                    GroupAccumulator::Last(MongoDBValue::from_json(acc_expr))
-                                }
-                                "$push" => {
-                                    GroupAccumulator::Push(MongoDBValue::from_json(acc_expr))
-                                }
-                                "$addToSet" => {
-                                    GroupAccumulator::AddToSet(MongoDBValue::from_json(acc_expr))
-                                }
-                                _ => return Err(anyhow!("Unknown accumulator: {}", acc_op)),
-                            };
-                            accumulators.insert(field.clone(), accumulator);
-                        }
+                        && let Some((acc_op, acc_expr)) = acc_obj.iter().next()
+                    {
+                        let accumulator = match acc_op.as_str() {
+                            "$sum" => GroupAccumulator::Sum(MongoDBValue::from_json(acc_expr)),
+                            "$avg" => GroupAccumulator::Avg(MongoDBValue::from_json(acc_expr)),
+                            "$min" => GroupAccumulator::Min(MongoDBValue::from_json(acc_expr)),
+                            "$max" => GroupAccumulator::Max(MongoDBValue::from_json(acc_expr)),
+                            "$first" => GroupAccumulator::First(MongoDBValue::from_json(acc_expr)),
+                            "$last" => GroupAccumulator::Last(MongoDBValue::from_json(acc_expr)),
+                            "$push" => GroupAccumulator::Push(MongoDBValue::from_json(acc_expr)),
+                            "$addToSet" => {
+                                GroupAccumulator::AddToSet(MongoDBValue::from_json(acc_expr))
+                            }
+                            _ => return Err(anyhow!("Unknown accumulator: {}", acc_op)),
+                        };
+                        accumulators.insert(field.clone(), accumulator);
+                    }
                 }
 
                 Ok(MongoDBPipelineStage::Group {

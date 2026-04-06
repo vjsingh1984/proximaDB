@@ -124,14 +124,12 @@ impl DocumentStoreParticipant {
 
     pub async fn staged_operation_count(&self, transaction_id: &str) -> usize {
         let transactions = self.transactions.read().await;
-        transactions
-            .get(transaction_id)
-            .map_or(0, |state| {
-                state
-                    .operations
-                    .len()
-                    .saturating_sub(state.next_commit_index)
-            })
+        transactions.get(transaction_id).map_or(0, |state| {
+            state
+                .operations
+                .len()
+                .saturating_sub(state.next_commit_index)
+        })
     }
 
     /// Clear all staged operations for a transaction (called on rollback)
@@ -341,14 +339,12 @@ impl ObservabilityStoreParticipant {
 
     pub async fn staged_operation_count(&self, transaction_id: &str) -> usize {
         let transactions = self.transactions.read().await;
-        transactions
-            .get(transaction_id)
-            .map_or(0, |state| {
-                state
-                    .operations
-                    .len()
-                    .saturating_sub(state.next_commit_index)
-            })
+        transactions.get(transaction_id).map_or(0, |state| {
+            state
+                .operations
+                .len()
+                .saturating_sub(state.next_commit_index)
+        })
     }
 
     /// Clear all staged operations for a transaction (called on rollback)
@@ -479,18 +475,10 @@ impl TwoPhaseParticipant for ObservabilityStoreParticipant {
 #[async_trait::async_trait]
 pub trait VectorWriteOperations: Send + Sync {
     /// Insert a batch of vectors into a collection.
-    async fn insert_vectors(
-        &self,
-        collection_id: &str,
-        vectors: Vec<VectorRecord>,
-    ) -> Result<u64>;
+    async fn insert_vectors(&self, collection_id: &str, vectors: Vec<VectorRecord>) -> Result<u64>;
 
     /// Delete vectors by their IDs.
-    async fn delete_vectors(
-        &self,
-        collection_id: &str,
-        ids: Vec<String>,
-    ) -> Result<u64>;
+    async fn delete_vectors(&self, collection_id: &str, ids: Vec<String>) -> Result<u64>;
 }
 
 /// Staged vector operations buffered until commit.
@@ -599,9 +587,7 @@ impl VectorStoreParticipant {
                     .await?;
             }
             StagedVectorOperation::Delete { collection, ids } => {
-                self.service
-                    .delete_vectors(collection, ids.clone())
-                    .await?;
+                self.service.delete_vectors(collection, ids.clone()).await?;
             }
         }
         Ok(())
@@ -685,32 +671,16 @@ impl TwoPhaseParticipant for VectorStoreParticipant {
 #[async_trait::async_trait]
 pub trait GraphWriteOperations: Send + Sync {
     /// Create a node in a graph.
-    async fn create_node(
-        &self,
-        graph_id: &str,
-        node: GraphNode,
-    ) -> Result<()>;
+    async fn create_node(&self, graph_id: &str, node: GraphNode) -> Result<()>;
 
     /// Create an edge in a graph.
-    async fn create_edge(
-        &self,
-        graph_id: &str,
-        edge: GraphEdge,
-    ) -> Result<()>;
+    async fn create_edge(&self, graph_id: &str, edge: GraphEdge) -> Result<()>;
 
     /// Delete a node by ID.
-    async fn delete_node(
-        &self,
-        graph_id: &str,
-        node_id: &str,
-    ) -> Result<()>;
+    async fn delete_node(&self, graph_id: &str, node_id: &str) -> Result<()>;
 
     /// Delete an edge by ID.
-    async fn delete_edge(
-        &self,
-        graph_id: &str,
-        edge_id: &str,
-    ) -> Result<()>;
+    async fn delete_edge(&self, graph_id: &str, edge_id: &str) -> Result<()>;
 }
 
 /// Lightweight node representation for staged graph transactions.
@@ -734,22 +704,10 @@ pub struct GraphEdge {
 /// Staged graph operations buffered until commit.
 #[derive(Debug, Clone)]
 pub enum StagedGraphOperation {
-    CreateNode {
-        graph_id: String,
-        node: GraphNode,
-    },
-    CreateEdge {
-        graph_id: String,
-        edge: GraphEdge,
-    },
-    DeleteNode {
-        graph_id: String,
-        node_id: String,
-    },
-    DeleteEdge {
-        graph_id: String,
-        edge_id: String,
-    },
+    CreateNode { graph_id: String, node: GraphNode },
+    CreateEdge { graph_id: String, edge: GraphEdge },
+    DeleteNode { graph_id: String, node_id: String },
+    DeleteEdge { graph_id: String, edge_id: String },
 }
 
 /// Graph-service-backed participant for multi-model 2PC.

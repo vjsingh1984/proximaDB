@@ -527,9 +527,10 @@ impl Flush {
                     let temp_path_str = temp_path.to_str().unwrap_or("");
                     if !temp_path_str.is_empty()
                         && let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str)
-                            && let Err(e) = local_fs.delete(temp_path_str).await {
-                                debug!("Temp file already moved or deleted: {}", e);
-                            }
+                        && let Err(e) = local_fs.delete(temp_path_str).await
+                    {
+                        debug!("Temp file already moved or deleted: {}", e);
+                    }
                     path
                 }
                 Err(e) => {
@@ -537,9 +538,10 @@ impl Flush {
                     let temp_path_str = temp_path.to_str().unwrap_or("");
                     if !temp_path_str.is_empty()
                         && let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str)
-                            && let Err(cleanup_err) = local_fs.delete(temp_path_str).await {
-                                debug!("Failed to clean up temp file: {}", cleanup_err);
-                            }
+                        && let Err(cleanup_err) = local_fs.delete(temp_path_str).await
+                    {
+                        debug!("Failed to clean up temp file: {}", cleanup_err);
+                    }
                     error!("❌ VIPER: Step 3 - Atomic move failed: {}", e);
                     return Err(e.context("Failed to atomically move Parquet file"));
                 }

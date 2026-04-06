@@ -446,19 +446,20 @@ impl super::GraphOperationsService {
             for entry in self.memory_pool.unique_constraints.iter() {
                 let (cgraph, clabel, cprop) = entry.key();
                 let map = entry.value();
-                if cgraph == graph_id && clabel == label
-                    && let Some(val) = node.properties.get(cprop) {
-                        let k = super::index_key_for_value(val);
-                        if let Some(existing) = map.get(&k)
-                            && existing.value() != &node.id {
-                                return Err(crate::core::error::ProximaDBError::InvalidInput(
-                                    format!(
-                                        "Unique constraint violation on (label='{}', property='{}') for value '{}'",
-                                        clabel, cprop, k
-                                    ),
-                                ));
-                            }
+                if cgraph == graph_id
+                    && clabel == label
+                    && let Some(val) = node.properties.get(cprop)
+                {
+                    let k = super::index_key_for_value(val);
+                    if let Some(existing) = map.get(&k)
+                        && existing.value() != &node.id
+                    {
+                        return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
+                            "Unique constraint violation on (label='{}', property='{}') for value '{}'",
+                            clabel, cprop, k
+                        )));
                     }
+                }
             }
         }
         Ok(())
@@ -470,11 +471,13 @@ impl super::GraphOperationsService {
             for entry in self.memory_pool.unique_constraints.iter() {
                 let (cgraph, clabel, cprop) = entry.key();
                 let map = entry.value();
-                if cgraph == graph_id && *clabel == label
-                    && let Some(val) = node.properties.get(cprop) {
-                        let k = super::index_key_for_value(val);
-                        map.insert(k, node.id.clone());
-                    }
+                if cgraph == graph_id
+                    && *clabel == label
+                    && let Some(val) = node.properties.get(cprop)
+                {
+                    let k = super::index_key_for_value(val);
+                    map.insert(k, node.id.clone());
+                }
             }
         }
     }
@@ -485,14 +488,17 @@ impl super::GraphOperationsService {
             for entry in self.memory_pool.unique_constraints.iter() {
                 let (cgraph, clabel, cprop) = entry.key();
                 let map = entry.value();
-                if cgraph == graph_id && *clabel == label
-                    && let Some(val) = node.properties.get(cprop) {
-                        let k = super::index_key_for_value(val);
-                        if let Some(existing) = map.get(&k)
-                            && existing.value() == &node.id {
-                                map.remove(&k);
-                            }
+                if cgraph == graph_id
+                    && *clabel == label
+                    && let Some(val) = node.properties.get(cprop)
+                {
+                    let k = super::index_key_for_value(val);
+                    if let Some(existing) = map.get(&k)
+                        && existing.value() == &node.id
+                    {
+                        map.remove(&k);
                     }
+                }
             }
         }
     }
@@ -517,12 +523,13 @@ impl super::GraphOperationsService {
             {
                 let map = entry.value();
                 if let Some(existing) = map.get(&comp)
-                    && existing.value() != &node.id {
-                        return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
-                            "Duplicate composite key for unique ({:?})",
-                            props
-                        )));
-                    }
+                    && existing.value() != &node.id
+                {
+                    return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
+                        "Duplicate composite key for unique ({:?})",
+                        props
+                    )));
+                }
             }
         }
         Ok(())

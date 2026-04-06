@@ -365,8 +365,7 @@ impl ColumnDataType {
 }
 
 /// TEXT storage strategy for columnar storage
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TextStorageStrategy {
     /// Store inline in main Parquet column (<4KB)
     Inline,
@@ -378,7 +377,6 @@ pub enum TextStorageStrategy {
     #[default]
     Adaptive,
 }
-
 
 impl TextStorageStrategy {
     /// Maximum size in bytes for inline text storage (4KB)
@@ -481,8 +479,7 @@ impl Default for TextColumnOptions {
 }
 
 /// Schema enforcement mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SchemaEnforcementMode {
     /// All columns must match schema exactly
     Strict,
@@ -492,7 +489,6 @@ pub enum SchemaEnforcementMode {
     #[default]
     Hybrid,
 }
-
 
 /// Record schema with enforcement rules
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -749,17 +745,19 @@ impl TypedValue {
         match self {
             TypedValue::Text(s) | TypedValue::Json(s) => {
                 if let Some(max) = constraints.max_length
-                    && s.len() > max as usize {
-                        return Err(anyhow!("Text length {} exceeds maximum {}", s.len(), max));
-                    }
+                    && s.len() > max as usize
+                {
+                    return Err(anyhow!("Text length {} exceeds maximum {}", s.len(), max));
+                }
                 if let Some(min) = constraints.min_length
-                    && s.len() < min as usize {
-                        return Err(anyhow!(
-                            "Text length {} is less than minimum {}",
-                            s.len(),
-                            min
-                        ));
-                    }
+                    && s.len() < min as usize
+                {
+                    return Err(anyhow!(
+                        "Text length {} is less than minimum {}",
+                        s.len(),
+                        min
+                    ));
+                }
                 if let Some(pattern) = &constraints.regex_pattern {
                     let re = regex::Regex::new(pattern)
                         .map_err(|e| anyhow!("Invalid regex pattern: {e}"))?;
@@ -770,29 +768,34 @@ impl TypedValue {
             }
             TypedValue::Integer(v) => {
                 if let Some(min) = constraints.min_value
-                    && *v < min {
-                        return Err(anyhow!("Value {v} is less than minimum {min}"));
-                    }
+                    && *v < min
+                {
+                    return Err(anyhow!("Value {v} is less than minimum {min}"));
+                }
                 if let Some(max) = constraints.max_value
-                    && *v > max {
-                        return Err(anyhow!("Value {v} exceeds maximum {max}"));
-                    }
+                    && *v > max
+                {
+                    return Err(anyhow!("Value {v} exceeds maximum {max}"));
+                }
             }
             TypedValue::Float(v) => {
                 if let Some(min) = constraints.min_float_value
-                    && *v < min {
-                        return Err(anyhow!("Value {v} is less than minimum {min}"));
-                    }
+                    && *v < min
+                {
+                    return Err(anyhow!("Value {v} is less than minimum {min}"));
+                }
                 if let Some(max) = constraints.max_float_value
-                    && *v > max {
-                        return Err(anyhow!("Value {v} exceeds maximum {max}"));
-                    }
+                    && *v > max
+                {
+                    return Err(anyhow!("Value {v} exceeds maximum {max}"));
+                }
             }
             TypedValue::Binary(b) => {
                 if let Some(max) = constraints.max_length
-                    && b.len() > max as usize {
-                        return Err(anyhow!("Binary length {} exceeds maximum {max}", b.len()));
-                    }
+                    && b.len() > max as usize
+                {
+                    return Err(anyhow!("Binary length {} exceeds maximum {max}", b.len()));
+                }
             }
             TypedValue::ArrayText(_) | TypedValue::ArrayInteger(_) | TypedValue::ArrayFloat(_) => {
                 if let Some(max) = constraints.array_max_items {
@@ -812,13 +815,14 @@ impl TypedValue {
                 if let TypedValue::ArrayText(arr) = self {
                     for s in arr {
                         if let Some(max) = constraints.max_length
-                            && s.len() > max as usize {
-                                return Err(anyhow!(
-                                    "Array element length {} exceeds maximum {}",
-                                    s.len(),
-                                    max
-                                ));
-                            }
+                            && s.len() > max as usize
+                        {
+                            return Err(anyhow!(
+                                "Array element length {} exceeds maximum {}",
+                                s.len(),
+                                max
+                            ));
+                        }
                     }
                 }
             }

@@ -43,10 +43,8 @@
 use anyhow::Result;
 use tracing::{debug, info, trace};
 
-use crate::core::search::filter_contract::{
-    CandidateSet, FilterContract, MetadataLookup,
-};
 use crate::core::search::FilterExpression;
+use crate::core::search::filter_contract::{CandidateSet, FilterContract, MetadataLookup};
 use crate::index::axis::management::manager::HybridQuery as AxisHybridQuery;
 
 /// Execution strategy for hybrid queries
@@ -125,14 +123,8 @@ impl HybridQuery {
     }
 
     /// Execute this hybrid query using the provided metadata lookup
-    pub async fn execute(
-        &self,
-        metadata_lookup: &dyn MetadataLookup,
-    ) -> Result<HybridQueryResult> {
-        info!(
-            "Executing hybrid query with strategy: {:?}",
-            self.strategy
-        );
+    pub async fn execute(&self, metadata_lookup: &dyn MetadataLookup) -> Result<HybridQueryResult> {
+        info!("Executing hybrid query with strategy: {:?}", self.strategy);
 
         let start = std::time::Instant::now();
 
@@ -158,9 +150,7 @@ impl HybridQuery {
             HybridExecutionStrategy::VectorFirst => {
                 self.execute_vector_first(metadata_lookup).await?
             }
-            HybridExecutionStrategy::Parallel => {
-                self.execute_parallel(metadata_lookup).await?
-            }
+            HybridExecutionStrategy::Parallel => self.execute_parallel(metadata_lookup).await?,
             HybridExecutionStrategy::Auto => {
                 // Should have been resolved above
                 return Err(anyhow::anyhow!("Auto strategy should have been resolved"));
@@ -171,8 +161,7 @@ impl HybridQuery {
 
         info!(
             "Hybrid query completed in {:?} with {} results",
-            execution_time,
-            result.candidate_count
+            execution_time, result.candidate_count
         );
 
         Ok(result)
@@ -217,7 +206,7 @@ impl HybridQuery {
         Ok(HybridQueryResult {
             candidate_count: limited_candidates.len(),
             result_count: self.top_k, // Placeholder
-            execution_time_ms: 0,      // Placeholder
+            execution_time_ms: 0,     // Placeholder
             strategy_used: HybridExecutionStrategy::FilterFirst,
         })
     }
@@ -472,10 +461,12 @@ impl From<HybridQuery> for AxisHybridQuery {
     fn from(query: HybridQuery) -> Self {
         AxisHybridQuery {
             collection_id: query.collection_id,
-            vector_query: Some(crate::index::axis::management::manager::VectorQuery::Dense {
-                vector: query.query_vector,
-                similarity_threshold: query.similarity_threshold,
-            }),
+            vector_query: Some(
+                crate::index::axis::management::manager::VectorQuery::Dense {
+                    vector: query.query_vector,
+                    similarity_threshold: query.similarity_threshold,
+                },
+            ),
             metadata_filters: Vec::new(), // Would convert from filter contract
             id_filters: Vec::new(),
             top_k: query.top_k,

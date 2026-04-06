@@ -135,8 +135,7 @@ impl Default for StreamConfig {
 }
 
 /// Per-session configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionConfig {
     /// Buffer size for this session (overrides default)
     pub buffer_size: Option<usize>,
@@ -159,7 +158,6 @@ pub struct SessionConfig {
     #[serde(default, with = "option_duration_millis")]
     pub flush_interval: Option<Duration>,
 }
-
 
 impl SessionConfig {
     /// Create a session config with a specific buffer size

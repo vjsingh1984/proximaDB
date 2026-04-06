@@ -638,7 +638,9 @@ fn convert_json_to_property_value(value: serde_json::Value) -> PropertyValue {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Some(Value::IntValue(i))
-            } else { n.as_f64().map(Value::DoubleValue) }
+            } else {
+                n.as_f64().map(Value::DoubleValue)
+            }
         }
         serde_json::Value::Bool(b) => Some(Value::BoolValue(b)),
         serde_json::Value::Array(arr) => {
@@ -657,7 +659,10 @@ fn convert_json_to_property_value(value: serde_json::Value) -> PropertyValue {
 
 fn format_timestamp(ts_ms: &i64) -> String {
     // Convert Unix epoch milliseconds to ISO 8601 string
-    chrono::DateTime::from_timestamp_millis(*ts_ms).map_or_else(|| "1970-01-01T00:00:00.000Z".to_string(), |dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+    chrono::DateTime::from_timestamp_millis(*ts_ms).map_or_else(
+        || "1970-01-01T00:00:00.000Z".to_string(),
+        |dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    )
 }
 
 /// Create the graph REST router with multi-graph support
@@ -1009,16 +1014,17 @@ pub async fn shortest_path(
         && let Some(v) = headers
             .get("x-graph-prefetch-enabled")
             .and_then(|v| v.to_str().ok())
-        {
-            req.enable_prefetch = Some(v.eq_ignore_ascii_case("true") || v == "1");
-        }
+    {
+        req.enable_prefetch = Some(v.eq_ignore_ascii_case("true") || v == "1");
+    }
     if req.prefetch_budget.is_none()
         && let Some(v) = headers
             .get("x-graph-prefetch-budget")
             .and_then(|v| v.to_str().ok())
-            && let Ok(n) = v.parse::<usize>() {
-                req.prefetch_budget = Some(n);
-            }
+        && let Ok(n) = v.parse::<usize>()
+    {
+        req.prefetch_budget = Some(n);
+    }
     match app_state
         .unified_handlers
         .graph_operations_service
@@ -1379,10 +1385,11 @@ pub async fn query_nodes(
     // Continuation token support: format "offset:<n>"
     if q.offset.is_none()
         && let Some(token) = &q.continuation_token
-            && let Some(rest) = token.strip_prefix("offset:")
-                && let Ok(n) = rest.parse::<u32>() {
-                    q.offset = Some(n);
-                }
+        && let Some(rest) = token.strip_prefix("offset:")
+        && let Ok(n) = rest.parse::<u32>()
+    {
+        q.offset = Some(n);
+    }
 
     match app_state
         .unified_handlers
@@ -1430,10 +1437,11 @@ pub async fn query_edges(
     let mut q = query;
     if q.offset.is_none()
         && let Some(token) = &q.continuation_token
-            && let Some(rest) = token.strip_prefix("offset:")
-                && let Ok(n) = rest.parse::<u32>() {
-                    q.offset = Some(n);
-                }
+        && let Some(rest) = token.strip_prefix("offset:")
+        && let Ok(n) = rest.parse::<u32>()
+    {
+        q.offset = Some(n);
+    }
     match app_state
         .unified_handlers
         .graph_operations_service
@@ -2686,9 +2694,7 @@ mod tests {
         assert_eq!(labels[0]["count"], json!(5000));
 
         // Verify edge type stats array
-        let edge_types = data["edge_type_stats"]
-            .as_array()
-            .expect("Should be array");
+        let edge_types = data["edge_type_stats"].as_array().expect("Should be array");
         assert_eq!(edge_types.len(), 2);
         assert_eq!(edge_types[0]["edge_type"], json!("KNOWS"));
         assert_eq!(edge_types[0]["count"], json!(30_000));
@@ -2786,18 +2792,11 @@ mod tests {
         assert_eq!(request.nodes[0].properties["name"], json!("Alice"));
 
         // Verify second node has multiple labels
-        assert_eq!(
-            request.nodes[1].labels,
-            vec!["Person", "Developer"]
-        );
+        assert_eq!(request.nodes[1].labels, vec!["Person", "Developer"]);
         assert_eq!(request.nodes[1].properties["level"], json!(5));
 
         // Convert all to proto and verify count
-        let proto_nodes: Vec<Node> = request
-            .nodes
-            .into_iter()
-            .map(|n| n.into())
-            .collect();
+        let proto_nodes: Vec<Node> = request.nodes.into_iter().map(|n| n.into()).collect();
         assert_eq!(proto_nodes.len(), 3);
         assert_eq!(proto_nodes[2].labels, vec!["Organization"]);
 
@@ -2857,11 +2856,7 @@ mod tests {
         assert!(request.edges[1].weight.is_none());
 
         // Convert to proto and verify
-        let proto_edges: Vec<Edge> = request
-            .edges
-            .into_iter()
-            .map(|e| e.into())
-            .collect();
+        let proto_edges: Vec<Edge> = request.edges.into_iter().map(|e| e.into()).collect();
         assert_eq!(proto_edges.len(), 2);
         assert_eq!(proto_edges[0].weight, Some(1.0));
         assert_eq!(proto_edges[1].weight, None);

@@ -73,9 +73,10 @@ impl EncryptedFilesystem {
 
     fn actual_path(&self, path: &str) -> String {
         if let Some(ref ext) = self.encrypted_extension
-            && !path.ends_with(ext) {
-                return format!("{}{}", path, ext);
-            }
+            && !path.ends_with(ext)
+        {
+            return format!("{}{}", path, ext);
+        }
         path.to_string()
     }
 
@@ -251,9 +252,10 @@ impl FileSystem for EncryptedFilesystem {
             metadata.path = path.to_string();
 
             if let Ok(header) = self.underlying.read_range(&actual_path, 0, 37).await
-                && let Ok(encrypted_metadata) = self.encryption.get_metadata(&header) {
-                    metadata.size = encrypted_metadata.original_size;
-                }
+                && let Ok(encrypted_metadata) = self.encryption.get_metadata(&header)
+            {
+                metadata.size = encrypted_metadata.original_size;
+            }
 
             return Ok(metadata);
         }

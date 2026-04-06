@@ -74,8 +74,9 @@ pub fn internal_distance_to_proto(metric: DistanceMetric) -> i32 {
 pub fn get_distance_metric_from_config(
     collection_config: Option<&crate::proto::proximadb_v1::CollectionConfig>,
 ) -> DistanceMetric {
-    collection_config
-        .map_or(DistanceMetric::Cosine, |config| proto_distance_to_internal(config.distance_metric.unwrap_or(0)))
+    collection_config.map_or(DistanceMetric::Cosine, |config| {
+        proto_distance_to_internal(config.distance_metric.unwrap_or(0))
+    })
 }
 
 // Deferred: Fix compilation errors - distance_metric is now Option<i32>

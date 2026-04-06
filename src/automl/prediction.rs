@@ -743,31 +743,55 @@ mod tests {
     fn test_feature_vector_read_write_ratios() {
         // read_write_ratio = 1.0 => equal reads and writes
         let fv = FeatureVector::from_characteristics(100, 64, 0.0, 1.0);
-        assert!((fv.read_ratio - 0.5).abs() < 1e-6, "Equal ratio should give 0.5 read");
-        assert!((fv.write_ratio - 0.5).abs() < 1e-6, "Equal ratio should give 0.5 write");
+        assert!(
+            (fv.read_ratio - 0.5).abs() < 1e-6,
+            "Equal ratio should give 0.5 read"
+        );
+        assert!(
+            (fv.write_ratio - 0.5).abs() < 1e-6,
+            "Equal ratio should give 0.5 write"
+        );
     }
 
     #[test]
     fn test_feature_vector_read_heavy() {
         // read_write_ratio = 99.0 => mostly reads
         let fv = FeatureVector::from_characteristics(100, 64, 0.0, 99.0);
-        assert!(fv.read_ratio > 0.98, "High ratio should give high read_ratio, got {}", fv.read_ratio);
-        assert!(fv.write_ratio < 0.02, "High ratio should give low write_ratio, got {}", fv.write_ratio);
+        assert!(
+            fv.read_ratio > 0.98,
+            "High ratio should give high read_ratio, got {}",
+            fv.read_ratio
+        );
+        assert!(
+            fv.write_ratio < 0.02,
+            "High ratio should give low write_ratio, got {}",
+            fv.write_ratio
+        );
     }
 
     #[test]
     fn test_feature_vector_write_heavy() {
         // read_write_ratio = 0.0 => all writes
         let fv = FeatureVector::from_characteristics(100, 64, 0.0, 0.0);
-        assert!((fv.read_ratio - 0.0).abs() < 1e-6, "Zero ratio should give 0 read_ratio");
-        assert!((fv.write_ratio - 1.0).abs() < 1e-6, "Zero ratio should give 1.0 write_ratio");
+        assert!(
+            (fv.read_ratio - 0.0).abs() < 1e-6,
+            "Zero ratio should give 0 read_ratio"
+        );
+        assert!(
+            (fv.write_ratio - 1.0).abs() < 1e-6,
+            "Zero ratio should give 1.0 write_ratio"
+        );
     }
 
     #[test]
     fn test_feature_vector_to_array_length() {
         let fv = FeatureVector::from_characteristics(1000, 128, 0.5, 2.0);
         let arr = fv.to_array();
-        assert_eq!(arr.len(), 13, "Feature vector should have exactly 13 elements");
+        assert_eq!(
+            arr.len(),
+            13,
+            "Feature vector should have exactly 13 elements"
+        );
     }
 
     #[test]
@@ -914,7 +938,11 @@ mod tests {
     fn test_random_forest_empty() {
         let model = RandomForestModel::new(10);
         let features = FeatureVector::from_characteristics(100, 64, 0.5, 1.0);
-        assert_eq!(model.predict(&features), 0.0, "Empty forest should predict 0");
+        assert_eq!(
+            model.predict(&features),
+            0.0,
+            "Empty forest should predict 0"
+        );
     }
 
     #[test]
@@ -942,7 +970,10 @@ mod tests {
         let model = NeuralNetworkModel::new(&[13, 8, 1]);
         let features = FeatureVector::from_characteristics(1000, 128, 0.5, 1.0);
         let prediction = model.predict(&features);
-        assert!(prediction.is_finite(), "Neural network prediction should be finite");
+        assert!(
+            prediction.is_finite(),
+            "Neural network prediction should be finite"
+        );
     }
 
     #[test]
@@ -950,7 +981,10 @@ mod tests {
         let model = GradientBoostingModel::new(10, 0.1);
         let features = FeatureVector::from_characteristics(100, 64, 0.5, 1.0);
         let prediction = model.predict(&features);
-        assert_eq!(prediction, 0.0, "Empty boosting model should predict base prediction (0)");
+        assert_eq!(
+            prediction, 0.0,
+            "Empty boosting model should predict base prediction (0)"
+        );
     }
 
     #[test]
@@ -975,7 +1009,9 @@ mod tests {
     #[test]
     fn test_model_type_name() {
         assert_eq!(
-            model_type_name(&PredictionModel::LinearRegression(LinearRegressionModel::new())),
+            model_type_name(&PredictionModel::LinearRegression(
+                LinearRegressionModel::new()
+            )),
             "LinearRegression"
         );
         assert_eq!(
@@ -983,11 +1019,15 @@ mod tests {
             "RandomForest"
         );
         assert_eq!(
-            model_type_name(&PredictionModel::NeuralNetwork(NeuralNetworkModel::new(&[13, 1]))),
+            model_type_name(&PredictionModel::NeuralNetwork(NeuralNetworkModel::new(&[
+                13, 1
+            ]))),
             "NeuralNetwork"
         );
         assert_eq!(
-            model_type_name(&PredictionModel::GradientBoosting(GradientBoostingModel::new(1, 0.1))),
+            model_type_name(&PredictionModel::GradientBoosting(
+                GradientBoostingModel::new(1, 0.1)
+            )),
             "GradientBoosting"
         );
     }

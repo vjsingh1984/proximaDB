@@ -308,14 +308,14 @@ impl TierEnforcement {
             // Check warning threshold
             if let Some(warning_threshold) = limit.warning_threshold
                 && usage_percentage > warning_threshold
-                    && self.enforcement_config.enable_usage_warnings
-                {
-                    warn!(
-                        "⚠️ Usage warning: {} at {:.1}% of limit",
-                        feature,
-                        usage_percentage * 100.0
-                    );
-                }
+                && self.enforcement_config.enable_usage_warnings
+            {
+                warn!(
+                    "⚠️ Usage warning: {} at {:.1}% of limit",
+                    feature,
+                    usage_percentage * 100.0
+                );
+            }
         }
 
         Ok(EnforcementResult {

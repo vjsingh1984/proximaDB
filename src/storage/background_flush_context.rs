@@ -74,8 +74,7 @@ pub struct QuantizationConfig {
 }
 
 /// Operation priority for background tasks
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OperationPriority {
     Low,
     #[default]
@@ -83,7 +82,6 @@ pub enum OperationPriority {
     High,
     Critical,
 }
-
 
 /// Pre-computed context containing ALL metadata needed for background flush/compaction
 ///

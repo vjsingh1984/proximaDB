@@ -1090,7 +1090,10 @@ impl FeatureExtractor {
             DataModel::Vector => 0.25,
             DataModel::Document => 0.50,
             DataModel::Graph => 0.75,
-            DataModel::Observability | DataModel::TimeSeries | DataModel::Relational | DataModel::Event => 1.0,
+            DataModel::Observability
+            | DataModel::TimeSeries
+            | DataModel::Relational
+            | DataModel::Event => 1.0,
         };
 
         features
@@ -1121,7 +1124,10 @@ impl FeatureExtractor {
                     DataModel::Vector => 3,
                     DataModel::Document => 4,
                     DataModel::Graph => 5,
-                    DataModel::Observability | DataModel::TimeSeries | DataModel::Relational | DataModel::Event => 6,
+                    DataModel::Observability
+                    | DataModel::TimeSeries
+                    | DataModel::Relational
+                    | DataModel::Event => 6,
                 };
                 if model_idx < self.num_features {
                     features[model_idx] = 1.0;

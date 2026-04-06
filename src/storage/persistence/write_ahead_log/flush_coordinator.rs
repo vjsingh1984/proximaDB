@@ -642,7 +642,10 @@ impl WALFlushCoordinator {
     pub async fn get_pending_flushes(&self, collection_id: &str) -> Vec<PendingFlush> {
         let flush_states = self.flush_states.read().await;
         flush_states
-            .get(collection_id).map_or_else(Vec::new, |state| state.pending_flushes.values().cloned().collect())
+            .get(collection_id)
+            .map_or_else(Vec::new, |state| {
+                state.pending_flushes.values().cloned().collect()
+            })
     }
 
     /// Cancel a pending flush (in case of errors)

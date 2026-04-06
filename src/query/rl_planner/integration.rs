@@ -104,9 +104,10 @@ impl RLPlannerIntegration {
                 SearchIndexType::ZoneMap | SearchIndexType::AdaptiveMatrix => None,
             };
             if let Some(idx_type) = mapped
-                && !indexes.contains(&idx_type) {
-                    indexes.push(idx_type);
-                }
+                && !indexes.contains(&idx_type)
+            {
+                indexes.push(idx_type);
+            }
         }
 
         // Also check collection config for explicitly enabled indexes
@@ -123,9 +124,10 @@ impl RLPlannerIntegration {
                         _ => None,
                     };
                     if let Some(it) = idx_type
-                        && !indexes.contains(&it) {
-                            indexes.push(it);
-                        }
+                        && !indexes.contains(&it)
+                    {
+                        indexes.push(it);
+                    }
                 }
             }
         }
@@ -204,10 +206,11 @@ impl RLPlannerIntegration {
         // Modify execution steps based on RL action
         for step in &mut plan.execution_steps {
             if let ExecutionStep::VectorSearch {
-                    execution_method,
-                    candidates,
-                    ..
-                } = step {
+                execution_method,
+                candidates,
+                ..
+            } = step
+            {
                 // Apply index strategy from action
                 if let Some(ref strategy) = action.index_strategy {
                     *execution_method = match strategy {
@@ -407,10 +410,11 @@ pub fn get_rl_planner() -> Option<&'static RLPlannerIntegration> {
 /// Convenience function to select action if RL planner is enabled
 pub async fn rl_select_action(context: &UnifiedQueryContext<'_>) -> Option<ExecutionAction> {
     if let Some(planner) = get_rl_planner()
-        && planner.is_enabled() {
-            let state = planner.extract_state(context);
-            return Some(planner.select_action(&state).await);
-        }
+        && planner.is_enabled()
+    {
+        let state = planner.extract_state(context);
+        return Some(planner.select_action(&state).await);
+    }
     None
 }
 

@@ -30,7 +30,9 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{Collection, CollectionConfig, MetadataItem, VectorRecord};
 use crate::storage::engines::impls::sst::readers::sst_query_engine::CollectionContext;
 use crate::storage::engines::impls::sst::{SstEngine, SstRecord, UnifiedSstableReader};
-use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory, UnifiedCachingFilesystem};
+use crate::storage::persistence::filesystem::{
+    FilesystemConfig, FilesystemFactory, UnifiedCachingFilesystem,
+};
 // manifest module is not exposed - tests may need refactoring
 // use crate::storage::engines::impls::sst::manifest::SstManifest;
 use crate::core::BloomFilterConfig;
@@ -318,7 +320,6 @@ pub fn create_simple_vector_record(id: &str, dim: usize) -> VectorRecord {
 /// # Returns
 /// Configured UnifiedSstableReader for testing
 pub async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
-
     let fs_config = FilesystemConfig::default();
     let fs_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
     let fs = fs_factory
@@ -343,7 +344,6 @@ pub async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
 /// # Returns
 /// Basic UnifiedSstableReader for testing
 pub async fn create_test_reader() -> UnifiedSstableReader {
-
     let config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
     let fs = filesystem

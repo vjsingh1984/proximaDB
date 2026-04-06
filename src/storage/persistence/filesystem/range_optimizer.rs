@@ -168,10 +168,7 @@ impl RangeOptimizer {
 
     /// Record a range access for learning
     pub async fn record_access(&self, file_path: &str, start: u64, end: u64) {
-        let mut entry = self
-            .range_history
-            .entry(file_path.to_string())
-            .or_default();
+        let mut entry = self.range_history.entry(file_path.to_string()).or_default();
 
         // Check if this range already exists
         for range in entry.iter_mut() {

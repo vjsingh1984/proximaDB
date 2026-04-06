@@ -329,19 +329,20 @@ impl DiskCsrStorage {
 
         // Log to WAL before writing (write-ahead logging)
         if self.wal_enabled
-            && let Some(ref _wal_writer) = self.wal_writer {
-                // Deferred: Create proper GraphOperation::CreateEdge
-                // For now, log the operation for debugging
-                tracing::debug!(
-                    "WAL: Edge addition from={} to={} id={}",
-                    from_idx,
-                    to_idx,
-                    edge_id
-                );
+            && let Some(ref _wal_writer) = self.wal_writer
+        {
+            // Deferred: Create proper GraphOperation::CreateEdge
+            // For now, log the operation for debugging
+            tracing::debug!(
+                "WAL: Edge addition from={} to={} id={}",
+                from_idx,
+                to_idx,
+                edge_id
+            );
 
-                // Note: In production, this would write to UnifiedWALWriter
-                // wal_writer.log_operation(operation).await?;
-            }
+            // Note: In production, this would write to UnifiedWALWriter
+            // wal_writer.log_operation(operation).await?;
+        }
 
         // Add to write buffer
         self.write_buffer
@@ -375,24 +376,25 @@ impl DiskCsrStorage {
             // This is a simplified implementation - production would need more sophisticated offset management
 
             if let Some(ref mut targets_mmap) = self.targets_mmap
-                && let Some(ref _edge_ids_mmap) = self.edge_ids_mmap {
-                    // For each edge, append to targets and edge_ids arrays
-                    for (to_idx, edge_id) in edges {
-                        // Convert to bytes and write to mmap
-                        // Note: This is simplified - production would use proper serialization
-                        let to_idx_bytes = to_idx.to_ne_bytes();
-                        let _edge_id_bytes = edge_id.as_bytes();
+                && let Some(ref _edge_ids_mmap) = self.edge_ids_mmap
+            {
+                // For each edge, append to targets and edge_ids arrays
+                for (to_idx, edge_id) in edges {
+                    // Convert to bytes and write to mmap
+                    // Note: This is simplified - production would use proper serialization
+                    let to_idx_bytes = to_idx.to_ne_bytes();
+                    let _edge_id_bytes = edge_id.as_bytes();
 
-                        // Append to targets (simplified - production would track current position)
-                        {
-                            let pos = self.edge_count * std::mem::size_of::<usize>();
-                            if pos + std::mem::size_of::<usize>() <= targets_mmap.len() {
-                                targets_mmap[pos..pos + std::mem::size_of::<usize>()]
-                                    .copy_from_slice(&to_idx_bytes);
-                            }
+                    // Append to targets (simplified - production would track current position)
+                    {
+                        let pos = self.edge_count * std::mem::size_of::<usize>();
+                        if pos + std::mem::size_of::<usize>() <= targets_mmap.len() {
+                            targets_mmap[pos..pos + std::mem::size_of::<usize>()]
+                                .copy_from_slice(&to_idx_bytes);
                         }
                     }
                 }
+            }
         }
 
         // Clear write buffer after flush
@@ -417,10 +419,11 @@ impl DiskCsrStorage {
 
         // Try to get from cache (non-blocking)
         if let Ok(cache) = self.page_cache.try_read()
-            && cache.peek(&page_id).is_some() {
-                // Cache hit - read from mmap
-                return self.read_edges_from_mmap(from_idx);
-            }
+            && cache.peek(&page_id).is_some()
+        {
+            // Cache hit - read from mmap
+            return self.read_edges_from_mmap(from_idx);
+        }
 
         // Cache miss - read from disk
         self.read_edges_from_mmap(from_idx)
@@ -455,25 +458,26 @@ impl DiskCsrStorage {
 
                     // Read edges from targets array
                     if let Some(ref targets_mmap) = self.targets_mmap
-                        && let Some(ref _edge_ids_mmap) = self.edge_ids_mmap {
-                            for i in start_offset..end_offset {
-                                let pos = i * std::mem::size_of::<usize>();
-                                if pos + std::mem::size_of::<usize>() <= targets_mmap.len() {
-                                    let target_bytes = targets_mmap
-                                        [pos..pos + std::mem::size_of::<usize>()]
-                                        .try_into()
-                                        .map_err(|_| {
-                                            io_error("Target slice has wrong size".to_string())
-                                        })?;
-                                    let to_idx = usize::from_ne_bytes(target_bytes);
+                        && let Some(ref _edge_ids_mmap) = self.edge_ids_mmap
+                    {
+                        for i in start_offset..end_offset {
+                            let pos = i * std::mem::size_of::<usize>();
+                            if pos + std::mem::size_of::<usize>() <= targets_mmap.len() {
+                                let target_bytes = targets_mmap
+                                    [pos..pos + std::mem::size_of::<usize>()]
+                                    .try_into()
+                                    .map_err(|_| {
+                                        io_error("Target slice has wrong size".to_string())
+                                    })?;
+                                let to_idx = usize::from_ne_bytes(target_bytes);
 
-                                    // Read edge_id (simplified - production would use proper deserialization)
-                                    let edge_id = format!("edge_{}", i);
+                                // Read edge_id (simplified - production would use proper deserialization)
+                                let edge_id = format!("edge_{}", i);
 
-                                    edges.push((to_idx, edge_id));
-                                }
+                                edges.push((to_idx, edge_id));
                             }
                         }
+                    }
                 }
             }
         }

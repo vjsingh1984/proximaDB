@@ -37,8 +37,7 @@ pub struct TimePartition {
 }
 
 /// Partition metadata
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PartitionMetadata {
     /// Number of records in partition
     pub record_count: usize,
@@ -55,7 +54,6 @@ pub struct PartitionMetadata {
     /// Last flush time
     pub last_flush: Option<DateTime<Utc>>,
 }
-
 
 impl TimePartition {
     /// Create a new empty time partition
@@ -98,10 +96,7 @@ impl TimePartition {
 
     /// Insert an OHLC bar
     pub async fn insert_ohlc(&mut self, bar: OHLCBar) -> Result<()> {
-        let symbol_bars = self
-            .ohlc_bars
-            .entry(bar.symbol.clone())
-            .or_default();
+        let symbol_bars = self.ohlc_bars.entry(bar.symbol.clone()).or_default();
 
         let timestamp = bar.timestamp;
         symbol_bars.insert(timestamp, bar);

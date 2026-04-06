@@ -195,9 +195,10 @@ impl NativeMetadataHandler {
     fn infer_field_type(&self, field: &str, stats: &FieldStatistics) -> Result<MetadataFieldType> {
         // Handle common field optimizations
         if self.use_common_field_optimization
-            && let Some(field_type) = self.get_common_field_type(field) {
-                return Ok(field_type);
-            }
+            && let Some(field_type) = self.get_common_field_type(field)
+        {
+            return Ok(field_type);
+        }
 
         let total = stats.total_values as f64;
         if total == 0.0 {

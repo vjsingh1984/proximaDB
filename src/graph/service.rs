@@ -255,13 +255,14 @@ impl GraphOperationsService {
     pub fn from_config(cfg: &crate::core::config::Config) -> Self {
         let engine_name = cfg
             .graph
-            .as_ref().map_or_else(|| "ORION".to_string(), |g| g.engine.to_ascii_uppercase());
+            .as_ref()
+            .map_or_else(|| "ORION".to_string(), |g| g.engine.to_ascii_uppercase());
 
         // Get storage URL from config
-        let base_storage_url = cfg
-            .storage
-            .storage_locations
-            .first().map_or_else(|| "file:///tmp/proximadb".to_string(), |loc| loc.url.clone());
+        let base_storage_url = cfg.storage.storage_locations.first().map_or_else(
+            || "file:///tmp/proximadb".to_string(),
+            |loc| loc.url.clone(),
+        );
 
         // Engine selection: PULSAR requires 'distributed-graph' feature, QUASAR requires 'tiered-graph'
         // Engine is determined per-graph from collection metadata during recovery
@@ -427,7 +428,8 @@ impl GraphOperationsService {
         let collection = self.collection_service.get_graph(graph_id).await?;
         let engine_type = collection
             .as_ref()
-            .and_then(|c| c.storage_config.as_ref()).map_or_else(|| "ORION".to_string(), |sc| sc.engine_type.to_uppercase());
+            .and_then(|c| c.storage_config.as_ref())
+            .map_or_else(|| "ORION".to_string(), |sc| sc.engine_type.to_uppercase());
 
         tracing::debug!(
             "Recovering graph {} with engine type: {}",
@@ -1058,12 +1060,13 @@ impl GraphOperationsService {
             if let Some(val) = node.properties.get(property) {
                 let k = index_key_for_value(val);
                 if let Some(existing) = map.get(&k)
-                    && existing.value() != &node.id {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "Existing duplicate value '{}' for unique ({},{})",
-                            k, label, property
-                        )));
-                    }
+                    && existing.value() != &node.id
+                {
+                    return Err(ProximaDBError::InvalidInput(format!(
+                        "Existing duplicate value '{}' for unique ({},{})",
+                        k, label, property
+                    )));
+                }
                 map.insert(k, node.id.clone());
             }
         }
@@ -1555,27 +1558,27 @@ impl GraphOperationsService {
                         if let Some(prefix) = extract_string_from_value(filter_val)
                             && let Some(map_lock) =
                                 self.memory_pool.edge_property_str_ordered.get(&filter.key)
+                        {
+                            // Handle poisoned lock gracefully
+                            let Ok(map) = map_lock.read() else {
+                                tracing::warn!(
+                                    "Poisoned lock in edge_property_str_ordered for key {}",
+                                    filter.key
+                                );
+                                continue;
+                            };
+                            let mut matched = std::collections::HashSet::new();
+                            for (_k, ids) in map
+                                .range(prefix.to_string()..)
+                                .take_while(|(k, _)| k.starts_with(prefix))
                             {
-                                // Handle poisoned lock gracefully
-                                let Ok(map) = map_lock.read() else {
-                                    tracing::warn!(
-                                        "Poisoned lock in edge_property_str_ordered for key {}",
-                                        filter.key
-                                    );
-                                    continue;
-                                };
-                                let mut matched = std::collections::HashSet::new();
-                                for (_k, ids) in map
-                                    .range(prefix.to_string()..)
-                                    .take_while(|(k, _)| k.starts_with(prefix))
-                                {
-                                    matched.extend(ids.iter().cloned());
-                                }
-                                candidate_ids = Some(match candidate_ids {
-                                    None => matched,
-                                    Some(prev) => prev.intersection(&matched).cloned().collect(),
-                                });
+                                matched.extend(ids.iter().cloned());
                             }
+                            candidate_ids = Some(match candidate_ids {
+                                None => matched,
+                                Some(prev) => prev.intersection(&matched).cloned().collect(),
+                            });
+                        }
                     }
                     Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
                         // Safely handle missing filter value
@@ -1800,8 +1803,8 @@ impl GraphOperationsService {
                     count: entry.value().load(std::sync::atomic::Ordering::Relaxed),
                 })
                 .collect(),
-            total_properties: 0,     // Property count: requires traversal (expensive)
-            memory_usage_bytes: 0,   // Memory: tracked by engine allocator
+            total_properties: 0, // Property count: requires traversal (expensive)
+            memory_usage_bytes: 0, // Memory: tracked by engine allocator
             average_degree: {
                 let nc = engine.node_count().unwrap_or(0) as f64;
                 let ec = self.stats_edges.load(std::sync::atomic::Ordering::Relaxed) as f64;
@@ -2162,58 +2165,58 @@ impl GraphOperationsService {
         let maybe_collection = self.collection_service.get_graph(graph_id).await?;
         if let Some(coll) = maybe_collection
             && let Some(schema) = &coll.schema
-                && let Some(ets) = schema
-                    .edge_types
-                    .iter()
-                    .find(|et| et.edge_type == edge.edge_type)
-                {
-                    use crate::proto::proximadb_v1::Cardinality;
-                    match ets.cardinality {
-                        x if x == Cardinality::OneToOne as i32 => {
-                            if !engine
-                                .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
-                                .is_empty()
-                            {
-                                return Err(ProximaDBError::InvalidInput(format!(
-                                    "Cardinality violation: ONE_TO_ONE allows a single '{}' from {}",
-                                    edge.edge_type, edge.from_node_id
-                                )));
-                            }
-                            if !engine
-                                .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
-                                .is_empty()
-                            {
-                                return Err(ProximaDBError::InvalidInput(format!(
-                                    "Cardinality violation: ONE_TO_ONE allows a single '{}' to {}",
-                                    edge.edge_type, edge.to_node_id
-                                )));
-                            }
-                        }
-                        x if x == Cardinality::OneToMany as i32 => {
-                            if !engine
-                                .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
-                                .is_empty()
-                            {
-                                return Err(ProximaDBError::InvalidInput(format!(
-                                    "Cardinality violation: ONE_TO_MANY allows a single incoming '{}' to {}",
-                                    edge.edge_type, edge.to_node_id
-                                )));
-                            }
-                        }
-                        x if x == Cardinality::ManyToOne as i32 => {
-                            if !engine
-                                .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
-                                .is_empty()
-                            {
-                                return Err(ProximaDBError::InvalidInput(format!(
-                                    "Cardinality violation: MANY_TO_ONE allows a single outgoing '{}' from {}",
-                                    edge.edge_type, edge.from_node_id
-                                )));
-                            }
-                        }
-                        _ => {}
+            && let Some(ets) = schema
+                .edge_types
+                .iter()
+                .find(|et| et.edge_type == edge.edge_type)
+        {
+            use crate::proto::proximadb_v1::Cardinality;
+            match ets.cardinality {
+                x if x == Cardinality::OneToOne as i32 => {
+                    if !engine
+                        .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
+                        .is_empty()
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Cardinality violation: ONE_TO_ONE allows a single '{}' from {}",
+                            edge.edge_type, edge.from_node_id
+                        )));
+                    }
+                    if !engine
+                        .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
+                        .is_empty()
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Cardinality violation: ONE_TO_ONE allows a single '{}' to {}",
+                            edge.edge_type, edge.to_node_id
+                        )));
                     }
                 }
+                x if x == Cardinality::OneToMany as i32 => {
+                    if !engine
+                        .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
+                        .is_empty()
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Cardinality violation: ONE_TO_MANY allows a single incoming '{}' to {}",
+                            edge.edge_type, edge.to_node_id
+                        )));
+                    }
+                }
+                x if x == Cardinality::ManyToOne as i32 => {
+                    if !engine
+                        .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
+                        .is_empty()
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Cardinality violation: MANY_TO_ONE allows a single outgoing '{}' from {}",
+                            edge.edge_type, edge.from_node_id
+                        )));
+                    }
+                }
+                _ => {}
+            }
+        }
         Ok(())
     }
 }

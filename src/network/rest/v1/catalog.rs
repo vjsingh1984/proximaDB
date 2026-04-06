@@ -140,8 +140,14 @@ pub async fn list_catalogs(
     debug!("Listing catalogs");
 
     // List catalogs from the manager. Currently returns default catalog.
-    let catalog_names = state.catalog_manager.list_catalog_names().await.unwrap_or_default();
-    Ok(Json(ListCatalogsResponse { catalogs: catalog_names }))
+    let catalog_names = state
+        .catalog_manager
+        .list_catalog_names()
+        .await
+        .unwrap_or_default();
+    Ok(Json(ListCatalogsResponse {
+        catalogs: catalog_names,
+    }))
 }
 
 /// Unregister a catalog

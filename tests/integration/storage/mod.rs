@@ -35,8 +35,8 @@ pub mod compaction_config_test;
 pub mod flush_management_test;
 pub mod global_flush_test;
 pub mod threshold_triggers_test;
-pub mod write_buffer_config_test;
 pub mod write_buffer_config_simple_test;
+pub mod write_buffer_config_test;
 
 // Existing tests
 pub mod test_atomic_strategy;

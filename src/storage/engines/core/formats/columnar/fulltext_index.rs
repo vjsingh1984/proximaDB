@@ -80,8 +80,7 @@ pub enum FullTextIndexError {
 // =============================================================================
 
 /// Tokenizer type selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TokenizerType {
     /// Standard tokenizer: lowercase, remove punctuation, split on whitespace
     #[default]
@@ -97,7 +96,6 @@ pub enum TokenizerType {
     /// Keyword tokenizer: entire input as single token
     Keyword,
 }
-
 
 /// Configuration for tokenization
 #[derive(Debug, Clone)]
@@ -1259,10 +1257,7 @@ impl FullTextIndex {
 
         // Merge inverted index
         for (term, other_pl) in other.inverted_index {
-            let pl = self
-                .inverted_index
-                .entry(term)
-                .or_default();
+            let pl = self.inverted_index.entry(term).or_default();
 
             for posting in other_pl.postings {
                 if pl.get_posting(&posting.doc_id).is_none() {

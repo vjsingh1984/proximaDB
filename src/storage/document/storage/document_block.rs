@@ -96,16 +96,16 @@ impl DocumentBlock {
                         stats.null_count += 1;
                     } else {
                         // Update min/max
-                        stats.min_value = Some(
-                            stats
-                                .min_value
-                                .take().map_or_else(|| value.clone(), |min| Self::min_value(&min, &value)),
-                        );
-                        stats.max_value = Some(
-                            stats
-                                .max_value
-                                .take().map_or_else(|| value.clone(), |max| Self::max_value(&max, &value)),
-                        );
+                        stats.min_value =
+                            Some(stats.min_value.take().map_or_else(
+                                || value.clone(),
+                                |min| Self::min_value(&min, &value),
+                            ));
+                        stats.max_value =
+                            Some(stats.max_value.take().map_or_else(
+                                || value.clone(),
+                                |max| Self::max_value(&max, &value),
+                            ));
                     }
                 }
             }
@@ -135,7 +135,9 @@ impl DocumentBlock {
         // Serialize documents as JSON bytes
         for (_, doc) in &documents {
             let json = serde_json::to_vec(doc).unwrap_or_default();
-            block.data.extend_from_slice(&(json.len() as u32).to_le_bytes());
+            block
+                .data
+                .extend_from_slice(&(json.len() as u32).to_le_bytes());
             block.data.extend_from_slice(&json);
         }
         block.header.uncompressed_size = block.data.len() as u64;
@@ -163,7 +165,9 @@ impl DocumentBlock {
         let mut h2: u64 = 0;
         for (i, b) in s.bytes().enumerate() {
             h1 = h1.wrapping_mul(31).wrapping_add(b as u64);
-            h2 = h2.wrapping_mul(37).wrapping_add((b as u64).wrapping_add(i as u64));
+            h2 = h2
+                .wrapping_mul(37)
+                .wrapping_add((b as u64).wrapping_add(i as u64));
         }
         let h3 = h1.wrapping_add(h2);
         [
@@ -199,13 +203,15 @@ impl DocumentBlock {
             // Check if ranges overlap
             if let (Some(block_min), Some(block_max)) = (&stats.min_value, &stats.max_value) {
                 if let Some(query_max) = max
-                    && Self::compare_values(block_min, query_max) > 0 {
-                        return false;
-                    }
+                    && Self::compare_values(block_min, query_max) > 0
+                {
+                    return false;
+                }
                 if let Some(query_min) = min
-                    && Self::compare_values(block_max, query_min) < 0 {
-                        return false;
-                    }
+                    && Self::compare_values(block_max, query_min) < 0
+                {
+                    return false;
+                }
             }
             true
         } else {
@@ -299,16 +305,23 @@ mod tests {
     use super::*;
 
     fn make_sql_string(s: &str) -> SqlValue {
-        SqlValue { value: Some(SqlVal::StringValue(s.to_string())) }
+        SqlValue {
+            value: Some(SqlVal::StringValue(s.to_string())),
+        }
     }
 
     fn make_sql_int(i: i64) -> SqlValue {
-        SqlValue { value: Some(SqlVal::Int64Value(i)) }
+        SqlValue {
+            value: Some(SqlVal::Int64Value(i)),
+        }
     }
 
     fn make_doc(fields: Vec<(&str, SqlValue)>) -> SqlObject {
         SqlObject {
-            fields: fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            fields: fields
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
         }
     }
 
@@ -322,10 +335,23 @@ mod tests {
     #[test]
     fn test_bloom_filter_positive() {
         let docs = vec![
-            ("d1".to_string(), make_doc(vec![("name", make_sql_string("Alice")), ("age", make_sql_int(30))])),
-            ("d2".to_string(), make_doc(vec![("name", make_sql_string("Bob")), ("age", make_sql_int(25))])),
+            (
+                "d1".to_string(),
+                make_doc(vec![
+                    ("name", make_sql_string("Alice")),
+                    ("age", make_sql_int(30)),
+                ]),
+            ),
+            (
+                "d2".to_string(),
+                make_doc(vec![
+                    ("name", make_sql_string("Bob")),
+                    ("age", make_sql_int(25)),
+                ]),
+            ),
         ];
-        let block = DocumentBlock::from_documents(docs, &["name".to_string(), "age".to_string()]).unwrap();
+        let block =
+            DocumentBlock::from_documents(docs, &["name".to_string(), "age".to_string()]).unwrap();
 
         assert!(block.might_contain_path("name"));
         assert!(block.might_contain_path("age"));
@@ -333,9 +359,10 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_negative() {
-        let docs = vec![
-            ("d1".to_string(), make_doc(vec![("name", make_sql_string("Alice"))])),
-        ];
+        let docs = vec![(
+            "d1".to_string(),
+            make_doc(vec![("name", make_sql_string("Alice"))]),
+        )];
         let block = DocumentBlock::from_documents(docs, &["name".to_string()]).unwrap();
 
         // "zzz_nonexistent_field" should almost certainly be negative
@@ -345,7 +372,10 @@ mod tests {
 
     #[test]
     fn test_extract_path_value() {
-        let doc = make_doc(vec![("city", make_sql_string("London")), ("pop", make_sql_int(9000000))]);
+        let doc = make_doc(vec![
+            ("city", make_sql_string("London")),
+            ("pop", make_sql_int(9000000)),
+        ]);
         let val = DocumentBlock::extract_path_value(&doc, "city").unwrap();
         assert_eq!(val.value, Some(SqlVal::StringValue("London".to_string())));
     }
@@ -362,9 +392,18 @@ mod tests {
     #[test]
     fn test_path_stats_populated() {
         let docs = vec![
-            ("d1".to_string(), make_doc(vec![("score", make_sql_int(10))])),
-            ("d2".to_string(), make_doc(vec![("score", make_sql_int(50))])),
-            ("d3".to_string(), make_doc(vec![("score", make_sql_int(30))])),
+            (
+                "d1".to_string(),
+                make_doc(vec![("score", make_sql_int(10))]),
+            ),
+            (
+                "d2".to_string(),
+                make_doc(vec![("score", make_sql_int(50))]),
+            ),
+            (
+                "d3".to_string(),
+                make_doc(vec![("score", make_sql_int(30))]),
+            ),
         ];
         let block = DocumentBlock::from_documents(docs, &["score".to_string()]).unwrap();
         let stats = block.header.path_stats.get("score").unwrap();
@@ -373,10 +412,14 @@ mod tests {
 
     #[test]
     fn test_data_serialized() {
-        let docs = vec![
-            ("d1".to_string(), make_doc(vec![("k", make_sql_string("v"))])),
-        ];
+        let docs = vec![(
+            "d1".to_string(),
+            make_doc(vec![("k", make_sql_string("v"))]),
+        )];
         let block = DocumentBlock::from_documents(docs, &[]).unwrap();
-        assert!(!block.data.is_empty(), "documents should be serialized into data");
+        assert!(
+            !block.data.is_empty(),
+            "documents should be serialized into data"
+        );
     }
 }

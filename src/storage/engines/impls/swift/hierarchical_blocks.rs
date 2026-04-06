@@ -742,7 +742,7 @@ mod tests {
         bs2.set(40); // Only in bs2
 
         let intersection = bs1.intersect(&bs2);
-        assert!(intersection.test(10));  // Common
+        assert!(intersection.test(10)); // Common
         assert!(!intersection.test(30)); // Only in bs1
         assert!(!intersection.test(40)); // Only in bs2
         assert_eq!(intersection.count(), 1);
@@ -837,9 +837,7 @@ mod tests {
 
     #[test]
     fn test_ordered_value_number_ordering() {
-        assert!(
-            OrderedValue::Number(OrderedFloat(1.0)) < OrderedValue::Number(OrderedFloat(2.0))
-        );
+        assert!(OrderedValue::Number(OrderedFloat(1.0)) < OrderedValue::Number(OrderedFloat(2.0)));
         assert_eq!(
             OrderedValue::Number(OrderedFloat(3.14)),
             OrderedValue::Number(OrderedFloat(3.14))

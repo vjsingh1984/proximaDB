@@ -22,8 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Performance tier for storage (from traits.rs)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum PerformanceTier {
     /// Memory/NVMe, <1ms latency - highest performance
     Hot,
@@ -77,7 +76,6 @@ impl PerformanceTier {
         }
     }
 }
-
 
 impl std::fmt::Display for PerformanceTier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

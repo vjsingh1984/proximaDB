@@ -360,17 +360,21 @@ impl AtomicMetadataStore {
                             .stats
                             .as_ref()
                             .map_or(0, |s| s.data_size_bytes as u64),
-                        config: collection.config.as_ref().map(|c| {
-                            let mut m = std::collections::HashMap::new();
-                            m.insert("dimension".to_string(), serde_json::json!(c.dimension));
-                            if let Some(dm) = c.distance_metric {
-                                m.insert("distance_metric".to_string(), serde_json::json!(dm));
-                            }
-                            if let Some(se) = c.storage_engine {
-                                m.insert("storage_engine".to_string(), serde_json::json!(se));
-                            }
-                            m
-                        }).unwrap_or_default(),
+                        config: collection
+                            .config
+                            .as_ref()
+                            .map(|c| {
+                                let mut m = std::collections::HashMap::new();
+                                m.insert("dimension".to_string(), serde_json::json!(c.dimension));
+                                if let Some(dm) = c.distance_metric {
+                                    m.insert("distance_metric".to_string(), serde_json::json!(dm));
+                                }
+                                if let Some(se) = c.storage_engine {
+                                    m.insert("storage_engine".to_string(), serde_json::json!(se));
+                                }
+                                m
+                            })
+                            .unwrap_or_default(),
                         description: None,
                         tags: Vec::new(),
                         owner: None,
@@ -446,11 +450,13 @@ impl AtomicMetadataStore {
             let mut version_store = self.version_store.write().await;
             for (collection_id, versioned_metadata) in version_updates {
                 // Convert VersionedCollectionMetadata back to Collection proto
-                let distance_metric_val = versioned_metadata.config
+                let distance_metric_val = versioned_metadata
+                    .config
                     .get("distance_metric")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i32;
-                let storage_engine_val = versioned_metadata.config
+                let storage_engine_val = versioned_metadata
+                    .config
                     .get("storage_engine")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i32;
@@ -611,9 +617,7 @@ impl AtomicMetadataStore {
 
         // Try to acquire all locks
         for collection_id in collection_ids {
-            let locks = lock_table
-                .entry(collection_id.clone())
-                .or_default();
+            let locks = lock_table.entry(collection_id.clone()).or_default();
 
             // Check for conflicts
             let has_conflict = locks.iter().any(|lock_info| {
@@ -905,7 +909,10 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         // Since operations are applied eagerly, rollback would need to
         // restore from the version store snapshot. For now, log and proceed
         // — full MVCC rollback requires snapshot isolation (deferred).
-        tracing::warn!("Transaction {} rollback requested; snapshot restore not yet implemented", transaction_id);
+        tracing::warn!(
+            "Transaction {} rollback requested; snapshot restore not yet implemented",
+            transaction_id
+        );
         Ok(())
     }
 
@@ -917,7 +924,10 @@ impl MetadataStoreInterface for AtomicMetadataStore {
             .map_err(|e| anyhow::anyhow!("Failed to serialize backup: {}", e))?;
         tracing::info!(
             "Backup {} created at {} ({} collections, {} bytes)",
-            backup_id, location, collections.len(), backup_data.len()
+            backup_id,
+            location,
+            collections.len(),
+            backup_data.len()
         );
         Ok(backup_id)
     }
@@ -926,7 +936,8 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         // Restore: deserialize metadata from backup location and upsert
         tracing::info!(
             "Restore requested from backup_id: {}, location: {}",
-            backup_id, location
+            backup_id,
+            location
         );
         Ok(())
     }

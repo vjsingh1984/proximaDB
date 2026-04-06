@@ -345,7 +345,10 @@ impl SharedParquetFormatReader {
         self.stats.footer_misses.fetch_add(1, Ordering::Relaxed);
 
         // For cloud files, download ONLY the footer
-        if file_path.starts_with("s3://") || file_path.starts_with("gs://") || file_path.starts_with("az://") {
+        if file_path.starts_with("s3://")
+            || file_path.starts_with("gs://")
+            || file_path.starts_with("az://")
+        {
             let metadata = self
                 .filesystem
                 .get_filesystem(file_path)?
@@ -369,7 +372,9 @@ impl SharedParquetFormatReader {
             use parquet::file::reader::{FileReader, SerializedFileReader};
 
             let reader = SerializedFileReader::new(bytes::Bytes::from(footer_data.clone()))
-                .map_err(|e| ProximaDBError::Internal(format!("Failed to parse Parquet footer: {}", e)))?;
+                .map_err(|e| {
+                    ProximaDBError::Internal(format!("Failed to parse Parquet footer: {}", e))
+                })?;
             let metadata = reader.metadata().clone();
 
             let cache_entry = ParquetFooterCache {
@@ -468,19 +473,21 @@ impl LocalDiskCache {
     ) -> Result<Option<RecordBatch>, ProximaDBError> {
         // Check if we have this row group cached
         if let Some(cached_rgs) = self.cached_row_groups.get(file_path)
-            && cached_rgs.contains(&rg_idx) {
-                // Check if we have all requested columns
-                if let Some(cached_cols) = self.cached_columns.get(file_path)
-                    && let Some(rg_columns) = cached_cols.get(&rg_idx)
-                        && columns.iter().all(|c| rg_columns.contains(c)) {
-                            // Load from cache
-                            let cache_file = self.cache_path_for_row_group(file_path, rg_idx);
-                            if cache_file.exists() {
-                                // Read and decode cached data
-                                // ... implementation
-                            }
-                        }
+            && cached_rgs.contains(&rg_idx)
+        {
+            // Check if we have all requested columns
+            if let Some(cached_cols) = self.cached_columns.get(file_path)
+                && let Some(rg_columns) = cached_cols.get(&rg_idx)
+                && columns.iter().all(|c| rg_columns.contains(c))
+            {
+                // Load from cache
+                let cache_file = self.cache_path_for_row_group(file_path, rg_idx);
+                if cache_file.exists() {
+                    // Read and decode cached data
+                    // ... implementation
+                }
             }
+        }
 
         Ok(None)
     }
@@ -534,25 +541,26 @@ impl LocalDiskCache {
             self.cached_columns.remove(&file_path);
 
             // Delete cache files
-            let pattern = self.cache_dir.join(format!(
-                "{}*",
-                file_path.replace(['/', ':'], "_")
-            ));
+            let pattern = self
+                .cache_dir
+                .join(format!("{}*", file_path.replace(['/', ':'], "_")));
 
             // Remove all matching files using internal glob implementation
             if let Some(parent_dir) = pattern.parent()
                 && let Some(pattern_name) = pattern.file_name().and_then(|n| n.to_str())
-                    && let Ok(glob_pattern) = crate::utils::glob::GlobPattern::new(pattern_name) {
-                        let matcher = crate::utils::glob::GlobMatcher::new(&glob_pattern);
-                        if let Ok(entries) = std::fs::read_dir(parent_dir) {
-                            for entry in entries.flatten() {
-                                if let Some(file_name) = entry.file_name().to_str()
-                                    && matcher.is_match(file_name) {
-                                        std::fs::remove_file(entry.path()).ok();
-                                    }
-                            }
+                && let Ok(glob_pattern) = crate::utils::glob::GlobPattern::new(pattern_name)
+            {
+                let matcher = crate::utils::glob::GlobMatcher::new(&glob_pattern);
+                if let Ok(entries) = std::fs::read_dir(parent_dir) {
+                    for entry in entries.flatten() {
+                        if let Some(file_name) = entry.file_name().to_str()
+                            && matcher.is_match(file_name)
+                        {
+                            std::fs::remove_file(entry.path()).ok();
                         }
                     }
+                }
+            }
         }
 
         info!(

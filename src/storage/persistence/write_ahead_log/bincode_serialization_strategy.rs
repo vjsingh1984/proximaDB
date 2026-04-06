@@ -118,7 +118,7 @@ impl BincodeSerializationStrategy {
 }
 
 impl Default for BincodeSerializationStrategy {
-    #[allow(clippy::panic)]  // Intentional panic for API misuse - Default not supported, must use new()
+    #[allow(clippy::panic)] // Intentional panic for API misuse - Default not supported, must use new()
     fn default() -> Self {
         panic!("BincodeSerializationStrategy requires configuration - use new() instead")
     }
@@ -143,7 +143,11 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         None // Filesystem is managed by disk_manager
     }
 
-    fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>, collection_id: &str) {
+    fn set_storage_engine(
+        &self,
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        collection_id: &str,
+    ) {
         let mut engine_guard = self.storage_engine.blocking_write();
         *engine_guard = Some(storage_engine.clone());
 
@@ -786,9 +790,10 @@ impl BincodeSerializationStrategy {
             }
 
             if let Some(max_files) = limit
-                && files_processed >= max_files {
-                    break;
-                }
+                && files_processed >= max_files
+            {
+                break;
+            }
 
             let file_path = format!("{}/{}", collection_wal_dir, entry.name);
 

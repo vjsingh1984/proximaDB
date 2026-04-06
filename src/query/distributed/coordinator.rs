@@ -249,12 +249,13 @@ impl DistributedQueryCoordinator {
 
         // Check cache
         if self.config.enable_result_cache
-            && let Some(cached) = self.check_cache(query).await {
-                let mut stats = self.stats.write().await;
-                stats.cache_hits += 1;
-                stats.total_queries += 1;
-                return Ok(cached);
-            }
+            && let Some(cached) = self.check_cache(query).await
+        {
+            let mut stats = self.stats.write().await;
+            stats.cache_hits += 1;
+            stats.total_queries += 1;
+            return Ok(cached);
+        }
 
         // Plan the query distribution
         let plan = self.plan_query(query).await?;

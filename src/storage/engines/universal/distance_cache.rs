@@ -97,26 +97,27 @@ impl DistanceTableCache {
             .cache_orchestrator
             .get(&CacheType::DistanceTable, &cache_key)
             .await
-            && let Ok(cached_table) = serde_json::from_slice::<CachedDistanceTable>(&cached_data) {
-                trace!("Cache hit for distance table");
+            && let Ok(cached_table) = serde_json::from_slice::<CachedDistanceTable>(&cached_data)
+        {
+            trace!("Cache hit for distance table");
 
-                // Update access count
-                let updated_table = CachedDistanceTable {
-                    distances: cached_table.distances.clone(),
-                    access_count: cached_table.access_count + 1,
-                };
+            // Update access count
+            let updated_table = CachedDistanceTable {
+                distances: cached_table.distances.clone(),
+                access_count: cached_table.access_count + 1,
+            };
 
-                if let Ok(updated_data) = serde_json::to_vec(&updated_table) {
-                    drop(self.cache_orchestrator.put(
-                        CacheType::DistanceTable,
-                        cache_key,
-                        updated_data,
-                        None,
-                    ));
-                }
-
-                return Ok(cached_table.distances);
+            if let Ok(updated_data) = serde_json::to_vec(&updated_table) {
+                drop(self.cache_orchestrator.put(
+                    CacheType::DistanceTable,
+                    cache_key,
+                    updated_data,
+                    None,
+                ));
             }
+
+            return Ok(cached_table.distances);
+        }
 
         // Cache miss - compute new table
         debug!("Cache miss - computing distance table");
@@ -129,10 +130,12 @@ impl DistanceTableCache {
         };
 
         if let Ok(cached_data) = serde_json::to_vec(&cached_table) {
-            drop(
-                self.cache_orchestrator
-                    .put(CacheType::DistanceTable, cache_key, cached_data, None),
-            );
+            drop(self.cache_orchestrator.put(
+                CacheType::DistanceTable,
+                cache_key,
+                cached_data,
+                None,
+            ));
         }
 
         Ok(distances)

@@ -741,8 +741,9 @@ fn property_value_to_json(value: &PropertyValue) -> Value {
     match &value.value {
         Some(property_value::Value::StringValue(value)) => Value::String(value.clone()),
         Some(property_value::Value::IntValue(value)) => Value::Number((*value).into()),
-        Some(property_value::Value::DoubleValue(value)) => serde_json::Number::from_f64(*value)
-            .map_or(Value::Null, Value::Number),
+        Some(property_value::Value::DoubleValue(value)) => {
+            serde_json::Number::from_f64(*value).map_or(Value::Null, Value::Number)
+        }
         Some(property_value::Value::BoolValue(value)) => Value::Bool(*value),
         Some(property_value::Value::BytesValue(bytes)) => {
             use base64::Engine;
@@ -832,8 +833,7 @@ fn resolve_adjacent_node_id(
 }
 
 fn binding_is_compatible(existing: Option<&BoundValue>, candidate: &BoundValue) -> bool {
-    existing
-        .is_none_or(|current| current.identity() == candidate.identity())
+    existing.is_none_or(|current| current.identity() == candidate.identity())
 }
 
 fn matches_where_clause(binding: &BindingRow, clause: &WhereClause) -> bool {
@@ -842,9 +842,9 @@ fn matches_where_clause(binding: &BindingRow, clause: &WhereClause) -> bool {
             variable,
             property,
             constraint,
-        } => binding
-            .get(variable)
-            .is_some_and(|value| matches_constraint(&resolve_entity_property(value, property), constraint)),
+        } => binding.get(variable).is_some_and(|value| {
+            matches_constraint(&resolve_entity_property(value, property), constraint)
+        }),
         WhereClause::And(left, right) => {
             matches_where_clause(binding, left) && matches_where_clause(binding, right)
         }

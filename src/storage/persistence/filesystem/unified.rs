@@ -288,12 +288,11 @@ impl FileSystem for UnifiedCachingFilesystem {
         // Check if we can optimize with range reads
         if self.config.io.enable_range_optimization
             && let Ok(metadata) = self.metadata(path).await
-                && metadata.size
-                    > (self.config.io.range_optimization_threshold_mb * 1024 * 1024) as u64
-                {
-                    // Use range optimization for large files
-                    return self.optimized_range_read(path, &metadata).await;
-                }
+            && metadata.size > (self.config.io.range_optimization_threshold_mb * 1024 * 1024) as u64
+        {
+            // Use range optimization for large files
+            return self.optimized_range_read(path, &metadata).await;
+        }
 
         // Fall back to regular read
         let data = self.underlying_fs.read(path).await?;
@@ -443,18 +442,19 @@ impl FileSystem for UnifiedCachingFilesystem {
                     if !entry.metadata.is_directory {
                         let cache_key = format!("{}:{}:{}", entry.url, collection_id, engine_type);
                         if metadata_cache.get(&cache_key).await.is_none()
-                            && let Ok(metadata) = underlying_fs.metadata(&entry.url).await {
-                                let cached = CachedMetadata {
-                                    metadata,
-                                    parquet_footer: None,
-                                    bloom_filter: None,
-                                    cached_at: Instant::now(),
-                                    access_count: 0,
-                                    size_bytes: 0,
-                                    ttl: Duration::from_secs(300),
-                                };
-                                metadata_cache.put(cache_key, cached).await;
-                            }
+                            && let Ok(metadata) = underlying_fs.metadata(&entry.url).await
+                        {
+                            let cached = CachedMetadata {
+                                metadata,
+                                parquet_footer: None,
+                                bloom_filter: None,
+                                cached_at: Instant::now(),
+                                access_count: 0,
+                                size_bytes: 0,
+                                ttl: Duration::from_secs(300),
+                            };
+                            metadata_cache.put(cache_key, cached).await;
+                        }
                     }
                 }
             });

@@ -171,14 +171,18 @@ mod tests {
         // Verify all OptimizationStrategy variants can be constructed
         let grid = optimization::OptimizationStrategy::GridSearch;
         let random = optimization::OptimizationStrategy::RandomSearch { budget: 50 };
-        let bayesian = optimization::OptimizationStrategy::BayesianOptimization { n_iterations: 20 };
+        let bayesian =
+            optimization::OptimizationStrategy::BayesianOptimization { n_iterations: 20 };
         let genetic = optimization::OptimizationStrategy::GeneticAlgorithm {
             population_size: 100,
             generations: 50,
         };
 
         // Verify parameters are stored correctly
-        assert!(matches!(grid, optimization::OptimizationStrategy::GridSearch));
+        assert!(matches!(
+            grid,
+            optimization::OptimizationStrategy::GridSearch
+        ));
 
         match random {
             optimization::OptimizationStrategy::RandomSearch { budget } => {
@@ -250,14 +254,18 @@ mod tests {
             prediction::TargetMetric::MemoryUsage(512.0),
             prediction::TargetMetric::IndexBuildTime(30.0),
         ];
-        assert_eq!(target_variants.len(), 4, "Expected 4 target metric variants");
+        assert_eq!(
+            target_variants.len(),
+            4,
+            "Expected 4 target metric variants"
+        );
 
         // Verify FeatureVector construction from characteristics
         let features = prediction::FeatureVector::from_characteristics(
-            10000,  // vector_count
-            128,    // dimension
-            0.1,    // sparsity
-            5.0,    // read_write_ratio
+            10000, // vector_count
+            128,   // dimension
+            0.1,   // sparsity
+            5.0,   // read_write_ratio
         );
         assert!((features.vector_count - 10000.0).abs() < f64::EPSILON);
         assert!((features.vector_dimension - 128.0).abs() < f64::EPSILON);
@@ -294,7 +302,11 @@ mod tests {
             _ => panic!("Expected Continuous"),
         }
 
-        let discrete = tuning::SearchSpace::Discrete { min: 1, max: 100, step: 5 };
+        let discrete = tuning::SearchSpace::Discrete {
+            min: 1,
+            max: 100,
+            step: 5,
+        };
         match &discrete {
             tuning::SearchSpace::Discrete { min, max, step } => {
                 assert!(*min < *max, "min should be less than max");
@@ -316,7 +328,10 @@ mod tests {
             _ => panic!("Expected Categorical"),
         }
 
-        let logscale = tuning::SearchSpace::LogScale { min: 0.001, max: 1.0 };
+        let logscale = tuning::SearchSpace::LogScale {
+            min: 0.001,
+            max: 1.0,
+        };
         match &logscale {
             tuning::SearchSpace::LogScale { min, max } => {
                 assert!(*min > 0.0, "LogScale min must be positive");
@@ -329,7 +344,10 @@ mod tests {
         let param = tuning::HyperParameter {
             name: "learning_rate".to_string(),
             param_type: tuning::ParameterType::Float,
-            search_space: tuning::SearchSpace::LogScale { min: 1e-4, max: 0.1 },
+            search_space: tuning::SearchSpace::LogScale {
+                min: 1e-4,
+                max: 0.1,
+            },
         };
         assert_eq!(param.name, "learning_rate");
         assert!(matches!(param.param_type, tuning::ParameterType::Float));

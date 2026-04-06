@@ -686,7 +686,11 @@ mod tests {
     fn test_tree_path_construction() {
         let path = TreePath {
             path_id: "path_1".to_string(),
-            nodes: vec!["root".to_string(), "child_a".to_string(), "leaf_1".to_string()],
+            nodes: vec![
+                "root".to_string(),
+                "child_a".to_string(),
+                "leaf_1".to_string(),
+            ],
             estimated_cost: 0.5,
             success_rate: 0.95,
             usage_frequency: 42,
@@ -725,10 +729,22 @@ mod tests {
         };
 
         // Verify enum variants are constructible (compile-time check + runtime shape)
-        assert!(matches!(preload, TreeOptimizationHint::PreloadSubtree { depth: 3, .. }));
-        assert!(matches!(cache_group, TreeOptimizationHint::CacheNodeGroup { .. }));
-        assert!(matches!(rebalance, TreeOptimizationHint::RebalanceRecommendation { .. }));
-        assert!(matches!(prefetch, TreeOptimizationHint::PrefetchSequence { .. }));
+        assert!(matches!(
+            preload,
+            TreeOptimizationHint::PreloadSubtree { depth: 3, .. }
+        ));
+        assert!(matches!(
+            cache_group,
+            TreeOptimizationHint::CacheNodeGroup { .. }
+        ));
+        assert!(matches!(
+            rebalance,
+            TreeOptimizationHint::RebalanceRecommendation { .. }
+        ));
+        assert!(matches!(
+            prefetch,
+            TreeOptimizationHint::PrefetchSequence { .. }
+        ));
     }
 
     #[test]

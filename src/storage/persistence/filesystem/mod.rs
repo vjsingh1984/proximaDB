@@ -271,8 +271,7 @@ pub struct DirEntry {
 }
 
 /// Temporary directory strategy for atomic operations
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum TempStrategy {
     /// Direct write (no temp files) - for local filesystem with atomic guarantees
     DirectWrite,
@@ -292,7 +291,6 @@ pub enum TempStrategy {
     /// Write to system /tmp directory (fallback for R&D)
     SystemTemp,
 }
-
 
 /// File operation options
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -659,7 +657,10 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
             TempStrategy::SameDirectory => {
                 // Create ___temp subdirectory in same location (same mount point)
                 let parent = final_path.parent();
-                let temp_dir = parent.map_or_else(|| std::path::PathBuf::from("___temp"), |p| p.join("___temp"));
+                let temp_dir = parent.map_or_else(
+                    || std::path::PathBuf::from("___temp"),
+                    |p| p.join("___temp"),
+                );
                 let temp_file = temp_dir.join(format!("{}.{}", filename, std::process::id())); // Add PID for uniqueness
                 Ok(temp_file.to_string_lossy().to_string())
             }
@@ -1218,9 +1219,10 @@ impl FilesystemFactory {
             "abfs" => {
                 // Container is before @ in hostname
                 if let Some(host) = parsed_url.host_str()
-                    && let Some(at_pos) = host.find('@') {
-                        return Ok(Some(host[..at_pos].to_string()));
-                    }
+                    && let Some(at_pos) = host.find('@')
+                {
+                    return Ok(Some(host[..at_pos].to_string()));
+                }
                 Ok(None)
             }
             _ => Ok(None),
@@ -1260,9 +1262,10 @@ impl FilesystemFactory {
             "abfs" => {
                 // Account is after @ in hostname
                 if let Some(host) = parsed_url.host_str()
-                    && let Some(at_pos) = host.find('@') {
-                        return Ok(Some(host[at_pos + 1..].to_string()));
-                    }
+                    && let Some(at_pos) = host.find('@')
+                {
+                    return Ok(Some(host[at_pos + 1..].to_string()));
+                }
                 Ok(None)
             }
             _ => Ok(None),
@@ -1429,7 +1432,9 @@ impl FilesystemFactory {
         }
 
         // Add default mappings if not configured
-        self.tier_mapping.entry(FileStorageTier::Memory).or_insert_with(|| "memory://".to_string());
+        self.tier_mapping
+            .entry(FileStorageTier::Memory)
+            .or_insert_with(|| "memory://".to_string());
     }
 
     /// Get filesystem URL for a specific storage tier

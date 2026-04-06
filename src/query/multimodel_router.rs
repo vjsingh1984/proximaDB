@@ -276,11 +276,7 @@ mod tests {
     #[test]
     fn test_detect_query_json_path() {
         assert_eq!(
-            detect_store_type_from_query(
-                "SELECT * FROM docs WHERE $.name = 'Alice'",
-                "docs",
-                None
-            ),
+            detect_store_type_from_query("SELECT * FROM docs WHERE $.name = 'Alice'", "docs", None),
             StoreType::Document
         );
     }
@@ -288,7 +284,11 @@ mod tests {
     #[test]
     fn test_detect_query_graph_prefix() {
         assert_eq!(
-            detect_store_type_from_query("SELECT * FROM graph_social WHERE label = 'Person'", "graph_social", None),
+            detect_store_type_from_query(
+                "SELECT * FROM graph_social WHERE label = 'Person'",
+                "graph_social",
+                None
+            ),
             StoreType::Graph
         );
     }

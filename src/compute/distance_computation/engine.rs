@@ -307,8 +307,7 @@ pub trait GpuAccelerator: Send + Sync {
 }
 
 /// Distance computation mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DistanceMode {
     /// Use CPU computation
     #[default]
@@ -322,7 +321,6 @@ pub enum DistanceMode {
     /// Normalized mode (compatibility)
     Normalized,
 }
-
 
 /// Properties of a distance metric
 #[derive(Debug, Clone)]
@@ -681,9 +679,10 @@ impl UnifiedDistanceCompute {
         let mut backends = vec![self.hardware_backend];
 
         if let Some(gpu) = self.gpu_accelerator_lazy.get().and_then(|g| g.as_ref())
-            && gpu.is_available() {
-                backends.push(gpu.backend());
-            }
+            && gpu.is_available()
+        {
+            backends.push(gpu.backend());
+        }
 
         backends.push(HardwareBackend::Scalar);
         backends
@@ -1504,7 +1503,7 @@ impl UnifiedDistanceCompute {
 
         #[cfg(target_arch = "aarch64")]
         {
-            32// NEON: Smaller batches for mobile/embedded
+            32 // NEON: Smaller batches for mobile/embedded
         }
 
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -2483,7 +2482,11 @@ mod tests {
         // Verify each has a string name via proto
         for metric in &metrics {
             let name = metric.as_str_name();
-            assert!(!name.is_empty(), "Metric {:?} should have a non-empty name", metric);
+            assert!(
+                !name.is_empty(),
+                "Metric {:?} should have a non-empty name",
+                metric
+            );
         }
 
         // Verify the is_similarity extension trait
@@ -2757,7 +2760,8 @@ mod tests {
         let large_a = vec![1e6, 1e6];
         let large_b = vec![1e6 + 1.0, 1e6 + 1.0];
 
-        let dist = euclidean_calc.calculate_distance(&large_a, &large_b, &DistanceMetric::Euclidean);
+        let dist =
+            euclidean_calc.calculate_distance(&large_a, &large_b, &DistanceMetric::Euclidean);
         assert!((dist.raw_value - std::f32::consts::SQRT_2).abs() < 0.01);
     }
 

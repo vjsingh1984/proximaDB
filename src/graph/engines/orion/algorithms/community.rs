@@ -322,10 +322,7 @@ impl LouvainCommunityDetection {
             let neighbors = self.csr.get_neighbors(from_idx).unwrap_or(&[]);
             for &to_idx in neighbors {
                 let to_comm = communities.get(&to_idx).copied().unwrap_or(to_idx);
-                let to_super = community_to_super
-                    .get(&to_comm)
-                    .copied()
-                    .unwrap_or(to_comm);
+                let to_super = community_to_super.get(&to_comm).copied().unwrap_or(to_comm);
 
                 *edge_weights.entry((from_super, to_super)).or_insert(0.0) += 1.0;
             }
@@ -427,11 +424,15 @@ impl GraphAlgorithm for LouvainCommunityDetection {
         // Each pass contracts the graph and re-runs local moving on the super-graph.
         let max_levels = 10;
         for _level in 0..max_levels {
-            let (super_csr, node_to_super) =
-                self.aggregate_communities(&communities)?;
+            let (super_csr, node_to_super) = self.aggregate_communities(&communities)?;
 
             // Detect if aggregation produced no further reduction
-            if super_csr.node_count() >= communities.values().collect::<std::collections::HashSet<_>>().len() {
+            if super_csr.node_count()
+                >= communities
+                    .values()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+            {
                 break;
             }
 
@@ -446,7 +447,10 @@ impl GraphAlgorithm for LouvainCommunityDetection {
             // Map original nodes through the chain: node → super → super_community
             let mut new_communities = HashMap::new();
             for (&node, &super_id) in &node_to_super {
-                let final_comm = super_communities.get(&super_id).copied().unwrap_or(super_id);
+                let final_comm = super_communities
+                    .get(&super_id)
+                    .copied()
+                    .unwrap_or(super_id);
                 new_communities.insert(node, final_comm);
             }
 

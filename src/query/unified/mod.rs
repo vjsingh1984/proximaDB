@@ -254,9 +254,9 @@ impl UnifiedQueryEngine {
     fn estimate_cost(&self, component: &QueryComponent) -> f64 {
         // Simple cost estimation based on model type
         match component.model {
-            DataModel::Vector => 1.0,        // Vector search is typically fast
-            DataModel::Document => 2.0,      // Document queries vary
-            DataModel::Graph => 3.0,         // Graph traversal can be expensive
+            DataModel::Vector => 1.0,   // Vector search is typically fast
+            DataModel::Document => 2.0, // Document queries vary
+            DataModel::Graph => 3.0,    // Graph traversal can be expensive
             DataModel::Observability | DataModel::TimeSeries => 2.5,
             DataModel::Relational => 1.5,
             DataModel::Event => 2.0,

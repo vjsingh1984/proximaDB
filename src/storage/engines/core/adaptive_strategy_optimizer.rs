@@ -286,9 +286,10 @@ impl AdaptiveStrategyOptimizer {
 
         // Don't switch if already using the recommended strategy
         if let Some(ref current) = current_strategy
-            && std::mem::discriminant(current) == std::mem::discriminant(&recommended_strategy) {
-                return None;
-            }
+            && std::mem::discriminant(current) == std::mem::discriminant(&recommended_strategy)
+        {
+            return None;
+        }
 
         // Check rate limiting for strategy switches
         if !self.should_allow_switch(collection_id).await {

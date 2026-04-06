@@ -47,17 +47,13 @@ use crate::transaction::participants::{BufferedOperation, DurableWriteFn};
 /// The `BufferedOperation::data` field is expected to contain a JSON-encoded
 /// document payload. Insert operations are decoded and forwarded to
 /// `insert_document`; deletes call `delete_document`.
-pub fn document_durable_writer(
-    service: Arc<dyn DocumentStorageOperations>,
-) -> DurableWriteFn {
+pub fn document_durable_writer(service: Arc<dyn DocumentStorageOperations>) -> DurableWriteFn {
     Arc::new(move |op: &BufferedOperation| {
         let service = Arc::clone(&service);
         match op {
             BufferedOperation::Insert { id, data } => {
-                let doc: crate::proto::proximadb_v1::SqlObject =
-                    serde_json::from_slice(data).map_err(|e| {
-                        format!("failed to deserialize document for {}: {}", id, e)
-                    })?;
+                let doc: crate::proto::proximadb_v1::SqlObject = serde_json::from_slice(data)
+                    .map_err(|e| format!("failed to deserialize document for {}: {}", id, e))?;
                 let id = id.clone();
                 // Block on async call — DurableWriteFn is synchronous by design.
                 // This is acceptable because commit runs on a dedicated task.
@@ -135,8 +131,7 @@ mod tests {
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
         let writer = recording_durable_writer(Arc::clone(&log));
 
-        let participant =
-            VectorEngineParticipant::new("test").with_durable_writer(writer);
+        let participant = VectorEngineParticipant::new("test").with_durable_writer(writer);
         let tx_id = 42;
 
         participant
@@ -183,8 +178,7 @@ mod tests {
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
         let writer = recording_durable_writer(log);
 
-        let participant =
-            VectorEngineParticipant::new("test").with_durable_writer(writer);
+        let participant = VectorEngineParticipant::new("test").with_durable_writer(writer);
         assert!(participant.supports_durable_commit());
     }
 
@@ -192,8 +186,7 @@ mod tests {
     async fn test_failing_durable_writer_propagates_error() {
         let writer = failing_durable_writer("simulated disk failure");
 
-        let participant =
-            VectorEngineParticipant::new("test").with_durable_writer(writer);
+        let participant = VectorEngineParticipant::new("test").with_durable_writer(writer);
         let tx_id = 99;
 
         participant

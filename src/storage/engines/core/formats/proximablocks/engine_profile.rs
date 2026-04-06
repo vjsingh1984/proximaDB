@@ -3,8 +3,7 @@
 //! Defines engine profiles for optimized block encoding and quantization.
 
 /// Engine-specific optimization profiles
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EngineProfile {
     /// SST: Write-optimized with filtering stages
     #[default]
@@ -20,4 +19,3 @@ pub enum EngineProfile {
     /// NOVA: Progressive columnar
     Nova,
 }
-

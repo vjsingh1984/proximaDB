@@ -716,14 +716,8 @@ impl MultiServerBuilder {
             api_config: self.api_config.clone(),
             data_dir: self.data_dir.clone(),
             // Unified port mode defaults (Phase 14)
-            unified_mode: self
-                .api_config
-                .as_ref()
-                .is_some_and(|c| c.unified_mode),
-            unified_port: self
-                .api_config
-                .as_ref()
-                .map_or(5678, |c| c.unified_port),
+            unified_mode: self.api_config.as_ref().is_some_and(|c| c.unified_mode),
+            unified_port: self.api_config.as_ref().map_or(5678, |c| c.unified_port),
             unified_bind_address: "0.0.0.0".to_string(),
             // Cluster mode defaults
             #[cfg(feature = "cluster")]

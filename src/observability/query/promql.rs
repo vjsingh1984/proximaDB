@@ -42,7 +42,13 @@ impl PromQLParser {
                 if !after_paren.is_empty() {
                     // Handle offset @ modifier
                     if let Some(offset_duration) = Self::parse_offset_modifier(after_paren)? {
-                        if let PromQLExpr::VectorSelector { name, matchers, range, .. } = expr {
+                        if let PromQLExpr::VectorSelector {
+                            name,
+                            matchers,
+                            range,
+                            ..
+                        } = expr
+                        {
                             return Ok(PromQLExpr::VectorSelector {
                                 name,
                                 matchers,
@@ -79,7 +85,13 @@ impl PromQLParser {
         // Check for offset modifier @
         let remaining = &query[Self::get_selector_length_in(query, &selector)..];
         if let Some(offset_duration) = Self::parse_offset_modifier(remaining)? {
-            if let PromQLExpr::VectorSelector { name, matchers, range, .. } = selector {
+            if let PromQLExpr::VectorSelector {
+                name,
+                matchers,
+                range,
+                ..
+            } = selector
+            {
                 selector = PromQLExpr::VectorSelector {
                     name,
                     matchers,
@@ -349,17 +361,53 @@ impl PromQLParser {
     fn parse_function_call(query: &str) -> Result<Option<PromQLExpr>> {
         // Supported mathematical and utility functions
         let functions = [
-            "abs", "sqrt", "cbrt", "exp", "ln", "log2", "log10",
-            "sgn", "sin", "cos", "tan", "asin", "acos", "atan",
-            "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
-            "atan2", "round", "floor", "ceil", "trunc", "clamp", "max", "min",
-            "vector", "scalar", "label_join", "label_replace",
-            "hour", "minute", "month", "year", "day_of_month", "day_of_week",
-            "day_of_year", "days_in_month", "timestamp",
+            "abs",
+            "sqrt",
+            "cbrt",
+            "exp",
+            "ln",
+            "log2",
+            "log10",
+            "sgn",
+            "sin",
+            "cos",
+            "tan",
+            "asin",
+            "acos",
+            "atan",
+            "sinh",
+            "cosh",
+            "tanh",
+            "asinh",
+            "acosh",
+            "atanh",
+            "atan2",
+            "round",
+            "floor",
+            "ceil",
+            "trunc",
+            "clamp",
+            "max",
+            "min",
+            "vector",
+            "scalar",
+            "label_join",
+            "label_replace",
+            "hour",
+            "minute",
+            "month",
+            "year",
+            "day_of_month",
+            "day_of_week",
+            "day_of_year",
+            "days_in_month",
+            "timestamp",
         ];
 
         for func_name in &functions {
-            if query.starts_with(func_name) && query[func_name.len()..].trim_start().starts_with('(') {
+            if query.starts_with(func_name)
+                && query[func_name.len()..].trim_start().starts_with('(')
+            {
                 let rest = &query[func_name.len()..].trim_start();
                 let inner = Self::extract_parentheses(rest)?;
 
@@ -455,11 +503,17 @@ impl PromQLParser {
                         leading_ws + brace_pos + close_pos + 1
                     } else {
                         // No closing brace found; fall back to metric name length
-                        leading_ws + trimmed.find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':').unwrap_or(trimmed.len())
+                        leading_ws
+                            + trimmed
+                                .find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+                                .unwrap_or(trimmed.len())
                     }
                 } else {
                     // No braces — end is the metric name
-                    leading_ws + trimmed.find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':').unwrap_or(trimmed.len())
+                    leading_ws
+                        + trimmed
+                            .find(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+                            .unwrap_or(trimmed.len())
                 };
 
                 // If there's a range, find the closing bracket after the braces
@@ -861,10 +915,7 @@ impl PromQLExecutor {
 
                 // Label matchers
                 for matcher in matchers {
-                    let label_value = s
-                        .labels
-                        .get(&matcher.name)
-                        .map_or("", |s| s.as_str());
+                    let label_value = s.labels.get(&matcher.name).map_or("", |s| s.as_str());
                     let matches = match matcher.op {
                         MatchOp::Equal => label_value == matcher.value,
                         MatchOp::NotEqual => label_value != matcher.value,
@@ -1442,15 +1493,20 @@ impl PromQLExecutor {
             "scalar" => {
                 if arg_results.len() == 1 {
                     // scalar(v) returns a single result from the vector
-                    Ok(vec![arg_results[0].first().map(|r| MetricResult {
-                        timestamp_ns: eval_time_ns,
-                        value: r.value,
-                        labels: HashMap::new(),
-                    }).unwrap_or(MetricResult {
-                        timestamp_ns: eval_time_ns,
-                        value: f64::NAN,
-                        labels: HashMap::new(),
-                    })])
+                    Ok(vec![
+                        arg_results[0]
+                            .first()
+                            .map(|r| MetricResult {
+                                timestamp_ns: eval_time_ns,
+                                value: r.value,
+                                labels: HashMap::new(),
+                            })
+                            .unwrap_or(MetricResult {
+                                timestamp_ns: eval_time_ns,
+                                value: f64::NAN,
+                                labels: HashMap::new(),
+                            }),
+                    ])
                 } else {
                     Err(anyhow!("scalar() requires exactly 1 argument"))
                 }
@@ -1730,7 +1786,8 @@ mod tests {
 
     #[test]
     fn test_parse_function_abs() {
-        let expr = PromQLParser::parse("abs(http_requests_total)").expect("should parse abs function");
+        let expr =
+            PromQLParser::parse("abs(http_requests_total)").expect("should parse abs function");
         match expr {
             PromQLExpr::Function { name, args } => {
                 assert_eq!(name, "abs");
@@ -1761,14 +1818,12 @@ mod tests {
     fn test_parse_parentheses() {
         let expr = PromQLParser::parse("(http_requests_total)").expect("should parse parentheses");
         match expr {
-            PromQLExpr::Paren(inner) => {
-                match *inner {
-                    PromQLExpr::VectorSelector { ref name, .. } => {
-                        assert_eq!(name, "http_requests_total");
-                    }
-                    _ => panic!("Expected VectorSelector inside Paren"),
+            PromQLExpr::Paren(inner) => match *inner {
+                PromQLExpr::VectorSelector { ref name, .. } => {
+                    assert_eq!(name, "http_requests_total");
                 }
-            }
+                _ => panic!("Expected VectorSelector inside Paren"),
+            },
             _ => panic!("Expected Paren expression"),
         }
     }
@@ -1810,8 +1865,8 @@ mod tests {
         ];
 
         let expr = PromQLParser::parse("abs(values)").expect("should parse abs");
-        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000)
-            .expect("should execute abs");
+        let results =
+            PromQLExecutor::execute(&expr, samples, 2000, 5000).expect("should execute abs");
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].value, 5.0); // |-5|
@@ -1836,8 +1891,8 @@ mod tests {
         ];
 
         let expr = PromQLParser::parse("sqrt(values)").expect("should parse sqrt");
-        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000)
-            .expect("should execute sqrt");
+        let results =
+            PromQLExecutor::execute(&expr, samples, 2000, 5000).expect("should execute sqrt");
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].value, 3.0); // √9
@@ -1846,18 +1901,16 @@ mod tests {
 
     #[test]
     fn test_execute_unary_negation() {
-        let samples = vec![
-            MetricSample {
-                name: "counter".to_string(),
-                timestamp_ns: 1000,
-                value: 10.0,
-                labels: HashMap::new(),
-            },
-        ];
+        let samples = vec![MetricSample {
+            name: "counter".to_string(),
+            timestamp_ns: 1000,
+            value: 10.0,
+            labels: HashMap::new(),
+        }];
 
         let expr = PromQLParser::parse("-counter").expect("should parse negation");
-        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000)
-            .expect("should execute negation");
+        let results =
+            PromQLExecutor::execute(&expr, samples, 2000, 5000).expect("should execute negation");
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].value, -10.0);
@@ -1865,18 +1918,16 @@ mod tests {
 
     #[test]
     fn test_execute_round_function() {
-        let samples = vec![
-            MetricSample {
-                name: "values".to_string(),
-                timestamp_ns: 1000,
-                value: 3.14159,
-                labels: HashMap::new(),
-            },
-        ];
+        let samples = vec![MetricSample {
+            name: "values".to_string(),
+            timestamp_ns: 1000,
+            value: 3.14159,
+            labels: HashMap::new(),
+        }];
 
         let expr = PromQLParser::parse("round(values)").expect("should parse round");
-        let results = PromQLExecutor::execute(&expr, samples, 2000, 5000)
-            .expect("should execute round");
+        let results =
+            PromQLExecutor::execute(&expr, samples, 2000, 5000).expect("should execute round");
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].value, 3.0);

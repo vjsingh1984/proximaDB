@@ -64,7 +64,9 @@ fn status_to_rpc_error(status: tonic::Status) -> RpcError {
     let kind = match status.code() {
         tonic::Code::Unavailable | tonic::Code::Aborted => RpcErrorKind::Connection,
         tonic::Code::DeadlineExceeded => RpcErrorKind::Timeout,
-        tonic::Code::InvalidArgument | tonic::Code::FailedPrecondition => RpcErrorKind::InvalidRequest,
+        tonic::Code::InvalidArgument | tonic::Code::FailedPrecondition => {
+            RpcErrorKind::InvalidRequest
+        }
         _ => RpcErrorKind::Internal,
     };
     RpcError::new(kind, status.message())
@@ -315,12 +317,20 @@ impl ConsensusTransport for GrpcConsensusTransport {
         // ```
 
         let mut client = proto::consensus_service_client::ConsensusServiceClient::new(_channel);
-        let resp = client.request_vote(tonic::Request::new(proto::RequestVoteRequest {
-            term: req.term, candidate_id: req.candidate_id.clone(),
-            last_log_index: req.last_log_index, last_log_term: req.last_log_term,
-        })).await.map_err(status_to_rpc_error)?;
+        let resp = client
+            .request_vote(tonic::Request::new(proto::RequestVoteRequest {
+                term: req.term,
+                candidate_id: req.candidate_id.clone(),
+                last_log_index: req.last_log_index,
+                last_log_term: req.last_log_term,
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
         let inner = resp.into_inner();
-        Ok(RequestVoteResponse { term: inner.term, vote_granted: inner.vote_granted })
+        Ok(RequestVoteResponse {
+            term: inner.term,
+            vote_granted: inner.vote_granted,
+        })
     }
 
     async fn append_entries(
@@ -331,19 +341,32 @@ impl ConsensusTransport for GrpcConsensusTransport {
         let _channel = self.connection_manager.get_channel(target).await?;
 
         let mut client = proto::consensus_service_client::ConsensusServiceClient::new(_channel);
-        let resp = client.append_entries(tonic::Request::new(proto::AppendEntriesRequest {
-            term: req.term, leader_id: req.leader_id.clone(),
-            prev_log_index: req.prev_log_index, prev_log_term: req.prev_log_term,
-            entries: req.entries.iter().map(|e| proto::LogEntry {
-                term: e.term, index: e.index, command: e.command.clone(),
-                entry_type: native_log_entry_type_to_proto(e.entry_type),
-            }).collect(),
-            leader_commit: req.leader_commit,
-        })).await.map_err(status_to_rpc_error)?;
+        let resp = client
+            .append_entries(tonic::Request::new(proto::AppendEntriesRequest {
+                term: req.term,
+                leader_id: req.leader_id.clone(),
+                prev_log_index: req.prev_log_index,
+                prev_log_term: req.prev_log_term,
+                entries: req
+                    .entries
+                    .iter()
+                    .map(|e| proto::LogEntry {
+                        term: e.term,
+                        index: e.index,
+                        command: e.command.clone(),
+                        entry_type: native_log_entry_type_to_proto(e.entry_type),
+                    })
+                    .collect(),
+                leader_commit: req.leader_commit,
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
         let inner = resp.into_inner();
         Ok(AppendEntriesResponse {
-            term: inner.term, success: inner.success,
-            match_index: inner.match_index, conflict_term: inner.conflict_term,
+            term: inner.term,
+            success: inner.success,
+            match_index: inner.match_index,
+            conflict_term: inner.conflict_term,
             conflict_index: inner.conflict_index,
         })
     }
@@ -356,13 +379,23 @@ impl ConsensusTransport for GrpcConsensusTransport {
         let _channel = self.connection_manager.get_channel(target).await?;
 
         let mut client = proto::consensus_service_client::ConsensusServiceClient::new(_channel);
-        let resp = client.install_snapshot(tonic::Request::new(proto::InstallSnapshotRequest {
-            term: req.term, leader_id: req.leader_id.clone(),
-            last_included_index: req.last_included_index, last_included_term: req.last_included_term,
-            offset: req.offset, data: req.data.clone(), done: req.done,
-        })).await.map_err(status_to_rpc_error)?;
+        let resp = client
+            .install_snapshot(tonic::Request::new(proto::InstallSnapshotRequest {
+                term: req.term,
+                leader_id: req.leader_id.clone(),
+                last_included_index: req.last_included_index,
+                last_included_term: req.last_included_term,
+                offset: req.offset,
+                data: req.data.clone(),
+                done: req.done,
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
         let inner = resp.into_inner();
-        Ok(InstallSnapshotResponse { term: inner.term, bytes_stored: inner.bytes_stored })
+        Ok(InstallSnapshotResponse {
+            term: inner.term,
+            bytes_stored: inner.bytes_stored,
+        })
     }
 
     async fn pre_vote(
@@ -373,12 +406,20 @@ impl ConsensusTransport for GrpcConsensusTransport {
         let _channel = self.connection_manager.get_channel(target).await?;
 
         let mut client = proto::consensus_service_client::ConsensusServiceClient::new(_channel);
-        let resp = client.pre_vote(tonic::Request::new(proto::PreVoteRequest {
-            term: req.term, candidate_id: req.candidate_id.clone(),
-            last_log_index: req.last_log_index, last_log_term: req.last_log_term,
-        })).await.map_err(status_to_rpc_error)?;
+        let resp = client
+            .pre_vote(tonic::Request::new(proto::PreVoteRequest {
+                term: req.term,
+                candidate_id: req.candidate_id.clone(),
+                last_log_index: req.last_log_index,
+                last_log_term: req.last_log_term,
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
         let inner = resp.into_inner();
-        Ok(RequestVoteResponse { term: inner.term, vote_granted: inner.vote_granted })
+        Ok(RequestVoteResponse {
+            term: inner.term,
+            vote_granted: inner.vote_granted,
+        })
     }
 }
 
@@ -417,18 +458,26 @@ impl ReplicationSink for GrpcReplicationSink {
         let _channel = self.connection_manager.get_channel(target).await?;
 
         let mut client = proto::replication_service_client::ReplicationServiceClient::new(_channel);
-        let resp = client.replicate(tonic::Request::new(proto::ReplicateRequest {
-            source_node_id: req.source_node_id.clone(), shard_id: req.shard_id.clone(),
-            lsn: req.lsn, timestamp: req.timestamp,
-            operation: native_repl_op_to_proto(req.operation),
-            data: req.data.clone(), checksum: req.checksum,
-            consistency: native_consistency_to_proto(req.consistency),
-            timeout_ms: req.timeout.as_millis() as u32,
-        })).await.map_err(status_to_rpc_error)?;
+        let resp = client
+            .replicate(tonic::Request::new(proto::ReplicateRequest {
+                source_node_id: req.source_node_id.clone(),
+                shard_id: req.shard_id.clone(),
+                lsn: req.lsn,
+                timestamp: req.timestamp,
+                operation: native_repl_op_to_proto(req.operation),
+                data: req.data.clone(),
+                checksum: req.checksum,
+                consistency: native_consistency_to_proto(req.consistency),
+                timeout_ms: req.timeout.as_millis() as u32,
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
         let inner = resp.into_inner();
         Ok(ReplicateResponse {
-            node_id: inner.node_id, acked_lsn: inner.acked_lsn,
-            success: inner.success, error: inner.error,
+            node_id: inner.node_id,
+            acked_lsn: inner.acked_lsn,
+            success: inner.success,
+            error: inner.error,
             latency: Duration::from_micros(inner.latency_us),
         })
     }
@@ -507,11 +556,19 @@ impl ReplicationSink for GrpcReplicationSink {
         let _channel = self.connection_manager.get_channel(target).await?;
 
         let mut client = proto::replication_service_client::ReplicationServiceClient::new(_channel);
-        let resp = client.ack_replication(tonic::Request::new(proto::AckReplicationRequest {
-            node_id: req.node_id.clone(), shard_id: req.shard_id.clone(), acked_lsn: req.acked_lsn,
-        })).await.map_err(status_to_rpc_error)?;
+        let resp = client
+            .ack_replication(tonic::Request::new(proto::AckReplicationRequest {
+                node_id: req.node_id.clone(),
+                shard_id: req.shard_id.clone(),
+                acked_lsn: req.acked_lsn,
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
         let inner = resp.into_inner();
-        Ok(AckReplicationResponse { success: inner.success, primary_lsn: inner.primary_lsn })
+        Ok(AckReplicationResponse {
+            success: inner.success,
+            primary_lsn: inner.primary_lsn,
+        })
     }
 }
 
@@ -549,26 +606,46 @@ impl SearchFanout for GrpcSearchFanout {
     ) -> RpcResult<ShardSearchResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        let mut client = proto::search_fanout_service_client::SearchFanoutServiceClient::new(_channel);
-        let resp = client.shard_search(tonic::Request::new(proto::ShardSearchRequest {
-            request_id: req.request_id.clone(), collection: req.collection.clone(),
-            shard_id: req.shard_id.clone(), vector: req.vector.clone(), top_k: req.top_k,
-            filter: req.filter.clone(),
-            params: Some(proto::SearchParams { metric: 0, min_score: req.params.min_score,
-                ef_search: req.params.ef_search, n_probes: req.params.n_probes }),
-            timeout_ms: req.timeout.as_millis() as u32, include_vectors: req.include_vectors,
-            tenant_id: req.tenant_id.clone(), domain_id: req.domain_id.clone(),
-        })).await.map_err(status_to_rpc_error)?;
+        let mut client =
+            proto::search_fanout_service_client::SearchFanoutServiceClient::new(_channel);
+        let resp = client
+            .shard_search(tonic::Request::new(proto::ShardSearchRequest {
+                request_id: req.request_id.clone(),
+                collection: req.collection.clone(),
+                shard_id: req.shard_id.clone(),
+                vector: req.vector.clone(),
+                top_k: req.top_k,
+                filter: req.filter.clone(),
+                params: Some(proto::SearchParams {
+                    metric: 0,
+                    min_score: req.params.min_score,
+                    ef_search: req.params.ef_search,
+                    n_probes: req.params.n_probes,
+                }),
+                timeout_ms: req.timeout.as_millis() as u32,
+                include_vectors: req.include_vectors,
+                tenant_id: req.tenant_id.clone(),
+                domain_id: req.domain_id.clone(),
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
         let inner = resp.into_inner();
         Ok(ShardSearchResponse {
-            request_id: inner.request_id, shard_id: inner.shard_id,
-            results: inner.results.into_iter().map(|r| ShardSearchResult {
-                id: r.id, score: r.score,
-                vector: r.vector.is_empty().not().then(|| r.vector),
-                metadata: r.metadata,
-            }).collect(),
+            request_id: inner.request_id,
+            shard_id: inner.shard_id,
+            results: inner
+                .results
+                .into_iter()
+                .map(|r| ShardSearchResult {
+                    id: r.id,
+                    score: r.score,
+                    vector: r.vector.is_empty().not().then(|| r.vector),
+                    metadata: r.metadata,
+                })
+                .collect(),
             vectors_scanned: inner.vectors_scanned,
-            latency: Duration::from_micros(inner.latency_us), truncated: inner.truncated,
+            latency: Duration::from_micros(inner.latency_us),
+            truncated: inner.truncated,
         })
     }
 
@@ -600,27 +677,51 @@ impl SearchFanout for GrpcSearchFanout {
     ) -> RpcResult<ForwardWriteResponse> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        let mut client = proto::search_fanout_service_client::SearchFanoutServiceClient::new(_channel);
-        let resp = client.forward_write(tonic::Request::new(proto::ForwardWriteRequest {
-            request_id: req.request_id.clone(), collection: req.collection.clone(),
-            shard_id: req.shard_id.clone(),
-            records: req.records.iter().map(|r| crate::proto::proximadb_v1::VectorRecord {
-                id: r.id.clone(), vector: r.vector.clone(),
-                metadata: r.metadata.iter().filter_map(|(k, v)| {
-                    serde_json::from_value::<crate::proto::proximadb_v1::SqlValue>(v.clone())
-                        .ok().map(|sv| (k.clone(), sv))
-                }).collect(),
-                timestamp: None, updated_at: None, expires_at: None, version: None, source: None,
-            }).collect(),
-            consistency: native_consistency_to_proto(req.consistency),
-            timeout_ms: req.timeout.as_millis() as u32,
-            tenant_id: req.tenant_id.clone(), domain_id: req.domain_id.clone(),
-        })).await.map_err(status_to_rpc_error)?;
+        let mut client =
+            proto::search_fanout_service_client::SearchFanoutServiceClient::new(_channel);
+        let resp = client
+            .forward_write(tonic::Request::new(proto::ForwardWriteRequest {
+                request_id: req.request_id.clone(),
+                collection: req.collection.clone(),
+                shard_id: req.shard_id.clone(),
+                records: req
+                    .records
+                    .iter()
+                    .map(|r| crate::proto::proximadb_v1::VectorRecord {
+                        id: r.id.clone(),
+                        vector: r.vector.clone(),
+                        metadata: r
+                            .metadata
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                serde_json::from_value::<crate::proto::proximadb_v1::SqlValue>(
+                                    v.clone(),
+                                )
+                                .ok()
+                                .map(|sv| (k.clone(), sv))
+                            })
+                            .collect(),
+                        timestamp: None,
+                        updated_at: None,
+                        expires_at: None,
+                        version: None,
+                        source: None,
+                    })
+                    .collect(),
+                consistency: native_consistency_to_proto(req.consistency),
+                timeout_ms: req.timeout.as_millis() as u32,
+                tenant_id: req.tenant_id.clone(),
+                domain_id: req.domain_id.clone(),
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
         let inner = resp.into_inner();
         Ok(ForwardWriteResponse {
-            request_id: inner.request_id, records_written: inner.records_written,
+            request_id: inner.request_id,
+            records_written: inner.records_written,
             replicas_acked: inner.replicas_acked,
-            latency: Duration::from_micros(inner.latency_us), error: inner.error,
+            latency: Duration::from_micros(inner.latency_us),
+            error: inner.error,
         })
     }
 
@@ -631,32 +732,63 @@ impl SearchFanout for GrpcSearchFanout {
     ) -> RpcResult<Vec<ForwardWriteResponse>> {
         let _channel = self.connection_manager.get_channel(target).await?;
 
-        let mut client = proto::search_fanout_service_client::SearchFanoutServiceClient::new(_channel);
-        let proto_reqs: Vec<proto::ForwardWriteRequest> = requests.iter().map(|req| {
-            proto::ForwardWriteRequest {
-                request_id: req.request_id.clone(), collection: req.collection.clone(),
+        let mut client =
+            proto::search_fanout_service_client::SearchFanoutServiceClient::new(_channel);
+        let proto_reqs: Vec<proto::ForwardWriteRequest> = requests
+            .iter()
+            .map(|req| proto::ForwardWriteRequest {
+                request_id: req.request_id.clone(),
+                collection: req.collection.clone(),
                 shard_id: req.shard_id.clone(),
-                records: req.records.iter().map(|r| crate::proto::proximadb_v1::VectorRecord {
-                    id: r.id.clone(), vector: r.vector.clone(),
-                    metadata: r.metadata.iter().filter_map(|(k, v)| {
-                        serde_json::from_value::<crate::proto::proximadb_v1::SqlValue>(v.clone())
-                            .ok().map(|sv| (k.clone(), sv))
-                    }).collect(),
-                    timestamp: None, updated_at: None, expires_at: None, version: None, source: None,
-                }).collect(),
+                records: req
+                    .records
+                    .iter()
+                    .map(|r| crate::proto::proximadb_v1::VectorRecord {
+                        id: r.id.clone(),
+                        vector: r.vector.clone(),
+                        metadata: r
+                            .metadata
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                serde_json::from_value::<crate::proto::proximadb_v1::SqlValue>(
+                                    v.clone(),
+                                )
+                                .ok()
+                                .map(|sv| (k.clone(), sv))
+                            })
+                            .collect(),
+                        timestamp: None,
+                        updated_at: None,
+                        expires_at: None,
+                        version: None,
+                        source: None,
+                    })
+                    .collect(),
                 consistency: native_consistency_to_proto(req.consistency),
                 timeout_ms: req.timeout.as_millis() as u32,
-                tenant_id: req.tenant_id.clone(), domain_id: req.domain_id.clone(),
-            }
-        }).collect();
-        let resp = client.forward_write_batch(tonic::Request::new(proto::ForwardWriteBatchRequest {
-            request_id: String::new(), requests: proto_reqs,
-        })).await.map_err(status_to_rpc_error)?;
-        Ok(resp.into_inner().responses.into_iter().map(|r| ForwardWriteResponse {
-            request_id: r.request_id, records_written: r.records_written,
-            replicas_acked: r.replicas_acked,
-            latency: Duration::from_micros(r.latency_us), error: r.error,
-        }).collect())
+                tenant_id: req.tenant_id.clone(),
+                domain_id: req.domain_id.clone(),
+            })
+            .collect();
+        let resp = client
+            .forward_write_batch(tonic::Request::new(proto::ForwardWriteBatchRequest {
+                request_id: String::new(),
+                requests: proto_reqs,
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
+        Ok(resp
+            .into_inner()
+            .responses
+            .into_iter()
+            .map(|r| ForwardWriteResponse {
+                request_id: r.request_id,
+                records_written: r.records_written,
+                replicas_acked: r.replicas_acked,
+                latency: Duration::from_micros(r.latency_us),
+                error: r.error,
+            })
+            .collect())
     }
 }
 
@@ -695,22 +827,35 @@ impl HealthChecker for GrpcHealthChecker {
         match self.connection_manager.get_channel(target).await {
             Ok(channel) => {
                 let mut client = proto::health_service_client::HealthServiceClient::new(channel);
-                match client.check(tonic::Request::new(proto::HealthCheckRequest {
-                    service: _req.service.clone(),
-                })).await {
+                match client
+                    .check(tonic::Request::new(proto::HealthCheckRequest {
+                        service: _req.service.clone(),
+                    }))
+                    .await
+                {
                     Ok(resp) => {
                         self.connection_manager.mark_healthy(target).await;
-                        Ok(HealthCheckResponse { status: native_serving_status(resp.into_inner().status) })
+                        Ok(HealthCheckResponse {
+                            status: native_serving_status(resp.into_inner().status),
+                        })
                     }
                     Err(s) => {
-                        self.connection_manager.mark_unhealthy(target, s.message()).await;
-                        Ok(HealthCheckResponse { status: ServingStatus::NotServing })
+                        self.connection_manager
+                            .mark_unhealthy(target, s.message())
+                            .await;
+                        Ok(HealthCheckResponse {
+                            status: ServingStatus::NotServing,
+                        })
                     }
                 }
             }
             Err(e) => {
-                self.connection_manager.mark_unhealthy(target, e.message()).await;
-                Ok(HealthCheckResponse { status: ServingStatus::NotServing })
+                self.connection_manager
+                    .mark_unhealthy(target, e.message())
+                    .await;
+                Ok(HealthCheckResponse {
+                    status: ServingStatus::NotServing,
+                })
             }
         }
     }
@@ -723,26 +868,42 @@ impl HealthChecker for GrpcHealthChecker {
         let _channel = self.connection_manager.get_channel(target).await?;
 
         let mut client = proto::health_service_client::HealthServiceClient::new(_channel);
-        let resp = client.status(tonic::Request::new(proto::StatusRequest {
-            include_metrics: _req.include_metrics, include_shards: _req.include_shards,
-        })).await.map_err(status_to_rpc_error)?;
+        let resp = client
+            .status(tonic::Request::new(proto::StatusRequest {
+                include_metrics: _req.include_metrics,
+                include_shards: _req.include_shards,
+            }))
+            .await
+            .map_err(status_to_rpc_error)?;
         let inner = resp.into_inner();
         Ok(StatusResponse {
-            node_id: inner.node_id, role: native_node_role(inner.role),
-            current_term: inner.current_term, leader_id: inner.leader_id,
-            uptime_seconds: inner.uptime_seconds, active_connections: inner.active_connections,
-            memory_bytes: inner.memory_bytes, cpu_percent: inner.cpu_percent,
-            shards: inner.shards.into_iter().map(|s| ShardStatus {
-                shard_id: s.shard_id, collection: s.collection, is_primary: s.is_primary,
-                state: match proto::ShardState::try_from(s.state) {
-                    Ok(proto::ShardState::Active) => ShardState::Active,
-                    Ok(proto::ShardState::Initializing) => ShardState::Initializing,
-                    Ok(proto::ShardState::CatchingUp) => ShardState::CatchingUp,
-                    Ok(proto::ShardState::Relocating) => ShardState::Relocating,
-                    _ => ShardState::Inactive,
-                },
-                current_lsn: s.current_lsn, vector_count: s.vector_count, disk_bytes: s.disk_bytes,
-            }).collect(),
+            node_id: inner.node_id,
+            role: native_node_role(inner.role),
+            current_term: inner.current_term,
+            leader_id: inner.leader_id,
+            uptime_seconds: inner.uptime_seconds,
+            active_connections: inner.active_connections,
+            memory_bytes: inner.memory_bytes,
+            cpu_percent: inner.cpu_percent,
+            shards: inner
+                .shards
+                .into_iter()
+                .map(|s| ShardStatus {
+                    shard_id: s.shard_id,
+                    collection: s.collection,
+                    is_primary: s.is_primary,
+                    state: match proto::ShardState::try_from(s.state) {
+                        Ok(proto::ShardState::Active) => ShardState::Active,
+                        Ok(proto::ShardState::Initializing) => ShardState::Initializing,
+                        Ok(proto::ShardState::CatchingUp) => ShardState::CatchingUp,
+                        Ok(proto::ShardState::Relocating) => ShardState::Relocating,
+                        _ => ShardState::Inactive,
+                    },
+                    current_lsn: s.current_lsn,
+                    vector_count: s.vector_count,
+                    disk_bytes: s.disk_bytes,
+                })
+                .collect(),
             replication_lag_ms: inner.replication_lag_ms,
         })
     }

@@ -230,16 +230,17 @@ impl EnhancedRBACManager {
 
         // Get or create user assignment
         let user_key = format!("{}::{}", tenant_id, user_id);
-        let mut assignment = self
-            .user_role_assignments
-            .get(&user_key).map_or_else(|| UserRoleAssignment {
+        let mut assignment = self.user_role_assignments.get(&user_key).map_or_else(
+            || UserRoleAssignment {
                 user_id: user_id.to_string(),
                 tenant_id: tenant_id.to_string(),
                 roles: HashSet::new(),
                 effective_permissions: HashSet::new(),
                 assigned_at: Utc::now(),
                 assigned_by: assigner_context.user_id.clone(),
-            }, |entry| entry.clone());
+            },
+            |entry| entry.clone(),
+        );
 
         // Add role
         assignment.roles.insert(role_name.to_string());

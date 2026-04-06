@@ -65,8 +65,7 @@ use crate::services::schema::{InferenceConfig, InferredSchema, SchemaInferenceSe
 /// Migration mode for collection
 ///
 /// Defines the current state of a collection in the migration process.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum MigrationMode {
     /// VectorRecord only (legacy format)
     ///
@@ -90,7 +89,6 @@ pub enum MigrationMode {
     /// - New writes only create ProximaRecord
     Migrated,
 }
-
 
 /// Migration statistics
 ///
@@ -916,17 +914,18 @@ impl RecordMigrationService {
 
         // Validate vector dimensions if specified
         if let Some(dim) = record.vector_dimension
-            && record.vector.len() != dim as usize {
-                errors.push(ValidationError {
-                    field: "vector".to_string(),
-                    message: format!(
-                        "Vector dimension mismatch: expected {}, got {}",
-                        dim,
-                        record.vector.len()
-                    ),
-                    code: ValidationErrorCode::DimensionMismatch,
-                });
-            }
+            && record.vector.len() != dim as usize
+        {
+            errors.push(ValidationError {
+                field: "vector".to_string(),
+                message: format!(
+                    "Vector dimension mismatch: expected {}, got {}",
+                    dim,
+                    record.vector.len()
+                ),
+                code: ValidationErrorCode::DimensionMismatch,
+            });
+        }
 
         // Schema-based validation
         if let Some(schema) = schema {

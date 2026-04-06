@@ -1,11 +1,11 @@
 //! Integration tests for LocalFileSystem
-//! 
+//!
 //! This module contains comprehensive integration tests for the LocalFileSystem
 //! implementation, covering all filesystem operations with real I/O testing.
 
 use proximadb::storage::persistence::filesystem::{
-    local::{LocalFileSystem, LocalConfig},
     DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError,
+    local::{LocalConfig, LocalFileSystem},
 };
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -19,7 +19,9 @@ async fn create_test_filesystem() -> (LocalFileSystem, TempDir) {
         default_permissions: None,
         sync_enabled: true,
     };
-    let fs = LocalFileSystem::new(config).await.expect("Failed to create filesystem");
+    let fs = LocalFileSystem::new(config)
+        .await
+        .expect("Failed to create filesystem");
     (fs, temp_dir)
 }
 
@@ -79,7 +81,7 @@ async fn test_local_filesystem_basic_operations() {
 async fn test_local_filesystem_configuration_variants() {
     setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test with custom configuration
     let config = LocalConfig {
         root_dir: Some(temp_dir.path().to_path_buf()),
@@ -134,14 +136,14 @@ async fn test_local_filesystem_error_handling() {
     // Test overwrite protection
     let test_data = b"Original data";
     let test_path = "overwrite_test.txt";
-    
+
     fs.write(test_path, test_data, None).await.unwrap();
-    
+
     let options = FileOptions {
         overwrite: false,
         ..Default::default()
     };
-    
+
     let result = fs.write(test_path, b"New data", Some(options)).await;
     assert!(result.is_err());
     if let Err(FilesystemError::AlreadyExists(_)) = result {
@@ -169,7 +171,9 @@ async fn test_local_filesystem_directory_operations() {
 
     // Test listing directory contents
     let test_file_path = "level1/test_file.txt";
-    fs.write(test_file_path, b"test content", None).await.unwrap();
+    fs.write(test_file_path, b"test content", None)
+        .await
+        .unwrap();
 
     let entries = fs.list("level1").await.unwrap();
     assert!(entries.len() >= 2); // At least level2 dir and test_file.txt
@@ -200,14 +204,16 @@ async fn test_local_filesystem_file_operations_with_options() {
     // Test file creation with directory creation
     let nested_file = "auto_create/subdirs/test.txt";
     let test_data = b"Auto-created directories test";
-    
+
     let options = FileOptions {
         create_dirs: true,
         overwrite: true,
         ..Default::default()
     };
-    
-    fs.write(nested_file, test_data, Some(options)).await.unwrap();
+
+    fs.write(nested_file, test_data, Some(options))
+        .await
+        .unwrap();
     assert!(fs.exists(nested_file).await.unwrap());
     assert!(fs.exists("auto_create").await.unwrap());
     assert!(fs.exists("auto_create/subdirs").await.unwrap());
@@ -223,13 +229,15 @@ async fn test_local_filesystem_file_operations_with_options() {
     // Test move operation
     let source_path = "source_file.txt";
     let dest_path = "destination_file.txt";
-    
-    fs.write(source_path, b"Move test data", None).await.unwrap();
+
+    fs.write(source_path, b"Move test data", None)
+        .await
+        .unwrap();
     fs.move_file(source_path, dest_path).await.unwrap();
-    
+
     assert!(!fs.exists(source_path).await.unwrap());
     assert!(fs.exists(dest_path).await.unwrap());
-    
+
     let moved_data = fs.read(dest_path).await.unwrap();
     assert_eq!(moved_data, b"Move test data");
 
@@ -256,14 +264,16 @@ async fn test_local_filesystem_atomic_operations() {
     // Test write_atomic operation
     let test_data = b"Atomic write test data";
     let test_path = "atomic_test.txt";
-    
+
     let options = FileOptions {
         create_dirs: true,
         overwrite: true,
         ..Default::default()
     };
-    
-    fs.write_atomic(test_path, test_data, Some(options)).await.unwrap();
+
+    fs.write_atomic(test_path, test_data, Some(options))
+        .await
+        .unwrap();
     assert!(fs.exists(test_path).await.unwrap());
 
     let read_data = fs.read(test_path).await.unwrap();
@@ -284,18 +294,22 @@ async fn test_local_filesystem_path_resolution() {
     // Test relative path resolution
     let test_data = b"Path resolution test";
     let relative_path = "subdir/relative_test.txt";
-    
+
     let options = FileOptions {
         create_dirs: true,
         ..Default::default()
     };
-    
-    fs.write(relative_path, test_data, Some(options)).await.unwrap();
+
+    fs.write(relative_path, test_data, Some(options))
+        .await
+        .unwrap();
     assert!(fs.exists(relative_path).await.unwrap());
 
     // Test absolute path handling (should work within root)
     let absolute_path = temp_dir.path().join("absolute_test.txt");
-    fs.write(&absolute_path.to_string_lossy(), test_data, None).await.unwrap();
+    fs.write(&absolute_path.to_string_lossy(), test_data, None)
+        .await
+        .unwrap();
     assert!(fs.exists(&absolute_path.to_string_lossy()).await.unwrap());
 
     // Cleanup
@@ -312,9 +326,9 @@ async fn test_local_filesystem_metadata_operations() {
     // Test file metadata
     let test_data = b"Metadata test content with some length";
     let test_path = "metadata_test.txt";
-    
+
     fs.write(test_path, test_data, None).await.unwrap();
-    
+
     let metadata = fs.metadata(test_path).await.unwrap();
     assert_eq!(metadata.size, test_data.len() as u64);
     assert!(!metadata.is_directory);
@@ -330,7 +344,7 @@ async fn test_local_filesystem_metadata_operations() {
     // Test directory metadata
     let dir_path = "metadata_dir";
     fs.create_dir(dir_path).await.unwrap();
-    
+
     let dir_metadata = fs.metadata(dir_path).await.unwrap();
     assert!(dir_metadata.is_directory);
     assert!(dir_metadata.path.ends_with("metadata_dir"));
@@ -348,7 +362,7 @@ async fn test_local_filesystem_large_file_operations() {
     // Test with larger file (10KB)
     let large_data = vec![0xAB; 10240];
     let large_file_path = "large_file_test.bin";
-    
+
     fs.write(large_file_path, &large_data, None).await.unwrap();
     assert!(fs.exists(large_file_path).await.unwrap());
 
@@ -373,25 +387,25 @@ async fn test_local_filesystem_concurrent_operations() {
     };
 
     let fs = std::sync::Arc::new(LocalFileSystem::new(config).await.unwrap());
-    
+
     // Test concurrent file operations
     let mut handles = Vec::new();
-    
+
     for i in 0..10 {
         let fs_clone = fs.clone();
         let test_data = format!("Concurrent test data {}", i).into_bytes();
         let test_path = format!("concurrent_test_{}.txt", i);
-        
+
         let handle = tokio::spawn(async move {
             fs_clone.write(&test_path, &test_data, None).await.unwrap();
             let read_data = fs_clone.read(&test_path).await.unwrap();
             assert_eq!(read_data, test_data);
             fs_clone.delete(&test_path).await.unwrap();
         });
-        
+
         handles.push(handle);
     }
-    
+
     // Wait for all operations to complete
     for handle in handles {
         handle.await.unwrap();
@@ -431,7 +445,7 @@ async fn test_local_filesystem_without_root_directory() {
     // This should work in the current directory
     let test_data = b"No root dir test";
     let test_path = "no_root_test.txt";
-    
+
     fs.write(test_path, test_data, None).await.unwrap();
     assert!(fs.exists(test_path).await.unwrap());
 
@@ -446,7 +460,7 @@ async fn test_local_filesystem_without_root_directory() {
 async fn test_local_filesystem_type_identification() {
     setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
-    
+
     // Test filesystem type
     assert_eq!(fs.filesystem_type(), "local");
 }
@@ -462,10 +476,10 @@ async fn test_local_filesystem_sync_operations() {
     };
 
     let fs = LocalFileSystem::new(config).await.unwrap();
-    
+
     // Test sync operation
     fs.sync().await.unwrap();
-    
+
     // Test with sync disabled
     let config_no_sync = LocalConfig {
         root_dir: Some(temp_dir.path().to_path_buf()),
@@ -476,12 +490,12 @@ async fn test_local_filesystem_sync_operations() {
     let fs_no_sync = LocalFileSystem::new(config_no_sync).await.unwrap();
     let test_data = b"No sync test data";
     let test_path = "no_sync_test.txt";
-    
+
     fs_no_sync.write(test_path, test_data, None).await.unwrap();
     fs_no_sync.append(test_path, b" appended").await.unwrap();
-    
+
     let read_data = fs_no_sync.read(test_path).await.unwrap();
     assert!(read_data.starts_with(test_data));
-    
+
     fs_no_sync.delete(test_path).await.unwrap();
 }

@@ -101,11 +101,7 @@ impl StorageEngine {
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
-            .map_err(|e| {
-                crate::core::StorageError::DiskIO(std::io::Error::other(
-                    e.to_string(),
-                ))
-            })?,
+            .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::other(e.to_string())))?,
         );
 
         // Create WAL manager using modern batch factory pattern
@@ -146,17 +142,11 @@ impl StorageEngine {
         info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
 
         // Initialize compaction manager with default config if not provided
-        let sst_config = config
-            .sst_config
-            .clone()
-            .unwrap_or_default();
+        let sst_config = config.sst_config.clone().unwrap_or_default();
         let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
 
         // Create singleton SST storage instance
-        let _sst_config_for_storage = config
-            .sst_config
-            .clone()
-            .unwrap_or_default();
+        let _sst_config_for_storage = config.sst_config.clone().unwrap_or_default();
         let _sst_storage = Arc::new(SstEngine::new().await.map_err(|e| {
             crate::core::error::StorageError::SstEngine(format!(
                 "Failed to create SST storage: {}",
@@ -218,11 +208,7 @@ impl StorageEngine {
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
-        let sst_config = self
-            .config
-            .sst_config
-            .clone()
-            .unwrap_or_default();
+        let sst_config = self.config.sst_config.clone().unwrap_or_default();
         let mut temp_manager = Compaction::new(sst_config).await?;
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);

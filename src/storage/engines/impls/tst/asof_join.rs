@@ -76,15 +76,16 @@ impl ASOFJoin {
 
                 // Check tolerance
                 if let Some(tol) = tolerance
-                    && time_diff > tol {
-                        // Outside tolerance, no match
-                        results.push(ASOFJoinResult {
-                            left_record,
-                            right_record: None,
-                            time_diff: None,
-                        });
-                        continue;
-                    }
+                    && time_diff > tol
+                {
+                    // Outside tolerance, no match
+                    results.push(ASOFJoinResult {
+                        left_record,
+                        right_record: None,
+                        time_diff: None,
+                    });
+                    continue;
+                }
 
                 results.push(ASOFJoinResult {
                     left_record,

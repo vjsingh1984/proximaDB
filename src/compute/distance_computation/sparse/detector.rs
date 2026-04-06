@@ -131,31 +131,33 @@ impl SparsityAnalyzer {
         // Check cache first
         if let Some(id) = vector_id
             && self.config.cache_sparsity_info
-                && let Some(cached) = self.cache.get(&id) {
-                    let ttl = Duration::from_secs(self.config.cache_ttl_seconds);
-                    if cached.is_valid(ttl) {
-                        return cached.clone();
-                    }
-                }
+            && let Some(cached) = self.cache.get(&id)
+        {
+            let ttl = Duration::from_secs(self.config.cache_ttl_seconds);
+            if cached.is_valid(ttl) {
+                return cached.clone();
+            }
+        }
 
         // Perform detection
         let info = self.analyze_vector(vector, None);
 
         // Cache result
         if let Some(id) = vector_id
-            && self.config.cache_sparsity_info {
-                self.cache.insert(id, info.clone());
+            && self.config.cache_sparsity_info
+        {
+            self.cache.insert(id, info.clone());
 
-                // Evict if cache too large (simple FIFO)
-                if self.cache.len() > self.config.sparsity_cache_size {
-                    // Remove oldest entries (approximate FIFO)
-                    if let Some(entry) = self.cache.iter().next() {
-                        let key = *entry.key();
-                        drop(entry);
-                        self.cache.remove(&key);
-                    }
+            // Evict if cache too large (simple FIFO)
+            if self.cache.len() > self.config.sparsity_cache_size {
+                // Remove oldest entries (approximate FIFO)
+                if let Some(entry) = self.cache.iter().next() {
+                    let key = *entry.key();
+                    drop(entry);
+                    self.cache.remove(&key);
                 }
             }
+        }
 
         info
     }

@@ -79,7 +79,12 @@ impl UnifiedNOVAReader {
         collection_id: String,
         dimension: u32,
     ) -> Result<Self> {
-        Self::new(filesystem_factory, collection_id, ReadAccessStrategy::DirectStream, dimension)
+        Self::new(
+            filesystem_factory,
+            collection_id,
+            ReadAccessStrategy::DirectStream,
+            dimension,
+        )
     }
 
     /// Create a reader optimized for search (cached reads)
@@ -91,7 +96,9 @@ impl UnifiedNOVAReader {
         Self::new(
             filesystem_factory,
             collection_id,
-            ReadAccessStrategy::CachedSearch { prefetch_metadata: true },
+            ReadAccessStrategy::CachedSearch {
+                prefetch_metadata: true,
+            },
             dimension,
         )
     }
@@ -346,14 +353,16 @@ impl StrategyAwareReader for UnifiedNOVAReader {
         self.pruning_strategy = Self::to_nova_pruning_strategy(&self.strategy);
 
         // Update cached filesystem if needed
-        if self.strategy.should_use_cache() && self.cached_filesystem.is_none()
-            && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
-                self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
-                    base_fs,
-                    self.collection_id.clone(),
-                    "nova".to_string(),
-                )));
-            }
+        if self.strategy.should_use_cache()
+            && self.cached_filesystem.is_none()
+            && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://")
+        {
+            self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
+                base_fs,
+                self.collection_id.clone(),
+                "nova".to_string(),
+            )));
+        }
     }
 }
 
@@ -365,7 +374,11 @@ pub struct DirectNOVAReader {
 }
 
 impl DirectNOVAReader {
-    pub fn new(filesystem_factory: Arc<FilesystemFactory>, collection_id: String, dimension: u32) -> Self {
+    pub fn new(
+        filesystem_factory: Arc<FilesystemFactory>,
+        collection_id: String,
+        dimension: u32,
+    ) -> Self {
         Self {
             filesystem_factory,
             collection_id,

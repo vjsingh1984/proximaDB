@@ -206,11 +206,7 @@ impl UnifiedProgressiveSearchPipeline {
         // Preprocess query vector
         let query_cache = self
             .query_preprocessor
-            .preprocess(
-                query_vector,
-                distance_metric,
-                Some(quantization_config),
-            )
+            .preprocess(query_vector, distance_metric, Some(quantization_config))
             .await;
 
         // Determine stages to use
@@ -659,8 +655,6 @@ impl UnifiedProgressiveSearchPipeline {
             SearchStage::Pq4 | SearchStage::Pq8 | SearchStage::Pq16 => thresholds.pq_selectivity,
             SearchStage::Fp16 | SearchStage::Fp32 => 1.0,
         };
-
-        
 
         ((current_count as f32 * selectivity) as usize)
             .max(top_k * 3)

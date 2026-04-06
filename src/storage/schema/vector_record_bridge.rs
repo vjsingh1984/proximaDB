@@ -118,8 +118,7 @@ pub struct DefaultVectorRecordBridge {
 }
 
 /// Mode for handling metadata in conversions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MetadataMode {
     /// Store metadata as JSON string (simple, flexible)
     #[default]
@@ -129,7 +128,6 @@ pub enum MetadataMode {
     /// Auto-detect based on schema
     Auto,
 }
-
 
 impl DefaultVectorRecordBridge {
     /// Create a new bridge with the given schema.
@@ -592,20 +590,21 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
 
         // Add vector column if present in schema and requested
         if self.include_vectors
-            && let Some(dimension) = self.vector_dimension() {
-                let _dimension = dimension as i32;
+            && let Some(dimension) = self.vector_dimension()
+        {
+            let _dimension = dimension as i32;
 
-                // Store as FixedSizeListArray - each row contains one vector
-                let vector_array = self.build_vector_array(records)?;
+            // Store as FixedSizeListArray - each row contains one vector
+            let vector_array = self.build_vector_array(records)?;
 
-                // Use the array's actual data type to ensure schema matches
-                fields.push(Field::new(
-                    "vector",
-                    vector_array.data_type().clone(),
-                    false,
-                ));
-                columns.push(vector_array);
-            }
+            // Use the array's actual data type to ensure schema matches
+            fields.push(Field::new(
+                "vector",
+                vector_array.data_type().clone(),
+                false,
+            ));
+            columns.push(vector_array);
+        }
 
         // Add metadata column
         let metadata_dtype = if matches!(self.metadata_mode, MetadataMode::ArrowStruct) {
@@ -711,14 +710,15 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
         for (i, record) in records.iter().enumerate() {
             // Validate vector dimension
             if let Some(dim) = expected_dim
-                && record.vector.len() != dim as usize {
-                    return Err(anyhow!(
-                        "Record {} has wrong vector dimension: expected {}, got {}",
-                        i,
-                        dim,
-                        record.vector.len()
-                    ));
-                }
+                && record.vector.len() != dim as usize
+            {
+                return Err(anyhow!(
+                    "Record {} has wrong vector dimension: expected {}, got {}",
+                    i,
+                    dim,
+                    record.vector.len()
+                ));
+            }
 
             // Validate ID is not empty
             if record.id.is_empty() {

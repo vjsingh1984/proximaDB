@@ -266,11 +266,12 @@ impl Node2VecEmbeddings {
                     let window_end = (i + self.window_size + 1).min(walk.len());
 
                     // Update embeddings based on context
-                    for (j, &context_idx) in walk.iter().enumerate().take(window_end).skip(window_start) {
+                    for (j, &context_idx) in
+                        walk.iter().enumerate().take(window_end).skip(window_start)
+                    {
                         if i == j {
                             continue;
                         }
-
 
                         // Simplified gradient update (positive sample)
                         // In practice, would use negative sampling for efficiency

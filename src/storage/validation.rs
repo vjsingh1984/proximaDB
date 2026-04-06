@@ -108,13 +108,14 @@ impl ConfigValidator {
             };
 
             if !data_dir_path.exists()
-                && let Err(e) = std::fs::create_dir_all(&data_dir_path) {
-                    bail!(
-                        "Cannot create WAL data directory {:?}: {}",
-                        data_dir_path,
-                        e
-                    );
-                }
+                && let Err(e) = std::fs::create_dir_all(&data_dir_path)
+            {
+                bail!(
+                    "Cannot create WAL data directory {:?}: {}",
+                    data_dir_path,
+                    e
+                );
+            }
         }
 
         // Validate segment size
@@ -196,12 +197,13 @@ impl ConfigValidator {
 
                     // Validate that parent directory exists or can be created
                     if let Some(parent) = Path::new(path).parent()
-                        && !parent.exists() {
-                            // Try to create the directory to validate permissions
-                            std::fs::create_dir_all(parent).with_context(|| {
-                                format!("Cannot create directory: {}", parent.display())
-                            })?;
-                        }
+                        && !parent.exists()
+                    {
+                        // Try to create the directory to validate permissions
+                        std::fs::create_dir_all(parent).with_context(|| {
+                            format!("Cannot create directory: {}", parent.display())
+                        })?;
+                    }
                 }
                 "s3" => {
                     if parsed.host().is_none() {
@@ -234,11 +236,11 @@ impl ConfigValidator {
             // Treat as local path
             let path = Path::new(url);
             if let Some(parent) = path.parent()
-                && !parent.exists() {
-                    std::fs::create_dir_all(parent).with_context(|| {
-                        format!("Cannot create directory: {}", parent.display())
-                    })?;
-                }
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("Cannot create directory: {}", parent.display()))?;
+            }
         }
 
         Ok(())

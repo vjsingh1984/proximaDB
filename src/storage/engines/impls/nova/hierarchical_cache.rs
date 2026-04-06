@@ -328,10 +328,10 @@ impl NovaHierarchicalCache {
                     if dim_range.dim_index == query_range.dim_index
                         && !(query_range.max_value < dim_range.min_value
                             || query_range.min_value > dim_range.max_value)
-                        {
-                            matching_blocks.push(collection.clone());
-                            break;
-                        }
+                    {
+                        matching_blocks.push(collection.clone());
+                        break;
+                    }
                 }
             }
         }

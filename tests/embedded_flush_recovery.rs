@@ -73,7 +73,7 @@ fn embedded_flush_persists_many_vectors() {
     for i in 0..num_vectors {
         ids.push(format!("vec_{}", i));
         let vector: Vec<f32> = (0..dimension)
-            .map(|j| i as f32 * 0.01 + j as f32 * 0.001 )
+            .map(|j| i as f32 * 0.01 + j as f32 * 0.001)
             .collect();
         vectors.push(vector);
     }
@@ -185,7 +185,7 @@ fn sst_block_serialization_roundtrip() {
             ids.push(format!("vec_{}", global_id));
             // Create distinct vectors using the global ID
             let vector: Vec<f32> = (0..64)
-                .map(|j| global_id as f32 * 0.01 + j as f32 * 0.001 )
+                .map(|j| global_id as f32 * 0.01 + j as f32 * 0.001)
                 .collect();
             vectors.push(vector);
         }
@@ -281,7 +281,7 @@ fn test_large_k_search_returns_correct_count() {
     for i in 0..num_vectors {
         ids.push(format!("vec_{}", i));
         let vector: Vec<f32> = (0..64)
-            .map(|j| i as f32 * 0.01 + j as f32 * 0.001 )
+            .map(|j| i as f32 * 0.01 + j as f32 * 0.001)
             .collect();
         vectors.push(vector);
     }

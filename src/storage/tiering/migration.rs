@@ -53,8 +53,7 @@ pub enum MigrationStatus {
 }
 
 /// Priority for migration tasks
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum MigrationPriority {
     /// Low priority (background optimization)
     Low = 0,
@@ -66,7 +65,6 @@ pub enum MigrationPriority {
     /// Critical priority (immediate action required)
     Critical = 3,
 }
-
 
 /// A migration task for moving data between tiers
 #[derive(Debug, Clone)]

@@ -55,8 +55,7 @@ pub struct MemoryMetrics {
 }
 
 /// Eviction metrics
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct EvictionMetrics {
     pub total_evictions: u64,
     pub lru_evictions: u64,
@@ -360,7 +359,6 @@ impl Default for MemoryMetrics {
         }
     }
 }
-
 
 impl Default for CoordinationMetrics {
     fn default() -> Self {

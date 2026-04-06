@@ -233,7 +233,8 @@ impl WindowExecutor {
             .iter()
             .map(|f| {
                 row.fields
-                    .get(f).map_or_else(|| "null".to_string(), |v| v.to_string())
+                    .get(f)
+                    .map_or_else(|| "null".to_string(), |v| v.to_string())
             })
             .collect::<Vec<_>>()
             .join("|")
@@ -275,9 +276,11 @@ impl WindowExecutor {
                 }
                 // Fall back to string comparison
                 let sa = va
-                    .as_str().map_or_else(|| va.to_string(), |s| s.to_string());
+                    .as_str()
+                    .map_or_else(|| va.to_string(), |s| s.to_string());
                 let sb = vb
-                    .as_str().map_or_else(|| vb.to_string(), |s| s.to_string());
+                    .as_str()
+                    .map_or_else(|| vb.to_string(), |s| s.to_string());
                 sa.cmp(&sb)
             }
         }
@@ -488,19 +491,16 @@ impl WindowExecutor {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(1);
 
-        let default_val: JsonValue = call
-            .args
-            .get(2)
-            .map_or(JsonValue::Null, |s| {
-                // Try to parse as number, otherwise use as string
-                if let Ok(n) = s.parse::<f64>() {
-                    JsonValue::from(n)
-                } else if s == "null" {
-                    JsonValue::Null
-                } else {
-                    JsonValue::from(s.clone())
-                }
-            });
+        let default_val: JsonValue = call.args.get(2).map_or(JsonValue::Null, |s| {
+            // Try to parse as number, otherwise use as string
+            if let Ok(n) = s.parse::<f64>() {
+                JsonValue::from(n)
+            } else if s == "null" {
+                JsonValue::Null
+            } else {
+                JsonValue::from(s.clone())
+            }
+        });
 
         for (pos, (idx, _)) in partition.iter().enumerate() {
             let target_pos = if is_lag {

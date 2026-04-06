@@ -128,9 +128,7 @@ impl TraceStorage {
         // Update service index
         {
             let mut service_index = self.service_index.write().await;
-            let traces = service_index
-                .entry(span.service_name.clone())
-                .or_default();
+            let traces = service_index.entry(span.service_name.clone()).or_default();
             if !traces.contains(trace_id) {
                 traces.push(trace_id.clone());
             }
@@ -222,31 +220,33 @@ impl TraceStorage {
 
         for trace_id in trace_ids {
             if let Some(trace) = traces.get(trace_id)
-                && trace.start_time_ns >= start_ns && trace.start_time_ns <= end_ns {
-                    results.push(TraceSummary {
-                        trace_id: trace.trace_id.clone(),
-                        start_time_ns: trace.start_time_ns,
-                        duration_ns: trace.end_time_ns - trace.start_time_ns,
-                        span_count: trace.spans.len(),
-                        services: trace.services.clone(),
-                        root_service: trace
-                            .spans
-                            .iter()
-                            .find(|s| s.parent_span_id.is_empty())
-                            .map(|s| s.service_name.clone())
-                            .unwrap_or_default(),
-                        root_operation: trace
-                            .spans
-                            .iter()
-                            .find(|s| s.parent_span_id.is_empty())
-                            .map(|s| s.name.clone())
-                            .unwrap_or_default(),
-                    });
+                && trace.start_time_ns >= start_ns
+                && trace.start_time_ns <= end_ns
+            {
+                results.push(TraceSummary {
+                    trace_id: trace.trace_id.clone(),
+                    start_time_ns: trace.start_time_ns,
+                    duration_ns: trace.end_time_ns - trace.start_time_ns,
+                    span_count: trace.spans.len(),
+                    services: trace.services.clone(),
+                    root_service: trace
+                        .spans
+                        .iter()
+                        .find(|s| s.parent_span_id.is_empty())
+                        .map(|s| s.service_name.clone())
+                        .unwrap_or_default(),
+                    root_operation: trace
+                        .spans
+                        .iter()
+                        .find(|s| s.parent_span_id.is_empty())
+                        .map(|s| s.name.clone())
+                        .unwrap_or_default(),
+                });
 
-                    if results.len() >= limit {
-                        break;
-                    }
+                if results.len() >= limit {
+                    break;
                 }
+            }
         }
 
         Ok(results)
@@ -265,10 +265,11 @@ impl TraceStorage {
             for span in &trace.spans {
                 if !span.parent_span_id.is_empty()
                     && let Some(parent) = span_map.get(&span.parent_span_id)
-                        && parent.service_name != span.service_name {
-                            let key = (parent.service_name.clone(), span.service_name.clone());
-                            *deps.entry(key).or_insert(0) += 1;
-                        }
+                    && parent.service_name != span.service_name
+                {
+                    let key = (parent.service_name.clone(), span.service_name.clone());
+                    *deps.entry(key).or_insert(0) += 1;
+                }
             }
         }
 

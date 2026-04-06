@@ -52,11 +52,7 @@ pub trait DocumentStorageEngine: Send + Sync {
     ) -> Result<DocumentRecord>;
 
     /// Get a document by ID. Returns None if not found.
-    async fn get_document(
-        &self,
-        collection: &str,
-        id: &str,
-    ) -> Result<Option<DocumentRecord>>;
+    async fn get_document(&self, collection: &str, id: &str) -> Result<Option<DocumentRecord>>;
 
     /// Update a document by ID. Returns the updated record with incremented version.
     async fn update_document(
@@ -91,11 +87,7 @@ pub trait DocumentStorageEngine: Send + Sync {
     ) -> Result<AggregateResult>;
 
     /// Create a secondary index on a field.
-    async fn create_index(
-        &self,
-        collection: &str,
-        index_def: IndexDefinition,
-    ) -> Result<()>;
+    async fn create_index(&self, collection: &str, index_def: IndexDefinition) -> Result<()>;
 
     /// Flush in-memory data to persistent storage.
     async fn flush(&self, collection: &str) -> Result<FlushToStorageResult>;

@@ -407,10 +407,10 @@ impl AxisTieringManager {
                 && constraints
                     .memory_pinned_collections
                     .contains(&collection_id)
-                {
-                    debug!("Skipping memory-pinned collection {}", collection_id);
-                    continue;
-                }
+            {
+                debug!("Skipping memory-pinned collection {}", collection_id);
+                continue;
+            }
 
             // Demote to NVMe
             let target_tier = InfrastructureTier::NvmeSsd {
@@ -607,13 +607,14 @@ impl AxisTieringManager {
             if constraints
                 .memory_pinned_collections
                 .contains(&collection_id.to_string())
-                && !matches!(global_recommendation, InfrastructureTier::Memory) {
-                    debug!(
-                        "Collection {} is memory-pinned, keeping in mem",
-                        collection_id
-                    );
-                    return Ok(Some(InfrastructureTier::Memory));
-                }
+                && !matches!(global_recommendation, InfrastructureTier::Memory)
+            {
+                debug!(
+                    "Collection {} is memory-pinned, keeping in mem",
+                    collection_id
+                );
+                return Ok(Some(InfrastructureTier::Memory));
+            }
 
             // No-cloud collections
             if constraints
@@ -624,25 +625,27 @@ impl AxisTieringManager {
                     InfrastructureTier::CloudStandard { .. }
                         | InfrastructureTier::CloudInfrequentAccess { .. }
                         | InfrastructureTier::CloudArchive { .. }
-                ) {
-                    debug!(
-                        "Collection {} cannot go to cloud, using HDD instead",
-                        collection_id
-                    );
-                    return Ok(Some(InfrastructureTier::HardDisk {
-                        mount_path: "/data".to_string(),
-                    }));
-                }
+                )
+            {
+                debug!(
+                    "Collection {} cannot go to cloud, using HDD instead",
+                    collection_id
+                );
+                return Ok(Some(InfrastructureTier::HardDisk {
+                    mount_path: "/data".to_string(),
+                }));
+            }
 
             // Maximum tier per collection
             if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id)
-                && self.tier_order(global_recommendation) > self.tier_order(max_tier) {
-                    debug!(
-                        "Collection {} limited to tier {:?}",
-                        collection_id, max_tier
-                    );
-                    return Ok(Some(max_tier.clone()));
-                }
+                && self.tier_order(global_recommendation) > self.tier_order(max_tier)
+            {
+                debug!(
+                    "Collection {} limited to tier {:?}",
+                    collection_id, max_tier
+                );
+                return Ok(Some(max_tier.clone()));
+            }
         }
 
         // Apply index type specific preferences
@@ -902,9 +905,10 @@ impl AxisTieringManager {
         if let Some(constraints) = &self.config.collection_constraints {
             // Check max tier constraint
             if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id)
-                && self.tier_order(target_tier) < self.tier_order(max_tier) {
-                    return Ok(false); // Would exceed max tier
-                }
+                && self.tier_order(target_tier) < self.tier_order(max_tier)
+            {
+                return Ok(false); // Would exceed max tier
+            }
         }
         Ok(true)
     }
@@ -920,9 +924,10 @@ impl AxisTieringManager {
             if constraints
                 .memory_pinned_collections
                 .contains(&collection_id.to_string())
-                && !matches!(target_tier, InfrastructureTier::Memory) {
-                    return Ok(false);
-                }
+                && !matches!(target_tier, InfrastructureTier::Memory)
+            {
+                return Ok(false);
+            }
 
             // No-cloud collections cannot be demoted to cloud
             if constraints
@@ -934,9 +939,10 @@ impl AxisTieringManager {
                         | InfrastructureTier::CloudInfrequentAccess { .. }
                         | InfrastructureTier::CloudArchive { .. }
                         | InfrastructureTier::CloudDeepArchive { .. }
-                ) {
-                    return Ok(false);
-                }
+                )
+            {
+                return Ok(false);
+            }
         }
         Ok(true)
     }

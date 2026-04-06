@@ -140,10 +140,7 @@ pub trait RelationalStorageEngine: Send + Sync {
     async fn drop_table(&self, table: String) -> Result<bool>;
 
     /// Get column definitions for a table, or `None` if it does not exist.
-    async fn get_table_columns(
-        &self,
-        table: String,
-    ) -> Result<Option<Vec<(String, String)>>>;
+    async fn get_table_columns(&self, table: String) -> Result<Option<Vec<(String, String)>>>;
 
     // -- Row CRUD --
 
@@ -338,10 +335,7 @@ impl RelationalStorageEngine for SequoiaEngine {
         Ok(removed_schema.is_some())
     }
 
-    async fn get_table_columns(
-        &self,
-        table: String,
-    ) -> Result<Option<Vec<(String, String)>>> {
+    async fn get_table_columns(&self, table: String) -> Result<Option<Vec<(String, String)>>> {
         Ok(self.schemas.get(&table).map(|r| r.value().clone()))
     }
 
@@ -449,10 +443,7 @@ impl RelationalStorageEngine for SequoiaEngine {
         let offset = params.offset as usize;
         let rows_after_offset: Vec<TypedRow> = matched.into_iter().skip(offset).collect();
         let rows_limited: Vec<TypedRow> = if let Some(limit) = params.limit {
-            rows_after_offset
-                .into_iter()
-                .take(limit as usize)
-                .collect()
+            rows_after_offset.into_iter().take(limit as usize).collect()
         } else {
             rows_after_offset
         };
@@ -475,12 +466,7 @@ impl RelationalStorageEngine for SequoiaEngine {
                 .map(|row| {
                     let values = proj_indices
                         .iter()
-                        .map(|&idx| {
-                            row.values
-                                .get(idx)
-                                .cloned()
-                                .unwrap_or(TypedValue::Null)
-                        })
+                        .map(|&idx| row.values.get(idx).cloned().unwrap_or(TypedValue::Null))
                         .collect();
                     TypedRow { values }
                 })
@@ -710,11 +696,7 @@ mod tests {
 
     /// Helper: column names for users table.
     fn user_columns() -> Vec<String> {
-        vec![
-            "id".to_string(),
-            "name".to_string(),
-            "age".to_string(),
-        ]
+        vec!["id".to_string(), "name".to_string(), "age".to_string()]
     }
 
     // -- test_sequoia_create_table --
@@ -811,10 +793,7 @@ mod tests {
     async fn test_sequoia_update_rows() {
         let engine = make_users_engine().await;
 
-        let rows = vec![
-            user_row(1, "Alice", 30),
-            user_row(2, "Bob", 25),
-        ];
+        let rows = vec![user_row(1, "Alice", 30), user_row(2, "Bob", 25)];
         engine
             .insert_rows("users".to_string(), user_columns(), rows)
             .await
@@ -824,7 +803,10 @@ mod tests {
         let updated = engine
             .update_rows(
                 "users".to_string(),
-                vec![("name".to_string(), TypedValue::String("Alice Updated".to_string()))],
+                vec![(
+                    "name".to_string(),
+                    TypedValue::String("Alice Updated".to_string()),
+                )],
                 Some(RowFilter::Eq("id".to_string(), TypedValue::Int64(1))),
             )
             .await
@@ -911,10 +893,7 @@ mod tests {
     async fn test_sequoia_query_with_projection() {
         let engine = make_users_engine().await;
 
-        let rows = vec![
-            user_row(1, "Alice", 30),
-            user_row(2, "Bob", 25),
-        ];
+        let rows = vec![user_row(1, "Alice", 30), user_row(2, "Bob", 25)];
         engine
             .insert_rows("users".to_string(), user_columns(), rows)
             .await

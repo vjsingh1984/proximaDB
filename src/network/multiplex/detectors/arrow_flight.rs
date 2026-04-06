@@ -92,12 +92,13 @@ impl ProtocolDetector for ArrowFlightDetector {
 
         // Arrow Flight uses gRPC, so check content-type
         if let Some(content_type) = headers.get(header::CONTENT_TYPE)
-            && let Ok(ct) = content_type.to_str() {
-                // Must be gRPC for Arrow Flight
-                if !ct.starts_with("application/grpc") {
-                    return None;
-                }
+            && let Ok(ct) = content_type.to_str()
+        {
+            // Must be gRPC for Arrow Flight
+            if !ct.starts_with("application/grpc") {
+                return None;
             }
+        }
 
         // Check for Arrow-specific metadata
         // Arrow Flight often has x-arrow-flight-* headers
@@ -116,8 +117,7 @@ impl ProtocolDetector for ArrowFlightDetector {
     }
 
     fn priority(&self) -> u32 {
-        self.priority
-            .unwrap_or(ARROW_FLIGHT_DETECTOR_PRIORITY)
+        self.priority.unwrap_or(ARROW_FLIGHT_DETECTOR_PRIORITY)
     }
 
     fn target_protocol(&self) -> DetectedProtocol {

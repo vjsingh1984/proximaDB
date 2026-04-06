@@ -32,12 +32,14 @@ use crate::cdc::error::{CdcError, CdcResult};
 use crate::cdc::event::ChangeEvent;
 
 fn unix_timestamp_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH).map_or_else(|_| {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or_else(
+        |_| {
             // System clock went backwards, use last known time
             // This is extremely rare and only happens if system clock is adjusted backwards
             0
-        }, |d| d.as_millis() as u64)
+        },
+        |d| d.as_millis() as u64,
+    )
 }
 
 /// Idempotency key for exactly-once delivery
@@ -504,13 +506,15 @@ impl ExactlyOnceManager {
 
     /// Get pending transaction count
     pub fn pending_count(&self) -> usize {
-        self.transactions
-            .read().map_or_else(|_| {
+        self.transactions.read().map_or_else(
+            |_| {
                 // Lock poisoned: return 0 as fallback
                 // In production, a poisoned lock indicates a thread panicked while holding the lock
                 // Returning 0 is safe as the count will be corrected on next successful read
                 0
-            }, |transactions| transactions.len())
+            },
+            |transactions| transactions.len(),
+        )
     }
 
     /// Clean up expired transactions
@@ -551,13 +555,15 @@ impl ExactlyOnceManager {
 
     /// Get statistics
     pub fn stats(&self) -> ExactlyOnceStats {
-        self.stats
-            .read().map_or_else(|_| {
+        self.stats.read().map_or_else(
+            |_| {
                 // Lock poisoned: return default stats as fallback
                 // In production, a poisoned lock indicates a thread panicked while holding the lock
                 // Returning default stats is safe as they will be corrected on next successful read
                 ExactlyOnceStats::default()
-            }, |stats| stats.clone())
+            },
+            |stats| stats.clone(),
+        )
     }
 
     /// Reset statistics

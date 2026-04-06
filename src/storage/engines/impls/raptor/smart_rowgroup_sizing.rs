@@ -844,8 +844,8 @@ mod tests {
         // Use very small vector dimension with large I/O to force very large result
         let sizer = SmartRowGroupSizer::new(
             CloudIOProfile::gcs_standard(), // 4MB optimal I/O
-            4,                               // Tiny dimension = 16 bytes per vector
-            1,                               // Minimal metadata
+            4,                              // Tiny dimension = 16 bytes per vector
+            1,                              // Minimal metadata
         );
         let result = sizer.calculate_optimal_rowgroup_size().unwrap();
         assert!(
@@ -930,9 +930,9 @@ mod tests {
         let sizer_1536 = SmartRowGroupSizer::for_s3_standard(1536, 100);
         let sizer_4096 = SmartRowGroupSizer::for_s3_standard(4096, 100);
 
-        assert_eq!(sizer_64.calculate_semantic_accuracy_factor(), 1.3);  // <= 128
-        assert_eq!(sizer_384.calculate_semantic_accuracy_factor(), 1.1);  // <= 384
-        assert_eq!(sizer_768.calculate_semantic_accuracy_factor(), 1.0);  // <= 768
+        assert_eq!(sizer_64.calculate_semantic_accuracy_factor(), 1.3); // <= 128
+        assert_eq!(sizer_384.calculate_semantic_accuracy_factor(), 1.1); // <= 384
+        assert_eq!(sizer_768.calculate_semantic_accuracy_factor(), 1.0); // <= 768
         assert_eq!(sizer_1536.calculate_semantic_accuracy_factor(), 0.8); // <= 1536
         assert_eq!(sizer_4096.calculate_semantic_accuracy_factor(), 0.6); // > 2048
     }

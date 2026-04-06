@@ -50,8 +50,8 @@
 //! - **Zero-copy**: Use Arrow arrays directly without intermediate copies
 
 use anyhow::Result;
-use arrow::compute::{sort_to_indices, take};
 use arrow::compute::SortOptions;
+use arrow::compute::{sort_to_indices, take};
 use arrow::record_batch::RecordBatch;
 use futures::stream::{Stream, StreamExt};
 use std::pin::Pin;
@@ -164,7 +164,11 @@ impl PipelineExecutor {
                         trace!("Applying Project operator");
                         Self::apply_project_static(chunk, columns)?
                     }
-                    PipelineOperator::Sort { column, ascending, limit } => {
+                    PipelineOperator::Sort {
+                        column,
+                        ascending,
+                        limit,
+                    } => {
                         trace!("Applying Sort operator");
                         Self::apply_sort_static(chunk, column, *ascending, *limit)?
                     }
@@ -196,7 +200,8 @@ impl PipelineExecutor {
     fn apply_project_static(chunk: DataChunk, columns: &[String]) -> Result<DataChunk> {
         // Convert column names to indices
         let schema = chunk.batch().schema();
-        let indices: Vec<usize> = columns.iter()
+        let indices: Vec<usize> = columns
+            .iter()
             .map(|name| schema.column_with_name(name).map(|(idx, _)| idx))
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| anyhow::anyhow!("Column not found in schema"))?;
@@ -282,31 +287,37 @@ impl PipelineExecutor {
     fn filter_expression_to_condition_static(
         expression: &FilterExpression,
     ) -> Result<crate::storage::engines::core::formats::columnar::FilterCondition> {
-        use crate::storage::engines::core::formats::columnar::FilterCondition;
         use crate::core::search::ComparisonOperator;
+        use crate::storage::engines::core::formats::columnar::FilterCondition;
 
         match expression {
-            FilterExpression::Comparison { field, operator, value } => match operator {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => match operator {
                 ComparisonOperator::Equals => {
                     Ok(FilterCondition::Equals(field.clone(), value.clone()))
                 }
-                ComparisonOperator::GreaterThan => {
-                    Ok(FilterCondition::Range(
-                        field.clone(),
-                        value.clone(),
-                        serde_json::json!(f64::MAX),
-                    ))
-                }
-                ComparisonOperator::LessThan => {
-                    Ok(FilterCondition::Range(
-                        field.clone(),
-                        serde_json::json!(f64::MIN),
-                        value.clone(),
-                    ))
-                }
-                _ => Ok(FilterCondition::Equals(field.clone(), serde_json::Value::Bool(true))),
+                ComparisonOperator::GreaterThan => Ok(FilterCondition::Range(
+                    field.clone(),
+                    value.clone(),
+                    serde_json::json!(f64::MAX),
+                )),
+                ComparisonOperator::LessThan => Ok(FilterCondition::Range(
+                    field.clone(),
+                    serde_json::json!(f64::MIN),
+                    value.clone(),
+                )),
+                _ => Ok(FilterCondition::Equals(
+                    field.clone(),
+                    serde_json::Value::Bool(true),
+                )),
             },
-            _ => Ok(FilterCondition::Equals("_id".to_string(), serde_json::Value::Bool(true))),
+            _ => Ok(FilterCondition::Equals(
+                "_id".to_string(),
+                serde_json::Value::Bool(true),
+            )),
         }
     }
 
@@ -348,21 +359,29 @@ impl PipelineExecutor {
             // Return empty chunk
             let schema = Schema::new(vec![
                 Field::new("id", DataType::Utf8, false),
-                Field::new("vector", DataType::FixedSizeList(
-                    std::sync::Arc::new(arrow::datatypes::Field::new("item", DataType::Float32, true)),
-                    384, // Default dimension
-                ), false),
+                Field::new(
+                    "vector",
+                    DataType::FixedSizeList(
+                        std::sync::Arc::new(arrow::datatypes::Field::new(
+                            "item",
+                            DataType::Float32,
+                            true,
+                        )),
+                        384, // Default dimension
+                    ),
+                    false,
+                ),
             ]);
-            return Ok(DataChunk::new(RecordBatch::new_empty(std::sync::Arc::new(schema))));
+            return Ok(DataChunk::new(RecordBatch::new_empty(std::sync::Arc::new(
+                schema,
+            ))));
         }
 
         // Extract IDs
         let ids: Vec<&str> = records.iter().map(|r| r.id.as_str()).collect();
 
         // Extract vectors (assuming all have the same dimension)
-        let vector_dim = records.first()
-            .map(|r| r.vector.len())
-            .unwrap_or(384);
+        let vector_dim = records.first().map(|r| r.vector.len()).unwrap_or(384);
 
         // Create vector arrays
         let mut vector_values = Vec::with_capacity(records.len() * vector_dim);
@@ -375,19 +394,24 @@ impl PipelineExecutor {
         // Create schema
         let schema = Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
-            Field::new("vector", DataType::FixedSizeList(
-                std::sync::Arc::new(arrow::datatypes::Field::new("item", DataType::Float32, true)),
-                vector_dim as i32,
-            ), false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(
+                    std::sync::Arc::new(arrow::datatypes::Field::new(
+                        "item",
+                        DataType::Float32,
+                        true,
+                    )),
+                    vector_dim as i32,
+                ),
+                false,
+            ),
         ]);
 
         // Create record batch
         let batch = RecordBatch::try_new(
             std::sync::Arc::new(schema),
-            vec![
-                Arc::new(StringArray::from(ids)),
-                Arc::new(vector_array),
-            ],
+            vec![Arc::new(StringArray::from(ids)), Arc::new(vector_array)],
         )?;
 
         Ok(DataChunk::new(batch))
@@ -412,7 +436,11 @@ impl PipelineExecutor {
                     trace!("Applying Project operator");
                     self.apply_project(current_chunk, columns)?
                 }
-                PipelineOperator::Sort { column, ascending, limit } => {
+                PipelineOperator::Sort {
+                    column,
+                    ascending,
+                    limit,
+                } => {
                     trace!("Applying Sort operator");
                     self.apply_sort(current_chunk, column, *ascending, *limit)?
                 }
@@ -427,11 +455,7 @@ impl PipelineExecutor {
     }
 
     /// Apply filter operation using selection vector (zero-copy)
-    fn apply_filter(
-        &self,
-        chunk: DataChunk,
-        expression: &FilterExpression,
-    ) -> Result<DataChunk> {
+    fn apply_filter(&self, chunk: DataChunk, expression: &FilterExpression) -> Result<DataChunk> {
         use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::evaluate_predicate_vectorized;
 
         // Convert FilterExpression to FilterCondition
@@ -441,7 +465,8 @@ impl PipelineExecutor {
         let mut filtered_chunk = chunk;
 
         // Evaluate predicate on the chunk to get selection mask
-        let selection_mask = evaluate_predicate_vectorized(filtered_chunk.batch(), &filter_condition)?;
+        let selection_mask =
+            evaluate_predicate_vectorized(filtered_chunk.batch(), &filter_condition)?;
 
         // Apply selection to the chunk (in-place modification)
         filtered_chunk.apply_selection(&selection_mask);
@@ -460,51 +485,54 @@ impl PipelineExecutor {
         &self,
         expression: &FilterExpression,
     ) -> Result<crate::storage::engines::core::formats::columnar::FilterCondition> {
-        use crate::storage::engines::core::formats::columnar::FilterCondition;
         use crate::core::search::ComparisonOperator;
+        use crate::storage::engines::core::formats::columnar::FilterCondition;
 
         match expression {
-            FilterExpression::Comparison { field, operator, value } => {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
                 match operator {
                     ComparisonOperator::Equals => {
                         Ok(FilterCondition::Equals(field.clone(), value.clone()))
                     }
-                    ComparisonOperator::GreaterThan => {
-                        Ok(FilterCondition::Range(
-                            field.clone(),
-                            value.clone(),
-                            serde_json::json!(f64::MAX),
-                        ))
-                    }
-                    ComparisonOperator::LessThan => {
-                        Ok(FilterCondition::Range(
-                            field.clone(),
-                            serde_json::json!(f64::MIN),
-                            value.clone(),
-                        ))
-                    }
+                    ComparisonOperator::GreaterThan => Ok(FilterCondition::Range(
+                        field.clone(),
+                        value.clone(),
+                        serde_json::json!(f64::MAX),
+                    )),
+                    ComparisonOperator::LessThan => Ok(FilterCondition::Range(
+                        field.clone(),
+                        serde_json::json!(f64::MIN),
+                        value.clone(),
+                    )),
                     _ => {
                         // For other operators, use a conservative default
-                        Ok(FilterCondition::Equals(field.clone(), serde_json::Value::Bool(true)))
+                        Ok(FilterCondition::Equals(
+                            field.clone(),
+                            serde_json::Value::Bool(true),
+                        ))
                     }
                 }
             }
             _ => {
                 // For complex expressions, return a default condition that passes all
-                Ok(FilterCondition::Equals("_id".to_string(), serde_json::Value::Bool(true)))
+                Ok(FilterCondition::Equals(
+                    "_id".to_string(),
+                    serde_json::Value::Bool(true),
+                ))
             }
         }
     }
 
     /// Apply projection operation (column selection)
-    fn apply_project(
-        &self,
-        chunk: DataChunk,
-        columns: &[String],
-    ) -> Result<DataChunk> {
+    fn apply_project(&self, chunk: DataChunk, columns: &[String]) -> Result<DataChunk> {
         // Convert column names to indices
         let schema = chunk.batch().schema();
-        let indices: Vec<usize> = columns.iter()
+        let indices: Vec<usize> = columns
+            .iter()
             .map(|name| schema.column_with_name(name).map(|(idx, _)| idx))
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| anyhow::anyhow!("Column not found in schema"))?;
@@ -576,12 +604,7 @@ impl PipelineExecutor {
     }
 
     /// Apply TopK operation - selects top K rows based on sort column
-    fn apply_topk(
-        &self,
-        chunk: DataChunk,
-        k: usize,
-        sort_column: &str,
-    ) -> Result<DataChunk> {
+    fn apply_topk(&self, chunk: DataChunk, k: usize, sort_column: &str) -> Result<DataChunk> {
         let batch = chunk.batch();
 
         if batch.num_rows() == 0 {
@@ -687,16 +710,15 @@ impl PipelineExecutor {
 impl Stream for PipelineExecutor {
     type Item = Result<DataChunk>;
 
-    fn poll_next(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<DataChunk>>> {
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Result<DataChunk>>> {
         if self.is_empty() {
             return Poll::Ready(None);
         }
 
         // Return an empty chunk as placeholder - use execute_stream() for actual processing
-        Poll::Ready(Some(Ok(DataChunk::new(RecordBatch::new_empty(Arc::new(arrow::datatypes::Schema::empty()))))))
+        Poll::Ready(Some(Ok(DataChunk::new(RecordBatch::new_empty(Arc::new(
+            arrow::datatypes::Schema::empty(),
+        ))))))
     }
 }
 

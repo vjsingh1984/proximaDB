@@ -328,9 +328,10 @@ impl RecoveryManager {
         info!("🧹 Cleaning up global manifest after recovery...");
         if let Ok(removed) =
             crate::storage::persistence::write_ahead_log::manifest::cleanup_checkpointed().await
-            && removed > 0 {
-                info!("🧹 Removed {} flushed manifest entries", removed);
-            }
+            && removed > 0
+        {
+            info!("🧹 Removed {} flushed manifest entries", removed);
+        }
 
         Ok(stats)
     }
@@ -632,9 +633,10 @@ impl RecoveryManager {
             .unwrap_or_default();
         for fi in listed {
             if let Some(name) = fi.file_url.split('/').next_back()
-                && entries.iter().any(|m| m.file_path.ends_with(name)) {
-                    continue;
-                }
+                && entries.iter().any(|m| m.file_path.ends_with(name))
+            {
+                continue;
+            }
             let count =
                 Self::recover_file_internal(&fi, &disk_manager, &storage_engines, recovery_mode)
                     .await?;

@@ -209,14 +209,16 @@ impl StrategyAwareReader for UnifiedHELIXReader {
         self.search_strategy = Self::to_helix_search_strategy(&self.strategy);
 
         // Update cached filesystem if needed
-        if self.strategy.should_use_cache() && self.cached_filesystem.is_none()
-            && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
-                self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
-                    base_fs,
-                    self.collection_id.clone(),
-                    "helix".to_string(),
-                )));
-            }
+        if self.strategy.should_use_cache()
+            && self.cached_filesystem.is_none()
+            && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://")
+        {
+            self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
+                base_fs,
+                self.collection_id.clone(),
+                "helix".to_string(),
+            )));
+        }
     }
 }
 

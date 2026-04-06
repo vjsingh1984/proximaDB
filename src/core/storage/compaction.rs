@@ -3,8 +3,7 @@
 use crate::core::foundation::BaseConfig;
 
 /// Compaction strategy for storage optimization
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum CompactionStrategy {
     /// Level-based compaction (LSM)
     #[default]
@@ -18,7 +17,6 @@ pub enum CompactionStrategy {
     /// No compaction
     None,
 }
-
 
 /// Compaction configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -65,8 +63,7 @@ impl BaseConfig for CompactionConfig {
 }
 
 /// WAL strategy type
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum WriteBufferStrategyType {
     /// Apache Avro format
     #[default]
@@ -77,10 +74,8 @@ pub enum WriteBufferStrategyType {
     Json,
 }
 
-
 /// Memory table type for WAL
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum MemTableType {
     /// Hash map implementation
     HashMap,
@@ -93,10 +88,8 @@ pub enum MemTableType {
     ART,
 }
 
-
 /// Synchronization mode for WAL
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum SyncMode {
     /// Synchronous writes
     Sync,
@@ -106,4 +99,3 @@ pub enum SyncMode {
     #[default]
     BatchSync,
 }
-

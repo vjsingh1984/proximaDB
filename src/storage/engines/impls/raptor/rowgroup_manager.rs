@@ -318,14 +318,10 @@ impl RowGroups {
                                 )) => serde_json::Value::Null,
                                 Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
                                     arr,
-                                )) => {
-                                    serde_json::to_value(arr).unwrap_or(serde_json::Value::Null)
-                                }
+                                )) => serde_json::to_value(arr).unwrap_or(serde_json::Value::Null),
                                 Some(
                                     crate::proto::proximadb_v1::sql_value::Value::ObjectValue(obj),
-                                ) => {
-                                    serde_json::to_value(obj).unwrap_or(serde_json::Value::Null)
-                                }
+                                ) => serde_json::to_value(obj).unwrap_or(serde_json::Value::Null),
                                 None => serde_json::Value::Null,
                             },
                         )

@@ -369,9 +369,10 @@ where
             unsafe {
                 let node = &*node_ptr;
                 if let Some(expires_at) = node.expires_at
-                    && now > expires_at {
-                        expired_keys.push(key.clone());
-                    }
+                    && now > expires_at
+                {
+                    expired_keys.push(key.clone());
+                }
             }
         }
 

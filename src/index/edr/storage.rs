@@ -139,7 +139,10 @@ mod tests {
         let wrong_vectors = vec![vec![1.0]]; // Only 1 vector, but config expects 2
         let result = store.insert("doc1".to_string(), wrong_vectors).await;
 
-        assert!(result.is_err(), "Should reject documents with wrong vector count");
+        assert!(
+            result.is_err(),
+            "Should reject documents with wrong vector count"
+        );
     }
 
     #[tokio::test]

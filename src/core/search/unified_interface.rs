@@ -274,9 +274,8 @@ impl IntegratedSearchOptimizer {
             .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
 
         // Build filterable columns from collection config
-        let filterable_columns: Vec<FilterableColumn> = collection
-            .config
-            .as_ref().map_or_else(Vec::new, |config| {
+        let filterable_columns: Vec<FilterableColumn> =
+            collection.config.as_ref().map_or_else(Vec::new, |config| {
                 config
                     .filterable_columns
                     .iter()

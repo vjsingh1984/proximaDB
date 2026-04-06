@@ -370,12 +370,13 @@ pub fn validate_schema(schema: &CatalogTableSchema) -> Result<()> {
     for col in &schema.columns {
         if (col.data_type == CatalogDataType::Vector
             || col.data_type == CatalogDataType::SparseVector)
-            && !col.properties.contains_key("dimension") {
-                return Err(anyhow!(
-                    "Vector column '{}' must have 'dimension' property",
-                    col.name
-                ));
-            }
+            && !col.properties.contains_key("dimension")
+        {
+            return Err(anyhow!(
+                "Vector column '{}' must have 'dimension' property",
+                col.name
+            ));
+        }
     }
 
     Ok(())

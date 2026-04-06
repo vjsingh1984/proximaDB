@@ -526,9 +526,9 @@ impl ProximaDB {
             if let Some(tls_config) = config.tls.as_ref()
                 && let (Some(cert_file), Some(key_file)) =
                     (&tls_config.cert_file, &tls_config.key_file)
-                {
-                    builder = builder.with_tls(cert_file.clone(), key_file.clone());
-                }
+            {
+                builder = builder.with_tls(cert_file.clone(), key_file.clone());
+            }
         }
 
         tracing::debug!("🔧 ProximaDB::new - Building multi-server config...");
@@ -875,38 +875,39 @@ impl ProximaDB {
 
         // Persist final policy
         if let Some(ref policy_path) = self.rl_policy_path
-            && let Some(planner) = query::rl_planner::get_rl_planner() {
-                match tokio::time::timeout(
-                    tokio::time::Duration::from_secs(5),
-                    planner.save_policy(policy_path),
-                )
-                .await
-                {
-                    Ok(Ok(())) => {
-                        tracing::info!("✅ RL policy persisted to {}", policy_path);
-                    }
-                    Ok(Err(e)) => {
-                        tracing::warn!("Failed to persist RL policy: {}", e);
-                    }
-                    Err(_) => {
-                        tracing::warn!("RL policy persist timeout");
-                    }
+            && let Some(planner) = query::rl_planner::get_rl_planner()
+        {
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(5),
+                planner.save_policy(policy_path),
+            )
+            .await
+            {
+                Ok(Ok(())) => {
+                    tracing::info!("✅ RL policy persisted to {}", policy_path);
                 }
-
-                // Log final stats
-                let stats = planner.get_action_stats().await;
-                if !stats.is_empty() {
-                    tracing::info!("RL Planner final stats: {} actions tracked", stats.len());
-                    for (action, (avg_reward, count)) in stats.iter().take(5) {
-                        tracing::debug!(
-                            "  {}: avg_reward={:.3}, count={}",
-                            action,
-                            avg_reward,
-                            count
-                        );
-                    }
+                Ok(Err(e)) => {
+                    tracing::warn!("Failed to persist RL policy: {}", e);
+                }
+                Err(_) => {
+                    tracing::warn!("RL policy persist timeout");
                 }
             }
+
+            // Log final stats
+            let stats = planner.get_action_stats().await;
+            if !stats.is_empty() {
+                tracing::info!("RL Planner final stats: {} actions tracked", stats.len());
+                for (action, (avg_reward, count)) in stats.iter().take(5) {
+                    tracing::debug!(
+                        "  {}: avg_reward={:.3}, count={}",
+                        action,
+                        avg_reward,
+                        count
+                    );
+                }
+            }
+        }
     }
 
     /// Get the multi-server status

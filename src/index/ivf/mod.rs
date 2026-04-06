@@ -7,6 +7,6 @@ pub mod filtered;
 
 // Re-export filtered search types
 pub use filtered::{
-    FilteredIVFIndex, IVFFilteredResult, IVFFilteredSearchParams, IVFIndexStats,
-    IVFInvertedList, IVFVector,
+    FilteredIVFIndex, IVFFilteredResult, IVFFilteredSearchParams, IVFIndexStats, IVFInvertedList,
+    IVFVector,
 };

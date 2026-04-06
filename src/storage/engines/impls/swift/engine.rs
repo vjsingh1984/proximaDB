@@ -335,7 +335,10 @@ impl SwiftEngine {
     /// **Documentation**: See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md`
     ///
     /// For hierarchical storage, use application-level hierarchy with production engines.
-    #[deprecated(since = "0.2.0", note = "SWIFT engine is deprecated. Use SST, VIPER, HELIX, or NOVA instead.")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "SWIFT engine is deprecated. Use SST, VIPER, HELIX, or NOVA instead."
+    )]
     pub async fn new() -> Result<Self> {
         tracing::warn!(
             "⚠️  SWIFT ENGINE DEPRECATION WARNING ⚠️ \
@@ -636,7 +639,8 @@ impl SwiftEngine {
                     crate::storage::engines::impls::sst::fp16_to_fp32(fp16_centroid)
                 } else {
                     sb.centroid
-                        .as_ref().map_or_else(|| vec![0.0; query.len()], |c| c.clone())
+                        .as_ref()
+                        .map_or_else(|| vec![0.0; query.len()], |c| c.clone())
                 }
             })
             .collect();
@@ -1321,14 +1325,14 @@ impl UnifiedStorageEngine for SwiftEngine {
         let entries_removed = total_entries.saturating_sub(live_records.len() as u64);
 
         // Build merged output file
-        let dimension = files
-            .first()
-            .map_or(0, |f| f.header.dimension);
+        let dimension = files.first().map_or(0, |f| f.header.dimension);
         let mut merged_file = SwiftFile::new(
             collection_id.to_string(),
             dimension,
-            files
-                .first().map_or_else(|| "euclidean".to_string(), |f| f.header.distance_metric.clone()),
+            files.first().map_or_else(
+                || "euclidean".to_string(),
+                |f| f.header.distance_metric.clone(),
+            ),
         );
         merged_file.build_blocks_from_records(live_records)?;
 
@@ -1420,14 +1424,15 @@ impl UnifiedStorageEngine for SwiftEngine {
         {
             // Try to get from vector cache first
             if let Some(vector_cache) = orchestrator.get_vector_cache()
-                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
-                    // Track cache hit for access pattern learning
-                    orchestrator.pattern_tracker().track_access_async(
-                        cache_key.clone(),
-                        crate::storage::cache::orchestrator::CacheType::VectorData,
-                    );
-                    return Ok(Some(cached_vector));
-                }
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await
+            {
+                // Track cache hit for access pattern learning
+                orchestrator.pattern_tracker().track_access_async(
+                    cache_key.clone(),
+                    crate::storage::cache::orchestrator::CacheType::VectorData,
+                );
+                return Ok(Some(cached_vector));
+            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(
@@ -1450,21 +1455,19 @@ impl UnifiedStorageEngine for SwiftEngine {
         for file in &files {
             if let Some(location) = file.id_index.lookup(vector_id) {
                 // Navigate to the record using the block location
-                if let Some(superblock) = file
-                    .superblocks
-                    .get(location.superblock_idx as usize)
+                if let Some(superblock) = file.superblocks.get(location.superblock_idx as usize)
                     && let Some(block) = superblock.blocks.get(location.block_idx as usize)
-                        && let Some(record) =
-                            block.records.get(location.offset_in_block as usize)
-                        {
-                            // Cache the result for future lookups
-                            if let Some(orchestrator) =
-                                crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
-                                && let Some(vector_cache) = orchestrator.get_vector_cache() {
-                                    let _ = vector_cache.put(cache_key, record.clone()).await;
-                                }
-                            return Ok(Some(record.clone()));
-                        }
+                    && let Some(record) = block.records.get(location.offset_in_block as usize)
+                {
+                    // Cache the result for future lookups
+                    if let Some(orchestrator) =
+                        crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+                        && let Some(vector_cache) = orchestrator.get_vector_cache()
+                    {
+                        let _ = vector_cache.put(cache_key, record.clone()).await;
+                    }
+                    return Ok(Some(record.clone()));
+                }
             }
         }
 
@@ -1822,8 +1825,12 @@ impl UnifiedStorageEngine for SwiftEngine {
     fn supports_feature(&self, feature: &str) -> bool {
         matches!(
             feature,
-            "id_lookup" | "similarity_search" | "progressive_search" | "quantization"
-                | "compression" | "batch_operations"
+            "id_lookup"
+                | "similarity_search"
+                | "progressive_search"
+                | "quantization"
+                | "compression"
+                | "batch_operations"
         )
     }
 }
@@ -1992,7 +1999,7 @@ impl SwiftEngine {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]  // SWIFT is experimental - tests validate expected behavior
+#[allow(deprecated)] // SWIFT is experimental - tests validate expected behavior
 mod tests {
     use super::*;
 
@@ -2036,7 +2043,11 @@ mod tests {
 
         // Lookup in non-existent path should return None (not error)
         let result = engine
-            .vector_by_id("test_collection", "/tmp/proximadb_test_nonexistent", "vec_123")
+            .vector_by_id(
+                "test_collection",
+                "/tmp/proximadb_test_nonexistent",
+                "vec_123",
+            )
             .await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
@@ -2157,12 +2168,7 @@ mod tests {
         }
 
         // Unsupported features
-        let unsupported = [
-            "unknown_feature",
-            "graph_queries",
-            "full_text_search",
-            "",
-        ];
+        let unsupported = ["unknown_feature", "graph_queries", "full_text_search", ""];
         for feature in &unsupported {
             assert!(
                 !engine.supports_feature(feature),
@@ -2241,7 +2247,11 @@ mod tests {
         assert_eq!(sb.record_count, 0);
         assert!(sb.adacurve_code.is_none());
         assert!(sb.swift_metadata.swift_specific_data.hierarchical_structure);
-        assert!(sb.swift_metadata.swift_specific_data.large_scale_optimization);
+        assert!(
+            sb.swift_metadata
+                .swift_specific_data
+                .large_scale_optimization
+        );
     }
 
     #[test]

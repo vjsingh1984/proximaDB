@@ -88,8 +88,7 @@ use crate::index::axis::eventlog::StorageEngineType;
 /// // Archive old data after 90 days
 /// engine.migrate_to_tier(old_data, PerformanceTier::Archive)?;
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PerformanceTier {
     /// Hot data - keep in memory/SSD, optimize for latency
     /// Target: <1ms latency, highest cost
@@ -139,8 +138,7 @@ pub enum PerformanceTier {
 /// | Swift    | 300K  | 2ms   | 2-3x        | High   |
 /// | Raptor   | 250K  | 3ms   | 4-6x        | Medium |
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum StorageEngineStrategy {
     /// VIPER: Vector-optimized Intelligent Parquet with Efficient Retrieval (Default)
     /// Best for: Analytics, batch operations, maximum compression
@@ -183,7 +181,6 @@ pub enum StorageEngineStrategy {
     /// Best for: Metrics, logs, traces with label indexing and time-range queries
     Chrono,
 }
-
 
 /// Core metadata provider trait for collection metadata operations
 ///
@@ -670,7 +667,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn engine_name(&self) -> &'static str;
     fn engine_version(&self) -> &'static str;
     fn strategy(&self) -> StorageEngineStrategy;
-
 
     /// Get the storage engine type for AXIS indexing and event logging
     ///
@@ -1230,44 +1226,45 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         // 🚀 INDEX UPDATES: Notify EventLog for AXIS indexing service
         if result.success
-            && let Some(collection_id) = &params.collection_id {
-                // Notify EventLog so AXIS consumer can build indexes asynchronously
-                if let Some(event_log) = crate::services::events::log::event_log_service() {
-                    // Use engine_type() method (OCP-compliant - no string matching)
-                    let storage_engine_type = self.engine_type();
+            && let Some(collection_id) = &params.collection_id
+        {
+            // Notify EventLog so AXIS consumer can build indexes asynchronously
+            if let Some(event_log) = crate::services::events::log::event_log_service() {
+                // Use engine_type() method (OCP-compliant - no string matching)
+                let storage_engine_type = self.engine_type();
 
-                    let vector_count = result.entries_flushed.unwrap_or(0) as usize;
-                    // Use file_paths from FlushResult for AXIS index building
-                    if let Err(e) = event_log
-                        .notify_flush(
-                            collection_id,
-                            result.file_paths.clone(),
-                            vector_count,
-                            false, // has_quantized - DEFERRED: pass from params
-                            true,  // has_fp32
-                            storage_engine_type,
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            "⚠️ Failed to notify EventLog about flush for '{}': {}",
-                            collection_id,
-                            e
-                        );
-                    } else {
-                        tracing::info!(
-                            "📢 Notified EventLog for AXIS indexing: '{}' ({} vectors)",
-                            collection_id,
-                            vector_count
-                        );
-                    }
+                let vector_count = result.entries_flushed.unwrap_or(0) as usize;
+                // Use file_paths from FlushResult for AXIS index building
+                if let Err(e) = event_log
+                    .notify_flush(
+                        collection_id,
+                        result.file_paths.clone(),
+                        vector_count,
+                        false, // has_quantized - DEFERRED: pass from params
+                        true,  // has_fp32
+                        storage_engine_type,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        "⚠️ Failed to notify EventLog about flush for '{}': {}",
+                        collection_id,
+                        e
+                    );
                 } else {
-                    tracing::debug!(
-                        "🔄 Flush successful for collection: {} - EventLog not initialized",
-                        collection_id
+                    tracing::info!(
+                        "📢 Notified EventLog for AXIS indexing: '{}' ({} vectors)",
+                        collection_id,
+                        vector_count
                     );
                 }
+            } else {
+                tracing::debug!(
+                    "🔄 Flush successful for collection: {} - EventLog not initialized",
+                    collection_id
+                );
             }
+        }
 
         Ok(result)
     }
@@ -1532,7 +1529,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
         let warnings = stats
             .engine_specific
             .get("warnings")
-            .and_then(|v| v.as_array()).map_or_else(Vec::new, |arr| {
+            .and_then(|v| v.as_array())
+            .map_or_else(Vec::new, |arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str())
                     .map(|s| s.to_string())
@@ -1643,9 +1641,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         // Validate timeout
         if let Some(timeout) = params.timeout_ms
-            && timeout == 0 {
-                return Err(anyhow::anyhow!("Flush timeout cannot be zero"));
-            }
+            && timeout == 0
+        {
+            return Err(anyhow::anyhow!("Flush timeout cannot be zero"));
+        }
 
         Ok(())
     }
@@ -1662,9 +1661,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         // Validate timeout
         if let Some(timeout) = params.timeout_ms
-            && timeout == 0 {
-                return Err(anyhow::anyhow!("Compaction timeout cannot be zero"));
-            }
+            && timeout == 0
+        {
+            return Err(anyhow::anyhow!("Compaction timeout cannot be zero"));
+        }
 
         Ok(())
     }
@@ -2040,15 +2040,18 @@ impl StorageQueryContext {
                 .unwrap_or(false),
             has_quantization: config.and_then(|c| c.quantization.as_ref()).is_some(),
             dimension: config.map_or(0, |c| c.dimension as usize),
-            distance_metric: config
-                .map_or(crate::compute::distance_computation::DistanceMetric::Cosine, |c| match c.distance_metric {
+            distance_metric: config.map_or(
+                crate::compute::distance_computation::DistanceMetric::Cosine,
+                |c| match c.distance_metric {
                     Some(0) => crate::compute::distance_computation::DistanceMetric::Euclidean,
                     Some(1) => crate::compute::distance_computation::DistanceMetric::Cosine,
                     Some(2) => crate::compute::distance_computation::DistanceMetric::DotProduct,
                     _ => crate::compute::distance_computation::DistanceMetric::Cosine,
-                }),
+                },
+            ),
             storage_strategy,
-            storage_path: storage_assignment.map_or_else(|| "./data".to_string(), |sa| sa.base_location.clone()),
+            storage_path: storage_assignment
+                .map_or_else(|| "./data".to_string(), |sa| sa.base_location.clone()),
             estimated_vector_count: 0,
             estimated_size_bytes: 0,
             performance_tier: PerformanceTier::Warm, // Default since preset field doesn't exist
@@ -2201,9 +2204,8 @@ impl StorageQueryContext {
 
     /// Get collection-specific storage path
     pub fn collection_storage_path(&self) -> Option<String> {
-        self.storage_url().map(|base| {
-            crate::utils::StoragePath::collection_data_path(base, self.collection_id())
-        })
+        self.storage_url()
+            .map(|base| crate::utils::StoragePath::collection_data_path(base, self.collection_id()))
     }
 }
 

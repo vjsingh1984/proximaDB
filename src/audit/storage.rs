@@ -156,10 +156,11 @@ impl AuditStorage for FileAuditStorage {
 
                 // Apply limit if specified
                 if let Some(limit) = limit
-                    && events.len() >= limit {
-                        events.truncate(limit);
-                        break;
-                    }
+                    && events.len() >= limit
+                {
+                    events.truncate(limit);
+                    break;
+                }
             }
         }
 
@@ -225,22 +226,23 @@ impl AuditStorage for FileAuditStorage {
             let file_path = entry.path();
 
             if let Ok(metadata) = entry.metadata().await
-                && let Ok(modified) = metadata.modified() {
-                    let modified_dt: DateTime<Utc> = modified.into();
+                && let Ok(modified) = metadata.modified()
+            {
+                let modified_dt: DateTime<Utc> = modified.into();
 
-                    if modified_dt < cutoff_date {
-                        if let Err(e) = tokio::fs::remove_file(&file_path).await {
-                            warn!(
-                                "Failed to delete old audit log {}: {}",
-                                file_path.display(),
-                                e
-                            );
-                        } else {
-                            deleted_files += 1;
-                            info!("🗑️ Deleted old audit log: {}", file_path.display());
-                        }
+                if modified_dt < cutoff_date {
+                    if let Err(e) = tokio::fs::remove_file(&file_path).await {
+                        warn!(
+                            "Failed to delete old audit log {}: {}",
+                            file_path.display(),
+                            e
+                        );
+                    } else {
+                        deleted_files += 1;
+                        info!("🗑️ Deleted old audit log: {}", file_path.display());
                     }
                 }
+            }
         }
 
         info!(
@@ -276,24 +278,28 @@ impl FileAuditStorage {
                 Ok(event) => {
                     // Apply filters
                     if let Some(ref filter_type) = event_type
-                        && &event.event_type != filter_type {
-                            continue;
-                        }
+                        && &event.event_type != filter_type
+                    {
+                        continue;
+                    }
 
                     if let Some(ref filter_user) = user_id
-                        && event.user_id.as_ref() != Some(filter_user) {
-                            continue;
-                        }
+                        && event.user_id.as_ref() != Some(filter_user)
+                    {
+                        continue;
+                    }
 
                     if let Some(since_time) = since
-                        && event.timestamp < since_time {
-                            continue;
-                        }
+                        && event.timestamp < since_time
+                    {
+                        continue;
+                    }
 
                     if let Some(until_time) = until
-                        && event.timestamp > until_time {
-                            continue;
-                        }
+                        && event.timestamp > until_time
+                    {
+                        continue;
+                    }
 
                     events.push(event);
                 }

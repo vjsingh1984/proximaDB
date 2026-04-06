@@ -65,9 +65,7 @@ impl WriteAheadLogDiskManager {
         encryption_layer: Option<Arc<WALEncryptionLayer>>,
     ) -> Self {
         let wal_base_url = wal_base_url.as_ref().to_string();
-        let encryption_enabled = encryption_layer
-            .as_ref()
-            .is_some_and(|e| e.is_enabled());
+        let encryption_enabled = encryption_layer.as_ref().is_some_and(|e| e.is_enabled());
 
         info!(
             "🎯 Creating WriteAheadLogDiskManager with base URL: {}, encryption: {}",
@@ -256,9 +254,10 @@ impl WriteAheadLogDiskManager {
                 file_name,                  // file_name
                 data_to_write.len() as u64, // size_bytes (encrypted size)
                 checksum,                   // checksum_crc32
-                SerializationFormat::parse_format(format_str).unwrap_or(SerializationFormat::Bincode), // format enum
-                0,                         // vector_count (unknown at this point)
-                self.wal_base_url.clone(), // storage_url
+                SerializationFormat::parse_format(format_str)
+                    .unwrap_or(SerializationFormat::Bincode), // format enum
+                0,                          // vector_count (unknown at this point)
+                self.wal_base_url.clone(),  // storage_url
             );
             // Async append (non-blocking, high performance)
             manifest_service.append_async(entry).await?;
@@ -387,15 +386,14 @@ impl WriteAheadLogDiskManager {
                 Self::join_url(&self.wal_base_url, &[collection_id, "write_buffer"], true);
             if filesystem.exists(&legacy_url).await.unwrap_or(false)
                 && let Ok(legacy_fs) = self.filesystem_factory.get_filesystem(&legacy_url)
-                    && let Ok(entries) = legacy_fs.list(&legacy_url).await {
-                        for entry in entries {
-                            if let Some(file_info) =
-                                self.parse_wal_filename(&entry.url, collection_id)
-                            {
-                                wal_files.push(file_info);
-                            }
-                        }
+                && let Ok(entries) = legacy_fs.list(&legacy_url).await
+            {
+                for entry in entries {
+                    if let Some(file_info) = self.parse_wal_filename(&entry.url, collection_id) {
+                        wal_files.push(file_info);
                     }
+                }
+            }
         }
 
         debug!(

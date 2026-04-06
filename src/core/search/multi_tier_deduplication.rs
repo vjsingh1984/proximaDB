@@ -232,7 +232,10 @@ impl MultiTierDeduplicator {
                                 ) => serde_json::Value::String(s.clone()),
                                 Some(
                                     crate::proto::proximadb_v1::sql_value::Value::NumberValue(n),
-                                ) => serde_json::Number::from_f64(*n).map_or_else(|| serde_json::Value::String(n.to_string()), serde_json::Value::Number),
+                                ) => serde_json::Number::from_f64(*n).map_or_else(
+                                    || serde_json::Value::String(n.to_string()),
+                                    serde_json::Value::Number,
+                                ),
                                 Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
                                     b,
                                 )) => serde_json::Value::Bool(*b),
@@ -390,19 +393,19 @@ impl MultiTierDeduplicator {
             // Check for early termination after each addition
             // Only terminate early if we don't require ordering
             if !self.requires_ordering
-                && let Some(k) = self.target_k {
-                    let current_unique_count =
-                        self.id_to_latest.len() + self.results_without_id.len();
-                    if current_unique_count >= k {
-                        self.early_termination_possible = true;
-                        tracing::info!(
-                            "🚀 Early termination triggered: Reached {} unique results (target k={}, ordering not required)",
-                            current_unique_count,
-                            k
-                        );
-                        return; // Stop processing more results
-                    }
+                && let Some(k) = self.target_k
+            {
+                let current_unique_count = self.id_to_latest.len() + self.results_without_id.len();
+                if current_unique_count >= k {
+                    self.early_termination_possible = true;
+                    tracing::info!(
+                        "🚀 Early termination triggered: Reached {} unique results (target k={}, ordering not required)",
+                        current_unique_count,
+                        k
+                    );
+                    return; // Stop processing more results
                 }
+            }
         }
     }
 
@@ -728,8 +731,8 @@ mod tests {
 
     // --- Inlined from tests/unit/search/multi_tier_deduplication_tests.rs ---
 
-    use chrono::Duration;
     use crate::proto::proximadb_v1::{SqlValue, sql_value};
+    use chrono::Duration;
     use serde_json::json;
 
     #[test]

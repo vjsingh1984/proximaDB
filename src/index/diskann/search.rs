@@ -308,11 +308,12 @@ impl DiskANNSearch {
                         // Track cache hit if using node ordering
                         if config.use_node_ordering
                             && let Some(ordering) = &self.node_ordering
-                                && let Some(new_pos) = ordering.get_new_position(neighbor_id)
-                                    && new_pos < 1000 {
-                                        // Assume first 1000 nodes are cached
-                                        stats.cache_hits += 1;
-                                    }
+                            && let Some(new_pos) = ordering.get_new_position(neighbor_id)
+                            && new_pos < 1000
+                        {
+                            // Assume first 1000 nodes are cached
+                            stats.cache_hits += 1;
+                        }
                     }
                 }
             }

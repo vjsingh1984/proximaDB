@@ -504,20 +504,18 @@ impl SchemaEvolution for DefaultSchemaEvolution {
         for col in &to_schema.columns {
             if !col.is_deleted
                 && let Some(old_col) = from_schema.column_by_id(col.id)
-                    && old_col.data_type != col.data_type {
-                        is_online = false;
-                        steps.push(MigrationStep::RewriteDataFiles {
-                            affected_files: vec![], // To be filled by storage engine
-                            transformations: vec![ColumnTransformation {
-                                source_column_id: old_col.id,
-                                target_column_id: col.id,
-                                transformation: format!(
-                                    "CAST({} AS {:?})",
-                                    old_col.name, col.data_type
-                                ),
-                            }],
-                        });
-                    }
+                && old_col.data_type != col.data_type
+            {
+                is_online = false;
+                steps.push(MigrationStep::RewriteDataFiles {
+                    affected_files: vec![], // To be filled by storage engine
+                    transformations: vec![ColumnTransformation {
+                        source_column_id: old_col.id,
+                        target_column_id: col.id,
+                        transformation: format!("CAST({} AS {:?})", old_col.name, col.data_type),
+                    }],
+                });
+            }
         }
 
         Ok(MigrationPlan {

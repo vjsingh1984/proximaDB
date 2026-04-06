@@ -293,7 +293,10 @@ impl StorageLocationConfig {
                 self.path.clone()
             } else {
                 // Make relative path absolute
-                std::env::current_dir().map_or_else(|_| self.path.clone(), |p| p.join(&self.path).to_string_lossy().to_string())
+                std::env::current_dir().map_or_else(
+                    |_| self.path.clone(),
+                    |p| p.join(&self.path).to_string_lossy().to_string(),
+                )
             };
             format!("file://{}", abs_path)
         }
@@ -690,24 +693,22 @@ impl EmbeddedProximaDB {
 
             // Try to load existing policy
             if let Some(planner) = crate::query::rl_planner::get_rl_planner()
-                && std::path::Path::new(&policy_path).exists() {
-                    runtime.block_on(async {
-                        match planner.load_policy(&policy_path).await {
-                            Ok(()) => {
-                                tracing::info!(
-                                    "🎯 EMBEDDED: RL policy loaded from {}",
-                                    policy_path
-                                );
-                            }
-                            Err(e) => {
-                                tracing::debug!(
-                                    "EMBEDDED: No existing RL policy (starting fresh): {}",
-                                    e
-                                );
-                            }
+                && std::path::Path::new(&policy_path).exists()
+            {
+                runtime.block_on(async {
+                    match planner.load_policy(&policy_path).await {
+                        Ok(()) => {
+                            tracing::info!("🎯 EMBEDDED: RL policy loaded from {}", policy_path);
                         }
-                    });
-                }
+                        Err(e) => {
+                            tracing::debug!(
+                                "EMBEDDED: No existing RL policy (starting fresh): {}",
+                                e
+                            );
+                        }
+                    }
+                });
+            }
 
             tracing::info!("🎯 EMBEDDED: RL Query Planner initialized");
             Some(policy_path)
@@ -723,7 +724,8 @@ impl EmbeddedProximaDB {
         // Initialize checkpoint manager for incremental persistence
         let base_path = config
             .storage_locations
-            .first().map_or_else(|| "./data".to_string(), |loc| loc.path.clone());
+            .first()
+            .map_or_else(|| "./data".to_string(), |loc| loc.path.clone());
         let checkpoint_manager = std::sync::Arc::new(CheckpointManager::new(&base_path));
         runtime.block_on(async {
             if let Err(e) = checkpoint_manager.init().await {
@@ -738,9 +740,10 @@ impl EmbeddedProximaDB {
                 // Acquire exclusive lock
                 let lock = FileLockManager::new(&base_path, AccessMode::Exclusive).map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(
-                            format!("Failed to acquire exclusive lock: {}", e),
-                        ))
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to acquire exclusive lock: {}",
+                            e
+                        )))
                     },
                 )?;
                 tracing::info!("EMBEDDED: Acquired exclusive lock for multi-process coordination");
@@ -750,9 +753,10 @@ impl EmbeddedProximaDB {
                 // Acquire shared read lock
                 let lock = FileLockManager::new(&base_path, AccessMode::SharedRead).map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(
-                            format!("Failed to acquire shared read lock: {}", e),
-                        ))
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to acquire shared read lock: {}",
+                            e
+                        )))
                     },
                 )?;
                 tracing::info!(
@@ -768,9 +772,10 @@ impl EmbeddedProximaDB {
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 let election = LeaderElection::new(&base_path, &node_id).map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(
-                            format!("Failed to initialize leader election: {}", e),
-                        ))
+                        Box::new(std::io::Error::other(format!(
+                            "Failed to initialize leader election: {}",
+                            e
+                        )))
                     },
                 )?;
 
@@ -824,7 +829,10 @@ impl EmbeddedProximaDB {
         } else if config.metadata_path.starts_with('/') {
             format!("file://{}", config.metadata_path)
         } else {
-            let abs_path = std::env::current_dir().map_or_else(|_| config.metadata_path.clone(), |p| p.join(&config.metadata_path).to_string_lossy().to_string());
+            let abs_path = std::env::current_dir().map_or_else(
+                |_| config.metadata_path.clone(),
+                |p| p.join(&config.metadata_path).to_string_lossy().to_string(),
+            );
             format!("file://{}", abs_path)
         };
 
@@ -932,9 +940,7 @@ impl EmbeddedProximaDB {
             )
             .await
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                ))
+                Box::new(std::io::Error::other(e.to_string()))
             })?;
 
         // Set global metadata provider for WAL path resolution
@@ -1055,10 +1061,9 @@ impl EmbeddedProximaDB {
         match self.config.access_mode {
             AccessMode::Exclusive => true,
             AccessMode::SharedRead => false,
-            AccessMode::LeaderFollower => self
-                .leader_election
-                .as_ref()
-                .is_some_and(|e| e.is_leader()),
+            AccessMode::LeaderFollower => {
+                self.leader_election.as_ref().is_some_and(|e| e.is_leader())
+            }
         }
     }
 
@@ -1137,9 +1142,7 @@ impl EmbeddedProximaDB {
                 .create_collection(&collection_config)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             // Check if the collection service returned an error in the response
@@ -1318,9 +1321,7 @@ impl EmbeddedProximaDB {
                 .delete_collection(name)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             // Check if the collection service returned an error in the response
@@ -1405,9 +1406,7 @@ impl EmbeddedProximaDB {
                 .insert_vectors_direct(collection, records)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
             Ok(count)
         });
@@ -1508,9 +1507,7 @@ impl EmbeddedProximaDB {
                 .unified_search_native(collection, query_vector, top_k, None, Some(config))
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             // Convert to embedded SearchResult format
@@ -1676,9 +1673,7 @@ impl EmbeddedProximaDB {
                 .get_collection_with_tenant_context(name, None)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(collection.map(|c| {
@@ -1701,9 +1696,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let collections = self.collection_service.list_collections().await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )?;
 
@@ -2050,20 +2043,21 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             // Step 1: Check WAL/memtable for unflushed data (most recent)
             if let Some(write_buffer) = get_global_write_buffer_behavior()
-                && let Ok(batches) = write_buffer.get_unflushed_batches(collection).await {
-                    for batch in batches {
-                        for record in batch.vector_records.iter() {
-                            if record.id == vector_id {
-                                // Found in unflushed data - check if it's a tombstone
-                                if record.vector.is_empty() && record.version.is_none() {
-                                    // This is a tombstone marker - vector was deleted
-                                    return Ok(None);
-                                }
-                                return Ok(Some(record.clone()));
+                && let Ok(batches) = write_buffer.get_unflushed_batches(collection).await
+            {
+                for batch in batches {
+                    for record in batch.vector_records.iter() {
+                        if record.id == vector_id {
+                            // Found in unflushed data - check if it's a tombstone
+                            if record.vector.is_empty() && record.version.is_none() {
+                                // This is a tombstone marker - vector was deleted
+                                return Ok(None);
                             }
+                            return Ok(Some(record.clone()));
                         }
                     }
                 }
+            }
 
             // Step 2: Search in flushed storage using the unified storage engine
             // Use a filter-based search to find the specific vector by ID
@@ -2083,9 +2077,10 @@ impl EmbeddedProximaDB {
                     }
                 }
                 Ok(None) => Ok(None),
-                Err(e) => Err(Box::new(std::io::Error::other(
-                    format!("Failed to get vector: {}", e),
-                ))
+                Err(e) => Err(Box::new(std::io::Error::other(format!(
+                    "Failed to get vector: {}",
+                    e
+                )))
                     as Box<dyn std::error::Error + Send + Sync>),
             }
         })
@@ -2162,9 +2157,7 @@ impl EmbeddedProximaDB {
                 .insert_vectors_direct(collection, records)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
             Ok(true)
         })
@@ -2229,9 +2222,7 @@ impl EmbeddedProximaDB {
                 .insert_vectors_direct(collection, records)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
             Ok(count)
         })
@@ -2318,13 +2309,12 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let collections = self.collection_service.list_collections().await.ok();
             let total_collections = collections.as_ref().map_or(0, |c| c.len() as u64);
-            let total_vectors: u64 = collections
-                .map_or(0, |c| {
-                    c.iter()
-                        .filter_map(|col| col.stats.as_ref())
-                        .map(|s| s.vector_count as u64)
-                        .sum()
-                });
+            let total_vectors: u64 = collections.map_or(0, |c| {
+                c.iter()
+                    .filter_map(|col| col.stats.as_ref())
+                    .map(|s| s.vector_count as u64)
+                    .sum()
+            });
 
             Ok(StorageStats {
                 total_vectors,
@@ -2473,27 +2463,28 @@ impl EmbeddedProximaDB {
     pub fn close(&self) {
         // Persist RL planner policy if enabled
         if let Some(ref policy_path) = self.rl_policy_path
-            && let Some(planner) = crate::query::rl_planner::get_rl_planner() {
-                self.runtime.block_on(async {
-                    match planner.save_policy(policy_path).await {
-                        Ok(()) => {
-                            tracing::info!("🎯 EMBEDDED: RL policy persisted to {}", policy_path);
-                        }
-                        Err(e) => {
-                            tracing::warn!("EMBEDDED: Failed to persist RL policy: {}", e);
-                        }
+            && let Some(planner) = crate::query::rl_planner::get_rl_planner()
+        {
+            self.runtime.block_on(async {
+                match planner.save_policy(policy_path).await {
+                    Ok(()) => {
+                        tracing::info!("🎯 EMBEDDED: RL policy persisted to {}", policy_path);
                     }
+                    Err(e) => {
+                        tracing::warn!("EMBEDDED: Failed to persist RL policy: {}", e);
+                    }
+                }
 
-                    // Log final stats
-                    let stats = planner.get_action_stats().await;
-                    if !stats.is_empty() {
-                        tracing::info!(
-                            "🎯 EMBEDDED: RL Planner final stats - {} actions tracked",
-                            stats.len()
-                        );
-                    }
-                });
-            }
+                // Log final stats
+                let stats = planner.get_action_stats().await;
+                if !stats.is_empty() {
+                    tracing::info!(
+                        "🎯 EMBEDDED: RL Planner final stats - {} actions tracked",
+                        stats.len()
+                    );
+                }
+            });
+        }
 
         tracing::info!("🛑 EMBEDDED: Database closed");
     }
@@ -2548,9 +2539,7 @@ impl EmbeddedProximaDB {
             // Gather collection states
             let collections = self.collection_service.list_collections().await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )?;
 
@@ -2575,9 +2564,7 @@ impl EmbeddedProximaDB {
                 .create_checkpoint(name, current_lsn, collection_states)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             tracing::info!(
@@ -2746,9 +2733,7 @@ impl EmbeddedProximaDB {
                                 batch.vector_records.as_ref();
                             let vector_data = bincode::serialize(records).map_err(
                                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                                    Box::new(std::io::Error::other(
-                                        e.to_string(),
-                                    ))
+                                    Box::new(std::io::Error::other(e.to_string()))
                                 },
                             )?;
 
@@ -2771,9 +2756,7 @@ impl EmbeddedProximaDB {
                 .save_delta(path, entries, base_checkpoint, start_lsn, end_lsn)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             tracing::info!(
@@ -2809,9 +2792,7 @@ impl EmbeddedProximaDB {
             // Load the delta file
             let (header, entries) = self.checkpoint_manager.load_delta(path).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )?;
 
@@ -2832,9 +2813,7 @@ impl EmbeddedProximaDB {
                             let records: Vec<crate::proto::proximadb_v1::VectorRecord> =
                                 bincode::deserialize(&vector_data).map_err(
                                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                                        Box::new(std::io::Error::other(
-                                            e.to_string(),
-                                        ))
+                                        Box::new(std::io::Error::other(e.to_string()))
                                     },
                                 )?;
 
@@ -2845,9 +2824,7 @@ impl EmbeddedProximaDB {
                                 .insert_vectors_direct(&entry.collection_id, records)
                                 .await
                                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                                    Box::new(std::io::Error::other(
-                                        e.to_string(),
-                                    ))
+                                    Box::new(std::io::Error::other(e.to_string()))
                                 })?;
                         }
                     }
@@ -2871,9 +2848,7 @@ impl EmbeddedProximaDB {
                                     .insert_vectors_direct(&entry.collection_id, records)
                                     .await
                                     .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                                        Box::new(std::io::Error::other(
-                                            e.to_string(),
-                                        ))
+                                        Box::new(std::io::Error::other(e.to_string()))
                                     })?;
                             }
                         }
@@ -2952,9 +2927,7 @@ impl EmbeddedProximaDB {
                 .create_graph_collection(request)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(())
@@ -2983,9 +2956,7 @@ impl EmbeddedProximaDB {
                 .await
                 .map(|inserted| inserted.len())
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })
         })
     }
@@ -3010,9 +2981,7 @@ impl EmbeddedProximaDB {
                 .await
                 .map(|inserted| inserted.len())
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })
         })
     }
@@ -3031,9 +3000,7 @@ impl EmbeddedProximaDB {
                 .get_node(graph_id, &node_id_string)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(proto_node.map(|n| GraphNode::from_proto(&n)))
@@ -3058,9 +3025,7 @@ impl EmbeddedProximaDB {
                 .query_nodes(graph_id, node_query)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(proto_nodes
@@ -3091,9 +3056,7 @@ impl EmbeddedProximaDB {
                 .query_edges(graph_id, edge_query)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(proto_edges
@@ -3124,9 +3087,7 @@ impl EmbeddedProximaDB {
                 .query_edges(graph_id, edge_query)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(proto_edges
@@ -3150,9 +3111,7 @@ impl EmbeddedProximaDB {
                 .delete_node(graph_id, &node_id_string)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(deleted.is_some())
@@ -3169,9 +3128,7 @@ impl EmbeddedProximaDB {
 
             let proto_stats = graph_service.get_stats(graph_id).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )?;
 
@@ -3242,9 +3199,7 @@ impl EmbeddedProximaDB {
 
             doc_service.create_collection(name, config).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )?;
 
@@ -3294,9 +3249,7 @@ impl EmbeddedProximaDB {
                 .insert_document(collection, id, sql_object)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok((record.id, record.version))
@@ -3336,9 +3289,7 @@ impl EmbeddedProximaDB {
                 .get_document(collection, id, None)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(record.map(|r| Self::sql_object_to_json(&r.document)))
@@ -3404,9 +3355,7 @@ impl EmbeddedProximaDB {
                 .query_documents(collection, params)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(result
@@ -3464,9 +3413,7 @@ impl EmbeddedProximaDB {
                 .update_document(collection, id, doc_updates, None)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             Ok(())
@@ -3502,9 +3449,7 @@ impl EmbeddedProximaDB {
 
             doc_service.delete_document(collection, id).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )
         })
@@ -3532,9 +3477,7 @@ impl EmbeddedProximaDB {
 
             doc_service.delete_collection(name).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )
         })
@@ -3566,9 +3509,7 @@ impl EmbeddedProximaDB {
 
             let collections = doc_service.list_collections().await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )?;
 
@@ -3616,32 +3557,33 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             // Execute vector search if query contains vector operations and vector is provided
             if models.contains(&"vector")
-                && let Some(ref vector) = query_vector {
-                    // Extract collection name from query (simplified parsing)
-                    if let Some(collection) = self.extract_collection_from_query(query) {
-                        match self.search_internal(&collection, vector, 10).await {
-                            Ok(results) => {
-                                for result in results {
-                                    let data = serde_json::json!({
-                                        "vector_score": result.score,
-                                        "metadata": result.metadata
-                                    });
-                                    all_results.push(
-                                        UnifiedQueryRecord::new(
-                                            &result.id,
-                                            "vector",
-                                            result.score as f64,
-                                        )
-                                        .with_data(data.to_string()),
-                                    );
-                                }
+                && let Some(ref vector) = query_vector
+            {
+                // Extract collection name from query (simplified parsing)
+                if let Some(collection) = self.extract_collection_from_query(query) {
+                    match self.search_internal(&collection, vector, 10).await {
+                        Ok(results) => {
+                            for result in results {
+                                let data = serde_json::json!({
+                                    "vector_score": result.score,
+                                    "metadata": result.metadata
+                                });
+                                all_results.push(
+                                    UnifiedQueryRecord::new(
+                                        &result.id,
+                                        "vector",
+                                        result.score as f64,
+                                    )
+                                    .with_data(data.to_string()),
+                                );
                             }
-                            Err(e) => {
-                                tracing::warn!("Vector search failed: {}", e);
-                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Vector search failed: {}", e);
                         }
                     }
                 }
+            }
 
             // Execute document query if query contains document operations
             if models.contains(&"document") {
@@ -3808,9 +3750,7 @@ impl EmbeddedProximaDB {
             .search_v1(search_request)
             .await
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                ))
+                Box::new(std::io::Error::other(e.to_string()))
             })?;
 
         // VectorOperationResponse.results is Option<SearchResult>
@@ -4027,10 +3967,10 @@ impl EmbeddedProximaDB {
         use crate::proto::proximadb_v1::{ObservabilityNamespaceConfig, RetentionConfig};
 
         // Get base path for observability data
-        let base_path = self
-            .config
-            .storage_locations
-            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
+        let base_path = self.config.storage_locations.first().map_or_else(
+            || "./data/observability".to_string(),
+            |loc| format!("{}/observability", loc.path),
+        );
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
@@ -4051,9 +3991,7 @@ impl EmbeddedProximaDB {
 
             storage.create_namespace(name, &config).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )?;
 
@@ -4088,10 +4026,10 @@ impl EmbeddedProximaDB {
         use crate::observability::storage::ObservabilityStorage;
         use crate::proto::proximadb_v1::{LogEntry, Severity};
 
-        let base_path = self
-            .config
-            .storage_locations
-            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
+        let base_path = self.config.storage_locations.first().map_or_else(
+            || "./data/observability".to_string(),
+            |loc| format!("{}/observability", loc.path),
+        );
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
@@ -4130,9 +4068,7 @@ impl EmbeddedProximaDB {
             for log in proto_logs {
                 storage.write_log(namespace, &log).await.map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(
-                            e.to_string(),
-                        ))
+                        Box::new(std::io::Error::other(e.to_string()))
                     },
                 )?;
             }
@@ -4176,10 +4112,10 @@ impl EmbeddedProximaDB {
         use crate::observability::storage::ObservabilityStorage;
         use crate::proto::proximadb_v1::Severity;
 
-        let base_path = self
-            .config
-            .storage_locations
-            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
+        let base_path = self.config.storage_locations.first().map_or_else(
+            || "./data/observability".to_string(),
+            |loc| format!("{}/observability", loc.path),
+        );
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
@@ -4198,9 +4134,7 @@ impl EmbeddedProximaDB {
 
             let result = query_engine.query_logs(namespace, params).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 },
             )?;
 
@@ -4264,10 +4198,10 @@ impl EmbeddedProximaDB {
         use crate::observability::storage::ObservabilityStorage;
         use crate::proto::proximadb_v1::MetricSample;
 
-        let base_path = self
-            .config
-            .storage_locations
-            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
+        let base_path = self.config.storage_locations.first().map_or_else(
+            || "./data/observability".to_string(),
+            |loc| format!("{}/observability", loc.path),
+        );
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
@@ -4288,9 +4222,7 @@ impl EmbeddedProximaDB {
             for metric in proto_metrics {
                 storage.write_metric(namespace, &metric).await.map_err(
                     |e| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::other(
-                            e.to_string(),
-                        ))
+                        Box::new(std::io::Error::other(e.to_string()))
                     },
                 )?;
             }
@@ -4336,10 +4268,10 @@ impl EmbeddedProximaDB {
         use crate::observability::storage::ObservabilityStorage;
         use crate::observability::{MetricAggParams, MetricAggregation};
 
-        let base_path = self
-            .config
-            .storage_locations
-            .first().map_or_else(|| "./data/observability".to_string(), |loc| format!("{}/observability", loc.path));
+        let base_path = self.config.storage_locations.first().map_or_else(
+            || "./data/observability".to_string(),
+            |loc| format!("{}/observability", loc.path),
+        );
 
         self.runtime.block_on(async {
             let storage = std::sync::Arc::new(ObservabilityStorage::new(&base_path));
@@ -4376,9 +4308,7 @@ impl EmbeddedProximaDB {
                 .aggregate_metrics(namespace, params)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(
-                        e.to_string(),
-                    ))
+                    Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
             // Flatten all series into data points
@@ -4423,9 +4353,10 @@ impl EmbeddedProximaDB {
             }
             // Parse "now-1h", "now-30m", etc.
             if let Some(offset_str) = s.strip_prefix("now-")
-                && let Some(duration) = Self::parse_duration(offset_str) {
-                    return Some((now - duration).timestamp_nanos_opt().unwrap_or(0));
-                }
+                && let Some(duration) = Self::parse_duration(offset_str)
+            {
+                return Some((now - duration).timestamp_nanos_opt().unwrap_or(0));
+            }
         }
 
         None
@@ -4487,9 +4418,7 @@ impl EmbeddedProximaDB {
         cache
             .prepare(sql)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                ))
+                Box::new(std::io::Error::other(e.to_string()))
             })
     }
 
@@ -4514,9 +4443,7 @@ impl EmbeddedProximaDB {
         cache
             .prepare_with_ttl(sql, Duration::from_secs(ttl_seconds))
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                ))
+                Box::new(std::io::Error::other(e.to_string()))
             })
     }
 
@@ -4560,9 +4487,7 @@ impl EmbeddedProximaDB {
         // Get the substituted SQL
         let sql = cache.execute_sql(statement_id, &param_values).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                ))
+                Box::new(std::io::Error::other(e.to_string()))
             },
         )?;
 
@@ -4593,17 +4518,13 @@ impl EmbeddedProximaDB {
         let cache = PreparedStatementCache::new(PreparedStatementConfig::default());
 
         // Convert JSON values to ParameterValue
-        let param_values: Vec<ParameterValue> = params
-            .iter()
-            .map(Self::json_to_parameter_value)
-            .collect();
+        let param_values: Vec<ParameterValue> =
+            params.iter().map(Self::json_to_parameter_value).collect();
 
         // Get the substituted SQL
         let sql = cache.execute_sql(statement_id, &param_values).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                ))
+                Box::new(std::io::Error::other(e.to_string()))
             },
         )?;
 
@@ -4635,9 +4556,7 @@ impl EmbeddedProximaDB {
 
         cache.drop_statement(statement_id).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                ))
+                Box::new(std::io::Error::other(e.to_string()))
             },
         )
     }
@@ -5441,8 +5360,12 @@ mod tests {
     fn test_embedded_config_builder() {
         let config = EmbeddedConfig {
             storage_locations: vec![
-                StorageLocationConfig::new("/nvme/data").with_weight(3).with_tag("hot"),
-                StorageLocationConfig::new("/hdd/data").with_weight(1).with_tag("cold"),
+                StorageLocationConfig::new("/nvme/data")
+                    .with_weight(3)
+                    .with_tag("hot"),
+                StorageLocationConfig::new("/hdd/data")
+                    .with_weight(1)
+                    .with_tag("cold"),
             ],
             metadata_path: "/nvme/metadata".to_string(),
             cache_size_mb: 2048,
@@ -5461,9 +5384,17 @@ mod tests {
 
         assert_eq!(config.storage_locations.len(), 2);
         assert_eq!(config.storage_locations[0].weight, 3);
-        assert!(config.storage_locations[0].tags.contains(&"hot".to_string()));
+        assert!(
+            config.storage_locations[0]
+                .tags
+                .contains(&"hot".to_string())
+        );
         assert_eq!(config.storage_locations[1].weight, 1);
-        assert!(config.storage_locations[1].tags.contains(&"cold".to_string()));
+        assert!(
+            config.storage_locations[1]
+                .tags
+                .contains(&"cold".to_string())
+        );
         assert_eq!(config.metadata_path, "/nvme/metadata");
         assert_eq!(config.cache_size_mb, 2048);
         assert_eq!(config.default_engine, "viper");

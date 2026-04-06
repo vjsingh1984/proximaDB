@@ -1081,14 +1081,15 @@ impl ViperEngine {
         {
             // Try to get from vector cache first (using correct cache type)
             if let Some(vector_cache) = orchestrator.get_vector_cache()
-                && let Some(cached_vector) = vector_cache.get(&cache_key).await {
-                    // Track cache hit for access pattern learning
-                    orchestrator.pattern_tracker().track_access_async(
-                        cache_key.clone(),
-                        crate::storage::cache::orchestrator::CacheType::VectorData,
-                    );
-                    return Ok(Some(cached_vector));
-                }
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await
+            {
+                // Track cache hit for access pattern learning
+                orchestrator.pattern_tracker().track_access_async(
+                    cache_key.clone(),
+                    crate::storage::cache::orchestrator::CacheType::VectorData,
+                );
+                return Ok(Some(cached_vector));
+            }
 
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(
@@ -1179,13 +1180,12 @@ impl ViperEngine {
                             });
                         // Skip if expired
                         if let Some(exp) = expires_at
-                            && exp > 0 && exp < current_time {
-                                debug!(
-                                    "Skipping expired vector {} (expired at {})",
-                                    vector_id, exp
-                                );
-                                continue;
-                            }
+                            && exp > 0
+                            && exp < current_time
+                        {
+                            debug!("Skipping expired vector {} (expired at {})", vector_id, exp);
+                            continue;
+                        }
                         // Extract vector data
                         let vector_values = vector_array.value(row_idx);
                         let vector_float_array = vector_values
@@ -1212,35 +1212,36 @@ impl ViperEngine {
                         if let Some(extra_meta_col) = batch.column_by_name("extra_meta")
                             && let Some(extra_meta_list) =
                                 extra_meta_col.as_any().downcast_ref::<ListArray>()
-                                && !extra_meta_list.is_null(row_idx) {
-                                    let kv_pairs = extra_meta_list.value(row_idx);
-                                    if let Some(struct_array) =
-                                        kv_pairs.as_any().downcast_ref::<StructArray>()
-                                    {
-                                        let (Some(key_array), Some(value_array)) = (
-                                            struct_array
-                                                .column(0)
-                                                .as_any()
-                                                .downcast_ref::<StringArray>(),
-                                            struct_array
-                                                .column(1)
-                                                .as_any()
-                                                .downcast_ref::<StringArray>(),
-                                        ) else {
-                                            continue;
-                                        };
+                            && !extra_meta_list.is_null(row_idx)
+                        {
+                            let kv_pairs = extra_meta_list.value(row_idx);
+                            if let Some(struct_array) =
+                                kv_pairs.as_any().downcast_ref::<StructArray>()
+                            {
+                                let (Some(key_array), Some(value_array)) = (
+                                    struct_array
+                                        .column(0)
+                                        .as_any()
+                                        .downcast_ref::<StringArray>(),
+                                    struct_array
+                                        .column(1)
+                                        .as_any()
+                                        .downcast_ref::<StringArray>(),
+                                ) else {
+                                    continue;
+                                };
 
-                                        for kv_idx in 0..struct_array.len() {
-                                            if !struct_array.is_null(kv_idx) {
-                                                let key = key_array.value(kv_idx).to_string();
-                                                let value = value_array.value(kv_idx).to_string();
-                                                metadata_map.insert(key, crate::proto::proximadb_v1::SqlValue {
+                                for kv_idx in 0..struct_array.len() {
+                                    if !struct_array.is_null(kv_idx) {
+                                        let key = key_array.value(kv_idx).to_string();
+                                        let value = value_array.value(kv_idx).to_string();
+                                        metadata_map.insert(key, crate::proto::proximadb_v1::SqlValue {
                                                     value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value)),
                                                 });
-                                            }
-                                        }
                                     }
                                 }
+                            }
+                        }
                         // Also parse filterable metadata columns (they have their own columns)
                         for field in batch.schema().fields() {
                             let field_name = field.name();
@@ -1256,53 +1257,53 @@ impl ViperEngine {
                                     | FIELD_VERSION
                                     | FIELD_EXPIRES_AT
                                     | "extra_meta"
-                            )
-                                && let Some(column) = batch.column_by_name(field_name)
-                                    && !column.is_null(row_idx) {
-                                        // Convert Arrow value to String based on data type
-                                        let string_value = match field.data_type() {
-                                            arrow_schema::DataType::Utf8 => {
-                                                if let Some(str_array) =
-                                                    column.as_any().downcast_ref::<StringArray>()
-                                                {
-                                                    str_array.value(row_idx).to_string()
-                                                } else {
-                                                    continue;
-                                                }
-                                            }
-                                            arrow_schema::DataType::Int64 => {
-                                                if let Some(int_array) =
-                                                    column.as_any().downcast_ref::<Int64Array>()
-                                                {
-                                                    int_array.value(row_idx).to_string()
-                                                } else {
-                                                    continue;
-                                                }
-                                            }
-                                            arrow_schema::DataType::Float64 => {
-                                                if let Some(float_array) =
-                                                    column.as_any().downcast_ref::<Float64Array>()
-                                                {
-                                                    float_array.value(row_idx).to_string()
-                                                } else {
-                                                    continue;
-                                                }
-                                            }
-                                            arrow_schema::DataType::Boolean => {
-                                                if let Some(bool_array) =
-                                                    column.as_any().downcast_ref::<BooleanArray>()
-                                                {
-                                                    bool_array.value(row_idx).to_string()
-                                                } else {
-                                                    continue;
-                                                }
-                                            }
-                                            _ => continue, // Skip unsupported types
-                                        };
-                                        metadata_map.insert(field_name.to_string(), crate::proto::proximadb_v1::SqlValue {
+                            ) && let Some(column) = batch.column_by_name(field_name)
+                                && !column.is_null(row_idx)
+                            {
+                                // Convert Arrow value to String based on data type
+                                let string_value = match field.data_type() {
+                                    arrow_schema::DataType::Utf8 => {
+                                        if let Some(str_array) =
+                                            column.as_any().downcast_ref::<StringArray>()
+                                        {
+                                            str_array.value(row_idx).to_string()
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    arrow_schema::DataType::Int64 => {
+                                        if let Some(int_array) =
+                                            column.as_any().downcast_ref::<Int64Array>()
+                                        {
+                                            int_array.value(row_idx).to_string()
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    arrow_schema::DataType::Float64 => {
+                                        if let Some(float_array) =
+                                            column.as_any().downcast_ref::<Float64Array>()
+                                        {
+                                            float_array.value(row_idx).to_string()
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    arrow_schema::DataType::Boolean => {
+                                        if let Some(bool_array) =
+                                            column.as_any().downcast_ref::<BooleanArray>()
+                                        {
+                                            bool_array.value(row_idx).to_string()
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    _ => continue, // Skip unsupported types
+                                };
+                                metadata_map.insert(field_name.to_string(), crate::proto::proximadb_v1::SqlValue {
                                             value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(string_value)),
                                         });
-                                    }
+                            }
                         }
                         // metadata_map is already HashMap<String, SqlValue> which is what VectorRecord expects
                         let record = VectorRecord {
@@ -1337,9 +1338,10 @@ impl ViperEngine {
         if let Some((ref record, _, _)) = best_match
             && let Some(orchestrator) =
                 crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
-                && let Some(vector_cache) = orchestrator.get_vector_cache() {
-                    let _ = vector_cache.put(cache_key, record.clone()).await;
-                }
+            && let Some(vector_cache) = orchestrator.get_vector_cache()
+        {
+            let _ = vector_cache.put(cache_key, record.clone()).await;
+        }
 
         // Return the best match (highest version/newest timestamp)
         Ok(best_match.map(|(record, _, _)| record))
@@ -1805,7 +1807,7 @@ impl ViperEngine {
 }
 
 // Close the impl ViperEngine block
-#[allow(clippy::panic)]  // Intentional panics for Default impl failures - indicates initialization problems
+#[allow(clippy::panic)] // Intentional panics for Default impl failures - indicates initialization problems
 impl Default for ViperEngine {
     fn default() -> Self {
         let runtime = match tokio::runtime::Runtime::new() {
@@ -2454,7 +2456,8 @@ impl UnifiedStorageEngine for ViperEngine {
             },
             filterable_columns: collection_opt
                 .as_ref()
-                .and_then(|c| c.config.as_ref()).map_or_else(Vec::new, |c| {
+                .and_then(|c| c.config.as_ref())
+                .map_or_else(Vec::new, |c| {
                     c.filterable_columns
                         .iter()
                         .map(|col| {
@@ -2510,7 +2513,8 @@ impl UnifiedStorageEngine for ViperEngine {
         // Get filterable columns from collection config if available
         let _filterable_column_specs = collection_opt
             .as_ref()
-            .and_then(|c| c.config.as_ref()).map_or_else(Vec::new, |cfg| cfg.filterable_columns.clone());
+            .and_then(|c| c.config.as_ref())
+            .map_or_else(Vec::new, |cfg| cfg.filterable_columns.clone());
 
         let collection_context = crate::storage::engines::core::formats::columnar::columnar_query_engine::CollectionContext {
             collection_id: collection_id.to_string(),

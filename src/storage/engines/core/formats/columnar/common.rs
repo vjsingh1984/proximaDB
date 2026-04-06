@@ -23,8 +23,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Common configuration for VIPER and NOVA engines
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct CommonColumnarConfig {
     /// Base columnar configuration
     pub base_config: ColumnarConfig,
@@ -97,8 +96,7 @@ pub struct CompressionLevels {
 }
 
 /// Serialization optimization configuration
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SerializationOptimizationConfig {
     /// Memory pool configuration
     pub memory_pools: MemoryPoolConfig,
@@ -277,8 +275,7 @@ pub struct HardwareAccelerationConfig {
 }
 
 /// Engine-specific optimizations
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct EngineOptimizations {
     /// VIPER-specific optimizations
     pub viper_optimizations: ViperOptimizations,
@@ -714,19 +711,20 @@ impl CommonColumnarOperations {
         {
             let mut cache = self.metadata_cache.write().await;
             if let Some(cached) = cache.file_metadata.get_mut(&path_str)
-                && !self.is_cache_expired(cached) {
-                    cached.last_accessed = std::time::Instant::now();
-                    cached.access_count += 1;
+                && !self.is_cache_expired(cached)
+            {
+                cached.last_accessed = std::time::Instant::now();
+                cached.access_count += 1;
 
-                    let metadata = cached.metadata.clone();
-                    let schema = cached.schema.clone();
-                    let compression_metadata = cached.compression_metadata.clone();
+                let metadata = cached.metadata.clone();
+                let schema = cached.schema.clone();
+                let compression_metadata = cached.compression_metadata.clone();
 
-                    cache.hits += 1;
+                cache.hits += 1;
 
-                    debug!("File metadata cache hit for: {}", path_str);
-                    return Ok((metadata, schema, compression_metadata));
-                }
+                debug!("File metadata cache hit for: {}", path_str);
+                return Ok((metadata, schema, compression_metadata));
+            }
         }
 
         // Load metadata from file
@@ -1014,7 +1012,6 @@ impl Default for CompressionLevels {
     }
 }
 
-
 impl Default for MemoryPoolConfig {
     fn default() -> Self {
         Self {
@@ -1144,7 +1141,6 @@ impl Default for HardwareAccelerationConfig {
         }
     }
 }
-
 
 impl Default for ViperOptimizations {
     fn default() -> Self {

@@ -310,20 +310,11 @@ pub fn create_observability_router() -> Router<ObservabilityApiState> {
             post(aggregate_metrics),
         )
         // PromQL endpoint
-        .route(
-            "/namespaces/:namespace/metrics/_promql",
-            post(query_promql),
-        )
+        .route("/namespaces/:namespace/metrics/_promql", post(query_promql))
         // Trace ingestion
-        .route(
-            "/namespaces/:namespace/traces/_bulk",
-            post(ingest_traces),
-        )
+        .route("/namespaces/:namespace/traces/_bulk", post(ingest_traces))
         // Trace queries
-        .route(
-            "/namespaces/:namespace/traces/_search",
-            post(query_traces),
-        )
+        .route("/namespaces/:namespace/traces/_search", post(query_traces))
 }
 
 /// Create a namespace
@@ -599,10 +590,7 @@ async fn query_promql(
     Path(namespace): Path<String>,
     Json(request): Json<PromQLRequest>,
 ) -> ApiResult<JsonResponse<PromQLResponse>> {
-    debug!(
-        "PromQL query in namespace {}: {}",
-        namespace, request.query
-    );
+    debug!("PromQL query in namespace {}: {}", namespace, request.query);
 
     // The PromQL parser exists at src/observability/query/promql.rs but full wiring
     // to the metric storage layer comes later. Return empty result for now.
@@ -927,8 +915,7 @@ mod tests {
             }
         });
 
-        let request: MetricAggregationRequest =
-            serde_json::from_value(json).expect("should parse");
+        let request: MetricAggregationRequest = serde_json::from_value(json).expect("should parse");
         assert_eq!(request.metric_name, "http_request_duration_seconds");
         assert_eq!(request.start_time_ns, 1700000000000000000);
         assert_eq!(request.end_time_ns, 1700000060000000000);
@@ -1170,15 +1157,11 @@ mod tests {
         };
         let promql_json = serde_json::to_value(&promql_resp).expect("should serialize");
         assert_eq!(promql_json["result_type"], "vector");
-        assert!(promql_json["result"]
-            .as_array()
-            .expect("array")
-            .is_empty());
+        assert!(promql_json["result"].as_array().expect("array").is_empty());
 
         // Verify CreateNamespaceRequest defaults
         let ns_json = serde_json::json!({ "name": "production" });
-        let ns: CreateNamespaceRequest =
-            serde_json::from_value(ns_json).expect("should parse");
+        let ns: CreateNamespaceRequest = serde_json::from_value(ns_json).expect("should parse");
         assert_eq!(ns.name, "production");
         assert_eq!(ns.hot_retention_days, 1); // default_hot_retention
         assert_eq!(ns.warm_retention_days, 7); // default_warm_retention

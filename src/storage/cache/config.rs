@@ -3,8 +3,7 @@
 use anyhow::Result;
 
 /// Complete cache configuration for production deployment
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct CacheConfig {
     /// Global cache settings
     pub global: GlobalCacheConfig,
@@ -261,7 +260,6 @@ pub struct AlertThresholds {
     /// Maximum prefetch queue depth
     pub max_prefetch_queue: usize,
 }
-
 
 impl Default for GlobalCacheConfig {
     fn default() -> Self {

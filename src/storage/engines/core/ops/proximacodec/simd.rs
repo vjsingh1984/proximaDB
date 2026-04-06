@@ -1587,7 +1587,9 @@ pub fn simd_double_delta_decode_f32(double_deltas: &[i64], count: usize) -> Resu
 
     for dd in double_deltas.iter().skip(2) {
         // Safe: first_deltas always has at least one element (first_delta pushed above)
-        let prev_delta = *first_deltas.last().expect("first_deltas should have at least one element");
+        let prev_delta = *first_deltas
+            .last()
+            .expect("first_deltas should have at least one element");
         first_deltas.push(prev_delta + dd);
     }
 

@@ -993,10 +993,7 @@ mod tests {
             response.enterprise_metadata.audit_trail_id,
             Some("audit_001".to_string())
         );
-        assert_eq!(
-            response.enterprise_metadata.user_context.user_id,
-            "system"
-        );
+        assert_eq!(response.enterprise_metadata.user_context.user_id, "system");
     }
 
     #[test]

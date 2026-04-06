@@ -155,11 +155,12 @@ impl BatchCoordinator {
     /// Mark batch as flushed
     fn mark_batch_flushed(&mut self, collection_id: &str, batch_id: &str) -> Result<()> {
         if let Some(collection_batches) = self.batches.get_mut(collection_id)
-            && let Some(batch) = collection_batches.get_mut(batch_id) {
-                batch.is_flushed = true;
-                tracing::debug!("✅ Marked batch {} as flushed", batch_id);
-                return Ok(());
-            }
+            && let Some(batch) = collection_batches.get_mut(batch_id)
+        {
+            batch.is_flushed = true;
+            tracing::debug!("✅ Marked batch {} as flushed", batch_id);
+            return Ok(());
+        }
         Err(anyhow::anyhow!(
             "Batch {}:{} not found",
             collection_id,
@@ -621,10 +622,7 @@ impl WALBehaviorWrapper {
     }
 
     /// Clear flushed entries for a specific collection
-    pub async fn clear_flushed_by_collection_id(
-        &self,
-        collection_id: &str,
-    ) -> Result<usize> {
+    pub async fn clear_flushed_by_collection_id(&self, collection_id: &str) -> Result<usize> {
         // Delegate to the string-based method
         self.clear_flushed(collection_id).await
     }
@@ -803,15 +801,9 @@ impl WALBehaviorWrapper {
     }
 
     /// Get all vectors for a specific collection (MODERN)
-    pub async fn get_collection_vectors(
-        &self,
-        collection_id: &str,
-    ) -> Result<Vec<VectorRecord>> {
+    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         // Direct access to collection vectors from GlobalPartitionedMemtable
-        let vectors = self
-            .inner
-            .get_collection_vectors(collection_id)
-            .await?;
+        let vectors = self.inner.get_collection_vectors(collection_id).await?;
 
         tracing::debug!(
             "🚀 MODERN_GET_ALL: Returning {} vectors for collection {} (direct VectorRecord access)",
@@ -913,14 +905,15 @@ impl WALBehaviorWrapper {
 
         // Remove batch from coordinator
         if let Some(collection_batches) = coordinator.batches.get_mut(collection_id)
-            && let Some(removed_batch) = collection_batches.remove(batch_id) {
-                // Remove vector index entries for this batch
-                for vector_record in removed_batch.vector_records.iter() {
-                    if !vector_record.id.is_empty() {
-                        coordinator.vector_index.remove(&vector_record.id);
-                    }
+            && let Some(removed_batch) = collection_batches.remove(batch_id)
+        {
+            // Remove vector index entries for this batch
+            for vector_record in removed_batch.vector_records.iter() {
+                if !vector_record.id.is_empty() {
+                    coordinator.vector_index.remove(&vector_record.id);
                 }
             }
+        }
         drop(coordinator);
 
         // IMPORTANT: Also remove from the actual GlobalPartitionedMemtable
@@ -1075,10 +1068,7 @@ impl WALBehaviorWrapper {
     }
 
     /// Complete flush and remove marked entries
-    pub async fn complete_flush_removal(
-        &self,
-        collection_id: &str,
-    ) -> Result<usize> {
+    pub async fn complete_flush_removal(&self, collection_id: &str) -> Result<usize> {
         self.clear_flushed(collection_id).await
     }
 

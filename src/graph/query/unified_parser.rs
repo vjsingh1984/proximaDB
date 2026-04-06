@@ -170,16 +170,13 @@ mod tests {
 
     #[test]
     fn test_parse_with_context() {
-        let result = parse_cypher_with_context(
-            "MATCH (n:Person) RETURN n",
-            Some("test_query"),
-        );
+        let result = parse_cypher_with_context("MATCH (n:Person) RETURN n", Some("test_query"));
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_parse_error_invalid_syntax() {
-        let result = parse_cypher("MATCH (n:Person");  // Missing closing paren
+        let result = parse_cypher("MATCH (n:Person"); // Missing closing paren
         assert!(result.is_err());
     }
 

@@ -736,13 +736,14 @@ impl TransactionCoordinator {
                     if entry.metadata.is_directory {
                         // Check if directory is older than cutoff
                         if let Some(created) = entry.metadata.created
-                            && created < cutoff_time {
-                                let old_dir_url = format!("{}/{}", pattern_url, entry.name);
-                                if let Ok(()) = self.filesystem.delete(&old_dir_url).await {
-                                    cleaned_count += 1;
-                                    debug!("🧹 Cleaned orphaned staging dir: {}", old_dir_url);
-                                }
+                            && created < cutoff_time
+                        {
+                            let old_dir_url = format!("{}/{}", pattern_url, entry.name);
+                            if let Ok(()) = self.filesystem.delete(&old_dir_url).await {
+                                cleaned_count += 1;
+                                debug!("🧹 Cleaned orphaned staging dir: {}", old_dir_url);
                             }
+                        }
                     }
                 }
             }
@@ -1101,7 +1102,8 @@ impl TransactionCoordinator {
         // Build staging directory name
         let staging_dir = config
             .custom_staging_dir
-            .as_ref().map_or_else(|| config.operation_type.staging_dir_name(), |s| s.as_str());
+            .as_ref()
+            .map_or_else(|| config.operation_type.staging_dir_name(), |s| s.as_str());
 
         // For metadata operations with custom staging dir containing path separators,
         // we need special handling

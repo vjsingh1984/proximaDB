@@ -15,15 +15,13 @@ mod sks_integration_tests {
     use proximadb::proto::proximadb_v1::{
         EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField, TypedMetadata,
     };
-    use proximadb::storage::entity_store::{
-        EntityStore, ProximaEntityStore,
-    };
+    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
     use proximadb::storage::provenance::InMemoryProvenanceRegistry;
     use proximadb::storage::relations::InMemoryRelationsStore;
+    use proximadb::storage::traits::StorageEngineStrategy;
     use proximadb::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
     };
-    use proximadb::storage::traits::StorageEngineStrategy;
     use std::collections::HashMap;
     use std::sync::Arc;
 

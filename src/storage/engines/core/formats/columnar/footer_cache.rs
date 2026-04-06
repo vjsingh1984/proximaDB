@@ -66,9 +66,10 @@ impl CachedFooter {
 
         // Check TTL
         if let Ok(elapsed) = SystemTime::now().duration_since(self.cached_at)
-            && elapsed > max_age {
-                return false;
-            }
+            && elapsed > max_age
+        {
+            return false;
+        }
 
         true
     }
@@ -407,12 +408,11 @@ impl ParquetFooterCache {
 
         // Use FileMetadata fields directly
         let file_size = metadata.size;
-        let modified_time = metadata
-            .modified.map_or_else(SystemTime::now, |dt| {
-                // Convert DateTime<Utc> to SystemTime
-                let timestamp = dt.timestamp();
-                UNIX_EPOCH + Duration::from_secs(timestamp as u64)
-            });
+        let modified_time = metadata.modified.map_or_else(SystemTime::now, |dt| {
+            // Convert DateTime<Utc> to SystemTime
+            let timestamp = dt.timestamp();
+            UNIX_EPOCH + Duration::from_secs(timestamp as u64)
+        });
 
         Ok((file_size, modified_time))
     }
@@ -450,13 +450,14 @@ impl ParquetFooterCache {
         // Check if file is accessed frequently enough
         let key = file_path.to_string();
         if let Some(footer) = self.cache.get(&key).await
-            && footer.access_count >= self.config.prefetch_threshold {
-                let mut queue = self.prefetch_queue.write().await;
-                if !queue.contains(&file_path.to_string()) {
-                    queue.push(file_path.to_string());
-                    debug!("Added {} to prefetch queue", file_path);
-                }
+            && footer.access_count >= self.config.prefetch_threshold
+        {
+            let mut queue = self.prefetch_queue.write().await;
+            if !queue.contains(&file_path.to_string()) {
+                queue.push(file_path.to_string());
+                debug!("Added {} to prefetch queue", file_path);
             }
+        }
     }
 
     /// Update statistics
@@ -481,21 +482,23 @@ impl ParquetFooterCache {
     /// Load persisted cache from disk
     async fn load_persisted_cache(&self) -> Result<()> {
         if let Some(path) = &self.config.persistence_path
-            && let Ok(data) = tokio::fs::read(path).await {
-                match bincode::deserialize::<Vec<(String, CachedFooter)>>(&data) {
-                    Ok(entries) => {
-                        info!("Loading {} cached entries from {}", entries.len(), path);
-                        for (key, footer) in entries {
-                            // Only load recent entries
-                            if let Ok(age) = SystemTime::now().duration_since(footer.cached_at)
-                                && age < self.config.ttl {
-                                    self.cache.insert(key, footer).await;
-                                }
+            && let Ok(data) = tokio::fs::read(path).await
+        {
+            match bincode::deserialize::<Vec<(String, CachedFooter)>>(&data) {
+                Ok(entries) => {
+                    info!("Loading {} cached entries from {}", entries.len(), path);
+                    for (key, footer) in entries {
+                        // Only load recent entries
+                        if let Ok(age) = SystemTime::now().duration_since(footer.cached_at)
+                            && age < self.config.ttl
+                        {
+                            self.cache.insert(key, footer).await;
                         }
                     }
-                    Err(e) => warn!("Failed to deserialize cache: {}", e),
                 }
+                Err(e) => warn!("Failed to deserialize cache: {}", e),
             }
+        }
         Ok(())
     }
 
@@ -548,9 +551,10 @@ impl ParquetFooterCache {
                     for file_path in files_to_prefetch {
                         // Check if not already in cache before prefetching
                         if cache.cache.get(&file_path).await.is_none()
-                            && let Err(e) = cache.preload_footer(&file_path).await {
-                                warn!("Prefetch failed for {}: {}", file_path, e);
-                            }
+                            && let Err(e) = cache.preload_footer(&file_path).await
+                        {
+                            warn!("Prefetch failed for {}: {}", file_path, e);
+                        }
                     }
                 }
             }

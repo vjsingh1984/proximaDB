@@ -344,13 +344,15 @@ impl FilterRule {
 
             FilterRuleType::LsnRange { min, max } => {
                 if let Some(min_lsn) = min
-                    && event.lsn < *min_lsn {
-                        return false;
-                    }
+                    && event.lsn < *min_lsn
+                {
+                    return false;
+                }
                 if let Some(max_lsn) = max
-                    && event.lsn > *max_lsn {
-                        return false;
-                    }
+                    && event.lsn > *max_lsn
+                {
+                    return false;
+                }
                 true
             }
 
@@ -414,14 +416,13 @@ impl FilterRule {
 
             MetadataCondition::NotEquals { value: expected } => value != Some(expected),
 
-            MetadataCondition::Contains { value: search } => value
-                .is_some_and(|v| match v {
-                    serde_json::Value::String(s) => s.contains(search),
-                    serde_json::Value::Array(arr) => arr
-                        .iter()
-                        .any(|item| item.as_str().is_some_and(|s| s == search)),
-                    _ => false,
-                }),
+            MetadataCondition::Contains { value: search } => value.is_some_and(|v| match v {
+                serde_json::Value::String(s) => s.contains(search),
+                serde_json::Value::Array(arr) => arr
+                    .iter()
+                    .any(|item| item.as_str().is_some_and(|s| s == search)),
+                _ => false,
+            }),
 
             MetadataCondition::StartsWith { value: prefix } => value
                 .and_then(|v| v.as_str())

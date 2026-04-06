@@ -48,7 +48,10 @@ async fn test_double_flush_creates_single_file() {
 
     // Note: This is a documentation test - actual implementation
     // tested via Python integration tests
-    assert!(true, "Idempotency relies on batch-level tracking in get_unflushed_batches()");
+    assert!(
+        true,
+        "Idempotency relies on batch-level tracking in get_unflushed_batches()"
+    );
 }
 
 /// Test Scenario 2: New Data After Flush
@@ -75,7 +78,10 @@ async fn test_new_data_after_flush_is_flushed() {
 
     // Note: This is a documentation test - actual implementation
     // tested via Python integration tests
-    assert!(true, "New data after flush relies on batch-level, not collection-level tracking");
+    assert!(
+        true,
+        "New data after flush relies on batch-level, not collection-level tracking"
+    );
 }
 
 /// Test Scenario 3: Batch ID Recycling After Clear
@@ -101,7 +107,10 @@ async fn test_batch_id_recycling_after_clear() {
 
     // Note: This is a documentation test - actual implementation
     // tested via Python integration tests
-    assert!(true, "Batch ID recycling works because clear_flushed() removes from tracking");
+    assert!(
+        true,
+        "Batch ID recycling works because clear_flushed() removes from tracking"
+    );
 }
 
 /// Test Scenario 4: Concurrent Insert and Flush (No Lost Data)
@@ -127,7 +136,10 @@ async fn test_concurrent_insert_and_flush_no_lost_data() {
 
     // Note: This is a documentation test - actual implementation
     // tested via Python integration tests
-    assert!(true, "Batch-level tracking ensures only complete batches are flushed");
+    assert!(
+        true,
+        "Batch-level tracking ensures only complete batches are flushed"
+    );
 }
 
 /// Test Scenario 5: Flush After Close Should Not Double-Flush
@@ -152,7 +164,10 @@ async fn test_flush_then_close_no_double_flush() {
 
     // Note: This is a documentation test - actual implementation
     // tested via Python integration tests (embedded_consolidated_benchmark.py)
-    assert!(true, "flush() then close() creates single SST due to batch-level tracking");
+    assert!(
+        true,
+        "flush() then close() creates single SST due to batch-level tracking"
+    );
 }
 
 #[cfg(test)]

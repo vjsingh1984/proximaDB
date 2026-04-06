@@ -183,20 +183,21 @@ impl DistributedLockManager {
     ) -> std::result::Result<bool, ProximaDBError> {
         // Check if already locked by another transaction
         if let Some(holder) = self.locks.get(resource_id)
-            && holder.value() != tx_id {
-                // Would cause waiting - check for deadlock
-                if self.would_deadlock(tx_id, holder.value()) {
-                    return Ok(false);
-                }
-
-                // Add to waiting set
-                self.waiting
-                    .entry(tx_id.clone())
-                    .or_default()
-                    .insert(resource_id.clone());
-
+            && holder.value() != tx_id
+        {
+            // Would cause waiting - check for deadlock
+            if self.would_deadlock(tx_id, holder.value()) {
                 return Ok(false);
             }
+
+            // Add to waiting set
+            self.waiting
+                .entry(tx_id.clone())
+                .or_default()
+                .insert(resource_id.clone());
+
+            return Ok(false);
+        }
 
         // Acquire lock
         self.locks.insert(resource_id.clone(), tx_id.clone());
@@ -217,9 +218,10 @@ impl DistributedLockManager {
         if let Some(waiting_resources) = self.waiting.get(holder) {
             for resource in waiting_resources.iter() {
                 if let Some(resource_holder) = self.locks.get(resource)
-                    && resource_holder.value() == tx_id {
-                        return true; // Deadlock detected
-                    }
+                    && resource_holder.value() == tx_id
+                {
+                    return true; // Deadlock detected
+                }
             }
         }
         false

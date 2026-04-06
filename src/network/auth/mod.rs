@@ -224,8 +224,7 @@ impl AuthService {
             permissions,
             auth_method: AuthMethod::JwtToken,
             token_expires_at: Some(
-                chrono::DateTime::from_timestamp(claims.exp, 0)
-                    .unwrap_or_default(),
+                chrono::DateTime::from_timestamp(claims.exp, 0).unwrap_or_default(),
             ),
         })
     }

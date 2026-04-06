@@ -69,9 +69,10 @@ pub fn bfs_generic(
             nodes.push(n);
         }
         if let Some(m) = max_depth
-            && d >= m {
-                continue;
-            }
+            && d >= m
+        {
+            continue;
+        }
         // Fetch all outgoing and filter by allowed types if provided
         let mut outs = engine.get_outgoing_edges(&u, None)?;
         if let Some(allow) = &allowed {
@@ -86,14 +87,16 @@ pub fn bfs_generic(
             }
             edges.push(e);
             if let Some(lim) = limit
-                && nodes.len() >= lim {
-                    break;
-                }
-        }
-        if let Some(lim) = limit
-            && nodes.len() >= lim {
+                && nodes.len() >= lim
+            {
                 break;
             }
+        }
+        if let Some(lim) = limit
+            && nodes.len() >= lim
+        {
+            break;
+        }
     }
 
     // Build simple paths from start to each visited node using parent map
@@ -196,9 +199,10 @@ pub fn dijkstra_generic(
             return Ok(Some((path, cur.dist)));
         }
         if let Some(&best) = dist.get(&cur.node_id)
-            && cur.dist > best {
-                continue;
-            }
+            && cur.dist > best
+        {
+            continue;
+        }
 
         let mut outs = engine.get_outgoing_edges(&cur.node_id, None)?;
         if let Some(allow) = &allow {
@@ -307,10 +311,9 @@ pub fn has_cycle_generic(engine: &GraphEngineImpl) -> Result<bool> {
     }
 
     for (nid, c) in color.clone().into_iter() {
-        if c == Color::White
-            && dfs(engine, &nid, &mut color)? {
-                return Ok(true);
-            }
+        if c == Color::White && dfs(engine, &nid, &mut color)? {
+            return Ok(true);
+        }
     }
     Ok(false)
 }

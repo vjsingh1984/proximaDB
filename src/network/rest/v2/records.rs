@@ -133,7 +133,9 @@ fn json_to_filter_clause_value(
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Some(Value::IntValue(i))
-            } else { n.as_f64().map(Value::DoubleValue) }
+            } else {
+                n.as_f64().map(Value::DoubleValue)
+            }
         }
         serde_json::Value::Bool(b) => Some(Value::BoolValue(*b)),
         _ => None, // Arrays and objects not directly supported in FilterClause
@@ -1979,13 +1981,19 @@ mod tests {
         assert_eq!(rec0.id, Some("rec_001".to_string()));
         assert_eq!(rec0.vector.len(), 4);
         assert!(rec0.typed_fields.is_some());
-        let typed = rec0.typed_fields.as_ref().expect("typed_fields should be Some");
+        let typed = rec0
+            .typed_fields
+            .as_ref()
+            .expect("typed_fields should be Some");
         assert_eq!(typed.get("name"), Some(&serde_json::json!("Widget")));
         assert_eq!(typed.get("price"), Some(&serde_json::json!(29.99)));
         assert_eq!(typed.get("in_stock"), Some(&serde_json::json!(true)));
         assert_eq!(typed.get("quantity"), Some(&serde_json::json!(42)));
 
-        let text_fields = rec0.text_fields.as_ref().expect("text_fields should be Some");
+        let text_fields = rec0
+            .text_fields
+            .as_ref()
+            .expect("text_fields should be Some");
         assert_eq!(text_fields.len(), 1);
         assert_eq!(text_fields[0].name, "description");
         assert_eq!(text_fields[0].storage_hint, Some("adaptive".to_string()));
@@ -2015,21 +2023,23 @@ mod tests {
                 id: Some("bad_rec".to_string()),
                 error: "Vector cannot be empty".to_string(),
             }],
-            inserted_ids: vec![
-                "id_1".to_string(),
-                "id_2".to_string(),
-                "id_3".to_string(),
-            ],
+            inserted_ids: vec!["id_1".to_string(), "id_2".to_string(), "id_3".to_string()],
         };
 
-        let json_str = serde_json::to_string(&response)
-            .expect("Failed to serialize InsertRecordsResponse");
+        let json_str =
+            serde_json::to_string(&response).expect("Failed to serialize InsertRecordsResponse");
         let parsed: serde_json::Value =
             serde_json::from_str(&json_str).expect("Failed to parse serialized response");
 
         assert_eq!(parsed["inserted_count"], 3);
         assert_eq!(parsed["failed_count"], 1);
-        assert_eq!(parsed["inserted_ids"].as_array().expect("Expected array").len(), 3);
+        assert_eq!(
+            parsed["inserted_ids"]
+                .as_array()
+                .expect("Expected array")
+                .len(),
+            3
+        );
 
         let errors = parsed["errors"].as_array().expect("Expected errors array");
         assert_eq!(errors.len(), 1);
@@ -2209,17 +2219,19 @@ mod tests {
             inserted_ids: vec![],
         };
 
-        let json_str = serde_json::to_string(&response)
-            .expect("Failed to serialize error response");
+        let json_str =
+            serde_json::to_string(&response).expect("Failed to serialize error response");
         let parsed: serde_json::Value =
             serde_json::from_str(&json_str).expect("Failed to parse serialized error response");
 
         assert_eq!(parsed["inserted_count"], 0);
         assert_eq!(parsed["failed_count"], 2);
-        assert!(parsed["inserted_ids"]
-            .as_array()
-            .expect("Expected array")
-            .is_empty());
+        assert!(
+            parsed["inserted_ids"]
+                .as_array()
+                .expect("Expected array")
+                .is_empty()
+        );
 
         let errors = parsed["errors"].as_array().expect("Expected errors array");
         assert_eq!(errors.len(), 2);
@@ -2227,18 +2239,22 @@ mod tests {
         // First error has an id
         assert_eq!(errors[0]["index"], 0);
         assert_eq!(errors[0]["id"], "rec_a");
-        assert!(errors[0]["error"]
-            .as_str()
-            .expect("Expected string")
-            .contains("empty"));
+        assert!(
+            errors[0]["error"]
+                .as_str()
+                .expect("Expected string")
+                .contains("empty")
+        );
 
         // Second error has null id
         assert_eq!(errors[1]["index"], 1);
         assert!(errors[1]["id"].is_null());
-        assert!(errors[1]["error"]
-            .as_str()
-            .expect("Expected string")
-            .contains("Dimension mismatch"));
+        assert!(
+            errors[1]["error"]
+                .as_str()
+                .expect("Expected string")
+                .contains("Dimension mismatch")
+        );
 
         // Also verify the search response serializes correctly
         let search_resp = TypedSearchResponse {
@@ -2259,8 +2275,8 @@ mod tests {
             request_id: "req-123".to_string(),
         };
 
-        let search_json = serde_json::to_string(&search_resp)
-            .expect("Failed to serialize search response");
+        let search_json =
+            serde_json::to_string(&search_resp).expect("Failed to serialize search response");
         let search_parsed: serde_json::Value =
             serde_json::from_str(&search_json).expect("Failed to parse serialized search response");
 

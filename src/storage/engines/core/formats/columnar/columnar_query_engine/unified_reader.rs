@@ -295,10 +295,11 @@ impl UnifiedParquetReader {
             all_records.extend(records);
 
             if let Some(limit) = limit
-                && all_records.len() >= limit {
-                    all_records.truncate(limit);
-                    break;
-                }
+                && all_records.len() >= limit
+            {
+                all_records.truncate(limit);
+                break;
+            }
         }
 
         // Apply start offset if needed
@@ -476,7 +477,7 @@ impl UnifiedParquetReader {
                 let result = reader
                     .read_file_batches_with_filters(
                         &fp,
-                        true,  // needs_vectors
+                        true, // needs_vectors
                         needs_metadata,
                         fe.as_ref(),
                         quantization_enabled,
@@ -576,7 +577,8 @@ impl UnifiedParquetReader {
             let _ = &distance_engine; // suppress unused warning
             for batch in &all_batches {
                 total_records_scanned += batch.num_rows();
-                let records = self.extract_records_from_batch(batch, needs_vectors, needs_metadata)?;
+                let records =
+                    self.extract_records_from_batch(batch, needs_vectors, needs_metadata)?;
                 for record in records {
                     let search_record = crate::core::search::results::OptimizedSearchRecord {
                         id: record.id.clone(),
@@ -584,7 +586,11 @@ impl UnifiedParquetReader {
                         score: 0.0,
                         similarity: Some(0.0),
                         vector: Some(Arc::new(record.vector)),
-                        metadata: if needs_metadata { record.metadata } else { HashMap::new() },
+                        metadata: if needs_metadata {
+                            record.metadata
+                        } else {
+                            HashMap::new()
+                        },
                         debug_info: None,
                         version: record.version,
                         timestamp: record.timestamp,
@@ -930,21 +936,24 @@ impl UnifiedParquetReader {
             if has_binary_vectors
                 && let Ok(idx) = schema.index_of(
                     crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
-                ) {
-                    projection.push(idx);
-                }
+                )
+            {
+                projection.push(idx);
+            }
             if has_int8_vectors
                 && let Ok(idx) = schema.index_of(
                     crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8,
-                ) {
-                    projection.push(idx);
-                }
+                )
+            {
+                projection.push(idx);
+            }
             if has_pq_vectors
                 && let Ok(idx) = schema.index_of(
                     crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8,
-                ) {
-                    projection.push(idx);
-                }
+                )
+            {
+                projection.push(idx);
+            }
         }
 
         // Vector column if needed
@@ -1135,11 +1144,8 @@ impl UnifiedParquetReader {
 
         // Reuse the same row group pruning logic as read_file_with_optimization_and_filters.
         // We delegate to a shared helper to avoid duplicating the pruning code.
-        let selected_row_groups = self.select_row_groups_with_pruning(
-            metadata,
-            total_row_groups,
-            filter_expression,
-        );
+        let selected_row_groups =
+            self.select_row_groups_with_pruning(metadata, total_row_groups, filter_expression);
 
         let row_groups_skipped = total_row_groups - selected_row_groups.len();
 
@@ -1230,7 +1236,7 @@ impl UnifiedParquetReader {
         needs_metadata: bool,
         priority_queue: &mut BoundedPriorityQueue,
     ) -> Result<()> {
-        use arrow_array::{Float32Array, FixedSizeListArray, Int64Array, ListArray, StringArray};
+        use arrow_array::{FixedSizeListArray, Float32Array, Int64Array, ListArray, StringArray};
 
         let num_rows = batch.num_rows();
         if num_rows == 0 {
@@ -1249,7 +1255,9 @@ impl UnifiedParquetReader {
                     .values()
                     .as_any()
                     .downcast_ref::<Float32Array>()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid vector values type in FixedSizeList"))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Invalid vector values type in FixedSizeList")
+                    })?;
                 let dim = fixed_list.value_length() as usize;
 
                 let mut vecs = Vec::with_capacity(num_rows);
@@ -1285,11 +1293,8 @@ impl UnifiedParquetReader {
         let vec_refs: Vec<&[f32]> = vector_slices.iter().map(|v| v.as_slice()).collect();
 
         // Compute ALL distances in one SIMD-accelerated batch call
-        let batch_results = distance_engine.batch_distance_pooled_simd(
-            query_vector,
-            &vec_refs,
-            distance_metric,
-        );
+        let batch_results =
+            distance_engine.batch_distance_pooled_simd(query_vector, &vec_refs, distance_metric);
 
         // Extract ID, version, timestamp columns for result construction
         let id_array = batch
@@ -1313,9 +1318,10 @@ impl UnifiedParquetReader {
 
             // Check minimum score threshold
             if let Some(min) = min_score
-                && score < min {
-                    continue;
-                }
+                && score < min
+            {
+                continue;
+            }
 
             // Check if this score would be accepted into the top-k queue
             if !priority_queue.would_accept(score) {
@@ -1374,10 +1380,27 @@ impl UnifiedParquetReader {
 
         // Reserved column names that are not metadata
         let reserved = [
-            "id", "vector", "vector_fp32", "q_binary", "q_int8", "qp_int8_scale",
-            "qp_int8_min", "qp_int8_max", "q_pq4", "q_pq8", "q_pq16", "q_pq32",
-            "timestamp", "updated_at", "expires_at", "version", "source",
-            "extra_meta", "metadata", "row_group_offset", "row_index",
+            "id",
+            "vector",
+            "vector_fp32",
+            "q_binary",
+            "q_int8",
+            "qp_int8_scale",
+            "qp_int8_min",
+            "qp_int8_max",
+            "q_pq4",
+            "q_pq8",
+            "q_pq16",
+            "q_pq32",
+            "timestamp",
+            "updated_at",
+            "expires_at",
+            "version",
+            "source",
+            "extra_meta",
+            "metadata",
+            "row_group_offset",
+            "row_index",
         ];
 
         for (col_idx, field) in schema.fields().iter().enumerate() {
@@ -1394,9 +1417,11 @@ impl UnifiedParquetReader {
                     if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
                         if !col.is_null(row_idx) {
                             Some(crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    arr.value(row_idx).to_string(),
-                                )),
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                        arr.value(row_idx).to_string(),
+                                    ),
+                                ),
                             })
                         } else {
                             None
@@ -1409,9 +1434,11 @@ impl UnifiedParquetReader {
                     if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
                         if !col.is_null(row_idx) {
                             Some(crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
-                                    arr.value(row_idx),
-                                )),
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                                        arr.value(row_idx),
+                                    ),
+                                ),
                             })
                         } else {
                             None
@@ -1424,9 +1451,11 @@ impl UnifiedParquetReader {
                     if let Some(arr) = col.as_any().downcast_ref::<Float32Array>() {
                         if !col.is_null(row_idx) {
                             Some(crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                    arr.value(row_idx) as f64,
-                                )),
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                        arr.value(row_idx) as f64,
+                                    ),
+                                ),
                             })
                         } else {
                             None
@@ -1439,9 +1468,11 @@ impl UnifiedParquetReader {
                     if let Some(arr) = col.as_any().downcast_ref::<Float64Array>() {
                         if !col.is_null(row_idx) {
                             Some(crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                    arr.value(row_idx),
-                                )),
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                        arr.value(row_idx),
+                                    ),
+                                ),
                             })
                         } else {
                             None
@@ -1629,11 +1660,19 @@ impl UnifiedParquetReader {
 
         // Check for quantized vector columns
         let has_binary_vectors = quantization_enabled
-            && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY).is_ok();
+            && schema
+                .index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
+                )
+                .is_ok();
         let has_int8_vectors = quantization_enabled
-            && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8).is_ok();
+            && schema
+                .index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8)
+                .is_ok();
         let has_pq_vectors = quantization_enabled
-            && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8).is_ok();
+            && schema
+                .index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8)
+                .is_ok();
 
         // Always need ID
         if let Ok(idx) = schema.index_of("id") {
@@ -1643,17 +1682,26 @@ impl UnifiedParquetReader {
         // Quantized vectors for pre-filtering
         if needs_vectors && (has_binary_vectors || has_int8_vectors || has_pq_vectors) {
             if has_binary_vectors
-                && let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY) {
-                    projection.push(idx);
-                }
+                && let Ok(idx) = schema.index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
+                )
+            {
+                projection.push(idx);
+            }
             if has_int8_vectors
-                && let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8) {
-                    projection.push(idx);
-                }
+                && let Ok(idx) = schema.index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8,
+                )
+            {
+                projection.push(idx);
+            }
             if has_pq_vectors
-                && let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8) {
-                    projection.push(idx);
-                }
+                && let Ok(idx) = schema.index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8,
+                )
+            {
+                projection.push(idx);
+            }
         }
 
         // Vector column
@@ -1678,10 +1726,26 @@ impl UnifiedParquetReader {
                 let field_name = schema.field(field_idx).name();
                 if matches!(
                     field_name.as_str(),
-                    "id" | "row_group_offset" | "row_index" | "vector" | "vector_fp32"
-                        | "q_binary" | "q_int8" | "qp_int8_scale" | "qp_int8_min" | "qp_int8_max"
-                        | "q_pq4" | "q_pq8" | "q_pq16" | "q_pq32" | "timestamp" | "updated_at"
-                        | "expires_at" | "version" | "source" | "extra_meta" | "metadata"
+                    "id" | "row_group_offset"
+                        | "row_index"
+                        | "vector"
+                        | "vector_fp32"
+                        | "q_binary"
+                        | "q_int8"
+                        | "qp_int8_scale"
+                        | "qp_int8_min"
+                        | "qp_int8_max"
+                        | "q_pq4"
+                        | "q_pq8"
+                        | "q_pq16"
+                        | "q_pq32"
+                        | "timestamp"
+                        | "updated_at"
+                        | "expires_at"
+                        | "version"
+                        | "source"
+                        | "extra_meta"
+                        | "metadata"
                 ) {
                     continue;
                 }
@@ -1691,13 +1755,15 @@ impl UnifiedParquetReader {
 
         // Always include version and timestamp
         if let Ok(idx) = schema.index_of("version")
-            && !projection.contains(&idx) {
-                projection.push(idx);
-            }
+            && !projection.contains(&idx)
+        {
+            projection.push(idx);
+        }
         if let Ok(idx) = schema.index_of("timestamp")
-            && !projection.contains(&idx) {
-                projection.push(idx);
-            }
+            && !projection.contains(&idx)
+        {
+            projection.push(idx);
+        }
 
         projection
     }
@@ -1717,9 +1783,10 @@ impl UnifiedParquetReader {
         for filter in metadata_filters {
             for condition in &filter.conditions {
                 if let FilterCondition::Equals(field, value) = condition
-                    && (field == "id" || field == "_id") {
-                        id_filters.push(value.clone());
-                    }
+                    && (field == "id" || field == "_id")
+                {
+                    id_filters.push(value.clone());
+                }
             }
         }
 
@@ -1950,57 +2017,61 @@ impl UnifiedParquetReader {
                         match field.data_type() {
                             DataType::Utf8 => {
                                 if let Some(str_array) = col.as_any().downcast_ref::<StringArray>()
-                                    && !ArrowArrayTrait::is_null(str_array, row_idx) {
-                                        meta_map.insert(
-                                            field_name.clone(),
-                                            SqlValue {
-                                                value: Some(Value::StringValue(
-                                                    str_array.value(row_idx).to_string(),
-                                                )),
-                                            },
-                                        );
-                                    }
+                                    && !ArrowArrayTrait::is_null(str_array, row_idx)
+                                {
+                                    meta_map.insert(
+                                        field_name.clone(),
+                                        SqlValue {
+                                            value: Some(Value::StringValue(
+                                                str_array.value(row_idx).to_string(),
+                                            )),
+                                        },
+                                    );
+                                }
                             }
                             DataType::Int64 => {
                                 if let Some(int_array) = col.as_any().downcast_ref::<Int64Array>()
-                                    && !ArrowArrayTrait::is_null(int_array, row_idx) {
-                                        meta_map.insert(
-                                            field_name.clone(),
-                                            SqlValue {
-                                                value: Some(Value::Int64Value(
-                                                    int_array.value(row_idx),
-                                                )),
-                                            },
-                                        );
-                                    }
+                                    && !ArrowArrayTrait::is_null(int_array, row_idx)
+                                {
+                                    meta_map.insert(
+                                        field_name.clone(),
+                                        SqlValue {
+                                            value: Some(Value::Int64Value(
+                                                int_array.value(row_idx),
+                                            )),
+                                        },
+                                    );
+                                }
                             }
                             DataType::Float64 => {
                                 if let Some(float_array) =
                                     col.as_any().downcast_ref::<Float64Array>()
-                                    && !ArrowArrayTrait::is_null(float_array, row_idx) {
-                                        meta_map.insert(
-                                            field_name.clone(),
-                                            SqlValue {
-                                                value: Some(Value::NumberValue(
-                                                    float_array.value(row_idx),
-                                                )),
-                                            },
-                                        );
-                                    }
+                                    && !ArrowArrayTrait::is_null(float_array, row_idx)
+                                {
+                                    meta_map.insert(
+                                        field_name.clone(),
+                                        SqlValue {
+                                            value: Some(Value::NumberValue(
+                                                float_array.value(row_idx),
+                                            )),
+                                        },
+                                    );
+                                }
                             }
                             DataType::Boolean => {
                                 if let Some(bool_array) =
                                     col.as_any().downcast_ref::<BooleanArray>()
-                                    && !ArrowArrayTrait::is_null(bool_array, row_idx) {
-                                        meta_map.insert(
-                                            field_name.clone(),
-                                            SqlValue {
-                                                value: Some(Value::BoolValue(
-                                                    bool_array.value(row_idx),
-                                                )),
-                                            },
-                                        );
-                                    }
+                                    && !ArrowArrayTrait::is_null(bool_array, row_idx)
+                                {
+                                    meta_map.insert(
+                                        field_name.clone(),
+                                        SqlValue {
+                                            value: Some(Value::BoolValue(
+                                                bool_array.value(row_idx),
+                                            )),
+                                        },
+                                    );
+                                }
                             }
                             _ => {
                                 // Unsupported type - skip
@@ -2011,49 +2082,46 @@ impl UnifiedParquetReader {
 
                 // Then, extract from "extra_meta" Map column if present (non-filterable metadata)
                 if let Some(map_col) = batch.column_by_name("extra_meta")
-                    && let Some(map_array) = map_col.as_any().downcast_ref::<MapArray>() {
-                        use arrow_array::Array;
+                    && let Some(map_array) = map_col.as_any().downcast_ref::<MapArray>()
+                {
+                    use arrow_array::Array;
 
-                        if !map_array.is_null(row_idx) {
-                            let map_value = map_array.value(row_idx);
+                    if !map_array.is_null(row_idx) {
+                        let map_value = map_array.value(row_idx);
 
-                            // Map is stored as a struct array with "key" and "value" fields
-                            if let Some(struct_array) = map_value
-                                .as_any()
-                                .downcast_ref::<arrow_array::StructArray>()
-                                && let Some(keys) = struct_array
-                                    .column_by_name("key")
-                                    .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                                    && let Some(values) = struct_array
-                                        .column_by_name("value")
-                                        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                                    {
-                                        for i in 0..keys.len() {
-                                            if !keys.is_null(i) && !values.is_null(i) {
-                                                let key = keys.value(i).to_string();
-                                                let value = values.value(i).to_string();
-                                                // Only insert if not already present from typed columns
-                                                meta_map.entry(key).or_insert(SqlValue {
-                                                    value: Some(Value::StringValue(value)),
-                                                });
-                                            }
-                                        }
-                                    }
+                        // Map is stored as a struct array with "key" and "value" fields
+                        if let Some(struct_array) = map_value
+                            .as_any()
+                            .downcast_ref::<arrow_array::StructArray>()
+                            && let Some(keys) = struct_array
+                                .column_by_name("key")
+                                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                            && let Some(values) = struct_array
+                                .column_by_name("value")
+                                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                        {
+                            for i in 0..keys.len() {
+                                if !keys.is_null(i) && !values.is_null(i) {
+                                    let key = keys.value(i).to_string();
+                                    let value = values.value(i).to_string();
+                                    // Only insert if not already present from typed columns
+                                    meta_map.entry(key).or_insert(SqlValue {
+                                        value: Some(Value::StringValue(value)),
+                                    });
+                                }
+                            }
                         }
                     }
+                }
 
                 meta_map
             } else {
                 HashMap::new()
             };
 
-            let version = version_array
-                .map(|arr| arr.value(row_idx))
-                .unwrap_or(0);
+            let version = version_array.map(|arr| arr.value(row_idx)).unwrap_or(0);
 
-            let timestamp = timestamp_array
-                .map(|arr| arr.value(row_idx))
-                .unwrap_or(0);
+            let timestamp = timestamp_array.map(|arr| arr.value(row_idx)).unwrap_or(0);
 
             records.push(VectorRecord {
                 id,

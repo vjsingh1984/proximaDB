@@ -332,7 +332,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(clippy::panic)]  // Test panic for assertion failure
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_simple_equality_parsing() {
         let mut filter = HashMap::new();
         filter.insert("category".to_string(), "electronics".to_string());
@@ -350,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::panic)]  // Test panic for assertion failure
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_json_logical_query_parsing() {
         let mut filter = HashMap::new();
         filter.insert(
@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::panic)]  // Test panic for assertion failure
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_operator_field_parsing() {
         let mut filter = HashMap::new();
         filter.insert(
@@ -400,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::panic)]  // Test panic for assertion failure
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_complex_query_parsing() {
         let mut filter = HashMap::new();
         filter.insert(

@@ -126,9 +126,10 @@ impl RDBMSStore {
     pub fn analyze_query(&self, estimated_rows: Option<usize>) -> QueryType {
         // Simple heuristic: if query touches many rows, use OLAP
         if let Some(rows) = estimated_rows
-            && rows > self.config.olap_query_threshold {
-                return QueryType::OLAP;
-            }
+            && rows > self.config.olap_query_threshold
+        {
+            return QueryType::OLAP;
+        }
         QueryType::OLTP
     }
 

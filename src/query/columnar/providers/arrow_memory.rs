@@ -166,85 +166,88 @@ impl ArrowInMemoryProvider {
 
         // Handle string comparisons
         if let Some(string_array) = column.as_any().downcast_ref::<StringArray>()
-            && let Some(val) = value.as_str() {
-                return match op {
-                    ComparisonOperator::Equals => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(string_array.value(i) == val)),
-                    )),
-                    ComparisonOperator::NotEquals => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(string_array.value(i) != val)),
-                    )),
-                    ComparisonOperator::LessThan => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(string_array.value(i) < val)),
-                    )),
-                    ComparisonOperator::LessThanOrEqual => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(string_array.value(i) <= val)),
-                    )),
-                    ComparisonOperator::GreaterThan => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(string_array.value(i) > val)),
-                    )),
-                    ComparisonOperator::GreaterThanOrEqual => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(string_array.value(i) >= val)),
-                    )),
-                    _ => Ok(BooleanArray::from(vec![true; num_rows])),
-                };
-            }
+            && let Some(val) = value.as_str()
+        {
+            return match op {
+                ComparisonOperator::Equals => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(string_array.value(i) == val)),
+                )),
+                ComparisonOperator::NotEquals => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(string_array.value(i) != val)),
+                )),
+                ComparisonOperator::LessThan => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(string_array.value(i) < val)),
+                )),
+                ComparisonOperator::LessThanOrEqual => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(string_array.value(i) <= val)),
+                )),
+                ComparisonOperator::GreaterThan => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(string_array.value(i) > val)),
+                )),
+                ComparisonOperator::GreaterThanOrEqual => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(string_array.value(i) >= val)),
+                )),
+                _ => Ok(BooleanArray::from(vec![true; num_rows])),
+            };
+        }
 
         // Handle integer comparisons
         if let Some(int_array) = column.as_any().downcast_ref::<Int64Array>()
-            && let Some(val) = value.as_i64() {
-                return match op {
-                    ComparisonOperator::Equals => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(int_array.value(i) == val)),
-                    )),
-                    ComparisonOperator::NotEquals => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(int_array.value(i) != val)),
-                    )),
-                    ComparisonOperator::LessThan => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(int_array.value(i) < val)),
-                    )),
-                    ComparisonOperator::LessThanOrEqual => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(int_array.value(i) <= val)),
-                    )),
-                    ComparisonOperator::GreaterThan => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(int_array.value(i) > val)),
-                    )),
-                    ComparisonOperator::GreaterThanOrEqual => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(int_array.value(i) >= val)),
-                    )),
-                    _ => Ok(BooleanArray::from(vec![true; num_rows])),
-                };
-            }
+            && let Some(val) = value.as_i64()
+        {
+            return match op {
+                ComparisonOperator::Equals => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(int_array.value(i) == val)),
+                )),
+                ComparisonOperator::NotEquals => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(int_array.value(i) != val)),
+                )),
+                ComparisonOperator::LessThan => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(int_array.value(i) < val)),
+                )),
+                ComparisonOperator::LessThanOrEqual => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(int_array.value(i) <= val)),
+                )),
+                ComparisonOperator::GreaterThan => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(int_array.value(i) > val)),
+                )),
+                ComparisonOperator::GreaterThanOrEqual => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(int_array.value(i) >= val)),
+                )),
+                _ => Ok(BooleanArray::from(vec![true; num_rows])),
+            };
+        }
 
         // Handle float comparisons
         if let Some(float_array) = column.as_any().downcast_ref::<Float64Array>()
-            && let Some(val) = value.as_f64() {
-                return match op {
-                    ComparisonOperator::Equals => {
-                        Ok(BooleanArray::from_iter((0..num_rows).map(|i| {
-                            Some((float_array.value(i) - val).abs() < f64::EPSILON)
-                        })))
-                    }
-                    ComparisonOperator::NotEquals => {
-                        Ok(BooleanArray::from_iter((0..num_rows).map(|i| {
-                            Some((float_array.value(i) - val).abs() >= f64::EPSILON)
-                        })))
-                    }
-                    ComparisonOperator::LessThan => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(float_array.value(i) < val)),
-                    )),
-                    ComparisonOperator::LessThanOrEqual => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(float_array.value(i) <= val)),
-                    )),
-                    ComparisonOperator::GreaterThan => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(float_array.value(i) > val)),
-                    )),
-                    ComparisonOperator::GreaterThanOrEqual => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some(float_array.value(i) >= val)),
-                    )),
-                    _ => Ok(BooleanArray::from(vec![true; num_rows])),
-                };
-            }
+            && let Some(val) = value.as_f64()
+        {
+            return match op {
+                ComparisonOperator::Equals => {
+                    Ok(BooleanArray::from_iter((0..num_rows).map(|i| {
+                        Some((float_array.value(i) - val).abs() < f64::EPSILON)
+                    })))
+                }
+                ComparisonOperator::NotEquals => {
+                    Ok(BooleanArray::from_iter((0..num_rows).map(|i| {
+                        Some((float_array.value(i) - val).abs() >= f64::EPSILON)
+                    })))
+                }
+                ComparisonOperator::LessThan => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(float_array.value(i) < val)),
+                )),
+                ComparisonOperator::LessThanOrEqual => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(float_array.value(i) <= val)),
+                )),
+                ComparisonOperator::GreaterThan => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(float_array.value(i) > val)),
+                )),
+                ComparisonOperator::GreaterThanOrEqual => Ok(BooleanArray::from_iter(
+                    (0..num_rows).map(|i| Some(float_array.value(i) >= val)),
+                )),
+                _ => Ok(BooleanArray::from(vec![true; num_rows])),
+            };
+        }
 
         // Default: return all true (no filtering)
         Ok(BooleanArray::from(vec![true; num_rows]))
@@ -342,9 +345,10 @@ impl ColumnarReadProvider for ArrowInMemoryProvider {
 
             // Apply projection if present
             if config.enable_projection
-                && let Some(ref columns) = config.projection {
-                    processed = Self::apply_projection(&processed, columns)?;
-                }
+                && let Some(ref columns) = config.projection
+            {
+                processed = Self::apply_projection(&processed, columns)?;
+            }
 
             if processed.num_rows() > 0 {
                 rows_matched += processed.num_rows() as u64;
@@ -456,7 +460,8 @@ impl ColumnarReadProvider for ArrowInMemoryProvider {
         // In production code, RwLock poisoning is extremely rare and indicates a serious bug
         // Using unwrap here is acceptable as it's a stats accessor in a non-critical path
         self.stats
-            .read().map_or_else(|_| ColumnarAccessStats::default(), |stats| stats.clone())
+            .read()
+            .map_or_else(|_| ColumnarAccessStats::default(), |stats| stats.clone())
     }
 
     fn reset_stats(&mut self) {

@@ -422,17 +422,21 @@ impl ConstraintEnforcer {
     ) {
         for column in &schema.columns {
             if !column.nullable
-                && row.is_null(&column.name) && row.values.contains_key(&column.name) {
-                    result.add_violation(ConstraintViolation::not_null(&column.name));
-                }
+                && row.is_null(&column.name)
+                && row.values.contains_key(&column.name)
+            {
+                result.add_violation(ConstraintViolation::not_null(&column.name));
+            }
         }
 
         // Also check explicit NOT NULL constraints
         for constraint in &schema.constraints {
             if let ConstraintType::NotNull { column } = &constraint.constraint_type
-                && row.is_null(column) && row.values.contains_key(column) {
-                    result.add_violation(ConstraintViolation::not_null(column));
-                }
+                && row.is_null(column)
+                && row.values.contains_key(column)
+            {
+                result.add_violation(ConstraintViolation::not_null(column));
+            }
         }
     }
 
@@ -506,13 +510,14 @@ impl ConstraintEnforcer {
         let indexes = self.unique_indexes.read().await;
         if let Some(obj_indexes) = indexes.get(&object.fqn())
             && let Some(index) = obj_indexes.get(constraint_name)
-                && index.contains(&key) {
-                    result.add_violation(ConstraintViolation::unique(
-                        constraint_name,
-                        columns.to_vec(),
-                        values.into_iter().map(|v| v.unwrap_or_default()).collect(),
-                    ));
-                }
+            && index.contains(&key)
+        {
+            result.add_violation(ConstraintViolation::unique(
+                constraint_name,
+                columns.to_vec(),
+                values.into_iter().map(|v| v.unwrap_or_default()).collect(),
+            ));
+        }
     }
 
     /// Check foreign key constraint
@@ -570,12 +575,10 @@ impl ConstraintEnforcer {
 
                 if let Some(Some(value)) = row.get(column)
                     && let Ok(num) = value.parse::<i64>()
-                        && num < threshold {
-                            result.add_violation(ConstraintViolation::check(
-                                constraint_name,
-                                expression,
-                            ));
-                        }
+                    && num < threshold
+                {
+                    result.add_violation(ConstraintViolation::check(constraint_name, expression));
+                }
             }
         }
 
@@ -595,9 +598,10 @@ impl ConstraintEnforcer {
     pub async fn unregister_value(&self, fqn: &str, constraint_name: &str, value_key: &str) {
         let mut indexes = self.unique_indexes.write().await;
         if let Some(obj_indexes) = indexes.get_mut(fqn)
-            && let Some(index) = obj_indexes.get_mut(constraint_name) {
-                index.remove(value_key);
-            }
+            && let Some(index) = obj_indexes.get_mut(constraint_name)
+        {
+            index.remove(value_key);
+        }
     }
 
     /// Clear all values for an object

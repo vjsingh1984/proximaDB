@@ -348,10 +348,7 @@ fn validate_certificate(
                 StatusCode::UNAUTHORIZED,
                 Json(TlsCertErrorResponse {
                     error: "certificate_revoked".to_string(),
-                    message: format!(
-                        "Client certificate has been revoked (serial: {})",
-                        serial
-                    ),
+                    message: format!("Client certificate has been revoked (serial: {})", serial),
                     code: 401,
                 }),
             ));
@@ -540,7 +537,10 @@ mod tests {
         // Single character subdomain
         assert!(matches_cn_pattern("a.example.com", "*.example.com"));
         // Hyphenated subdomain
-        assert!(matches_cn_pattern("my-service.example.com", "*.example.com"));
+        assert!(matches_cn_pattern(
+            "my-service.example.com",
+            "*.example.com"
+        ));
         // Numeric subdomain
         assert!(matches_cn_pattern("123.example.com", "*.example.com"));
     }
@@ -573,14 +573,23 @@ mod tests {
     #[test]
     fn test_matches_cn_pattern_case_sensitive() {
         // CN matching is case-sensitive by default
-        assert!(!matches_cn_pattern("Client.Example.Com", "client.example.com"));
+        assert!(!matches_cn_pattern(
+            "Client.Example.Com",
+            "client.example.com"
+        ));
         assert!(!matches_cn_pattern("CLIENT.EXAMPLE.COM", "*.example.com"));
     }
 
     #[test]
     fn test_matches_cn_pattern_special_characters() {
-        assert!(matches_cn_pattern("under_score.example.com", "*.example.com"));
-        assert!(matches_cn_pattern("with.dots.in.suffix", "with.dots.in.suffix"));
+        assert!(matches_cn_pattern(
+            "under_score.example.com",
+            "*.example.com"
+        ));
+        assert!(matches_cn_pattern(
+            "with.dots.in.suffix",
+            "with.dots.in.suffix"
+        ));
         // The wildcard matches single-level: anything.[suffix] where "anything" has no dots
         // So "prefix.with.dots.in.suffix" doesn't match "*.with.dots.in.suffix"
         // because the pattern checks for dots in the part BEFORE the matched suffix
@@ -592,10 +601,16 @@ mod tests {
         // So it DOES match! The test expectation is wrong or the implementation needs review
 
         // For now, let's match the actual behavior:
-        assert!(matches_cn_pattern("prefix.with.dots.in.suffix", "*.with.dots.in.suffix"));
+        assert!(matches_cn_pattern(
+            "prefix.with.dots.in.suffix",
+            "*.with.dots.in.suffix"
+        ));
 
         // To reject CNs with dots in the full CN before the suffix, we'd need different logic
-        assert!(!matches_cn_pattern("subdomain.withdots.example.com", "*.example.com"));
+        assert!(!matches_cn_pattern(
+            "subdomain.withdots.example.com",
+            "*.example.com"
+        ));
     }
 
     #[test]

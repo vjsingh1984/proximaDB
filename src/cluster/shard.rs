@@ -261,8 +261,7 @@ fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp
 }
 
 /// Partition strategy for a collection
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PartitionStrategy {
     /// Hash-based partitioning on record ID (default)
     #[default]
@@ -289,7 +288,6 @@ pub enum PartitionStrategy {
         shards_per_tenant: u32,
     },
 }
-
 
 /// Configuration for collection partitioning
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -481,14 +479,16 @@ impl Shard {
         if let Some(ref bounds) = self.metadata_bounds {
             // Check tenant filter
             if let Some(tid) = tenant_id
-                && !bounds.may_contain_tenant(tid) {
-                    return false;
-                }
+                && !bounds.may_contain_tenant(tid)
+            {
+                return false;
+            }
             // Check domain filter
             if let Some(did) = domain_id
-                && !bounds.may_contain_domain(did) {
-                    return false;
-                }
+                && !bounds.may_contain_domain(did)
+            {
+                return false;
+            }
         }
         // If no bounds or no filters, assume it might contain relevant data
         true

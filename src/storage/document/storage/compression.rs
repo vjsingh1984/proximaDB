@@ -76,11 +76,13 @@ impl DocumentCompressor {
 
         // Add frequently occurring strings to dictionary
         for (s, count) in string_counts {
-            if count >= 2 && s.len() >= self.min_dict_length
-                && !self.string_dictionary.contains_key(&s) {
-                    self.string_dictionary.insert(s, self.next_dict_id);
-                    self.next_dict_id += 1;
-                }
+            if count >= 2
+                && s.len() >= self.min_dict_length
+                && !self.string_dictionary.contains_key(&s)
+            {
+                self.string_dictionary.insert(s, self.next_dict_id);
+                self.next_dict_id += 1;
+            }
         }
     }
 
@@ -100,9 +102,10 @@ impl DocumentCompressor {
                     }
                 }
                 if i > start
-                    && let Ok(s) = std::str::from_utf8(&doc[start..i]) {
-                        *counts.entry(s.to_string()).or_insert(0) += 1;
-                    }
+                    && let Ok(s) = std::str::from_utf8(&doc[start..i])
+                {
+                    *counts.entry(s.to_string()).or_insert(0) += 1;
+                }
             }
             i += 1;
         }
@@ -309,7 +312,10 @@ mod tests {
         ];
 
         let compressed = compressor.compress(&documents).unwrap();
-        assert!(!compressed.dictionary.is_empty(), "dictionary should be non-empty");
+        assert!(
+            !compressed.dictionary.is_empty(),
+            "dictionary should be non-empty"
+        );
 
         let decompressed = compressor.decompress(&compressed).unwrap();
         assert_eq!(documents, decompressed);

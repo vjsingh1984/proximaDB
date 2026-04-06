@@ -239,7 +239,8 @@ pub async fn get_schema(
         schema_version,
         collection_id: collection_id.clone(),
         schema: schema_def,
-        created_at: chrono::DateTime::from_timestamp(collection.created_at / 1000, 0).map_or_else(|| chrono::Utc::now().to_rfc3339(), |dt| dt.to_rfc3339()),
+        created_at: chrono::DateTime::from_timestamp(collection.created_at / 1000, 0)
+            .map_or_else(|| chrono::Utc::now().to_rfc3339(), |dt| dt.to_rfc3339()),
         updated_at: if collection.updated_at != collection.created_at {
             chrono::DateTime::from_timestamp(collection.updated_at / 1000, 0)
                 .map(|dt| dt.to_rfc3339())
@@ -421,13 +422,12 @@ pub async fn update_schema(
         }
 
         // Validate decimal precision/scale
-        if column.data_type == "decimal"
-            && (column.precision.is_none() || column.scale.is_none()) {
-                return Err(ApiError::InvalidArgument(format!(
-                    "Column '{}' with type 'decimal' requires precision and scale",
-                    column.name
-                )));
-            }
+        if column.data_type == "decimal" && (column.precision.is_none() || column.scale.is_none()) {
+            return Err(ApiError::InvalidArgument(format!(
+                "Column '{}' with type 'decimal' requires precision and scale",
+                column.name
+            )));
+        }
 
         // Validate vector dimension
         if column.data_type == "vector" && column.vector_dimension.is_none() {
@@ -595,9 +595,10 @@ pub async fn update_schema(
     }
 
     // Step 4: Create new schema version
-    let previous_schema_id = config
-        .record_schema
-        .as_ref().map_or_else(|| format!("schema_{}_v0", collection_id), |s| s.schema_id.clone());
+    let previous_schema_id = config.record_schema.as_ref().map_or_else(
+        || format!("schema_{}_v0", collection_id),
+        |s| s.schema_id.clone(),
+    );
 
     let new_schema_id = format!("schema_{}_{}", collection_id, uuid::Uuid::new_v4());
     let new_version = increment_version(
@@ -752,10 +753,7 @@ fn build_existing_schema(
                 _ => "hybrid".to_string(),
             });
 
-    let allow_additional = config
-        .record_schema
-        .as_ref()
-        .is_none_or(|s| s.auto_evolve);
+    let allow_additional = config.record_schema.as_ref().is_none_or(|s| s.auto_evolve);
 
     Some(SchemaDefinition {
         columns,
@@ -772,9 +770,10 @@ fn increment_version(current: &str) -> String {
             parts[0].parse::<u32>(),
             parts[1].parse::<u32>(),
             parts[2].parse::<u32>(),
-        ) {
-            return format!("{}.{}.{}", major, minor, patch + 1);
-        }
+        )
+    {
+        return format!("{}.{}.{}", major, minor, patch + 1);
+    }
     // Fallback: return 1.0.0
     "1.0.0".to_string()
 }
@@ -846,12 +845,14 @@ pub fn validate_schema(
 
         // Warn about large max_length for indexed text
         if let Some(max_length) = column.max_length
-            && max_length > 4096 && column.indexed.unwrap_or(false) {
-                warnings.push(format!(
-                    "Column '{}' has large max_length ({}) with indexing enabled",
-                    column.name, max_length
-                ));
-            }
+            && max_length > 4096
+            && column.indexed.unwrap_or(false)
+        {
+            warnings.push(format!(
+                "Column '{}' has large max_length ({}) with indexing enabled",
+                column.name, max_length
+            ));
+        }
     }
 
     // Check evolution compatibility if existing schema provided
@@ -881,12 +882,13 @@ pub fn validate_schema(
         // Check for type changes
         for (name, new_col) in &new_columns {
             if let Some(existing_col) = existing_columns.get(name)
-                && existing_col.data_type != new_col.data_type {
-                    errors.push(format!(
-                        "Cannot change type of column '{}' from '{}' to '{}'",
-                        name, existing_col.data_type, new_col.data_type
-                    ));
-                }
+                && existing_col.data_type != new_col.data_type
+            {
+                errors.push(format!(
+                    "Cannot change type of column '{}' from '{}' to '{}'",
+                    name, existing_col.data_type, new_col.data_type
+                ));
+            }
         }
 
         // Check new columns are nullable or have defaults

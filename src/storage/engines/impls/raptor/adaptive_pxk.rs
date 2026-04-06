@@ -930,21 +930,33 @@ mod tests {
     fn test_calculate_optimal_coverage_low_ratio() {
         // ratio < 0.25: coverage = 1.0
         let coverage = AdaptivePxKStorage::calculate_optimal_coverage(10, 100);
-        assert!((coverage - 1.0).abs() < 0.001, "Low ratio should give 100% coverage, got {}", coverage);
+        assert!(
+            (coverage - 1.0).abs() < 0.001,
+            "Low ratio should give 100% coverage, got {}",
+            coverage
+        );
     }
 
     #[test]
     fn test_calculate_optimal_coverage_medium_ratio() {
         // 0.25 <= ratio < 1.0: linear decay from 100% to 50%
         let coverage = AdaptivePxKStorage::calculate_optimal_coverage(50, 100);
-        assert!(coverage > 0.49 && coverage < 1.01, "Medium ratio coverage {} should be between 0.5 and 1.0", coverage);
+        assert!(
+            coverage > 0.49 && coverage < 1.01,
+            "Medium ratio coverage {} should be between 0.5 and 1.0",
+            coverage
+        );
     }
 
     #[test]
     fn test_calculate_optimal_coverage_high_ratio_has_floor() {
         // ratio >= 1.0: logarithmic decay with 10% floor
         let coverage = AdaptivePxKStorage::calculate_optimal_coverage(5000, 100);
-        assert!(coverage >= 0.10, "Coverage should never go below 10% floor, got {}", coverage);
+        assert!(
+            coverage >= 0.10,
+            "Coverage should never go below 10% floor, got {}",
+            coverage
+        );
     }
 
     #[test]
@@ -956,7 +968,9 @@ mod tests {
             assert!(
                 coverage <= prev,
                 "Coverage should decrease: k={}, coverage={}, prev={}",
-                k, coverage, prev
+                k,
+                coverage,
+                prev
             );
             prev = coverage;
         }

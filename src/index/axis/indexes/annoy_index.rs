@@ -300,15 +300,15 @@ impl AnnoyTree {
                         };
 
                         if let Some(view) = vectors.get(id)
-                            && let Some(vector_data) = view.as_f32() {
-                                let distance_result = distance_compute.calculate_distance(
-                                    query,
-                                    vector_data,
-                                    &distance_compute.system_default(),
-                                );
-                                candidates
-                                    .push((actual_id.to_string(), distance_result.rank_value));
-                            }
+                            && let Some(vector_data) = view.as_f32()
+                        {
+                            let distance_result = distance_compute.calculate_distance(
+                                query,
+                                vector_data,
+                                &distance_compute.system_default(),
+                            );
+                            candidates.push((actual_id.to_string(), distance_result.rank_value));
+                        }
                     }
                 }
                 AnnoyNode::Split {
@@ -381,9 +381,7 @@ impl AxisAnnoyIndex {
         // USING UTILS: Validate configuration
         validation::validate_dimension(dimension)?;
 
-        let coll_str = collection_id
-            .as_ref()
-            .map_or("default", |s| s.as_str());
+        let coll_str = collection_id.as_ref().map_or("default", |s| s.as_str());
         info!(
             "Creating AXIS Annoy index for collection '{}': {} trees, search_k={}, dim={}",
             coll_str, config.n_trees, config.search_k, dimension

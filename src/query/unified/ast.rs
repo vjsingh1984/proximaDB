@@ -201,8 +201,7 @@ pub struct VectorSearchParams {
 }
 
 /// Distance metrics for vector search
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum DistanceMetric {
     /// Euclidean distance (L2)
     Euclidean,
@@ -214,7 +213,6 @@ pub enum DistanceMetric {
     /// Manhattan distance (L1)
     Manhattan,
 }
-
 
 /// Document query expression
 #[derive(Debug, Clone)]
@@ -318,15 +316,13 @@ pub enum StartNodeSpec {
 }
 
 /// Traversal direction
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TraversalDirection {
     #[default]
     Outgoing,
     Incoming,
     Both,
 }
-
 
 /// Node filter for graph queries
 #[derive(Debug, Clone)]
@@ -398,8 +394,7 @@ pub struct MetricQueryExpr {
 }
 
 /// Metric aggregation functions
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum MetricAggregation {
     Sum,
     #[default]
@@ -413,7 +408,6 @@ pub enum MetricAggregation {
     P99,
     Rate,
 }
-
 
 /// Generic filter that can apply to any record
 #[derive(Debug, Clone)]

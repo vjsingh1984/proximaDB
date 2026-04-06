@@ -292,10 +292,8 @@ impl CompactionTaskBuilder {
             ),
             "size" => {
                 // Calculate total size at L0
-                let l0_total_size_mb = filtered_files
-                    .compactable_files
-                    .get(&0)
-                    .map_or(0, |files| {
+                let l0_total_size_mb =
+                    filtered_files.compactable_files.get(&0).map_or(0, |files| {
                         files
                             .iter()
                             .map(|f| f.size_bytes / (1024 * 1024))
@@ -310,10 +308,8 @@ impl CompactionTaskBuilder {
                     0,
                     config.l0_file_threshold,
                 );
-                let l0_total_size_mb = filtered_files
-                    .compactable_files
-                    .get(&0)
-                    .map_or(0, |files| {
+                let l0_total_size_mb =
+                    filtered_files.compactable_files.get(&0).map_or(0, |files| {
                         files
                             .iter()
                             .map(|f| f.size_bytes / (1024 * 1024))
@@ -357,43 +353,44 @@ impl CompactionTaskBuilder {
                 * config.level_multiplier.powi(level as i32))
                 as usize;
 
-            let should_compact = match config.strategy.as_str() {
-                "count" => file_discovery.should_trigger_compaction(
-                    &filtered_files,
-                    level,
-                    level_file_threshold,
-                ),
-                "size" => {
-                    let level_total_size_mb = filtered_files
-                        .compactable_files
-                        .get(&level)
-                        .map_or(0, |files| {
-                            files
-                                .iter()
-                                .map(|f| f.size_bytes / (1024 * 1024))
-                                .sum::<u64>() as usize
-                        });
-                    level_total_size_mb >= level_size_threshold_mb
-                }
-                _ => {
-                    let count_triggered = file_discovery.should_trigger_compaction(
+            let should_compact =
+                match config.strategy.as_str() {
+                    "count" => file_discovery.should_trigger_compaction(
                         &filtered_files,
                         level,
                         level_file_threshold,
-                    );
-                    let level_total_size_mb = filtered_files
-                        .compactable_files
-                        .get(&level)
-                        .map_or(0, |files| {
-                            files
-                                .iter()
-                                .map(|f| f.size_bytes / (1024 * 1024))
-                                .sum::<u64>() as usize
-                        });
-                    let size_triggered = level_total_size_mb >= level_size_threshold_mb;
-                    count_triggered || size_triggered
-                }
-            };
+                    ),
+                    "size" => {
+                        let level_total_size_mb = filtered_files
+                            .compactable_files
+                            .get(&level)
+                            .map_or(0, |files| {
+                                files
+                                    .iter()
+                                    .map(|f| f.size_bytes / (1024 * 1024))
+                                    .sum::<u64>() as usize
+                            });
+                        level_total_size_mb >= level_size_threshold_mb
+                    }
+                    _ => {
+                        let count_triggered = file_discovery.should_trigger_compaction(
+                            &filtered_files,
+                            level,
+                            level_file_threshold,
+                        );
+                        let level_total_size_mb = filtered_files
+                            .compactable_files
+                            .get(&level)
+                            .map_or(0, |files| {
+                                files
+                                    .iter()
+                                    .map(|f| f.size_bytes / (1024 * 1024))
+                                    .sum::<u64>() as usize
+                            });
+                        let size_triggered = level_total_size_mb >= level_size_threshold_mb;
+                        count_triggered || size_triggered
+                    }
+                };
 
             if should_compact {
                 let compactable_files = file_discovery.get_compaction_files(&filtered_files, level);

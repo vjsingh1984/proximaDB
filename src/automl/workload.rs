@@ -112,7 +112,6 @@ impl WorkloadTimeSeries {
             sum_x2 += x * x;
         }
 
-        
         (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
     }
 
@@ -123,7 +122,6 @@ impl WorkloadTimeSeries {
         }
 
         let mean = series.iter().map(|p| p.value).sum::<f64>() / series.len() as f64;
-        
 
         series.iter().map(|p| (p.value - mean).powi(2)).sum::<f64>() / series.len() as f64
     }

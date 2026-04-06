@@ -401,8 +401,12 @@ impl SstEngine {
             } else {
                 // Use SSTable reader for ProximaBlocks format
                 // Choose execution strategy based on flags (TD-041, TD-039, TD-031)
-                let use_parallel_morsels = ctx.search_params.enable_parallel_morsels.unwrap_or(false);
-                let use_vectorized = ctx.search_params.enable_vectorized_execution.unwrap_or(false);
+                let use_parallel_morsels =
+                    ctx.search_params.enable_parallel_morsels.unwrap_or(false);
+                let use_vectorized = ctx
+                    .search_params
+                    .enable_vectorized_execution
+                    .unwrap_or(false);
                 let use_pipeline = ctx.search_params.enable_pipeline_execution.unwrap_or(false);
 
                 if use_pipeline {
@@ -565,9 +569,10 @@ impl SstEngine {
         if let SearchMode::Adaptive {
             threshold: _threshold,
         } = search_mode
-            && all_files.len() <= 3 {
-                return Ok(all_files);
-            }
+            && all_files.len() <= 3
+        {
+            return Ok(all_files);
+        }
 
         // Calculate effective nprobe based on search mode and number of files
         let nprobe = search_mode.effective_nprobe(all_files.len(), all_files.len() * 1000); // Estimate 1000 vectors per file
@@ -823,9 +828,10 @@ impl SstEngine {
         if let Ok(mut entries) = tokio::fs::read_dir(data_dir).await {
             while let Some(entry) = entries.next_entry().await? {
                 if let Some(name) = entry.file_name().to_str()
-                    && (name.ends_with(".sst") || name.ends_with(".arrow")) {
-                        sstable_files.push(format!("{}/{}", data_dir, name));
-                    }
+                    && (name.ends_with(".sst") || name.ends_with(".arrow"))
+                {
+                    sstable_files.push(format!("{}/{}", data_dir, name));
+                }
             }
         }
 

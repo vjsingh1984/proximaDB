@@ -355,7 +355,8 @@ impl SwiftCandidateLoader {
     ) -> Vec<ScoredCandidate> {
         let mut candidates = Vec::new();
 
-        let indices: Vec<usize> = block_indices.map_or_else(|| (0..superblock.blocks.len()).collect(), |i| i.to_vec());
+        let indices: Vec<usize> =
+            block_indices.map_or_else(|| (0..superblock.blocks.len()).collect(), |i| i.to_vec());
 
         for block_idx in indices {
             if let Some(block) = superblock.blocks.get(block_idx) {
@@ -401,7 +402,8 @@ impl SwiftCandidateLoader {
     ) -> Vec<ScoredCandidate> {
         let mut all_candidates = Vec::new();
 
-        let sb_indices: Vec<usize> = superblock_filter.map_or_else(|| (0..superblocks.len()).collect(), |i| i.to_vec());
+        let sb_indices: Vec<usize> =
+            superblock_filter.map_or_else(|| (0..superblocks.len()).collect(), |i| i.to_vec());
 
         for sb_idx in sb_indices {
             if let Some(superblock) = superblocks.get(sb_idx) {
@@ -747,7 +749,10 @@ mod tests {
         let compute = create_test_distance_compute();
         let stage = SwiftInt8Stage::new(compute);
 
-        let candidates = vec![ScoredCandidate::with_vector("id".to_string(), vec![1.0, 2.0])];
+        let candidates = vec![ScoredCandidate::with_vector(
+            "id".to_string(),
+            vec![1.0, 2.0],
+        )];
         assert!(!stage.can_skip(&candidates));
     }
 

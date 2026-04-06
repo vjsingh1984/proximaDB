@@ -183,7 +183,8 @@ impl FieldEncryption {
     ) -> Result<EncryptedField, FieldEncryptionError> {
         // Get field settings or use defaults
         let settings = self.config.field_settings.get(field_name);
-        let encryption_type = settings.map_or_else(|| self.config.default_type, |s| s.encryption_type);
+        let encryption_type =
+            settings.map_or_else(|| self.config.default_type, |s| s.encryption_type);
 
         let key_id = settings.map_or("default", |s| s.key_id.as_str());
 
@@ -203,13 +204,13 @@ impl FieldEncryption {
         };
 
         // Generate blind index if enabled
-        let blind_index = if settings.map_or_else(|| self.config.enable_blind_indexes, |s| s.blind_index)
-        {
-            let truncate = settings.and_then(|s| s.blind_index_bytes);
-            self.generate_blind_index(value, truncate)?
-        } else {
-            None
-        };
+        let blind_index =
+            if settings.map_or_else(|| self.config.enable_blind_indexes, |s| s.blind_index) {
+                let truncate = settings.and_then(|s| s.blind_index_bytes);
+                self.generate_blind_index(value, truncate)?
+            } else {
+                None
+            };
 
         Ok(EncryptedField {
             ciphertext: base64::Engine::encode(
