@@ -34,3 +34,6 @@ pub mod simple_context_test;
 
 #[cfg(test)]
 pub mod optimization_validation;
+
+#[cfg(test)]
+pub mod wal_manager_infra_tests;

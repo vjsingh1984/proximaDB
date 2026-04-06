@@ -2353,3 +2353,519 @@ pub async fn trigger_migration(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ================================================================
+    // Node CRUD tests
+    // ================================================================
+
+    #[test]
+    fn test_create_node_request_parsing() {
+        let json_input = json!({
+            "node": {
+                "id": "node-001",
+                "labels": ["Person", "Employee"],
+                "properties": {
+                    "name": "Alice",
+                    "age": 30,
+                    "active": true
+                }
+            }
+        });
+
+        let request: CreateNodeRequest =
+            serde_json::from_value(json_input).expect("CreateNodeRequest should deserialize");
+        assert_eq!(request.node.id, "node-001");
+        assert_eq!(request.node.labels, vec!["Person", "Employee"]);
+        assert_eq!(request.node.properties.len(), 3);
+        assert_eq!(request.node.properties["name"], json!("Alice"));
+        assert_eq!(request.node.properties["age"], json!(30));
+        assert_eq!(request.node.properties["active"], json!(true));
+
+        // Verify conversion to proto Node preserves fields
+        let proto_node: Node = request.node.into();
+        assert_eq!(proto_node.id, "node-001");
+        assert_eq!(proto_node.labels, vec!["Person", "Employee"]);
+        assert_eq!(proto_node.properties.len(), 3);
+        // Check that the property value roundtrips correctly
+        let name_prop = &proto_node.properties["name"];
+        match &name_prop.value {
+            Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => {
+                assert_eq!(s, "Alice");
+            }
+            other => panic!("Expected StringValue, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_get_node_response_serialization() {
+        let node = CanonicalNode {
+            id: "node-101".to_string(),
+            labels: vec!["Person".to_string(), "Author".to_string()],
+            properties: {
+                let mut p = HashMap::new();
+                p.insert("name".to_string(), json!("Bob"));
+                p.insert("score".to_string(), json!(95.5));
+                p
+            },
+            embedding: None,
+            created_at: "2026-01-15T10:30:00.000Z".to_string(),
+            updated_at: "2026-01-15T10:30:00.000Z".to_string(),
+        };
+
+        let response = GraphResponse::success(node);
+        let serialized = serde_json::to_value(&response).expect("Should serialize GraphResponse");
+
+        assert_eq!(serialized["success"], json!(true));
+        assert!(serialized.get("error").is_none());
+
+        let data = &serialized["data"];
+        assert_eq!(data["id"], json!("node-101"));
+        assert_eq!(data["labels"], json!(["Person", "Author"]));
+        assert_eq!(data["properties"]["name"], json!("Bob"));
+        assert_eq!(data["properties"]["score"], json!(95.5));
+        assert_eq!(data["created_at"], json!("2026-01-15T10:30:00.000Z"));
+
+        // Verify round-trip: deserialize back
+        let roundtrip: GraphResponse<CanonicalNode> =
+            serde_json::from_value(serialized).expect("Should deserialize back");
+        assert!(roundtrip.success);
+        let roundtrip_data = roundtrip.data.expect("data should be present");
+        assert_eq!(roundtrip_data.id, "node-101");
+        assert_eq!(roundtrip_data.labels.len(), 2);
+    }
+
+    #[test]
+    fn test_update_node_request_parsing() {
+        let json_input = json!({
+            "id": "node-002",
+            "labels": ["Person"],
+            "properties": {
+                "name": "Charlie",
+                "age": 45,
+                "email": "charlie@example.com"
+            }
+        });
+
+        let node_input: RestNodeInput =
+            serde_json::from_value(json_input).expect("RestNodeInput should deserialize");
+        assert_eq!(node_input.id, "node-002");
+        assert_eq!(node_input.labels, vec!["Person"]);
+        assert_eq!(node_input.properties.len(), 3);
+        assert_eq!(node_input.properties["email"], json!("charlie@example.com"));
+
+        // Convert to proto and verify property types are correct
+        let proto_node: Node = node_input.into();
+        assert_eq!(proto_node.id, "node-002");
+        let age_prop = &proto_node.properties["age"];
+        match &age_prop.value {
+            Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
+                assert_eq!(*i, 45);
+            }
+            other => panic!("Expected IntValue(45), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_delete_node_request_parsing() {
+        // Delete uses path parameters (graph_id, node_id) not a JSON body.
+        // Verify that the path tuple can be destructured as the handler expects.
+        let graph_id = "social-graph".to_string();
+        let node_id = "node-999".to_string();
+
+        // Simulate the path extraction
+        let (extracted_graph_id, extracted_node_id): (String, String) =
+            (graph_id.clone(), node_id.clone());
+        assert_eq!(extracted_graph_id, "social-graph");
+        assert_eq!(extracted_node_id, "node-999");
+
+        // Also verify that a CanonicalNode can represent a deleted node response
+        let deleted_node = CanonicalNode {
+            id: node_id,
+            labels: vec!["Person".to_string()],
+            properties: HashMap::new(),
+            embedding: None,
+            created_at: "2026-01-01T00:00:00.000Z".to_string(),
+            updated_at: "2026-04-04T12:00:00.000Z".to_string(),
+        };
+        let response = GraphResponse::success(deleted_node);
+        let serialized = serde_json::to_value(&response).expect("Should serialize");
+        assert_eq!(serialized["data"]["id"], json!("node-999"));
+        assert!(serialized["success"].as_bool().unwrap_or(false));
+    }
+
+    // ================================================================
+    // Edge CRUD tests
+    // ================================================================
+
+    #[test]
+    fn test_create_edge_request_parsing() {
+        let json_input = json!({
+            "edge": {
+                "id": "edge-001",
+                "from_node_id": "node-A",
+                "to_node_id": "node-B",
+                "edge_type": "KNOWS",
+                "properties": {
+                    "since": "2020-01-01",
+                    "strength": 0.85
+                },
+                "weight": 1.5
+            }
+        });
+
+        let request: CreateEdgeRequest =
+            serde_json::from_value(json_input).expect("CreateEdgeRequest should deserialize");
+        assert_eq!(request.edge.id, "edge-001");
+        assert_eq!(request.edge.from_node_id, "node-A");
+        assert_eq!(request.edge.to_node_id, "node-B");
+        assert_eq!(request.edge.edge_type, "KNOWS");
+        assert_eq!(request.edge.properties.len(), 2);
+        assert_eq!(request.edge.weight, Some(1.5));
+
+        // Convert to proto Edge and verify
+        let proto_edge: Edge = request.edge.into();
+        assert_eq!(proto_edge.id, "edge-001");
+        assert_eq!(proto_edge.from_node_id, "node-A");
+        assert_eq!(proto_edge.to_node_id, "node-B");
+        assert_eq!(proto_edge.edge_type, "KNOWS");
+        assert_eq!(proto_edge.weight, Some(1.5));
+        // Verify property conversion
+        let since_prop = &proto_edge.properties["since"];
+        match &since_prop.value {
+            Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => {
+                assert_eq!(s, "2020-01-01");
+            }
+            other => panic!("Expected StringValue, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_query_edges_request_parsing() {
+        let json_input = json!({
+            "edge_type": "WORKS_FOR",
+            "from_node_id": "person-1",
+            "to_node_id": null,
+            "properties": {
+                "department": "Engineering"
+            },
+            "limit": 50,
+            "offset": 10,
+            "continuation_token": null
+        });
+
+        let query: RestEdgeQuery =
+            serde_json::from_value(json_input).expect("RestEdgeQuery should deserialize");
+        assert_eq!(query.edge_type, "WORKS_FOR");
+        assert_eq!(query.from_node_id, Some("person-1".to_string()));
+        assert!(query.to_node_id.is_none());
+        assert_eq!(query.properties.len(), 1);
+        assert_eq!(query.limit, 50);
+        assert_eq!(query.offset, Some(10));
+
+        // Convert to proto EdgeQuery and verify
+        let proto_query: crate::proto::proximadb_v1::EdgeQuery = query.into();
+        assert_eq!(proto_query.edge_types, vec!["WORKS_FOR"]);
+        assert_eq!(proto_query.from_node_id, Some("person-1".to_string()));
+        assert!(proto_query.to_node_id.is_none());
+        assert_eq!(proto_query.limit, Some(50));
+        assert_eq!(proto_query.offset, Some(10));
+        assert_eq!(proto_query.filters.len(), 1);
+        assert_eq!(proto_query.filters[0].key, "department");
+    }
+
+    #[test]
+    fn test_delete_edge_request_parsing() {
+        // Delete edge uses path parameters (graph_id, edge_id)
+        let graph_id = "knowledge-graph".to_string();
+        let edge_id = "edge-abc-123".to_string();
+
+        let (extracted_graph_id, extracted_edge_id): (String, String) =
+            (graph_id.clone(), edge_id.clone());
+        assert_eq!(extracted_graph_id, "knowledge-graph");
+        assert_eq!(extracted_edge_id, "edge-abc-123");
+
+        // Verify canonical edge response for deletion
+        let deleted_edge = CanonicalEdge {
+            id: edge_id,
+            from_node_id: "src-node".to_string(),
+            to_node_id: "dst-node".to_string(),
+            edge_type: "REFERENCES".to_string(),
+            properties: HashMap::new(),
+            weight: Some(2.0),
+            created_at: "2026-02-01T00:00:00.000Z".to_string(),
+            updated_at: "2026-03-15T08:00:00.000Z".to_string(),
+        };
+        let response = GraphResponse::success(deleted_edge);
+        let serialized = serde_json::to_value(&response).expect("Should serialize");
+        assert_eq!(serialized["data"]["id"], json!("edge-abc-123"));
+        assert_eq!(serialized["data"]["edge_type"], json!("REFERENCES"));
+        assert_eq!(serialized["data"]["weight"], json!(2.0));
+    }
+
+    // ================================================================
+    // Graph operations tests
+    // ================================================================
+
+    #[test]
+    fn test_graph_query_request_parsing() {
+        let json_input = json!({
+            "query": "MATCH (n:Person)-[:KNOWS]->(m) WHERE n.name = 'Alice' RETURN m.name, m.age",
+            "_language": "cypher"
+        });
+
+        let request: GraphQueryRequest =
+            serde_json::from_value(json_input).expect("GraphQueryRequest should deserialize");
+        assert_eq!(
+            request.query,
+            "MATCH (n:Person)-[:KNOWS]->(m) WHERE n.name = 'Alice' RETURN m.name, m.age"
+        );
+
+        // Test with default language (omitted from JSON)
+        let json_minimal = json!({
+            "query": "MATCH (n) RETURN n LIMIT 10"
+        });
+        let request2: GraphQueryRequest =
+            serde_json::from_value(json_minimal).expect("Should deserialize with defaults");
+        assert_eq!(request2.query, "MATCH (n) RETURN n LIMIT 10");
+    }
+
+    #[test]
+    fn test_graph_stats_response_serialization() {
+        let stats = RestGraphStats {
+            total_nodes: 10_000,
+            total_edges: 50_000,
+            label_stats: vec![
+                RestLabelStats {
+                    label: "Person".to_string(),
+                    count: 5000,
+                },
+                RestLabelStats {
+                    label: "Organization".to_string(),
+                    count: 3000,
+                },
+            ],
+            edge_type_stats: vec![
+                RestEdgeTypeStats {
+                    edge_type: "KNOWS".to_string(),
+                    count: 30_000,
+                },
+                RestEdgeTypeStats {
+                    edge_type: "WORKS_FOR".to_string(),
+                    count: 20_000,
+                },
+            ],
+            total_properties: 120_000,
+            memory_usage_bytes: 52_428_800,
+            average_degree: 5.0,
+            max_degree: 150,
+            connected_components: 3,
+        };
+
+        let response = GraphResponse::success(stats);
+        let serialized = serde_json::to_value(&response).expect("Should serialize stats response");
+
+        assert_eq!(serialized["success"], json!(true));
+        let data = &serialized["data"];
+        assert_eq!(data["total_nodes"], json!(10_000));
+        assert_eq!(data["total_edges"], json!(50_000));
+        assert_eq!(data["average_degree"], json!(5.0));
+        assert_eq!(data["max_degree"], json!(150));
+        assert_eq!(data["connected_components"], json!(3));
+        assert_eq!(data["memory_usage_bytes"], json!(52_428_800));
+        assert_eq!(data["total_properties"], json!(120_000));
+
+        // Verify label stats array
+        let labels = data["label_stats"].as_array().expect("Should be array");
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[0]["label"], json!("Person"));
+        assert_eq!(labels[0]["count"], json!(5000));
+
+        // Verify edge type stats array
+        let edge_types = data["edge_type_stats"]
+            .as_array()
+            .expect("Should be array");
+        assert_eq!(edge_types.len(), 2);
+        assert_eq!(edge_types[0]["edge_type"], json!("KNOWS"));
+        assert_eq!(edge_types[0]["count"], json!(30_000));
+    }
+
+    #[test]
+    fn test_traversal_request_parsing() {
+        let json_input = json!({
+            "start_node_id": "start-node-42",
+            "max_depth": 5,
+            "edge_types": ["KNOWS", "FOLLOWS"],
+            "node_labels": ["Person"],
+            "_return_path": true,
+            "algorithm": "bfs"
+        });
+
+        let request: RestTraversalRequest =
+            serde_json::from_value(json_input).expect("RestTraversalRequest should deserialize");
+        assert_eq!(request.start_node_id, "start-node-42");
+        assert_eq!(request.max_depth, 5);
+        assert_eq!(request.edge_types, vec!["KNOWS", "FOLLOWS"]);
+        assert_eq!(request.node_labels, vec!["Person"]);
+        assert_eq!(request.algorithm, "bfs");
+
+        // Convert to proto TraversalRequest and verify
+        let proto_req: crate::proto::proximadb_v1::TraversalRequest = request.into();
+        assert_eq!(proto_req.start_node_id, "start-node-42");
+        assert_eq!(proto_req.max_depth, 5);
+        assert_eq!(proto_req.edge_types, vec!["KNOWS", "FOLLOWS"]);
+        assert_eq!(proto_req.node_labels, vec!["Person"]);
+        assert_eq!(proto_req.algorithm, 1); // BFS = 1
+
+        // Test DFS algorithm mapping
+        let dfs_input = json!({
+            "start_node_id": "n1",
+            "max_depth": 3,
+            "edge_types": [],
+            "node_labels": [],
+            "_return_path": false,
+            "algorithm": "dfs"
+        });
+        let dfs_req: RestTraversalRequest = serde_json::from_value(dfs_input).unwrap();
+        let proto_dfs: crate::proto::proximadb_v1::TraversalRequest = dfs_req.into();
+        assert_eq!(proto_dfs.algorithm, 2); // DFS = 2
+
+        // Test parallel_bfs algorithm mapping
+        let pbfs_input = json!({
+            "start_node_id": "n2",
+            "max_depth": 10,
+            "edge_types": [],
+            "node_labels": [],
+            "_return_path": false,
+            "algorithm": "parallel_bfs"
+        });
+        let pbfs_req: RestTraversalRequest = serde_json::from_value(pbfs_input).unwrap();
+        let proto_pbfs: crate::proto::proximadb_v1::TraversalRequest = pbfs_req.into();
+        assert_eq!(proto_pbfs.algorithm, 3); // PARALLEL_BFS = 3
+    }
+
+    // ================================================================
+    // Batch operations tests
+    // ================================================================
+
+    #[test]
+    fn test_batch_create_nodes_request() {
+        let json_input = json!({
+            "nodes": [
+                {
+                    "id": "batch-node-1",
+                    "labels": ["Person"],
+                    "properties": {"name": "Alice"}
+                },
+                {
+                    "id": "batch-node-2",
+                    "labels": ["Person", "Developer"],
+                    "properties": {"name": "Bob", "level": 5}
+                },
+                {
+                    "id": "batch-node-3",
+                    "labels": ["Organization"],
+                    "properties": {"name": "Acme Corp"}
+                }
+            ],
+            "if_exists": "skip"
+        });
+
+        let request: BatchCreateNodesRequest =
+            serde_json::from_value(json_input).expect("BatchCreateNodesRequest should deserialize");
+        assert_eq!(request.nodes.len(), 3);
+        assert_eq!(request.if_exists, Some("skip".to_string()));
+
+        // Verify first node
+        assert_eq!(request.nodes[0].id, "batch-node-1");
+        assert_eq!(request.nodes[0].labels, vec!["Person"]);
+        assert_eq!(request.nodes[0].properties["name"], json!("Alice"));
+
+        // Verify second node has multiple labels
+        assert_eq!(
+            request.nodes[1].labels,
+            vec!["Person", "Developer"]
+        );
+        assert_eq!(request.nodes[1].properties["level"], json!(5));
+
+        // Convert all to proto and verify count
+        let proto_nodes: Vec<Node> = request
+            .nodes
+            .into_iter()
+            .map(|n| n.into())
+            .collect();
+        assert_eq!(proto_nodes.len(), 3);
+        assert_eq!(proto_nodes[2].labels, vec!["Organization"]);
+
+        // Test with default if_exists (omitted)
+        let json_no_strategy = json!({
+            "nodes": [
+                {
+                    "id": "n1",
+                    "labels": [],
+                    "properties": {}
+                }
+            ]
+        });
+        let req2: BatchCreateNodesRequest =
+            serde_json::from_value(json_no_strategy).expect("Should deserialize without if_exists");
+        assert!(req2.if_exists.is_none());
+    }
+
+    #[test]
+    fn test_batch_create_edges_request() {
+        let json_input = json!({
+            "edges": [
+                {
+                    "id": "batch-edge-1",
+                    "from_node_id": "node-A",
+                    "to_node_id": "node-B",
+                    "edge_type": "KNOWS",
+                    "properties": {"since": "2024"},
+                    "weight": 1.0
+                },
+                {
+                    "id": "batch-edge-2",
+                    "from_node_id": "node-B",
+                    "to_node_id": "node-C",
+                    "edge_type": "WORKS_FOR",
+                    "properties": {},
+                    "weight": null
+                }
+            ],
+            "if_exists": "update"
+        });
+
+        let request: BatchCreateEdgesRequest =
+            serde_json::from_value(json_input).expect("BatchCreateEdgesRequest should deserialize");
+        assert_eq!(request.edges.len(), 2);
+        assert_eq!(request.if_exists, Some("update".to_string()));
+
+        // Verify first edge
+        assert_eq!(request.edges[0].id, "batch-edge-1");
+        assert_eq!(request.edges[0].from_node_id, "node-A");
+        assert_eq!(request.edges[0].to_node_id, "node-B");
+        assert_eq!(request.edges[0].edge_type, "KNOWS");
+        assert_eq!(request.edges[0].weight, Some(1.0));
+
+        // Verify second edge has no weight
+        assert_eq!(request.edges[1].edge_type, "WORKS_FOR");
+        assert!(request.edges[1].weight.is_none());
+
+        // Convert to proto and verify
+        let proto_edges: Vec<Edge> = request
+            .edges
+            .into_iter()
+            .map(|e| e.into())
+            .collect();
+        assert_eq!(proto_edges.len(), 2);
+        assert_eq!(proto_edges[0].weight, Some(1.0));
+        assert_eq!(proto_edges[1].weight, None);
+        assert_eq!(proto_edges[1].from_node_id, "node-B");
+        assert_eq!(proto_edges[1].to_node_id, "node-C");
+    }
+}

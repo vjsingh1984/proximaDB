@@ -1867,4 +1867,216 @@ mod tests {
         assert!(extensions.contains(&"GRAPH_QUERY"));
         assert!(extensions.contains(&"LOGS"));
     }
+
+    // =========================================================================
+    // Request / Response serialization tests
+    // =========================================================================
+
+    #[test]
+    fn test_unified_query_request_parsing() {
+        // Verify ExecuteQueryRequest deserializes correctly from JSON
+        let json = serde_json::json!({
+            "query": "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2]', 10)",
+            "query_vector": [0.1, 0.2, 0.3],
+            "fusion_strategy": "rrf",
+            "limit": 50
+        });
+
+        let request: ExecuteQueryRequest =
+            serde_json::from_value(json).expect("should deserialize");
+
+        assert_eq!(
+            request.query,
+            "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2]', 10)"
+        );
+        let qv = request.query_vector.expect("query_vector should be present");
+        assert_eq!(qv.len(), 3);
+        assert!((qv[0] - 0.1).abs() < f32::EPSILON);
+        assert_eq!(
+            request.fusion_strategy.as_deref(),
+            Some("rrf")
+        );
+        assert_eq!(request.limit, Some(50));
+
+        // Minimal request (only required field)
+        let minimal = serde_json::json!({ "query": "SELECT 1" });
+        let req: ExecuteQueryRequest =
+            serde_json::from_value(minimal).expect("minimal request should parse");
+        assert_eq!(req.query, "SELECT 1");
+        assert!(req.query_vector.is_none());
+        assert!(req.fusion_strategy.is_none());
+        // default_limit() returns Some(100)
+        assert_eq!(req.limit, Some(100));
+    }
+
+    #[test]
+    fn test_unified_query_response_serialization() {
+        // Verify QueryResultResponse serializes to the expected JSON shape
+        let response = QueryResultResponse {
+            records: vec![
+                UnifiedRecordResponse {
+                    id: "vec_001".into(),
+                    source_model: "vector".into(),
+                    data: serde_json::json!({"score": 0.95}),
+                    score: Some(0.95),
+                    metadata: HashMap::new(),
+                },
+                UnifiedRecordResponse {
+                    id: "doc_042".into(),
+                    source_model: "document".into(),
+                    data: serde_json::json!({"title": "Rust programming"}),
+                    score: None,
+                    metadata: {
+                        let mut m = HashMap::new();
+                        m.insert("collection".into(), "articles".into());
+                        m
+                    },
+                },
+            ],
+            total_count: Some(2),
+            records_returned: 2,
+            metrics: QueryMetricsResponse {
+                total_time_ms: 12.5,
+                sub_query_times: vec![
+                    SubQueryTimeResponse {
+                        model: "vector".into(),
+                        time_ms: 5.0,
+                    },
+                    SubQueryTimeResponse {
+                        model: "document".into(),
+                        time_ms: 7.5,
+                    },
+                ],
+                records_scanned: 1000,
+                records_returned: 2,
+            },
+        };
+
+        let json = serde_json::to_value(&response).expect("should serialize");
+        assert_eq!(json["total_count"], 2);
+        assert_eq!(json["records_returned"], 2);
+        assert_eq!(json["records"].as_array().expect("records array").len(), 2);
+        assert_eq!(json["records"][0]["id"], "vec_001");
+        assert_eq!(json["records"][0]["source_model"], "vector");
+        assert!((json["records"][0]["score"].as_f64().unwrap() - 0.95).abs() < f64::EPSILON);
+        // metadata with entries should be present; empty metadata should be absent
+        assert!(json["records"][1]["metadata"].is_object());
+        assert!(
+            json["records"][0].get("metadata").is_none()
+                || json["records"][0]["metadata"].as_object().map_or(false, |m| m.is_empty()),
+            "empty metadata should be skipped or empty"
+        );
+        assert!((json["metrics"]["total_time_ms"].as_f64().unwrap() - 12.5).abs() < f64::EPSILON);
+        assert_eq!(
+            json["metrics"]["sub_query_times"]
+                .as_array()
+                .expect("sub_query_times")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_federated_query_request() {
+        // Verify MultiModelQueryRequest (cross-model programmatic API) parses correctly
+        let json = serde_json::json!({
+            "components": [
+                {
+                    "component_type": "vector",
+                    "config": {
+                        "collection": "embeddings",
+                        "query_vector": [0.1, 0.2],
+                        "top_k": 10
+                    }
+                },
+                {
+                    "component_type": "document",
+                    "config": {
+                        "collection": "articles",
+                        "filter": "$.category = 'science'"
+                    }
+                },
+                {
+                    "component_type": "graph",
+                    "config": {
+                        "graph": "social",
+                        "cypher": "MATCH (a)-[:KNOWS]->(b) RETURN b.name"
+                    }
+                }
+            ],
+            "fusion_strategy": "rrf",
+            "limit": 25
+        });
+
+        let request: MultiModelQueryRequest =
+            serde_json::from_value(json).expect("should deserialize cross-model request");
+
+        assert_eq!(request.components.len(), 3);
+        assert_eq!(request.components[0].component_type, "vector");
+        assert_eq!(request.components[1].component_type, "document");
+        assert_eq!(request.components[2].component_type, "graph");
+        assert_eq!(request.fusion_strategy, "rrf");
+        assert_eq!(request.limit, Some(25));
+
+        // Verify nested config values are accessible
+        let vec_config = &request.components[0].config;
+        assert_eq!(vec_config["collection"], "embeddings");
+        assert_eq!(vec_config["top_k"], 10);
+
+        // Default fusion strategy should be "intersection"
+        let minimal = serde_json::json!({
+            "components": []
+        });
+        let req: MultiModelQueryRequest =
+            serde_json::from_value(minimal).expect("minimal request should parse");
+        assert_eq!(req.fusion_strategy, "intersection");
+        assert_eq!(req.limit, Some(100));
+    }
+
+    #[test]
+    fn test_query_explain_request() {
+        // ExplainResponse is the output of the /explain endpoint.
+        // Verify it serializes with the expected structure.
+        let explain = ExplainResponse {
+            components: vec![
+                ComponentPlanResponse {
+                    model: "vector".into(),
+                    estimated_cost: 1.0,
+                    parallelizable: true,
+                },
+                ComponentPlanResponse {
+                    model: "document".into(),
+                    estimated_cost: 2.0,
+                    parallelizable: true,
+                },
+                ComponentPlanResponse {
+                    model: "graph".into(),
+                    estimated_cost: 3.0,
+                    parallelizable: false,
+                },
+            ],
+            fusion_strategy: "rrf".into(),
+            estimated_total_cost: 6.0,
+        };
+
+        let json = serde_json::to_value(&explain).expect("should serialize");
+        assert_eq!(json["fusion_strategy"], "rrf");
+        assert!((json["estimated_total_cost"].as_f64().unwrap() - 6.0).abs() < f64::EPSILON);
+
+        let components = json["components"].as_array().expect("components array");
+        assert_eq!(components.len(), 3);
+        assert_eq!(components[0]["model"], "vector");
+        assert!(components[0]["parallelizable"].as_bool().unwrap());
+        assert!(!components[2]["parallelizable"].as_bool().unwrap());
+        assert!((components[1]["estimated_cost"].as_f64().unwrap() - 2.0).abs() < f64::EPSILON);
+
+        // Also verify the explain endpoint uses the same ExecuteQueryRequest format
+        let explain_input = serde_json::json!({
+            "query": "SELECT * FROM VECTOR_SEARCH('products', '[0.5]', 5) JOIN GRAPH_QUERY('MATCH (n) RETURN n')"
+        });
+        let req: ExecuteQueryRequest =
+            serde_json::from_value(explain_input).expect("explain input should parse as ExecuteQueryRequest");
+        assert!(req.query.contains("VECTOR_SEARCH"));
+        assert!(req.query.contains("GRAPH_QUERY"));
+    }
 }
