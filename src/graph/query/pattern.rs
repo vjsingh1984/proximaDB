@@ -123,17 +123,22 @@ impl PatternMatcher {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use proximadb::graph::query::{PatternMatcher, QueryContext};
+    /// use proximadb::graph::memory::GraphMemoryPool;
     /// use std::sync::Arc;
     ///
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let matcher = PatternMatcher::new()?;
     /// let context = QueryContext::new();
+    /// let memory_pool = Arc::new(GraphMemoryPool::new());
     /// let results = matcher.execute_query(
     ///     "MATCH (n:Person)-[:KNOWS]->(f:Person) RETURN n, f",
     ///     &memory_pool,
     ///     &context
     /// )?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn execute_query(
         &mut self,
