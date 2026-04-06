@@ -596,4 +596,284 @@ mod tests {
         assert_eq!(drained.len(), 3);
         assert_eq!(scheduler.pending_count().await, 0);
     }
+
+    // -------------------------------------------------------------------
+    // Additional coverage tests
+    // -------------------------------------------------------------------
+
+    /// Helper to create a test plan with a unique collection_id to avoid
+    /// rate-limiting collisions between tasks in the same test.
+    fn create_test_plan_for_collection(
+        id: &str,
+        collection: &str,
+        priority: f64,
+    ) -> CompactionPlan {
+        CompactionPlan {
+            plan_id: id.to_string(),
+            collection_id: collection.to_string(),
+            input_files: vec![FileMetadata::new("f1", "/path/f1.sst", 10 * 1024 * 1024)],
+            target_level: 1,
+            estimated_output_size: 10 * 1024 * 1024,
+            priority,
+            strategy_name: "leveled".to_string(),
+            parameters: CompactionParameters::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_schedule_compaction() {
+        let scheduler = CompactionScheduler::new();
+        assert_eq!(scheduler.pending_count().await, 0);
+
+        let plan = create_test_plan("sched_1", 42.0);
+        scheduler
+            .schedule(plan.clone())
+            .await
+            .expect("Failed to schedule compaction");
+
+        assert_eq!(scheduler.pending_count().await, 1);
+
+        // Verify the plan can be drained back out with correct id
+        let drained = scheduler.drain_pending().await;
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].plan_id, "sched_1");
+        assert_eq!(drained[0].collection_id, "test_collection");
+    }
+
+    #[tokio::test]
+    async fn test_compaction_trigger_conditions() {
+        // Verify that the max_pending_tasks limit is enforced
+        let config = SchedulerConfig {
+            max_pending_tasks: 3,
+            min_collection_interval: Duration::from_secs(0), // disable rate limit for this test
+            ..Default::default()
+        };
+        let scheduler = CompactionScheduler::with_config(config);
+
+        // Schedule up to the limit using different collections to avoid rate limiting
+        for i in 0..3 {
+            let plan = create_test_plan_for_collection(
+                &format!("trigger_{}", i),
+                &format!("coll_{}", i),
+                10.0 + i as f64,
+            );
+            scheduler
+                .schedule(plan)
+                .await
+                .unwrap_or_else(|e| panic!("Failed to schedule task {}: {}", i, e));
+        }
+
+        assert_eq!(scheduler.pending_count().await, 3);
+
+        // The 4th task should be rejected because we hit max_pending_tasks
+        let overflow_plan =
+            create_test_plan_for_collection("trigger_overflow", "coll_overflow", 99.0);
+        let result = scheduler.schedule(overflow_plan).await;
+        assert!(
+            result.is_err(),
+            "Scheduler should reject tasks beyond max_pending_tasks"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("capacity"),
+            "Error should mention capacity: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scheduler_status() {
+        let scheduler = CompactionScheduler::new();
+
+        // Initial stats should be all zeros
+        let stats = scheduler.get_stats().await;
+        assert_eq!(stats.pending_tasks, 0);
+        assert_eq!(stats.active_compactions, 0);
+        assert_eq!(stats.completed_compactions, 0);
+        assert_eq!(stats.failed_compactions, 0);
+        assert_eq!(stats.total_bytes_compacted, 0);
+
+        // Schedule and execute two compactions
+        let plan_a = create_test_plan_for_collection("status_a", "coll_a", 50.0);
+        scheduler
+            .schedule(plan_a)
+            .await
+            .expect("Failed to schedule plan_a");
+
+        let stats_after_schedule = scheduler.get_stats().await;
+        assert_eq!(stats_after_schedule.pending_tasks, 1);
+
+        scheduler
+            .execute_next(|plan| async move {
+                Ok(CompactionExecutionResult {
+                    plan_id: plan.plan_id,
+                    files_removed: vec!["old.sst".to_string()],
+                    files_created: vec![],
+                    bytes_freed: 2048,
+                    duration: Duration::from_millis(50),
+                    success: true,
+                    error_message: None,
+                })
+            })
+            .await
+            .expect("Failed to execute plan_a");
+
+        let plan_b = create_test_plan_for_collection("status_b", "coll_b", 60.0);
+        scheduler
+            .schedule(plan_b)
+            .await
+            .expect("Failed to schedule plan_b");
+
+        scheduler
+            .execute_next(|plan| async move {
+                Ok(CompactionExecutionResult {
+                    plan_id: plan.plan_id,
+                    files_removed: vec![],
+                    files_created: vec![],
+                    bytes_freed: 4096,
+                    duration: Duration::from_millis(100),
+                    success: true,
+                    error_message: None,
+                })
+            })
+            .await
+            .expect("Failed to execute plan_b");
+
+        let final_stats = scheduler.get_stats().await;
+        assert_eq!(final_stats.completed_compactions, 2);
+        assert_eq!(final_stats.total_bytes_compacted, 2048 + 4096);
+        assert_eq!(final_stats.failed_compactions, 0);
+        assert_eq!(final_stats.pending_tasks, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_compaction() {
+        let scheduler = CompactionScheduler::new();
+
+        // Schedule three tasks with different collections to avoid rate limiting
+        let plan_keep1 = create_test_plan_for_collection("keep_1", "coll_1", 30.0);
+        let plan_cancel = create_test_plan_for_collection("to_remove", "coll_2", 50.0);
+        let plan_keep2 = create_test_plan_for_collection("keep_2", "coll_3", 70.0);
+
+        scheduler
+            .schedule(plan_keep1)
+            .await
+            .expect("schedule keep_1");
+        scheduler
+            .schedule(plan_cancel)
+            .await
+            .expect("schedule to_remove");
+        scheduler
+            .schedule(plan_keep2)
+            .await
+            .expect("schedule keep_2");
+
+        assert_eq!(scheduler.pending_count().await, 3);
+
+        // Cancel the middle task
+        let cancelled = scheduler.cancel("to_remove").await;
+        assert!(cancelled, "Task 'to_remove' should have been cancelled");
+        assert_eq!(scheduler.pending_count().await, 2);
+
+        // Cancelling again should return false (already removed)
+        let cancelled_again = scheduler.cancel("to_remove").await;
+        assert!(
+            !cancelled_again,
+            "Cancelling an already-removed task should return false"
+        );
+
+        // Cancelling a non-existent id should return false
+        let never_existed = scheduler.cancel("nonexistent_plan_id").await;
+        assert!(
+            !never_existed,
+            "Cancelling non-existent plan should return false"
+        );
+
+        // The remaining tasks should still be present
+        let drained = scheduler.drain_pending().await;
+        assert_eq!(drained.len(), 2);
+        let ids: Vec<&str> = drained.iter().map(|p| p.plan_id.as_str()).collect();
+        assert!(ids.contains(&"keep_1"));
+        assert!(ids.contains(&"keep_2"));
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_compaction_limit() {
+        // Configure max_concurrent = 1 so only one compaction can run at a time
+        let config = SchedulerConfig {
+            max_concurrent: 1,
+            min_collection_interval: Duration::from_secs(0),
+            ..Default::default()
+        };
+        let scheduler = CompactionScheduler::with_config(config);
+
+        // Schedule two tasks
+        let plan1 = create_test_plan_for_collection("conc_1", "coll_1", 80.0);
+        let plan2 = create_test_plan_for_collection("conc_2", "coll_2", 40.0);
+        scheduler.schedule(plan1).await.expect("schedule conc_1");
+        scheduler.schedule(plan2).await.expect("schedule conc_2");
+
+        assert_eq!(scheduler.pending_count().await, 2);
+
+        // We directly acquire the semaphore permit to simulate a running compaction,
+        // then verify that execute_next returns None when the limit is reached.
+
+        // Execute first task -- this acquires the semaphore permit
+        // We simulate by manually acquiring the semaphore permit
+        let permit = scheduler
+            .concurrency_semaphore
+            .try_acquire()
+            .expect("Should acquire first permit");
+
+        // Now try to execute_next while the permit is held -- should return None
+        let second_result = scheduler
+            .execute_next(|plan| async move {
+                Ok(CompactionExecutionResult {
+                    plan_id: plan.plan_id,
+                    files_removed: vec![],
+                    files_created: vec![],
+                    bytes_freed: 0,
+                    duration: Duration::from_millis(1),
+                    success: true,
+                    error_message: None,
+                })
+            })
+            .await
+            .expect("execute_next should not error");
+
+        assert!(
+            second_result.is_none(),
+            "With max_concurrent=1 and one permit held, execute_next should return None"
+        );
+
+        // Both tasks should still be pending (none were actually executed)
+        assert_eq!(scheduler.pending_count().await, 2);
+
+        // Release the permit
+        drop(permit);
+
+        // Now execution should succeed
+        let third_result = scheduler
+            .execute_next(|plan| async move {
+                Ok(CompactionExecutionResult {
+                    plan_id: plan.plan_id,
+                    files_removed: vec![],
+                    files_created: vec![],
+                    bytes_freed: 500,
+                    duration: Duration::from_millis(5),
+                    success: true,
+                    error_message: None,
+                })
+            })
+            .await
+            .expect("execute_next should succeed after permit released");
+
+        assert!(
+            third_result.is_some(),
+            "Should execute a task after permit is released"
+        );
+        // The higher-priority task should have been executed first
+        assert_eq!(third_result.as_ref().unwrap().plan_id, "conc_1");
+        assert_eq!(scheduler.pending_count().await, 1);
+    }
 }

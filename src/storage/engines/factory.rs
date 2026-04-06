@@ -999,6 +999,135 @@ impl StorageEngineFactory {
 mod tests {
     use super::*;
 
+    // -----------------------------------------------------------------------
+    // Engine creation tests via async factory methods
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_create_sst_engine() {
+        let engine = StorageEngineFactory::create_sst_async()
+            .await
+            .expect("Failed to create SST engine");
+        assert_eq!(engine.engine_name(), "sst");
+    }
+
+    #[tokio::test]
+    async fn test_create_viper_engine() {
+        let engine = StorageEngineFactory::create_viper_async()
+            .await
+            .expect("Failed to create VIPER engine");
+        assert_eq!(engine.engine_name(), "VIPER");
+    }
+
+    #[tokio::test]
+    async fn test_create_nova_engine() {
+        let engine = StorageEngineFactory::create_nova_async()
+            .await
+            .expect("Failed to create NOVA engine");
+        assert_eq!(engine.engine_name(), "NOVA");
+    }
+
+    #[tokio::test]
+    async fn test_create_helix_engine() {
+        let engine = StorageEngineFactory::create_helix_async()
+            .await
+            .expect("Failed to create HELIX engine");
+        assert_eq!(engine.engine_name(), "helix");
+    }
+
+    #[tokio::test]
+    async fn test_create_cedar_engine() {
+        let engine = StorageEngineFactory::create_cedar_async()
+            .await
+            .expect("Failed to create CEDAR engine");
+        assert_eq!(engine.engine_name(), "cedar");
+    }
+
+    #[tokio::test]
+    async fn test_create_chrono_engine() {
+        let engine = StorageEngineFactory::create_chrono_async()
+            .await
+            .expect("Failed to create CHRONO engine");
+        assert_eq!(engine.engine_name(), "chrono");
+    }
+
+    #[tokio::test]
+    async fn test_create_sequoia_engine() {
+        // Sequoia is not yet in the proto enum, so we create it directly
+        use super::super::impls::sequoia::SequoiaEngine;
+        let engine = SequoiaEngine::new();
+        assert_eq!(
+            crate::storage::traits::UnifiedStorageEngine::engine_name(&engine),
+            "sequoia"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_tst_engine() {
+        let engine = StorageEngineFactory::create_tst_async()
+            .await
+            .expect("Failed to create TST engine");
+        assert_eq!(engine.engine_name(), "tst");
+    }
+
+    #[tokio::test]
+    async fn test_factory_default_engine() {
+        // Unspecified proto engine should default to SST
+        let engine = StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Unspecified)
+            .await
+            .expect("Failed to create default engine");
+        assert_eq!(engine.engine_name(), "sst");
+    }
+
+    #[tokio::test]
+    async fn test_factory_invalid_config() {
+        // SWIFT and RAPTOR require experimental-engines feature flag.
+        // Without that feature, requesting them should produce a meaningful error.
+        #[cfg(not(feature = "experimental-engines"))]
+        {
+            let result =
+                StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Swift).await;
+            assert!(result.is_err(), "SWIFT should fail without experimental-engines feature");
+            let err_msg = format!("{}", result.err().unwrap());
+            assert!(
+                err_msg.contains("experimental"),
+                "Error should mention experimental: {}",
+                err_msg
+            );
+
+            let result =
+                StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Raptor).await;
+            assert!(result.is_err(), "RAPTOR should fail without experimental-engines feature");
+            let err_msg = format!("{}", result.err().unwrap());
+            assert!(
+                err_msg.contains("experimental"),
+                "Error should mention experimental: {}",
+                err_msg
+            );
+        }
+
+        // Mmap and Hybrid should fall back to SST (not error), verify they succeed
+        let mmap_engine =
+            StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Mmap).await;
+        assert!(
+            mmap_engine.is_ok(),
+            "Mmap should fallback to SST, not error"
+        );
+        assert_eq!(mmap_engine.as_ref().unwrap().engine_name(), "sst");
+
+        let hybrid_engine =
+            StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Hybrid).await;
+        assert!(
+            hybrid_engine.is_ok(),
+            "Hybrid should fallback to SST, not error"
+        );
+        assert_eq!(hybrid_engine.as_ref().unwrap().engine_name(), "sst");
+    }
+
+    // -----------------------------------------------------------------------
+    // Existing tests below
+    // -----------------------------------------------------------------------
+
     #[test]
     fn test_engine_recommendation() {
         // Test for analytics workload
