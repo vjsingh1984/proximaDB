@@ -49,3 +49,120 @@ pub use sparse::{
 //     DistanceCompute, PlatformCapability, create_distance_calculator,
 //     detect_platform_capability, SimdLevel, DistanceMetric
 // };
+
+// --- Tests inlined from tests/unit/compute/test_unified_modules_coverage.rs ---
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::hardware_capabilities::initialize_hardware_capabilities_default;
+
+    #[test]
+    fn test_distance_computation_construction() {
+        let _ = initialize_hardware_capabilities_default();
+        // Test default construction
+        let _default_compute = UnifiedDistanceCompute::default();
+        // Test that the engine was constructed successfully
+        // (platform capability is private and automatically detected)
+        assert!(true); // Constructor succeeded
+
+        // Test construction with specific metric
+        let _euclidean_compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+        let _cosine_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let _manhattan_compute = UnifiedDistanceCompute::new(DistanceMetric::Manhattan);
+
+        // All engines should construct successfully
+        // (platform capability detection is internal)
+        assert!(true); // All constructors succeeded
+    }
+
+    #[test]
+    fn test_chunked_batch_calculation() {
+        let _ = initialize_hardware_capabilities_default();
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+
+        let query = vec![1.0, 2.0, 3.0];
+        let vector_data: Vec<Vec<f32>> = (0..100)
+            .map(|i| vec![i as f32 * 0.1, i as f32 * 0.2, i as f32 * 0.3])
+            .collect();
+        let vectors: Vec<&[f32]> = vector_data.iter().map(|v| v.as_slice()).collect();
+
+        // Test batch calculation instead
+        let distances =
+            compute.calculate_distance_batch(&query, &vectors, &DistanceMetric::Euclidean);
+
+        assert_eq!(distances.len(), 100);
+
+        // Verify first and last distances
+        assert_eq!(
+            distances[0],
+            compute.calculate_distance(&query, vectors[0], &DistanceMetric::Euclidean)
+        );
+        assert_eq!(
+            distances[99],
+            compute.calculate_distance(&query, vectors[99], &DistanceMetric::Euclidean)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn test_dimension_mismatch_handling() {
+        // Test that dimension mismatch causes a panic (debug_assert_eq!)
+        // This is the expected behavior for safety - mismatched dimensions are programming errors
+        let _ = initialize_hardware_capabilities_default();
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+
+        let vec1 = vec![1.0, 2.0];
+        let vec2 = vec![1.0, 2.0, 3.0];
+
+        // This should panic due to dimension mismatch
+        let _distance = compute.calculate_distance(&vec1, &vec2, &DistanceMetric::Euclidean);
+    }
+
+    #[test]
+    fn test_distance_normalization() {
+        let _ = initialize_hardware_capabilities_default();
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+
+        // Test that all metrics follow "lower = more similar" semantics
+        let identical = vec![1.0, 2.0, 3.0];
+        let similar = vec![1.1, 2.1, 3.1];
+        let different = vec![-1.0, -2.0, -3.0];
+
+        for metric in [
+            DistanceMetric::Euclidean,
+            DistanceMetric::Cosine,
+            DistanceMetric::Manhattan,
+        ] {
+            let d_identical = compute.calculate_distance(&identical, &identical, &metric);
+            let d_similar = compute.calculate_distance(&identical, &similar, &metric);
+            let d_different = compute.calculate_distance(&identical, &different, &metric);
+
+            // Distance to self should be minimal (with epsilon for floating point)
+            assert!(
+                d_identical.rank_value <= d_similar.rank_value + 1e-6,
+                "For {:?}: d_identical={} should be <= d_similar={}",
+                metric,
+                d_identical.rank_value,
+                d_similar.rank_value
+            );
+            // Similar vectors should have less distance than different ones
+            assert!(
+                d_similar.rank_value < d_different.rank_value + 1e-6,
+                "For {:?}: d_similar={} should be < d_different={}",
+                metric,
+                d_similar.rank_value,
+                d_different.rank_value
+            );
+        }
+
+        // DotProduct behaves differently - it's based on magnitude and angle
+        // For unnormalized vectors, the relationship may not hold
+        let metric = DistanceMetric::DotProduct;
+        let d_identical = compute.calculate_distance(&identical, &identical, &metric);
+        let d_different = compute.calculate_distance(&identical, &different, &metric);
+        // Just verify it returns valid values
+        assert!(d_identical.rank_value.is_finite());
+        assert!(d_different.rank_value.is_finite());
+    }
+}

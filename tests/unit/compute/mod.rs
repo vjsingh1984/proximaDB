@@ -18,5 +18,5 @@
 
 // pub mod distance_avx512_tests; // Removed - AVX512 is covered in UnifiedDistanceCompute
 // pub mod algorithms_tests; // Module removed - tests were for axis HNSW
-pub mod test_unified_modules_coverage;
+// pub mod test_unified_modules_coverage; // Inlined into src/compute/distance_computation/mod.rs and src/compute/quantization/unified.rs
 // pub mod hardware_tests; // File not found - commented for now

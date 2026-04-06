@@ -28,7 +28,7 @@ pub mod mvcc_logic_tests;
 pub mod network;
 pub mod query;
 pub mod search;
-pub mod serialization_compression_tests;
+// pub mod serialization_compression_tests; // Inlined into src/core/serialization/mod.rs
 pub mod server;
 pub mod services;
 pub mod sst_optimization_tests;
