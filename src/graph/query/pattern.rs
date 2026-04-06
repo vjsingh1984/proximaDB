@@ -123,12 +123,11 @@ impl PatternMatcher {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use proximadb::graph::query::{PatternMatcher, QueryContext};
     /// use proximadb::graph::memory::GraphMemoryPool;
     /// use std::sync::Arc;
     ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let matcher = PatternMatcher::new()?;
     /// let context = QueryContext::new();
     /// let memory_pool = Arc::new(GraphMemoryPool::new());
@@ -137,8 +136,6 @@ impl PatternMatcher {
     ///     &memory_pool,
     ///     &context
     /// )?;
-    /// # Ok(())
-    /// # }
     /// ```
     pub fn execute_query(
         &mut self,

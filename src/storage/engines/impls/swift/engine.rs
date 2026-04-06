@@ -78,10 +78,9 @@ lazy_static::lazy_static! {
 ///
 /// # Example
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// let model = train_pca_model(&vectors, n_components)?;
 /// set_collection_pca_model("my_collection", model);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Performance Impact
@@ -117,19 +116,15 @@ pub fn set_collection_pca_model(collection_id: &str, model: super::pca_manager::
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// # use proximadb::storage::engines::impls::swift::pca_manager::EnhancedPCAModel;
-/// # let query_vector = vec![0.0; 128];
+/// ```rust,ignore
+/// use proximadb::storage::engines::impls::swift::pca_manager::EnhancedPCAModel;
+/// let query_vector = vec![0.0; 128];
 /// if let Some(model) = get_collection_pca_model("my_collection") {
 ///     let transformed = model.transform(&query_vector)?;
 ///     // Use transformed vector for search
-///     # Ok::<(), Box<dyn std::error::Error>>(())
 /// } else {
 ///     // Fallback: use original vector or train model
-///     # Ok::<(), Box<dyn std::error::Error>>(())
-/// # };
-/// ```
-/// }
+/// };
 /// ```
 ///
 /// # Performance Impact

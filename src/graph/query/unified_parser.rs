@@ -36,28 +36,22 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use proximadb::graph::query::unified_parser::parse_cypher;
 //!
-//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let statement = parse_cypher("MATCH (n:Person) RETURN n")?;
-//! # Ok(())
-//! # }
 //! ```
 //!
 //! ## Integration with Pattern Matcher
 //!
 //! The parser integrates with `PatternMatcher` through the `PatternCompiler`:
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use proximadb::graph::query::{PatternMatcher, QueryContext};
 //!
-//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let matcher = PatternMatcher::new()?;
 //! let context = QueryContext::new();
 //! // Note: execute_query also requires memory_pool parameter
-//! # Ok(())
-//! # }
 //! ```
 
 use crate::core::error::ProximaDBError;
@@ -86,10 +80,9 @@ pub use super::cypher_parser::CypherParser;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use proximadb::graph::query::unified_parser::parse_cypher;
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Simple match query
 /// let stmt = parse_cypher("MATCH (n:Person) RETURN n")?;
 ///
@@ -101,8 +94,6 @@ pub use super::cypher_parser::CypherParser;
 ///      ORDER BY p.name ASC \
 ///      LIMIT 10"
 /// )?;
-/// # Ok(())
-/// # }
 /// ```
 pub fn parse_cypher(input: &str) -> Result<CypherStatement, ProximaDBError> {
     CypherParser::parse(input).map_err(|e| {

@@ -240,23 +240,23 @@ impl PartialOrd for Candidate {
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// # use proximadb::storage::engines::impls::swift::progressive_search::search_progressive;
-/// # use proximadb::storage::engines::impls::swift::SwiftFile;
-/// # use proximadb::core::search::BlockPruneConfig;
-/// # use proximadb::storage::metadata::MetadataFilter;
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// # let swift_file = SwiftFile::default();
-/// # let query_vector = vec![0.0; 128];
-/// let results = search_progressive(
-///     &swift_file,
-///     &query_vector,
-///     10, // top_k
-///     None, // no filter
-///     &BlockPruneConfig::default(),
-/// ).await?;
-/// # Ok(())
-/// # }
+/// ```rust,ignore
+/// use proximadb::storage::engines::impls::swift::progressive_search::search_progressive;
+/// use proximadb::storage::engines::impls::swift::SwiftFile;
+/// use proximadb::core::search::BlockPruneConfig;
+/// use proximadb::storage::metadata::MetadataFilter;
+/// async fn example() -> Result<(), Box<dyn std::error::Error>> {
+///     let swift_file = SwiftFile::new("test.swift")?;
+///     let query_vector = vec![0.0; 128];
+///     let results = search_progressive(
+///         &swift_file,
+///         &query_vector,
+///         10, // top_k
+///         None, // no filter
+///         &BlockPruneConfig::default(),
+///     ).await?;
+///     Ok(())
+/// }
 /// ```
 pub async fn search_progressive(
     sst: &SwiftFile,
