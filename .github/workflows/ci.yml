@@ -830,7 +830,7 @@ jobs:
           # Run multi-model API tests (Document, Hybrid, Time-Series)
           echo "=== Starting Multi-Model Tests ==="
           set +e
-          timeout 480 pytest test_document_api.py test_hybrid_api.py test_timeseries_api.py -v --tb=short --timeout=120 --timeout-method=signal 2>&1 | tee multimodel_output.txt
+          timeout 480 pytest tests/test_document_api.py tests/test_hybrid_api.py tests/test_timeseries_api.py -v --tb=short --timeout=120 --timeout-method=signal 2>&1 | tee multimodel_output.txt
           exit_code=${PIPESTATUS[0]}
           set -e
           echo "=== Multi-Model Tests Completed (exit code: ${exit_code}) ==="
