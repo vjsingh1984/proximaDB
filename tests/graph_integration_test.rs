@@ -641,9 +641,8 @@ async fn test_concurrent_operations() {
     let service = Arc::new(GraphOperationsService::new());
     ensure_test_graph_exists(&service).await;
 
-    // Spawn multiple tasks creating nodes concurrently
+    // Phase 1: Create all nodes concurrently
     let mut handles = vec![];
-
     for i in 0..10 {
         let service_clone = Arc::clone(&service);
         let handle = tokio::spawn(async move {
@@ -664,30 +663,36 @@ async fn test_concurrent_operations() {
                 .create_node(TEST_GRAPH_ID, node)
                 .await
                 .unwrap();
-
-            // Also create edges
-            if i > 0 {
-                let edge = Edge {
-                    id: format!("concurrent_edge_{}", i),
-                    from_node_id: format!("concurrent_node_{}", i - 1),
-                    to_node_id: format!("concurrent_node_{}", i),
-                    edge_type: "NEXT".to_string(),
-                    properties: HashMap::new(),
-                    weight: None,
-                    created_at_ms: 0,
-                    updated_at_ms: 0,
-                };
-                service_clone
-                    .create_edge(TEST_GRAPH_ID, edge)
-                    .await
-                    .unwrap();
-            }
         });
         handles.push(handle);
     }
-
-    // Wait for all operations to complete
     for handle in handles {
+        handle.await.unwrap();
+    }
+
+    // Phase 2: Create edges (nodes guaranteed to exist now)
+    let mut edge_handles = vec![];
+    for i in 1..10 {
+        let service_clone = Arc::clone(&service);
+        let handle = tokio::spawn(async move {
+            let edge = Edge {
+                id: format!("concurrent_edge_{}", i),
+                from_node_id: format!("concurrent_node_{}", i - 1),
+                to_node_id: format!("concurrent_node_{}", i),
+                edge_type: "NEXT".to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service_clone
+                .create_edge(TEST_GRAPH_ID, edge)
+                .await
+                .unwrap();
+        });
+        edge_handles.push(handle);
+    }
+    for handle in edge_handles {
         handle.await.unwrap();
     }
 
