@@ -16,21 +16,33 @@
 
 //! ProximaDB Unit Tests
 //!
-//! This module contains all unit tests organized by functional area.
-//! Unit tests focus on testing individual components in isolation.
+//! **IMPORTANT:** This directory structure has been reorganized.
+//! Unit tests are now inline within source files (src/**/*.rs) as #[cfg(test)] modules.
+//! Integration tests have been moved to tests/integration/.
+//!
+//! ## Test Organization (Current):
+//! - **Unit Tests:** Inline in source files → `cargo test --lib`
+//! - **Integration Tests:** Standalone files → `cargo test --test integration`
+//!
+//! ## Migration Notes:
+//! Most tests that were here have been moved:
+//! - mvcc_logic_tests → tests/integration/mvcc_logic_test
+//! - sst_optimization_tests → tests/integration/sst_optimization_test
+//! - write_buffer_recovery_stress_tests → tests/integration/write_buffer_recovery_stress_test
+//! - services tests → tests/integration/services_*
+//! - storage tests → tests/integration/storage/*
+//!
+//! The remaining subdirectories (compute, config, core, etc.) may contain
+//! inline test helpers or may be deprecated. See individual module documentation.
 
 pub mod compute;
 pub mod config;
 pub mod core;
 pub mod graph;
 pub mod handlers;
-pub mod mvcc_logic_tests;
 pub mod network;
 pub mod query;
 pub mod search;
-// pub mod serialization_compression_tests; // Inlined into src/core/serialization/mod.rs
 pub mod server;
 pub mod services;
-pub mod sst_optimization_tests;
 pub mod storage;
-pub mod write_buffer_recovery_stress_tests;

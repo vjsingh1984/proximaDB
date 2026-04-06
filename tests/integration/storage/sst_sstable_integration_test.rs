@@ -30,54 +30,54 @@ async fn test_sstable_write_read_integration() -> Result<()> {
     // Create test vectors
     let vectors = vec![
         VectorRecord {
-            id: Some("vec1".to_string())),
+            id: Some("vec1".to_string()),
             vector: vec![1.0, 0.0, 0.0],
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
                     value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string())),
+                }
+            ],
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             distance: None,
             rank: None,
             score: None,
-        }
-            ],
             ..Default::default()
         },
         VectorRecord {
-            id: Some("vec2".to_string())),
+            id: Some("vec2".to_string()),
             vector: vec![0.0, 1.0, 0.0],
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
                     value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("B".to_string())),
+                }
+            ],
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             distance: None,
             rank: None,
             score: None,
-        }
-            ],
             ..Default::default()
         },
         VectorRecord {
-            id: Some("vec3".to_string())),
+            id: Some("vec3".to_string()),
             vector: vec![0.0, 0.0, 1.0],
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
                     value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string())),
+                }
+            ],
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             distance: None,
             rank: None,
             score: None,
-        }
-            ],
             ..Default::default()
         },
     ];

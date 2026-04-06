@@ -106,6 +106,27 @@ pub mod sst_collection_test_fixed;
 
 // MVCC consistency tests
 pub mod mvcc_logic_integration_test;
+pub mod mvcc_logic_test;
+
+// Core routing integration tests
+pub mod core_routing_test;
+
+// Services integration tests
+pub mod services_collection_test;
+pub mod services_vector_test;
+
+// SST optimization integration tests
+pub mod sst_optimization_test;
+
+// Write buffer recovery integration tests
+pub mod write_buffer_recovery_stress_test;
+
+// Storage engine integration tests
+pub mod storage_engine_adapters_test;
+pub mod storage_table_provider_test;
+
+// VIPER engine integration tests (additional)
+pub mod viper_engine_test;
 
 // Assignment service recovery integration tests
 // pub mod assignment_service_recovery_integration_test; // File not found - commented for now
