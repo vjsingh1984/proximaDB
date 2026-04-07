@@ -15,7 +15,7 @@ pub mod test_data_generator;
 pub mod parquet_reconstructor;
 
 #[cfg(test)]
-pub mod tests;
+pub mod readers_tests;
 
 // Re-export from columnar module to maintain API compatibility
 pub use crate::storage::engines::core::formats::columnar::{

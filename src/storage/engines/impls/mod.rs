@@ -59,4 +59,4 @@ pub use viper::ViperEngine;
 
 // Consolidated test module
 #[cfg(test)]
-pub mod tests;
+pub mod impls_tests;
