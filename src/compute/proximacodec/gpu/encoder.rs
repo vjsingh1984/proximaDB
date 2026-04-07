@@ -11,7 +11,7 @@ use anyhow::Result;
 use tracing::{debug, trace};
 
 use crate::core::hardware_capabilities::HardwareBackend;
-use crate::storage::engines::core::ops::proximacodec::simd::{
+use crate::compute::proximacodec::simd::{
     get_simd_backend, simd_bitpack_encode_f32, simd_delta_encode_f32,
     simd_frame_of_reference_encode_f32, simd_pfor_delta_encode_f32, simd_zigzag_encode_f32,
 };
@@ -139,7 +139,7 @@ impl GpuEncoder {
                     "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
                     backend
                 );
-                simd_frame_of_reference_encode_f32(values, reference, bits)
+                simd_frame_of_reference_encode_f32(values, reference as f32, bits)
             }
         }
     }
@@ -247,7 +247,7 @@ impl RawEncoder for GpuEncoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
+                use crate::compute::proximacodec::baseline::functions::delta;
                 let result = delta::encode_f32(values, *base)?;
 
                 debug!(
@@ -348,7 +348,7 @@ impl RawEncoder for GpuEncoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
+                use crate::compute::proximacodec::baseline::functions::delta;
                 let result = delta::encode_i64(values, *base)?;
 
                 debug!(
@@ -378,7 +378,7 @@ impl RawEncoder for GpuEncoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
+                use crate::compute::proximacodec::baseline::functions::delta;
                 let result = delta::encode_i32(values, *base)?;
 
                 debug!(

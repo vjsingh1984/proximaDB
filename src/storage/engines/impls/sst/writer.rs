@@ -105,7 +105,7 @@ use crate::core::compression::{CompressionContext, CompressionProvider, Standard
 
 // ProximaCodec system for encoding/decoding
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
-use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
+use crate::compute::proximacodec::types::ProximaScheme;
 
 /// Proxima encoding markers as constants
 mod encoding_markers {

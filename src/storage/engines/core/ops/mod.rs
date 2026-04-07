@@ -72,7 +72,10 @@ pub mod zero_copy_reader_integration;
 /// - Hardware-aware routing: GPU → SIMD → Baseline
 /// - Versioned wire format
 /// - Unified metrics integration
-pub mod proximacodec;
+///
+/// NOTE: Module has been moved to src/compute/proximacodec to reduce module nesting depth.
+/// Re-exported here for backward compatibility with storage layer imports.
+pub use crate::compute::proximacodec;
 
 /// OBSOLETE: Old encoder/decoder modules - replaced by proximacodec
 ///

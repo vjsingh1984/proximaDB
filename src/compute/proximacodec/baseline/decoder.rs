@@ -163,7 +163,7 @@ mod tests {
         // For values [1.0, 2.0, 3.0, 4.0] with base=0
 
         // First encode using encoder
-        use crate::storage::engines::core::ops::proximacodec::impls::baseline::encoder::BaselineEncoder;
+        use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = BaselineEncoder;
@@ -187,7 +187,7 @@ mod tests {
         let decoder = BaselineDecoder;
 
         // First encode using encoder
-        use crate::storage::engines::core::ops::proximacodec::impls::baseline::encoder::BaselineEncoder;
+        use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = BaselineEncoder;
@@ -211,7 +211,7 @@ mod tests {
         let decoder = BaselineDecoder;
 
         // First encode using encoder
-        use crate::storage::engines::core::ops::proximacodec::impls::baseline::encoder::BaselineEncoder;
+        use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = BaselineEncoder;
@@ -235,7 +235,7 @@ mod tests {
         let decoder = BaselineDecoder;
 
         // First encode using encoder
-        use crate::storage::engines::core::ops::proximacodec::impls::baseline::encoder::BaselineEncoder;
+        use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = BaselineEncoder;
@@ -258,7 +258,7 @@ mod tests {
     fn test_decode_i64_bitpacked() {
         let decoder = BaselineDecoder;
 
-        use crate::storage::engines::core::ops::proximacodec::impls::baseline::encoder::BaselineEncoder;
+        use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = BaselineEncoder;
@@ -281,7 +281,7 @@ mod tests {
     fn test_decode_i32_bitpacked() {
         let decoder = BaselineDecoder;
 
-        use crate::storage::engines::core::ops::proximacodec::impls::baseline::encoder::BaselineEncoder;
+        use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = BaselineEncoder;
@@ -304,7 +304,7 @@ mod tests {
     fn test_decode_f32_for() {
         let decoder = BaselineDecoder;
 
-        use crate::storage::engines::core::ops::proximacodec::impls::baseline::encoder::BaselineEncoder;
+        use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = BaselineEncoder;
@@ -330,7 +330,7 @@ mod tests {
     fn test_decode_i64_for() {
         let decoder = BaselineDecoder;
 
-        use crate::storage::engines::core::ops::proximacodec::impls::baseline::encoder::BaselineEncoder;
+        use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = BaselineEncoder;
@@ -356,7 +356,7 @@ mod tests {
     fn test_decode_i32_for() {
         let decoder = BaselineDecoder;
 
-        use crate::storage::engines::core::ops::proximacodec::impls::baseline::encoder::BaselineEncoder;
+        use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = BaselineEncoder;

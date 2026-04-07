@@ -114,7 +114,7 @@ use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 
 // ProximaCodec system for encoding/decoding
 use super::engine_profile::EngineProfile;
-use crate::storage::engines::core::ops::proximacodec::{
+use crate::compute::proximacodec::{
     ProximaCodec, analysis, types::ProximaScheme,
 };
 // Quantization now handled by unified compute module
@@ -2965,7 +2965,7 @@ impl ProximaDataBlock {
             encoded_id_data.len()
         );
         let codec = ProximaCodec::global();
-        let decoded_id_indices = match codec.decode_i64(&encoded_id_data) {
+        let decoded_id_indices: Vec<i64> = match codec.decode_i64(&encoded_id_data) {
             Ok(indices) => {
                 if indices.len() != record_count {
                     warn!(
@@ -3218,7 +3218,7 @@ impl ProximaDataBlock {
         trace!("[DECODE] Read timestamps: {} bytes", timestamp_len);
 
         // Decode timestamps using ProximaCodec (migrated from old decoder)
-        let decoded_timestamps = match codec.decode_i64(&timestamp_bytes) {
+        let decoded_timestamps: Vec<i64> = match codec.decode_i64(&timestamp_bytes) {
             Ok(timestamps) => {
                 trace!(
                     "✅ [DECODE] Successfully decoded {} timestamps",
@@ -3263,7 +3263,7 @@ impl ProximaDataBlock {
         cursor.read_exact(&mut encoded_source_data)?;
 
         // Use record_count from header instead of storing redundant count
-        let decoded_source_indices = match codec.decode_i64(&encoded_source_data) {
+        let decoded_source_indices: Vec<i64> = match codec.decode_i64(&encoded_source_data) {
             Ok(indices) => {
                 trace!(
                     "✅ [DECODE] Successfully decoded {} source indices",
@@ -3298,7 +3298,10 @@ impl ProximaDataBlock {
                 let mut data = vec![0u8; data_len];
                 cursor.read_exact(&mut data)?;
                 match codec.decode_i64(&data) {
-                    Ok(values) => values.into_iter().map(Some).collect(),
+                    Ok(values) => {
+                        let result: Vec<Option<i64>> = values.into_iter().map(Some).collect();
+                        result
+                    },
                     Err(_) => vec![None; record_count],
                 }
             }
@@ -3348,7 +3351,10 @@ impl ProximaDataBlock {
                 let mut data = vec![0u8; data_len];
                 cursor.read_exact(&mut data)?;
                 match codec.decode_i64(&data) {
-                    Ok(values) => values.into_iter().map(Some).collect(),
+                    Ok(values) => {
+                        let result: Vec<Option<i64>> = values.into_iter().map(Some).collect();
+                        result
+                    },
                     Err(_) => vec![None; record_count],
                 }
             }
@@ -3630,20 +3636,20 @@ impl ProximaDataBlock {
             sample_values
         );
 
-        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
+        use crate::compute::proximacodec::{ProximaCodec, analysis};
 
         let detected_scheme = analysis::analyze_and_choose_scheme_f32(&all_floats);
         let pattern_info = format!("{:?}", detected_scheme); // Use scheme name as pattern description
 
         // Override lossy schemes with lossless alternatives
         let scheme = match &detected_scheme {
-            crate::storage::engines::core::ops::proximacodec::ProximaScheme::Simple8b
-            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::RunLength
-            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::VByte
-            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::Zigzag { .. }
-            | crate::storage::engines::core::ops::proximacodec::ProximaScheme::PForDelta {
+            crate::compute::proximacodec::ProximaScheme::Simple8b
+            | crate::compute::proximacodec::ProximaScheme::RunLength
+            | crate::compute::proximacodec::ProximaScheme::VByte
+            | crate::compute::proximacodec::ProximaScheme::Zigzag { .. }
+            | crate::compute::proximacodec::ProximaScheme::PForDelta {
                 ..
-            } => crate::storage::engines::core::ops::proximacodec::ProximaScheme::Delta { base: 0 },
+            } => crate::compute::proximacodec::ProximaScheme::Delta { base: 0 },
             _ => detected_scheme.clone(),
         };
 
@@ -3830,7 +3836,7 @@ impl ProximaDataBlock {
         //
         // ============================================================================
 
-        use crate::storage::engines::core::ops::proximacodec::{
+        use crate::compute::proximacodec::{
             ProximaScheme as CodecScheme, analysis,
         };
         use std::collections::HashMap;
@@ -3867,7 +3873,7 @@ impl ProximaDataBlock {
 
             // Use is_lossy() method to automatically filter lossy schemes
             // This ensures future lossless schemes are automatically allowed
-            use crate::storage::engines::core::ops::proximacodec::TypeId;
+            use crate::compute::proximacodec::TypeId;
 
             let scheme = if detected_scheme.is_lossy(TypeId::F32) {
                 // Scheme is lossy for f32 - override with safe alternative
@@ -4026,7 +4032,7 @@ impl ProximaDataBlock {
             }
 
             // Analyze this group's pattern and choose scheme
-            use crate::storage::engines::core::ops::proximacodec::{
+            use crate::compute::proximacodec::{
                 ProximaScheme as CodecScheme, analysis,
             };
 
@@ -4035,7 +4041,7 @@ impl ProximaDataBlock {
 
             // Use is_lossy() method to automatically filter lossy schemes
             // This ensures future lossless schemes are automatically allowed
-            use crate::storage::engines::core::ops::proximacodec::TypeId;
+            use crate::compute::proximacodec::TypeId;
 
             let scheme = if detected_scheme.is_lossy(TypeId::F32) {
                 // Scheme is lossy for f32 - override with safe alternative
@@ -4198,8 +4204,8 @@ impl ProximaDataBlock {
             std::collections::HashMap::new();
 
         // Use ProximaCodec for hardware-optimized encoding
-        use crate::storage::engines::core::ops::proximacodec::TypeId;
-        use crate::storage::engines::core::ops::proximacodec::{
+        use crate::compute::proximacodec::TypeId;
+        use crate::compute::proximacodec::{
             ProximaCodec, ProximaScheme as CodecScheme, analysis,
         };
 
@@ -4334,8 +4340,8 @@ impl ProximaDataBlock {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding with parallel analysis
 
         use crate::core::compression::{CompressionContext, compress};
-        use crate::storage::engines::core::ops::proximacodec::TypeId;
-        use crate::storage::engines::core::ops::proximacodec::{
+        use crate::compute::proximacodec::TypeId;
+        use crate::compute::proximacodec::{
             ProximaCodec, ProximaScheme as CodecScheme, analysis,
         };
         use rayon::prelude::*;
@@ -4598,11 +4604,12 @@ impl ProximaDataBlock {
 
                     match codec.decode(&vector_data) {
                         Ok(floats) => {
+                            let typed_floats: Vec<f32> = floats;
                             trace!(
                                 "✅ [DECODE_FV] Proxima decoded {} floats successfully",
-                                floats.len()
+                                typed_floats.len()
                             );
-                            floats
+                            typed_floats
                         }
                         Err(e) => {
                             warn!("❌ [DECODE_FV] Proxima decoding failed: {}", e);

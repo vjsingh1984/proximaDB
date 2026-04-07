@@ -13,13 +13,13 @@
 use anyhow::Result;
 use std::sync::OnceLock;
 
-use super::impls::baseline::{BaselineDecoder, BaselineEncoder};
+use super::baseline::{BaselineDecoder, BaselineEncoder};
 use super::registry::ImplementationRegistry;
 use super::types::{ProximaScheme, TypeId};
 use super::wire_format::WireFormatManager;
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-use super::impls::simd::{SimdDecoder, SimdEncoder};
+use super::simd::{SimdDecoder, SimdEncoder};
 
 /// The ONLY public encoding/decoding interface
 ///
@@ -55,7 +55,7 @@ impl ProximaCodec {
         // Phase 1: GPU implementations (highest priority, CUDA/ROCm/MPS/OpenCL)
         #[cfg(feature = "gpu")]
         {
-            use crate::storage::engines::core::ops::proximacodec::impls::gpu::{
+            use crate::compute::proximacodec::gpu::{
                 GpuDecoder, GpuEncoder,
             };
 

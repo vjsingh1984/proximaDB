@@ -21,7 +21,7 @@ use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
-use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
+use crate::compute::proximacodec::{ProximaCodec, types::ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -3728,7 +3728,7 @@ impl RaptorReader {
     /// Format: [col1_len:u32][col1_data][col2_len:u32][col2_data]...
     /// Each column is one dimension across all vectors, encoded with ProximaCodec
     fn decode_vector_column(&self, data: &[u8], dimension: usize) -> Result<Vec<Vec<f32>>> {
-        use crate::storage::engines::core::ops::proximacodec::ProximaCodec;
+        use crate::compute::proximacodec::ProximaCodec;
 
         let codec = ProximaCodec::global();
         let mut offset = 0;

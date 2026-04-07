@@ -219,7 +219,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 
 // ProximaCodec system for encoding/decoding
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
-use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
+use crate::compute::proximacodec::types::ProximaScheme;
 // NOTE: Quantization now uses unified engine from compute module
 
 // Import Proxima common structures (SWIFT uses hierarchical structure)
