@@ -14,6 +14,9 @@
 
 | link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap] | **Start here** - Vision-aligned phase planning | ✅ Authoritative
 | link:MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard] | All 135 features with status by phase | ✅ Current
+| link:LOW_LATENCY_OPERATIONAL_QUERIES_SPEC.adoc[Operational Queries Spec] | Low-latency SQL query engine specification | 📅 New (2025-04-07)
+| link:operational_queries_implementation_guide.adoc[Operational Queries Implementation] | Detailed implementation guide and code examples | 📅 New (2025-04-07)
+| link:operational_queries_competitive_analysis.adoc[Operational Queries Competitive Analysis] | Market analysis and positioning strategy | 📅 New (2025-04-07)
 | link:CURRENT_ROADMAP.adoc[Current Roadmap] | Quarterly focus areas | ✅ Current
 | link:../DOCUMENTATION_STATUS.adoc[Documentation Status] | All docs with phase and status | ✅ Current
 |===
