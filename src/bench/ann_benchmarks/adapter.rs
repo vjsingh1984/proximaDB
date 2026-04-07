@@ -359,10 +359,17 @@ mod tests {
 
     #[test]
     fn test_dataset_metadata() {
+        // Skip test if dataset path doesn't exist (CI environments)
+        let dataset_path = PathBuf::from("/data/sift");
+        if !dataset_path.exists() {
+            println!("Skipping test_dataset_metadata: dataset path not found");
+            return;
+        }
+
         let runner = ANNBenchmarksRunner::new(ANNBenchmarkConfig {
             dataset: "sift".to_string(),
             algorithm: "hnsw".to_string(),
-            dataset_path: PathBuf::from("/data/sift"),
+            dataset_path,
             k: 10,
             runs: 100,
             build_params: BuildParams::default(),
@@ -378,10 +385,17 @@ mod tests {
 
     #[test]
     fn test_benchmark_results() {
+        // Skip test if dataset path doesn't exist (CI environments)
+        let dataset_path = PathBuf::from("/data/sift");
+        if !dataset_path.exists() {
+            println!("Skipping test_benchmark_results: dataset path not found");
+            return;
+        }
+
         let runner = ANNBenchmarksRunner::new(ANNBenchmarkConfig {
             dataset: "sift".to_string(),
             algorithm: "hnsw".to_string(),
-            dataset_path: PathBuf::from("/data/sift"),
+            dataset_path,
             k: 10,
             runs: 100,
             build_params: BuildParams::default(),
@@ -399,10 +413,17 @@ mod tests {
 
     #[test]
     fn test_csv_export() {
+        // Skip test if dataset path doesn't exist (CI environments)
+        let dataset_path = PathBuf::from("/data/sift");
+        if !dataset_path.exists() {
+            println!("Skipping test_csv_export: dataset path not found");
+            return;
+        }
+
         let runner = ANNBenchmarksRunner::new(ANNBenchmarkConfig {
             dataset: "sift".to_string(),
             algorithm: "hnsw".to_string(),
-            dataset_path: PathBuf::from("/data/sift"),
+            dataset_path,
             k: 10,
             runs: 100,
             build_params: BuildParams::default(),
