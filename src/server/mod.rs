@@ -9,9 +9,11 @@
 //! It coordinates all subsystems while maintaining separation of concerns.
 
 pub mod builder;
+pub mod proximadb;
 
 // Re-export main types for easier use
 pub use builder::{
     ComputeConfig, DistanceMetric, HardwareAcceleration, IndexingAlgorithm, IndexingConfig,
     MonitoringConfig, NetworkConfig, ProximaDBServer, ServerBuilder, ServerConfig,
 };
+pub use proximadb::ProximaDB;
