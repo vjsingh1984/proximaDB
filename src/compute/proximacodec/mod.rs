@@ -51,7 +51,9 @@
 
 pub mod adaptive;
 pub mod analysis;
+pub mod baseline;
 pub mod codec;
+pub mod gpu;
 pub mod registry;
 pub mod simd_analysis;
 pub mod strategy;
@@ -60,7 +62,8 @@ pub mod types;
 pub mod wire_format;
 
 // Hardware-accelerated implementations (SIMD + GPU)
-pub mod simd;
+pub mod simd;  // simd.rs file contains all SIMD functions
+pub mod simd_impls;  // simd_impls/ directory contains encoder/decoder wrappers
 // Experimental SIMD prototype lives under archive; opt-in only.
 #[cfg(feature = "simd-experimental")]
 pub mod simd_experimental;
@@ -79,7 +82,7 @@ pub use traits::{RawDecoder, RawEncoder};
 pub use types::{Decodable, Encodable, ProximaScheme, TypeId};
 pub use wire_format::{WIRE_FORMAT_VERSION, WireFormatManager, WireHeader};
 
-// Implementations (will be added in next phases)
+// Implementations
 pub mod impls;
 
 // Integration tests

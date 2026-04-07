@@ -164,6 +164,7 @@
 pub mod distance_computation;
 pub mod gpu;
 pub mod pipeline_executor;
+pub mod proximacodec;
 pub mod quantization;
 
 // Pluggable compute provider interface (Hadoop-style storage-compute separation)
