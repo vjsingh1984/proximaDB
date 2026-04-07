@@ -1755,7 +1755,7 @@ mod tests {
     #[tokio::test]
     async fn test_sstable_write_read_format() {
         use crate::proto::proximadb_v1::VectorRecord as VR;
-        use crate::storage::engines::impls::sst::{SstEntry, SstMetadata};
+        use crate::storage::engines::impls::sst::SstEntry;
         use crate::storage::persistence::filesystem::FilesystemConfig;
         use crate::storage::persistence::filesystem::FilesystemFactory;
         use tempfile::TempDir;

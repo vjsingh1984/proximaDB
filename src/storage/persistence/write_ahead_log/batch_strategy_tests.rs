@@ -617,7 +617,7 @@ mod write_ahead_log_batch_strategy_tests {
             .await;
 
         match result {
-            Ok(batch_urls) => {
+            Ok(_batch_urls) => {
                 // Unexpected success - but verify result structure
                 // Verify result is a vector (empty or not)
                 // batch_urls.len() is always >= 0 (usize)

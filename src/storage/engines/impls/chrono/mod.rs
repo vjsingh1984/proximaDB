@@ -352,7 +352,7 @@ impl UnifiedStorageEngine for ChronoEngine {
 mod tests {
     use super::*;
 
-    fn make_metric(name: &str, ts: i64, value: f64) -> MetricSample {
+    fn make_metric(name: &str, ts: i64, _value: f64) -> MetricSample {
         MetricSample {
             name: name.to_string(),
             timestamp_ns: ts,
@@ -364,7 +364,7 @@ mod tests {
     fn make_metric_with_labels(
         name: &str,
         ts: i64,
-        value: f64,
+        _value: f64,
         labels: Vec<(&str, &str)>,
     ) -> MetricSample {
         MetricSample {

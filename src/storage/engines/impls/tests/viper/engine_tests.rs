@@ -30,7 +30,7 @@ use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStor
 async fn test_viper_engine_creation() {
     let temp_dir = TempDir::new().unwrap();
     let _config = create_default_test_config(temp_dir.path().to_str().unwrap());
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),

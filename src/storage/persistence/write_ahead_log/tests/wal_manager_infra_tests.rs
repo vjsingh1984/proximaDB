@@ -5,7 +5,7 @@
 
 use crate::storage::persistence::write_ahead_log::config::{WALConfig, WriteBufferStrategyType};
 use crate::storage::persistence::write_ahead_log::{
-    WALStats, WriteAheadLogManagerPoolConfig, WriteAheadLogManagerRegistry,
+    WriteAheadLogManagerPoolConfig, WriteAheadLogManagerRegistry,
 };
 
 // ---------------------------------------------------------------------------

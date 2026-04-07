@@ -2043,6 +2043,7 @@ mod tests {
     }
 
     /// Convenience: create a numeric (f64) SqlValue
+    #[allow(dead_code)]
     fn sql_number(n: f64) -> SqlValue {
         SqlValue {
             value: Some(sql_value::Value::NumberValue(n)),

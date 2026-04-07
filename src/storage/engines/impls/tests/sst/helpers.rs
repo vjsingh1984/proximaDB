@@ -272,7 +272,6 @@ pub fn create_test_vector_record(
                 crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => SqlValue {
                     value: Some(sql_value::Value::BoolValue(b)),
                 },
-                _ => continue,
             };
             metadata.insert(item.key, sql_value);
         }

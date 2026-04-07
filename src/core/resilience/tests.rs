@@ -78,6 +78,7 @@ async fn test_circuit_breaker_half_open_recovery() {
 fn test_retry_with_condition() {
     // Test that non-retryable errors stop immediately
     #[derive(Debug)]
+    #[allow(dead_code)]
     enum TestError {
         Retryable,
         NonRetryable,

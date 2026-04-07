@@ -6768,7 +6768,7 @@ mod tests {
         };
 
         // Infer capabilities
-        let claimed = scan_node.infer_capabilities();
+        let _claimed = scan_node.infer_capabilities();
 
         // Simulate a storage engine that doesn't support predicate pushdown
         let limited_engine = CapabilitySet::from_capabilities(&[
@@ -6777,7 +6777,7 @@ mod tests {
             // Missing: Filter, PredicatePushdown
         ]);
 
-        let (honest, missing, _extra) = scan_node.get_capability_honesty_report(&limited_engine);
+        let (_honest, missing, _extra) = scan_node.get_capability_honesty_report(&limited_engine);
 
         // Should detect the honesty gap
         assert!(missing.contains_capability(&Capability::Filter));

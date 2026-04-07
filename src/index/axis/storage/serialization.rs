@@ -821,6 +821,7 @@ mod tests {
 
     /// Index type enum for testing
     #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[allow(dead_code)]
     enum Index {
         Hnsw,
         Ivf,

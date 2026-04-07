@@ -352,6 +352,7 @@ mod tests {
 
     /// Test struct for collection statistics
     #[derive(Debug, Clone)]
+    #[allow(dead_code)]
     struct CollectionStatistics {
         total_vectors: u64,
         vector_dimension: usize,
@@ -364,6 +365,7 @@ mod tests {
 
     /// Test struct for query patterns
     #[derive(Debug, Clone)]
+    #[allow(dead_code)]
     struct QueryPatterns {
         avg_queries_per_second: f32,
         filter_usage_ratio: f32,
@@ -374,6 +376,7 @@ mod tests {
 
     /// Test struct for index strategy builder
     #[derive(Debug)]
+    #[allow(dead_code)]
     struct IndexStrategyBuilder {
         stats: CollectionStatistics,
         patterns: QueryPatterns,
