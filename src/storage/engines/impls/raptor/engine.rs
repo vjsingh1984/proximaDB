@@ -1504,7 +1504,7 @@ impl RaptorEngine {
         let num_vectors = u32::from_le_bytes(count_bytes) as usize;
 
         // Decode each dimension column
-        let mut columns = Vec::with_capacity(dimension);
+        let mut columns: Vec<Vec<f32>> = Vec::with_capacity(dimension);
         for _ in 0..dimension {
             let mut len_bytes = [0u8; 4];
             cursor.read_exact(&mut len_bytes)?;

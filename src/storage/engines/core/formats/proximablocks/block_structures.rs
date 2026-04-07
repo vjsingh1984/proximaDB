@@ -2965,7 +2965,7 @@ impl ProximaDataBlock {
             encoded_id_data.len()
         );
         let codec = ProximaCodec::global();
-        let decoded_id_indices = match codec.decode_i64(&encoded_id_data) {
+        let decoded_id_indices: Vec<i64> = match codec.decode_i64(&encoded_id_data) {
             Ok(indices) => {
                 if indices.len() != record_count {
                     warn!(
@@ -3218,7 +3218,7 @@ impl ProximaDataBlock {
         trace!("[DECODE] Read timestamps: {} bytes", timestamp_len);
 
         // Decode timestamps using ProximaCodec (migrated from old decoder)
-        let decoded_timestamps = match codec.decode_i64(&timestamp_bytes) {
+        let decoded_timestamps: Vec<i64> = match codec.decode_i64(&timestamp_bytes) {
             Ok(timestamps) => {
                 trace!(
                     "✅ [DECODE] Successfully decoded {} timestamps",
@@ -3263,7 +3263,7 @@ impl ProximaDataBlock {
         cursor.read_exact(&mut encoded_source_data)?;
 
         // Use record_count from header instead of storing redundant count
-        let decoded_source_indices = match codec.decode_i64(&encoded_source_data) {
+        let decoded_source_indices: Vec<i64> = match codec.decode_i64(&encoded_source_data) {
             Ok(indices) => {
                 trace!(
                     "✅ [DECODE] Successfully decoded {} source indices",
@@ -3298,7 +3298,7 @@ impl ProximaDataBlock {
                 let mut data = vec![0u8; data_len];
                 cursor.read_exact(&mut data)?;
                 match codec.decode_i64(&data) {
-                    Ok(values) => values.into_iter().map(Some).collect(),
+                    Ok(values) => { let result: Vec<Option<i64>> = values.into_iter().map(Some).collect(); result },
                     Err(_) => vec![None; record_count],
                 }
             }
@@ -3348,7 +3348,7 @@ impl ProximaDataBlock {
                 let mut data = vec![0u8; data_len];
                 cursor.read_exact(&mut data)?;
                 match codec.decode_i64(&data) {
-                    Ok(values) => values.into_iter().map(Some).collect(),
+                    Ok(values) => { let result: Vec<Option<i64>> = values.into_iter().map(Some).collect(); result },
                     Err(_) => vec![None; record_count],
                 }
             }
@@ -4598,11 +4598,12 @@ impl ProximaDataBlock {
 
                     match codec.decode(&vector_data) {
                         Ok(floats) => {
+                            let typed_floats: Vec<f32> = floats;
                             trace!(
                                 "✅ [DECODE_FV] Proxima decoded {} floats successfully",
-                                floats.len()
+                                typed_floats.len()
                             );
-                            floats
+                            typed_floats
                         }
                         Err(e) => {
                             warn!("❌ [DECODE_FV] Proxima decoding failed: {}", e);
