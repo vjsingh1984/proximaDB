@@ -67,6 +67,7 @@ fn generate_clustered_vectors(
 }
 
 /// Generate random test vectors
+#[allow(dead_code)]
 fn generate_random_vectors(num_vectors: usize, dimension: usize) -> Vec<VectorRecord> {
     let mut rng_seed = 12345u64;
 

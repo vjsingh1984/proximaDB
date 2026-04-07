@@ -43,6 +43,8 @@ pub enum ExpansionMethod {
 /// Query expansion module
 pub struct QueryExpansion {
     config: QueryExpansionConfig,
+    /// Distance compute reserved for future similarity-based expansion
+    #[allow(dead_code)]
     distance_compute: Arc<UnifiedDistanceCompute>,
 }
 

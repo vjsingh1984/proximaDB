@@ -61,6 +61,8 @@ impl Default for CedarConfig {
 /// Uses DashMap for lock-free concurrent document access in the memtable.
 /// Each collection gets its own DashMap partition.
 pub struct CedarEngine {
+    /// Engine configuration (reserved for future tuning parameters)
+    #[allow(dead_code)]
     config: CedarConfig,
     /// Per-collection document memtables: collection_name -> (doc_id -> DocumentRecord)
     collections: DashMap<String, DashMap<String, DocumentRecord>>,

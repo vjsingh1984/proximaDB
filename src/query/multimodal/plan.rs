@@ -141,8 +141,6 @@ impl MultiModelPlan {
 
         // Validate operator sequence
         let mut has_scan = false;
-        let mut has_join = false;
-        let mut has_aggregate = false;
 
         for (idx, operator) in self.operators.iter().enumerate() {
             match operator {
@@ -153,13 +151,12 @@ impl MultiModelPlan {
                     }
                 }
                 Operator::Join { .. } => {
-                    has_join = true;
                     if !has_scan {
                         errors.push(format!("Operator {}: Join before any Scan operator", idx));
                     }
                 }
                 Operator::Aggregate { .. } => {
-                    has_aggregate = true;
+                    // Aggregate validation - currently no specific rules
                 }
                 Operator::Filter { expression } => {
                     // Validate filter expression

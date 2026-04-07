@@ -75,7 +75,8 @@ impl Default for EdrIndexConfig {
 pub struct EdrIndex {
     /// Index configuration
     config: EdrIndexConfig,
-    /// Distance computation engine
+    /// Distance computation engine (reserved for future use in advanced scoring)
+    #[allow(dead_code)]
     distance_compute: Arc<UnifiedDistanceCompute>,
     /// Document storage with multi-vector support
     document_store: EdrDocumentStore,
@@ -183,7 +184,7 @@ impl AxisVectorIndex for EdrIndex {
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<&HashMap<String, String>>,
+        _filter: Option<&HashMap<String, String>>, // TODO: implement filter support
     ) -> Result<Vec<(String, f32)>> {
         // Note: Filter parameter not yet implemented for EDR
         let query_vec = query.to_vec();

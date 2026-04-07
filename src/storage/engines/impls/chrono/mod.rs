@@ -62,6 +62,8 @@ impl Default for ChronoConfig {
 /// each data type. Metrics are keyed by series key (name + sorted labels),
 /// logs are appended chronologically, traces are keyed by trace_id.
 pub struct ChronoEngine {
+    /// Engine configuration (reserved for future tuning parameters)
+    #[allow(dead_code)]
     config: ChronoConfig,
     /// Metric memtable: metric_name -> Vec<MetricSample> (sorted by timestamp)
     metrics: DashMap<String, Vec<MetricSample>>,
@@ -105,7 +107,7 @@ impl ChronoEngine {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         name.hash(&mut hasher);
         let mut sorted_labels: Vec<_> = labels.iter().collect();
-        sorted_labels.sort_by_key(|(k, _)| k.clone());
+        sorted_labels.sort_by_key(|(k, _)| *k);
         for (k, v) in sorted_labels {
             k.hash(&mut hasher);
             v.hash(&mut hasher);

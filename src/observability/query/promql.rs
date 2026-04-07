@@ -532,6 +532,7 @@ impl PromQLParser {
     }
 
     /// Convert MatchOp to string representation
+    #[allow(dead_code)]
     fn match_op_string(op: &MatchOp) -> Option<&'static str> {
         match op {
             MatchOp::Equal => Some("="),
@@ -542,6 +543,7 @@ impl PromQLParser {
     }
 
     /// Format duration for length calculation
+    #[allow(dead_code)]
     fn format_duration(duration: &Duration) -> String {
         let ns = duration.nanoseconds;
         if ns % 3_600_000_000_000 == 0 {

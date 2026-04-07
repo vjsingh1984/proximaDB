@@ -42,7 +42,7 @@ impl LateInteractionScorer {
         &self,
         expanded_queries: &[Vec<f32>],
         document_vectors: &[Vec<f32>],
-        top_k: usize,
+        _top_k: usize, // TODO: apply top_k limiting to results
     ) -> Result<f32> {
         let mut all_scores = Vec::new();
 
