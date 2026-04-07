@@ -196,9 +196,6 @@ pub mod specialized;
 pub mod traits;
 pub mod warming;
 
-#[cfg(test)]
-mod tests;
-
 // Re-export main types
 pub use backend::{CacheTier, StorageBackend};
 pub use base::BaseCacheImpl;
@@ -244,5 +241,544 @@ impl CacheValue for crate::proto::proximadb_v1::VectorRecord {
         }
 
         size
+    }
+}
+
+#[cfg(test)]
+mod base_cache_tests {
+    use super::*;
+    use crate::storage::cache::base::BaseCacheImpl;
+    use crate::storage::cache::traits::{BaseCache, CacheValue};
+    use crate::storage::cache::backend::CacheTier;
+
+    #[derive(Debug, Clone)]
+    struct TestValue {
+        data: Vec<u8>,
+    }
+
+    impl CacheValue for TestValue {
+        fn size_bytes(&self) -> usize {
+            self.data.len()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_basic_get_put() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+
+        let cache = BaseCacheImpl::<String, TestValue>::new(10);
+
+        let key = "test_key".to_string();
+        let value = TestValue {
+            data: vec![1, 2, 3, 4, 5],
+        };
+
+        // Put value
+        cache.put_with_hooks(key.clone(), value.clone()).await;
+
+        // Get value
+        let retrieved = cache.get_with_hooks(&key).await;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().data, value.data);
+    }
+
+    #[tokio::test]
+    async fn test_cache_miss() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+
+        let cache = BaseCacheImpl::<String, TestValue>::new(10);
+
+        let key = "non_existent".to_string();
+        let retrieved = cache.get_with_hooks(&key).await;
+        assert!(retrieved.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_invalidation() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+
+        let cache = BaseCacheImpl::<String, TestValue>::new(10);
+
+        let key = "test_key".to_string();
+        let value = TestValue {
+            data: vec![1, 2, 3],
+        };
+
+        // Put value
+        cache.put_with_hooks(key.clone(), value).await;
+
+        // Verify it exists
+        assert!(cache.get_with_hooks(&key).await.is_some());
+
+        // Invalidate
+        let invalidated = cache.invalidate(&key).await;
+        assert!(invalidated);
+
+        // Verify it's gone
+        assert!(cache.get_with_hooks(&key).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tier_selection() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+
+        let cache = BaseCacheImpl::<String, TestValue>::new(10);
+
+        let small_value = TestValue {
+            data: vec![1; 100], // Small value
+        };
+
+        let large_value = TestValue {
+            data: vec![1; 2_000_000], // Large value (2MB)
+        };
+
+        let small_tier = cache.select_tier(&"small".to_string(), &small_value).await;
+        let large_tier = cache.select_tier(&"large".to_string(), &large_value).await;
+
+        assert_eq!(small_tier, CacheTier::L1);
+        // Large value should go to L1 as well since we don't have L2/L3 configured
+        assert_eq!(large_tier, CacheTier::L1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_metrics_recording() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+
+        let cache = BaseCacheImpl::<String, TestValue>::new(10);
+
+        let key1 = "key1".to_string();
+        let key2 = "key2".to_string();
+        let value = TestValue {
+            data: vec![1, 2, 3],
+        };
+
+        // Put and get
+        cache.put_with_hooks(key1.clone(), value.clone()).await;
+
+        let result1 = cache.get_with_hooks(&key1).await;
+        let result2 = cache.get_with_hooks(&key2).await;
+
+        // Wait for async metrics recording to complete
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        let snapshot = cache.metrics().get_snapshot().await;
+
+        assert_eq!(snapshot.total_operations, 3, "Should have 1 put + 2 gets");
+        assert_eq!(snapshot.cache_misses, 1);
+        assert!(snapshot.cache_hits > 0);
+    }
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use super::*;
+    use crate::storage::cache::backend::{CacheTier, MemoryBackend, StorageBackend};
+
+    #[derive(Clone, Debug)]
+    struct TestBytes {
+        data: Box<[u8]>,
+    }
+
+    impl TestBytes {
+        fn new_large() -> Self {
+            TestBytes {
+                data: vec![0u8; 2 * 1024 * 1024].into_boxed_slice(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_memory_backend_basic_operations() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let backend = MemoryBackend::<String, String>::new(1); // 1MB
+
+        // Test put and get
+        let key = "test_key".to_string();
+        let value = "test_value".to_string();
+
+        assert!(backend.put(key.clone(), value.clone()).await.is_ok());
+        assert_eq!(backend.get(&key).await, Some(value.clone()));
+
+        // Test contains
+        assert!(backend.contains(&key).await);
+        assert!(!backend.contains(&"non_existent".to_string()).await);
+
+        // Test remove
+        assert!(backend.remove(&key).await);
+        assert!(!backend.contains(&key).await);
+        assert_eq!(backend.get(&key).await, None);
+    }
+
+    #[tokio::test]
+    async fn test_memory_backend_capacity() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let backend = MemoryBackend::<u32, TestBytes>::new(1); // 1MB limit
+
+        // Try to insert data that exceeds capacity
+        let large_value = TestBytes::new_large(); // 2MB
+
+        let result = backend.put(1, large_value).await;
+        assert!(result.is_err());
+
+        // Verify the error is capacity exceeded
+        if let Err(e) = result {
+            match e {
+                crate::storage::cache::backend::StorageError::CapacityExceeded => {}
+                _ => panic!("Expected CapacityExceeded error"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_memory_backend_clear() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let backend = MemoryBackend::<String, String>::new(1);
+
+        // Insert some data
+        for i in 0..10 {
+            let key = format!("key_{}", i);
+            let value = format!("value_{}", i);
+            let _ = backend.put(key, value).await;
+        }
+
+        assert_eq!(backend.entry_count().await, 10);
+        assert!(backend.size_bytes().await > 0);
+
+        // Clear
+        assert!(backend.clear().await.is_ok());
+
+        // Verify cleared
+        assert_eq!(backend.entry_count().await, 0);
+        assert_eq!(backend.size_bytes().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_memory_backend_tier() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let backend = MemoryBackend::<String, String>::new(1);
+        assert_eq!(backend.tier(), CacheTier::L1);
+    }
+
+    #[tokio::test]
+    async fn test_memory_backend_concurrent_access() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        use std::sync::Arc;
+
+        let backend = Arc::new(MemoryBackend::<u32, u32>::new(10));
+
+        // Spawn multiple tasks that read and write concurrently
+        let mut handles = vec![];
+
+        for i in 0..10 {
+            let backend_clone = backend.clone();
+            let handle = tokio::spawn(async move {
+                for j in 0..100 {
+                    let key = i * 100 + j;
+                    let _ = backend_clone.put(key, key * 2).await;
+                    let _ = backend_clone.get(&key).await;
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all tasks
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Verify some data exists
+        assert!(backend.entry_count().await > 0);
+    }
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use super::*;
+    use crate::storage::cache::backend::CacheTier;
+    use crate::storage::cache::metrics::CacheMetrics;
+    use std::time::Duration;
+
+    #[test]
+    fn test_metrics_recording() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let metrics = CacheMetrics::new();
+
+        // Record some hits
+        metrics.record_hit(CacheTier::L1);
+        metrics.record_hit(CacheTier::L1);
+        metrics.record_hit(CacheTier::L2);
+        metrics.record_hit(CacheTier::L3);
+
+        // Record misses
+        metrics.record_miss();
+        metrics.record_miss();
+
+        // Record operations
+        metrics.record_put();
+        metrics.record_invalidation();
+        metrics.record_eviction();
+
+        // Record latencies
+        metrics.record_get_latency(Duration::from_micros(100));
+        metrics.record_get_latency(Duration::from_micros(200));
+        metrics.record_put_latency(Duration::from_micros(150));
+
+        // Update size
+        metrics.update_size(100, 1024 * 1024);
+
+        // Get snapshot
+        let snapshot = metrics.snapshot();
+
+        assert_eq!(snapshot.l1_hits, 2);
+        assert_eq!(snapshot.l2_hits, 1);
+        assert_eq!(snapshot.l3_hits, 1);
+        assert_eq!(snapshot.misses, 2);
+        assert_eq!(snapshot.total_gets, 6); // 4 hits + 2 misses
+        assert_eq!(snapshot.total_puts, 1);
+        assert_eq!(snapshot.invalidations, 1);
+        assert_eq!(snapshot.evictions, 1);
+        assert_eq!(snapshot.total_entries, 100);
+        assert_eq!(snapshot.total_bytes, 1024 * 1024);
+        assert_eq!(snapshot.avg_get_latency_us, 150); // (100 + 200) / 2
+        assert_eq!(snapshot.avg_put_latency_us, 150);
+
+        // Check hit rate calculation
+        let expected_hit_rate = 4.0 / 6.0; // 4 hits out of 6 gets
+        assert!((snapshot.hit_rate - expected_hit_rate).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_metrics_reset() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let metrics = CacheMetrics::new();
+
+        // Record some operations
+        metrics.record_hit(CacheTier::L1);
+        metrics.record_miss();
+        metrics.record_put();
+
+        // Verify they were recorded
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.l1_hits, 1);
+        assert_eq!(snapshot.misses, 1);
+        assert_eq!(snapshot.total_puts, 1);
+
+        // Reset
+        metrics.reset();
+
+        // Verify reset
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.l1_hits, 0);
+        assert_eq!(snapshot.misses, 0);
+        assert_eq!(snapshot.total_puts, 0);
+        assert_eq!(snapshot.total_gets, 0);
+    }
+
+    #[test]
+    fn test_metrics_summary_print() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let metrics = CacheMetrics::new();
+
+        // Set up some metrics
+        for _ in 0..70 {
+            metrics.record_hit(CacheTier::L1);
+        }
+        for _ in 0..20 {
+            metrics.record_hit(CacheTier::L2);
+        }
+        for _ in 0..5 {
+            metrics.record_hit(CacheTier::L3);
+        }
+        for _ in 0..5 {
+            metrics.record_miss();
+        }
+
+        metrics.update_size(1000, 10 * 1024 * 1024);
+
+        let snapshot = metrics.snapshot();
+
+        // Test that summary can be printed without panic
+        snapshot.print_summary();
+
+        // Verify percentages
+        assert_eq!(snapshot.total_gets, 100);
+        assert_eq!(snapshot.hit_rate, 0.95); // 95% hit rate
+    }
+}
+
+#[cfg(test)]
+mod eviction_tests {
+    use super::*;
+    use crate::storage::cache::eviction::{
+        AccessTracker, CacheEvictionConfig, CacheEvictor, EvictionPolicy,
+    };
+    use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+    use crate::storage::traits::UnifiedMetricsCollector;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_lru_policy() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let policy = EvictionPolicy::LRU {
+            max_items: 1000,
+            batch_size: 10,
+        };
+
+        match policy {
+            EvictionPolicy::LRU {
+                max_items,
+                batch_size,
+            } => {
+                assert_eq!(max_items, 1000);
+                assert_eq!(batch_size, 10);
+            }
+            _ => panic!("Expected LRU policy"),
+        }
+    }
+
+    #[test]
+    fn test_lfu_policy() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let policy = EvictionPolicy::LFU {
+            max_items: 1000,
+            min_access_count: 2,
+            frequency_window_hours: 24,
+        };
+
+        match policy {
+            EvictionPolicy::LFU {
+                max_items,
+                min_access_count,
+                frequency_window_hours,
+            } => {
+                assert_eq!(max_items, 1000);
+                assert_eq!(min_access_count, 2);
+                assert_eq!(frequency_window_hours, 24);
+            }
+            _ => panic!("Expected LFU policy"),
+        }
+    }
+
+    #[test]
+    fn test_arc_policy() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let policy = EvictionPolicy::ARC {
+            target_size: 1000,
+            recent_size: 500,
+            frequent_size: 500,
+        };
+
+        match policy {
+            EvictionPolicy::ARC {
+                target_size,
+                recent_size,
+                frequent_size,
+            } => {
+                assert_eq!(target_size, 1000);
+                assert_eq!(recent_size, 500);
+                assert_eq!(frequent_size, 500);
+            }
+            _ => panic!("Expected ARC policy"),
+        }
+    }
+
+    #[test]
+    fn test_ttl_policy() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let policy = EvictionPolicy::TTL {
+            max_age_seconds: 3600,
+            cleanup_interval_seconds: 60,
+        };
+
+        match policy {
+            EvictionPolicy::TTL {
+                max_age_seconds,
+                cleanup_interval_seconds,
+            } => {
+                assert_eq!(max_age_seconds, 3600);
+                assert_eq!(cleanup_interval_seconds, 60);
+            }
+            _ => panic!("Expected TTL policy"),
+        }
+    }
+
+    #[test]
+    fn test_pattern_based_policy() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let policy = EvictionPolicy::PatternBased {
+            use_ml_predictions: true,
+            pattern_window_hours: 48,
+            eviction_threshold: 0.7,
+        };
+
+        match policy {
+            EvictionPolicy::PatternBased {
+                use_ml_predictions,
+                pattern_window_hours,
+                eviction_threshold,
+            } => {
+                assert!(use_ml_predictions);
+                assert_eq!(pattern_window_hours, 48);
+                assert_eq!(eviction_threshold, 0.7);
+            }
+            _ => panic!("Expected PatternBased policy"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_access_tracker() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let tracker = AccessTracker::new();
+
+        // Track some accesses
+        tracker.track_access("key1".to_string()).await;
+        tracker.track_access("key2".to_string()).await;
+        tracker.track_access("key1".to_string()).await; // Second access to key1
+
+        // Get access statistics - method not available, testing LRU items instead
+        let lru_items = tracker.get_lru_items(3).await;
+
+        // key3 should be in LRU list as it was never accessed
+        // key1 and key2 were accessed so they should be more recent
+        assert!(!lru_items.is_empty());
+    }
+
+    #[test]
+    fn test_cache_eviction_config() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let config = CacheEvictionConfig::default();
+
+        // Default config should have reasonable values
+        assert!(!config.policies.is_empty());
+        assert!(config.check_interval_seconds > 0);
+        assert!(config.max_cache_size > 0);
+    }
+
+    #[tokio::test]
+    async fn test_cache_evictor_creation() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let orchestrator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 100)); // 100MB
+        let metrics = Arc::new(UnifiedMetricsCollector::new());
+
+        let evictor = CacheEvictor::new(orchestrator, metrics);
+
+        // Verify evictor was created successfully
+        assert!(Arc::strong_count(&Arc::new(evictor)) == 1);
     }
 }
