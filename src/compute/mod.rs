@@ -210,9 +210,6 @@ pub use scheduler::{
     SchedulerStatistics, SchedulingPolicy,
 };
 
-#[cfg(test)]
-mod tests;
-
 /// Vector computation configuration
 #[derive(Debug, Clone)]
 pub struct ComputeConfig {
@@ -553,5 +550,205 @@ pub fn get_hardware_info() -> HardwareInfo {
                 memory_free: caps.memory.total_memory / 2,
             }],
         },
+    }
+}
+
+#[cfg(test)]
+mod unified_quantization_tests {
+    use super::*;
+    use crate::compute::quantization::types::{
+        BinaryQuantization, NoQuantization, ProductQuantization, QuantizationLevel, ScalarQuantization,
+        UnifiedQuantizationLevel, UniformQuantization,
+    };
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn setup_hardware_capabilities() {
+        INIT.call_once(|| {
+            let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        });
+    }
+
+    #[test]
+    fn test_quantization_level_creation() {
+        setup_hardware_capabilities();
+
+        // Test PQ8 creation
+        let pq8 = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Pq(ProductQuantization {
+                bits_per_code: 8,
+                num_subvectors: 16,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            })),
+        };
+
+        assert!(pq8.level_type.is_some());
+        if let Some(QuantizationLevel::Pq(pq)) = &pq8.level_type {
+            assert_eq!(pq.bits_per_code, 8);
+            assert_eq!(pq.num_subvectors, 16);
+        }
+
+        // Test Uniform quantization
+        let uniform4 = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Uniform(UniformQuantization {
+                bits: 4,
+                scale: None,
+                offset: None,
+            })),
+        };
+
+        assert!(uniform4.level_type.is_some());
+        if let Some(QuantizationLevel::Uniform(uniform)) = &uniform4.level_type {
+            assert_eq!(uniform.bits, 4);
+        }
+
+        // Test Binary quantization
+        let binary = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
+                threshold: None,
+                sign_based: false,
+            })),
+        };
+
+        assert!(binary.level_type.is_some());
+        if let Some(QuantizationLevel::Binary(bin)) = &binary.level_type {
+            assert!(!bin.sign_based);
+        }
+    }
+
+    #[test]
+    fn test_quantization_none() {
+        setup_hardware_capabilities();
+
+        let none_quant = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::None(NoQuantization {})),
+        };
+
+        assert!(none_quant.level_type.is_some());
+        assert!(matches!(
+            none_quant.level_type,
+            Some(QuantizationLevel::None(_))
+        ));
+    }
+
+    #[test]
+    fn test_scalar_quantization() {
+        setup_hardware_capabilities();
+
+        let scalar = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
+                bits: 8,
+                scale: None,
+                offset: None,
+            })),
+        };
+
+        assert!(scalar.level_type.is_some());
+        if let Some(QuantizationLevel::Scalar(s)) = &scalar.level_type {
+            assert_eq!(s.bits, 8);
+        }
+    }
+
+    #[test]
+    fn test_quantization_level_display() {
+        setup_hardware_capabilities();
+
+        let pq_level = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Pq(ProductQuantization {
+                bits_per_code: 8,
+                num_subvectors: 16,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            })),
+        };
+
+        let display_str = format!("{:?}", pq_level);
+        assert!(display_str.contains("UnifiedQuantizationLevel"));
+    }
+
+    #[test]
+    fn test_product_quantization_subvectors() {
+        setup_hardware_capabilities();
+
+        let pq = ProductQuantization {
+            bits_per_code: 8,
+            num_subvectors: 32,
+            codebook_id: None,
+            adaptive_subvectors: true,
+        };
+
+        assert_eq!(pq.bits_per_code, 8);
+        assert_eq!(pq.num_subvectors, 32);
+        assert!(pq.adaptive_subvectors);
+        assert!(pq.codebook_id.is_none());
+    }
+
+    #[test]
+    fn test_uniform_quantization_params() {
+        setup_hardware_capabilities();
+
+        let uniform = UniformQuantization {
+            bits: 4,
+            scale: Some(0.01),
+            offset: Some(-128),
+        };
+
+        assert_eq!(uniform.bits, 4);
+        assert_eq!(uniform.scale, Some(0.01));
+        assert_eq!(uniform.offset, Some(-128));
+    }
+
+    #[test]
+    fn test_binary_quantization_threshold() {
+        setup_hardware_capabilities();
+
+        let binary = BinaryQuantization {
+            threshold: Some(0.5),
+            sign_based: true,
+        };
+
+        assert_eq!(binary.threshold, Some(0.5));
+        assert!(binary.sign_based);
+    }
+
+    #[test]
+    fn test_no_quantization() {
+        setup_hardware_capabilities();
+
+        let none = NoQuantization {};
+        let display_str = format!("{:?}", none);
+        assert!(display_str.contains("NoQuantization"));
+    }
+
+    #[test]
+    fn test_quantization_levels() {
+        setup_hardware_capabilities();
+
+        // Test that all quantization levels can be created
+        let levels = vec![
+            UnifiedQuantizationLevel {
+                level_type: Some(QuantizationLevel::None(NoQuantization {})),
+            },
+            UnifiedQuantizationLevel {
+                level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
+                    threshold: None,
+                    sign_based: false,
+                })),
+            },
+            UnifiedQuantizationLevel {
+                level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
+                    bits: 8,
+                    scale: None,
+                    offset: None,
+                })),
+            },
+        ];
+
+        assert_eq!(levels.len(), 3);
+        for level in levels {
+            assert!(level.level_type.is_some());
+        }
     }
 }
