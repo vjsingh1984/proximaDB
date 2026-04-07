@@ -695,7 +695,7 @@ impl UnifiedDistanceCompute {
     /// Compute distance using the most optimal SIMD path available
     #[inline(always)]
     fn compute_distance_simd(&self, vec_a: &[f32], vec_b: &[f32], metric: &DistanceMetric) -> f32 {
-        debug_assert_eq!(vec_a.len(), vec_b.len(), "Vectors must have same dimension");
+        assert_eq!(vec_a.len(), vec_b.len(), "Vectors must have same dimension");
 
         // Log search backend on first search only
         log_search_backend_first_time(self.platform_capability);
