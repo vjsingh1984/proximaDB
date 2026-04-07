@@ -25,13 +25,13 @@ pub mod gpu {
 }
 
 // Re-export SIMD implementations
-// Note: SIMD functions are in simd.rs, encoder/decoder wrappers are in simd_impls/
+// Note: SIMD is now consolidated in simd/ directory
 pub mod simd {
     // Re-export encoder submodule
-    pub use crate::compute::proximacodec::simd_impls::encoder;
+    pub use crate::compute::proximacodec::simd::encoder;
     // Re-export decoder submodule
-    pub use crate::compute::proximacodec::simd_impls::decoder;
+    pub use crate::compute::proximacodec::simd::decoder;
     // Re-export at module level for convenience
-    pub use crate::compute::proximacodec::simd_impls::encoder::SimdEncoder;
-    pub use crate::compute::proximacodec::simd_impls::decoder::SimdDecoder;
+    pub use crate::compute::proximacodec::simd::encoder::SimdEncoder;
+    pub use crate::compute::proximacodec::simd::decoder::SimdDecoder;
 }

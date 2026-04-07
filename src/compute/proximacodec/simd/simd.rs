@@ -416,7 +416,7 @@ fn simd_delta_encode_scalar(values: &[f32], base: f32) -> Result<Vec<i64>> {
 /// **Current approach:** Delegate to baseline for correctness and maintainability.
 /// Baseline implementation is already highly optimized scalar code.
 pub fn simd_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    use super::impls::baseline::functions::bitpack;
+    use crate::compute::proximacodec::impls::baseline::functions::bitpack;
     bitpack::encode_f32(values, bits)
 }
 
@@ -617,7 +617,7 @@ fn simd_delta_decode_scalar(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 ///
 /// See `simd_bitpack_encode_f32()` for rationale on why SIMD is not used.
 pub fn simd_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    use super::impls::baseline::functions::bitpack;
+    use crate::compute::proximacodec::impls::baseline::functions::bitpack;
     bitpack::decode_f32(packed, bits, count)
 }
 
@@ -675,7 +675,7 @@ fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
 /// Helper: Unpack bytes into i32 values (delegates to baseline)
 #[allow(dead_code)]
 fn bitunpack_bytes_to_i32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
-    use super::impls::baseline::functions::bitpack;
+    use crate::compute::proximacodec::impls::baseline::functions::bitpack;
     // Unpack to u32 first, then reinterpret as i32
     let u32_values = bitpack::unbitpack_u32(packed, bits, count)?;
     Ok(u32_values.iter().map(|&v| v as i32).collect())
@@ -994,7 +994,7 @@ pub fn simd_frame_of_reference_decode_f32(
     _bits: u8,
     count: usize,
 ) -> Result<Vec<f32>> {
-    use super::impls::baseline::functions::frame_of_ref;
+    use crate::compute::proximacodec::impls::baseline::functions::frame_of_ref;
 
     if count == 0 {
         return Ok(Vec::new());
@@ -1004,7 +1004,7 @@ pub fn simd_frame_of_reference_decode_f32(
     let (base_i32, bits, offset) = frame_of_ref::parse_header_f32(packed)?;
 
     // 2. Bitunpack offsets (delegate to baseline - hard to vectorize)
-    use super::impls::baseline::functions::bitpack;
+    use crate::compute::proximacodec::impls::baseline::functions::bitpack;
     let offsets_i32 = bitpack::unbitpack_i32(&packed[offset..], bits, count)?;
 
     // 3. Reconstruct values with SIMD acceleration
@@ -1065,7 +1065,7 @@ pub fn simd_frame_of_reference_decode_f32(
 ///
 /// **Current approach:** Delegate to baseline for correctness and simplicity.
 pub fn simd_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    use super::impls::baseline::functions::zigzag;
+    use crate::compute::proximacodec::impls::baseline::functions::zigzag;
     zigzag::encode_f32(values, bits)
 }
 
@@ -1078,7 +1078,7 @@ pub fn simd_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
 ///
 /// See `simd_zigzag_encode_f32()` for rationale on why SIMD is not used.
 pub fn simd_zigzag_decode_f32(packed: &[u8], _bits: u8, count: usize) -> Result<Vec<f32>> {
-    use super::impls::baseline::functions::zigzag;
+    use crate::compute::proximacodec::impls::baseline::functions::zigzag;
     // Baseline reads bit width from packed[0], so we ignore the bits parameter
     zigzag::decode_f32(packed, count)
 }
@@ -1318,7 +1318,7 @@ unsafe fn compute_deltas_pfor_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
 /// Bit-pack i32 values (helper for Frame of Reference and PForDelta)
 /// Helper: Pack i32 values into bits (delegates to baseline)
 fn bitpack_i32_scalar(values: &[i32], bits: u8) -> Result<Vec<u8>> {
-    use super::impls::baseline::functions::bitpack;
+    use crate::compute::proximacodec::impls::baseline::functions::bitpack;
 
     if bits == 0 {
         return Ok(Vec::new());
@@ -1345,7 +1345,7 @@ pub fn simd_pfor_delta_decode_f32(
     _base: i64,
     count: usize,
 ) -> Result<Vec<f32>> {
-    use super::impls::baseline::functions::pfor_delta;
+    use crate::compute::proximacodec::impls::baseline::functions::pfor_delta;
 
     if count == 0 {
         return Ok(Vec::new());
