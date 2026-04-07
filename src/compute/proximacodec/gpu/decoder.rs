@@ -11,7 +11,7 @@ use anyhow::Result;
 use tracing::{debug, trace};
 
 use crate::core::hardware_capabilities::HardwareBackend;
-use crate::compute::proximacodec::simd::{
+use crate::storage::engines::core::ops::proximacodec::simd::{
     get_simd_backend, simd_bitpack_decode_f32, simd_delta_decode_f32,
     simd_frame_of_reference_decode_f32, simd_pfor_delta_decode_f32, simd_zigzag_decode_f32,
 };
@@ -140,7 +140,7 @@ impl GpuDecoder {
                     "⚠️  [GPU] Backend {:?} not available, falling back to SIMD",
                     backend
                 );
-                simd_frame_of_reference_decode_f32(packed, reference as f32, bits, count)
+                simd_frame_of_reference_decode_f32(packed, reference, bits, count)
             }
         }
     }
@@ -256,7 +256,7 @@ impl RawDecoder for GpuDecoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::compute::proximacodec::baseline::functions::delta;
+                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let values = delta::decode_f32(data, count)?;
 
                 debug!(
@@ -362,7 +362,7 @@ impl RawDecoder for GpuDecoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::compute::proximacodec::baseline::functions::delta;
+                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let values = delta::decode_i64(data, count)?;
 
                 debug!(
@@ -392,7 +392,7 @@ impl RawDecoder for GpuDecoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::compute::proximacodec::baseline::functions::delta;
+                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let values = delta::decode_i32(data, count)?;
 
                 debug!(
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_gpu_delta_decode() {
-        use crate::compute::proximacodec::gpu::encoder::GpuEncoder;
+        use crate::storage::engines::core::ops::proximacodec::impls::gpu::encoder::GpuEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let backend = get_simd_backend();

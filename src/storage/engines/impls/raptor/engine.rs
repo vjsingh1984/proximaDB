@@ -21,7 +21,7 @@ use crate::core::hardware_capabilities::get_hardware_capabilities;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::compute::proximacodec::ProximaCodec;
+use crate::storage::engines::core::ops::proximacodec::ProximaCodec;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,
     UnifiedStorageEngine,
@@ -1488,7 +1488,7 @@ impl RaptorEngine {
     }
 
     fn deserialize_proxima_batch(&self, data: &[u8], _marker: u8) -> Result<RecordBatch> {
-        use crate::compute::proximacodec::ProximaCodec;
+        use crate::storage::engines::core::ops::proximacodec::ProximaCodec;
         use arrow_array::{ArrayRef, Float32Array, Int64Array, StringArray, UInt32Array};
         use std::io::Read;
 
@@ -1504,7 +1504,7 @@ impl RaptorEngine {
         let num_vectors = u32::from_le_bytes(count_bytes) as usize;
 
         // Decode each dimension column
-        let mut columns: Vec<Vec<f32>> = Vec::with_capacity(dimension);
+        let mut columns = Vec::with_capacity(dimension);
         for _ in 0..dimension {
             let mut len_bytes = [0u8; 4];
             cursor.read_exact(&mut len_bytes)?;

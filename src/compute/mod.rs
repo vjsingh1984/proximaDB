@@ -164,7 +164,6 @@
 pub mod distance_computation;
 pub mod gpu;
 pub mod pipeline_executor;
-pub mod proximacodec;
 pub mod quantization;
 
 // Pluggable compute provider interface (Hadoop-style storage-compute separation)
@@ -185,7 +184,6 @@ pub mod scheduler;
 // Re-export main APIs from semantic modules
 pub use distance_computation::*;
 pub use pipeline_executor::*;
-pub use proximacodec::*;
 pub use quantization::*;
 
 // ============================================================================

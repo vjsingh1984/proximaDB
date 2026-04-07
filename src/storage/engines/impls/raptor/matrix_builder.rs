@@ -20,7 +20,7 @@ use tracing::{debug, info};
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::compute::proximacodec::types::ProximaScheme;
+use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 #[cfg(feature = "gpu")]
 use crate::compute::gpu::distance::GpuDistanceCompute;

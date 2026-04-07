@@ -5,7 +5,7 @@
 //!
 //! Tests the complete encode-decode pipeline through WireFormatManager
 
-use super::baseline::{BaselineDecoder, BaselineEncoder};
+use super::impls::baseline::{BaselineDecoder, BaselineEncoder};
 use super::traits::{RawDecoder, RawEncoder};
 use super::types::{ProximaScheme, TypeId};
 use super::wire_format::WireFormatManager;

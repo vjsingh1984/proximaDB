@@ -18,7 +18,7 @@
 //! - Matrix building and verification
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
-use crate::compute::proximacodec::types::ProximaScheme;
+use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 use std::sync::Arc;
 
 // ============================================================================

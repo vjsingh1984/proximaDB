@@ -51,7 +51,6 @@
 
 pub mod adaptive;
 pub mod analysis;
-pub mod batching;
 pub mod codec;
 pub mod registry;
 pub mod simd_analysis;
@@ -60,14 +59,14 @@ pub mod traits;
 pub mod types;
 pub mod wire_format;
 
-// Hardware-accelerated implementations
-pub mod baseline;
-pub mod gpu;
+// Hardware-accelerated implementations (SIMD + GPU)
 pub mod simd;
-
 // Experimental SIMD prototype lives under archive; opt-in only.
 #[cfg(feature = "simd-experimental")]
 pub mod simd_experimental;
+
+// Hardware-aware batching framework (common across SIMD, GPU, Scalar)
+pub mod batching;
 
 // Re-export main types
 pub use codec::ProximaCodec;
@@ -79,6 +78,9 @@ pub use strategy::{
 pub use traits::{RawDecoder, RawEncoder};
 pub use types::{Decodable, Encodable, ProximaScheme, TypeId};
 pub use wire_format::{WIRE_FORMAT_VERSION, WireFormatManager, WireHeader};
+
+// Implementations (will be added in next phases)
+pub mod impls;
 
 // Integration tests
 #[cfg(test)]

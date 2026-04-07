@@ -73,7 +73,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
 // ProximaCodec system for encoding/decoding
-use crate::compute::proximacodec::{
+use crate::storage::engines::core::ops::proximacodec::{
     ProximaCodec, analysis, types::ProximaScheme,
 };
 use crate::storage::persistence::filesystem::FileSystem;

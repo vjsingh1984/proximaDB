@@ -10,7 +10,7 @@
 use anyhow::Result;
 use tracing::trace;
 
-use crate::compute::proximacodec::simd::{
+use crate::storage::engines::core::ops::proximacodec::simd::{
     get_simd_backend, simd_bitpack_decode_f32,
 };
 use crate::storage::engines::core::ops::proximacodec::traits::RawDecoder;
@@ -58,7 +58,7 @@ impl RawDecoder for SimdDecoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::compute::proximacodec::baseline::functions::delta;
+                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let values = delta::decode_f32(data, count)?;
 
                 trace!(
@@ -98,7 +98,7 @@ impl RawDecoder for SimdDecoder {
                 );
 
                 // Decode using SIMD FrameOfReference
-                let values = crate::compute::proximacodec::simd::simd_frame_of_reference_decode_f32(data, (*reference) as f32, *bits, count)?;
+                let values = crate::storage::engines::core::ops::proximacodec::simd::simd_frame_of_reference_decode_f32(data, *reference, *bits, count)?;
 
                 trace!(
                     "✅ [SIMD] FrameOfReference decoded {} bytes → {} values",
@@ -118,7 +118,7 @@ impl RawDecoder for SimdDecoder {
 
                 // Decode using SIMD Zigzag
                 let values =
-                    crate::compute::proximacodec::simd::simd_zigzag_decode_f32(
+                    crate::storage::engines::core::ops::proximacodec::simd::simd_zigzag_decode_f32(
                         data, *bits, count,
                     )?;
 
@@ -143,7 +143,7 @@ impl RawDecoder for SimdDecoder {
                 );
 
                 // Decode using SIMD PForDelta
-                let values = crate::compute::proximacodec::simd::simd_pfor_delta_decode_f32(data, *majority_bits, *base, count)?;
+                let values = crate::storage::engines::core::ops::proximacodec::simd::simd_pfor_delta_decode_f32(data, *majority_bits, *base, count)?;
 
                 trace!(
                     "✅ [SIMD] PForDelta decoded {} bytes → {} values",
@@ -169,7 +169,7 @@ impl RawDecoder for SimdDecoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::compute::proximacodec::baseline::functions::delta;
+                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let values = delta::decode_i64(data, count)?;
 
                 trace!(
@@ -199,7 +199,7 @@ impl RawDecoder for SimdDecoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::compute::proximacodec::baseline::functions::delta;
+                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let values = delta::decode_i32(data, count)?;
 
                 trace!(
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_simd_delta_decode() {
-        use crate::compute::proximacodec::simd::encoder::SimdEncoder;
+        use crate::storage::engines::core::ops::proximacodec::impls::simd::encoder::SimdEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = SimdEncoder;
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_simd_bitpack_decode() {
-        use crate::compute::proximacodec::simd::encoder::SimdEncoder;
+        use crate::storage::engines::core::ops::proximacodec::impls::simd::encoder::SimdEncoder;
         use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 
         let encoder = SimdEncoder;

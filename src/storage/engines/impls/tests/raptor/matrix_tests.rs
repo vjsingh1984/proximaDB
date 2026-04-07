@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::compute::proximacodec::types::ProximaScheme;
+use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 use crate::storage::engines::impls::raptor::common::VectorCentroidStorageStrategy;
 use crate::storage::engines::impls::raptor::consolidated_reader::IntraRowgroupMatrix;
 use crate::storage::engines::impls::raptor::matrix_builder::MatrixBuilder;
@@ -153,8 +153,8 @@ async fn test_p2_matrix_proximaencoder() -> Result<()> {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     // Use ProximaCodec for encoding (migrated from old ProximaEncoder)
-    use crate::compute::proximacodec::types::ProximaScheme as CodecScheme;
-    use crate::compute::proximacodec::{ProximaCodec, analysis};
+    use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme as CodecScheme;
+    use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
 
     // Create larger set of vectors to test compression
     let mut vectors = Vec::new();

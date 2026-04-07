@@ -62,7 +62,7 @@ use anyhow::Result;
 use tracing::debug;
 
 use crate::core::hardware_capabilities::HardwareBackend;
-use crate::compute::proximacodec::simd::get_simd_backend;
+use crate::storage::engines::core::ops::proximacodec::simd::get_simd_backend;
 
 /// Batch size optimizer for hardware-aware processing
 ///

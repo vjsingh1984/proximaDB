@@ -10,7 +10,7 @@
 use anyhow::Result;
 use tracing::{debug, trace};
 
-use crate::compute::proximacodec::simd::{
+use crate::storage::engines::core::ops::proximacodec::simd::{
     get_simd_backend, simd_bitpack_encode_f32,
 };
 use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
@@ -59,7 +59,7 @@ impl RawEncoder for SimdEncoder {
 
                 // Use baseline implementation for wire format compatibility
                 // SIMD can compute deltas faster, but we bitpack them for compression
-                use crate::compute::proximacodec::baseline::functions::delta;
+                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let result = delta::encode_f32(values, *base)?;
 
                 debug!(
@@ -97,7 +97,7 @@ impl RawEncoder for SimdEncoder {
                 );
 
                 // Encode using SIMD FrameOfReference
-                let packed = crate::compute::proximacodec::simd::simd_frame_of_reference_encode_f32(values, (*reference) as f32, *bits)?;
+                let packed = crate::storage::engines::core::ops::proximacodec::simd::simd_frame_of_reference_encode_f32(values, *reference, *bits)?;
 
                 debug!(
                     "✅ [SIMD] FrameOfReference encoded {} values → {} bytes",
@@ -116,7 +116,7 @@ impl RawEncoder for SimdEncoder {
 
                 // Encode using SIMD Zigzag
                 let packed =
-                    crate::compute::proximacodec::simd::simd_zigzag_encode_f32(
+                    crate::storage::engines::core::ops::proximacodec::simd::simd_zigzag_encode_f32(
                         values, *bits,
                     )?;
 
@@ -140,7 +140,7 @@ impl RawEncoder for SimdEncoder {
                 );
 
                 // Encode using SIMD PForDelta
-                let packed = crate::compute::proximacodec::simd::simd_pfor_delta_encode_f32(values, *majority_bits, *base)?;
+                let packed = crate::storage::engines::core::ops::proximacodec::simd::simd_pfor_delta_encode_f32(values, *majority_bits, *base)?;
 
                 debug!(
                     "✅ [SIMD] PForDelta encoded {} values → {} bytes",
@@ -166,7 +166,7 @@ impl RawEncoder for SimdEncoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::compute::proximacodec::baseline::functions::delta;
+                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let result = delta::encode_i64(values, *base)?;
 
                 debug!(
@@ -196,7 +196,7 @@ impl RawEncoder for SimdEncoder {
                 );
 
                 // Use baseline implementation for wire format compatibility
-                use crate::compute::proximacodec::baseline::functions::delta;
+                use crate::storage::engines::core::ops::proximacodec::impls::baseline::functions::delta;
                 let result = delta::encode_i32(values, *base)?;
 
                 debug!(

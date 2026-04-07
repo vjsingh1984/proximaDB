@@ -18,7 +18,7 @@ use crate::core::compression::CompressionAlgorithm;
 use crate::storage::engines::core::formats::proximablocks::{
     BlockCompressionConfig, VectorEncodingLayout,
 };
-use crate::compute::proximacodec::{
+use crate::storage::engines::core::ops::proximacodec::{
     ProximaCodec, analysis, types::ProximaScheme,
 };
 
@@ -598,7 +598,7 @@ impl RowGroups {
 
         // Calculate compression ratio
         let original_size = vectors.len() * dimension * 4; // 4 bytes per f32
-        let compressed_size: usize = encoded_dimensions.iter().map(|d: &Vec<u8>| d.len()).sum();
+        let compressed_size: usize = encoded_dimensions.iter().map(|d| d.len()).sum();
         let compression_ratio = original_size as f32 / compressed_size.max(1) as f32;
 
         // Update row group with SIMD-encoded data

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 // Re-export ProximaScheme for use in RAPTOR modules
-pub use crate::compute::proximacodec::types::ProximaScheme;
+pub use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
