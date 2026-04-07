@@ -52,7 +52,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::two_phase_commit::{
     TransactionId, TransactionParticipant, TransactionState, TwoPhaseCommit,
@@ -383,10 +383,10 @@ impl CrossModelTransactionCoordinator {
                                 "Prepared transaction {} cannot be replayed durably: {}. Aborting instead.",
                                 tx_id, e
                             );
-                            self.two_phase_commit
-                                .abort(tx_id, &participant_ids)
-                                .await
-                                .ok();
+                            match self.two_phase_commit.abort(tx_id, &participant_ids).await {
+                                Ok(_) => debug!("Successfully aborted transaction {} during recovery", tx_id),
+                                Err(err) => error!("Failed to abort transaction {} during recovery: {}", tx_id, err),
+                            }
                             self.wal_coordinator.write_tx_abort(tx_id).await.ok();
                             continue;
                         }
@@ -401,10 +401,10 @@ impl CrossModelTransactionCoordinator {
                             .await
                         {
                             warn!("Failed to commit prepared tx {}: {}", tx_id, e);
-                            self.two_phase_commit
-                                .abort(tx_id, &participant_ids)
-                                .await
-                                .ok();
+                            match self.two_phase_commit.abort(tx_id, &participant_ids).await {
+                                Ok(_) => debug!("Successfully aborted transaction {} after commit failure", tx_id),
+                                Err(err) => error!("Failed to abort transaction {} after commit failure: {}", tx_id, err),
+                            }
                         } else {
                             self.wal_coordinator.write_tx_commit(tx_id).await.ok();
                             recovered += 1;
@@ -416,15 +416,17 @@ impl CrossModelTransactionCoordinator {
                     } => {
                         warn!("Transaction {} only partially prepared, aborting", tx_id);
 
-                        self.two_phase_commit
-                            .abort(tx_id, &participant_ids)
-                            .await
-                            .ok();
+                        match self.two_phase_commit.abort(tx_id, &participant_ids).await {
+                            Ok(_) => debug!("Successfully aborted partially prepared transaction {}", tx_id),
+                            Err(err) => error!("Failed to abort partially prepared transaction {}: {}", tx_id, err),
+                        }
                         self.wal_coordinator.write_tx_abort(tx_id).await.ok();
                     }
                     _ => {
                         // Not prepared, must abort
                         warn!("Transaction {} not prepared, aborting", tx_id);
+                        // Update TwoPhaseCommit state before writing to WAL
+                        self.two_phase_commit.set_state(tx_id, TransactionState::Aborted).await;
                         self.wal_coordinator.write_tx_abort(tx_id).await.ok();
                     }
                 }

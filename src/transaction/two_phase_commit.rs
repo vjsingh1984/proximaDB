@@ -368,6 +368,13 @@ impl TwoPhaseCommit {
         transactions.get(&tx_id).cloned()
     }
 
+    /// Set transaction state directly (used for recovery)
+    pub async fn set_state(&self, tx_id: TransactionId, state: TransactionState) {
+        let mut transactions = self.transactions.write().await;
+        debug!("Transaction {} state set to {:?}", tx_id, state);
+        transactions.insert(tx_id, state);
+    }
+
     /// Generate unique transaction ID
     fn generate_tx_id(&self) -> TransactionId {
         use std::time::{SystemTime, UNIX_EPOCH};
